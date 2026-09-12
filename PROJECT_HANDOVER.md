@@ -190,5 +190,6 @@ crontab -l
 | **2026-09-12** | **서버 최적화 & 보안 강화** | WP Super Cache 실제 가동(`$cache_enabled = true;`)으로 정적 캐싱 활성화, MariaDB 1GB RAM OOM 방지 메모리 캡(`innodb_buffer_pool_size = 64M`), 외부 봇 차단 Apache `.htaccess` (`xmlrpc.php` 403 차단) 적용 완료 |
 | **2026-09-12** | **무중단 자동화 및 일일 자동 백업 구축** | 서버 타임존 KST(Asia/Seoul) 설정, 매일 새벽 4시 MariaDB 압축 자동 백업(`backup_daily.sh`) 및 7일 롤링 보관, 매일 아침 8시 자동 발행 파이프라인 Crontab 정식 등록 완료 |
 | **2026-09-12** | **문서화** | 타 AI(Claude, ChatGPT 등) 인계용 종합 컨텍스트 문서(`PROJECT_HANDOVER.md`) 실시간 갱신 및 로컬/서버 동기화 |
+| **2026-09-12** | **GitHub 연동 & 보안 마스킹** | GitHub 저장소([ostrichick/bloguito](https://github.com/ostrichick/bloguito)) 최초 연동. Public 저장소 보안을 위해 API 키·DB 비밀번호·서버 IP를 환경변수 템플릿(`.env.example` 등)으로 마스킹하고 `.gitignore` 적용 후 `main` 브랜치 정식 푸시 완료 |
 
 
