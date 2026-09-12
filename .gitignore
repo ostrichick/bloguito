@@ -1,4 +1,4 @@
-﻿# Environment & Secrets
+# Environment & Secrets
 .env
 *.env
 *.key
@@ -21,3 +21,4 @@ desktop.ini
 *.log
 /tmp/
 backups/
+*.metadata.json
