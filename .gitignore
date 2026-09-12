@@ -1,8 +1,13 @@
 # Environment & Secrets
 .env
+.env.*
 *.env
+!.env.example
+!**/.env.example
 *.key
 *.pem
+*.p12
+*.pfx
 
 # Python
 __pycache__/
@@ -22,3 +27,8 @@ desktop.ini
 /tmp/
 backups/
 *.metadata.json
+
+# Runtime state (examples remain versioned)
+agent-publisher/data/history.json
+agent-publisher/data/published_posts.json
+agent-publisher/data/designer_state.json

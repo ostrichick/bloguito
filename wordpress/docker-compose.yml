@@ -4,10 +4,10 @@ services:
     container_name: wordpress_db
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-your_mysql_root_password}
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in wordpress/.env}"
       MYSQL_DATABASE: wordpress
       MYSQL_USER: wordpress
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-your_mysql_password}
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in wordpress/.env}"
     volumes:
       - db_data:/var/lib/mysql
       - ./mysql_custom.cnf:/etc/mysql/conf.d/custom.cnf:ro
@@ -24,7 +24,7 @@ services:
       WORDPRESS_DB_HOST: db:3306
       WORDPRESS_DB_NAME: wordpress
       WORDPRESS_DB_USER: wordpress
-      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:-your_mysql_password}
+      WORDPRESS_DB_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in wordpress/.env}"
     volumes:
       - wp_data:/var/www/html
       - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini

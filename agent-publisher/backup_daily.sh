@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 BACKUP_DIR="/home/ubuntu/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -12,13 +12,17 @@ echo "[BACKUP] Daily DB Backup Started at: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "=================================================="
 
 # 1. Stream dump from MariaDB container directly through gzip
-DB_PASS="${MYSQL_ROOT_PASSWORD:-your_mysql_root_password}"
-if [ -f "/home/ubuntu/wordpress/.env" ]; then
-    # shellcheck disable=SC1091
-    source /home/ubuntu/wordpress/.env
-    DB_PASS="${MYSQL_ROOT_PASSWORD:-$DB_PASS}"
+WORDPRESS_ENV_FILE="/home/ubuntu/wordpress/.env"
+if [ ! -f "$WORDPRESS_ENV_FILE" ]; then
+    echo "[BACKUP] ❌ Missing required environment file: $WORDPRESS_ENV_FILE"
+    exit 1
 fi
-sudo docker exec wordpress_db mariadb-dump -u root -p"$DB_PASS" --single-transaction --quick wordpress | gzip > "$TARGET_ARCHIVE"
+
+# shellcheck disable=SC1090
+source "$WORDPRESS_ENV_FILE"
+: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required in $WORDPRESS_ENV_FILE}"
+
+sudo docker exec wordpress_db mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --quick wordpress | gzip > "$TARGET_ARCHIVE"
 
 # 2. Check backup file size
 if [ -s "$TARGET_ARCHIVE" ]; then

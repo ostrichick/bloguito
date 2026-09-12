@@ -46,3 +46,49 @@
 
 - **매일 새벽 04:00**: MariaDB 데이터베이스 자동 압축 백업 및 7일 롤링 보관 (`backup_daily.sh`)
 - **매일 아침 08:00**: 3대 카테고리 자율 발행 파이프라인 무인 가동 (`run_daily.sh`)
+
+---
+
+## 🔐 로컬 개발 환경 준비
+
+실제 API 키와 데이터베이스 비밀번호는 Git에 저장하지 않습니다. 예제 파일을 복사해 각 환경의 실제 값을 입력하세요.
+
+```bash
+cp agent-publisher/.env.example agent-publisher/.env
+cp wordpress/.env.example wordpress/.env
+```
+
+- `agent-publisher/.env`: Gemini API 키, 글 상태(`draft` 권장), 사이트 주소를 설정합니다.
+- `wordpress/.env`: MariaDB 루트 비밀번호와 WordPress용 DB 비밀번호를 설정합니다.
+- 두 `.env` 파일은 `.gitignore` 대상입니다. 실제 값이 든 파일을 커밋하지 마세요.
+- `wordpress/docker-compose.yml`은 필수 DB 비밀번호가 없으면 실행을 중단합니다. 예시 비밀번호로 실수로 서버가 시작되지 않습니다.
+
+Python 3.12 가상환경과 의존성은 다음과 같이 준비합니다.
+
+```bash
+cd agent-publisher
+python3.12 -m venv venv
+./venv/bin/python -m pip install --upgrade pip
+./venv/bin/python -m pip install -r requirements.txt
+```
+
+Windows PowerShell에서는 다음 명령을 사용합니다.
+
+```powershell
+cd agent-publisher
+py -3.12 -m venv venv
+./venv/Scripts/python.exe -m pip install --upgrade pip
+./venv/Scripts/python.exe -m pip install -r requirements.txt
+```
+
+Python 3.12가 먼저 설치돼 있어야 합니다. 의존성 목록은 현재 서버의 직접 사용 라이브러리 버전을 고정한 것이며, 전이 의존성 전체를 고정한 잠금 파일은 아닙니다. 전체 발행 프로그램은 Linux 경로, Docker/WP-CLI, 나눔스퀘어 폰트를 사용하므로 의존성 설치만으로 Windows에서 운영 서버와 동일하게 실행되지는 않습니다.
+
+`agent-publisher/data/`의 실행 상태 JSON은 서버마다 달라 Git에서 제외합니다. `*.example.json` 파일은 형식 참고용입니다.
+
+## 운영 서버 적용 시 주의사항
+
+GitHub의 템플릿을 기존 서버에 적용하기 전, 서버의 `wordpress/.env`에 **현재 DB의 실제 비밀번호**를 설정해야 합니다. 이미 초기화된 MariaDB는 Compose 환경변수를 바꿔도 기존 비밀번호가 자동 변경되지 않습니다. 이번 변경은 비밀번호 교체 작업을 포함하지 않습니다.
+
+백업 스크립트는 같은 `.env`를 Bash로 읽으므로 공백이나 `$` 등 셸 특수문자가 있는 값은 작은따옴표로 감싸세요. Linux 서버에서는 두 `.env` 파일의 권한을 `chmod 600`으로 제한하세요. 값이나 `docker compose config`의 전체 출력에는 비밀번호가 포함될 수 있으므로 공유하지 마세요. 설정 검사에는 `docker compose config --quiet`를 사용합니다.
+
+실행 상태 JSON은 신규 설치 시 없어도 프로그램이 생성합니다. 기존 서버를 갱신할 때는 `.env`, `data/*.json`, WordPress 볼륨을 보존해야 합니다.

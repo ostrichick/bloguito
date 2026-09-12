@@ -1,0 +1,13 @@
+# Runtime dependencies. Versions match the working OCI virtual environment
+# captured on 2026-09-12.
+beautifulsoup4==4.15.0
+feedparser==6.0.14
+google-genai==2.23.0
+googlenewsdecoder==0.1.7
+pillow==12.3.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+requests==2.34.2
+
+# Used by scripts/test_ddg.py and retained for maintenance diagnostics.
+duckduckgo-search==8.1.1
