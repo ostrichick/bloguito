@@ -3,6 +3,7 @@ import urllib.parse
 from datetime import datetime
 import feedparser
 from config import HISTORY_FILE, CATEGORIES
+from agents.search_intent import load_briefs, matches_brief
 
 
 class RadarAgent:
@@ -52,7 +53,11 @@ class RadarAgent:
 
         print(f"[RadarAgent] 🔍 카테고리 '{cat_info['name']}' 탐색 시작 (키워드당 최대 {max_items_per_keyword}건)...")
 
-        for keyword in cat_info["keywords"]:
+        briefs = load_briefs(category_key)
+        if not briefs:
+            print("[RadarAgent] 검색 의도 검토가 완료된 유효 주제가 없어 보류합니다.")
+        seen = set()
+        for brief, keyword in [(b, q) for b in briefs for q in b['queries']]:
             encoded_query = urllib.parse.quote(keyword)
             # Google News RSS (한국어, 대한민국 지역)
             rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
@@ -64,8 +69,9 @@ class RadarAgent:
                     link = entry.get("link", "")
                     title = entry.get("title", "")
 
-                    if not link or link in self.history:
+                    if not link or link in self.history or link in seen or not matches_brief(title, brief):
                         continue
+                    seen.add(link)
 
                     collected.append({
                         "category_key": category_key,
@@ -76,6 +82,7 @@ class RadarAgent:
                         "link": link,
                         "published": entry.get("published", ""),
                         "raw_summary": entry.get("summary", ""),
+                        "search_brief": brief,
                     })
 
                     count += 1

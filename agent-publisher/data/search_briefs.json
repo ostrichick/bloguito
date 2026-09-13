@@ -1,0 +1,37 @@
+[
+  {
+    "id": "mumyeong-suwon-2026",
+    "category_key": "concert",
+    "approved": true,
+    "entity": "무명전설",
+    "primary_keyword": "무명전설 수원 앵콜 예매",
+    "question": "티켓은 언제 열리고 공연 날짜와 가격은 무엇인가?",
+    "angle": "오픈일과 공연일 구분, 수원 회차만 설명, 가격과 직접 예매 링크",
+    "required_title_terms": ["무명전설", "수원", "앵콜"],
+    "queries": ["2026 무명전설 수원 앵콜 티켓 오픈"],
+    "official_urls": ["https://nol.yanolja.com/ticket/products/26013136"],
+    "serp_urls": ["https://sports.donga.com/ent/article/all/20260908/134629535/1", "https://trot2.blogspot.com/2026/09/2026.html"],
+    "reviewed_at": "2026-09-13",
+    "review_until": "2026-09-15",
+    "search_volume": null,
+    "competition": "유사 글 존재; 검색량·순위 난이도 미측정",
+    "publication_note": "오픈 전 안내는 수동 임시글 검토용. 자동 판매중 검사를 우회하지 않음"
+  },
+  {
+    "id": "energy-voucher-deadline-2026",
+    "category_key": "welfare",
+    "approved": true,
+    "entity": "에너지바우처",
+    "primary_keyword": "2026 에너지바우처 신청기간",
+    "question": "지금 신청 가능한가, 언제 마감이며 사용기간과 어떻게 다른가?",
+    "angle": "신청 마감과 사용기간, 접수 일시 중단, 대상 확인 경로",
+    "required_title_terms": ["2026", "에너지바우처"],
+    "queries": ["2026 에너지바우처 신청기간 신청 대상"],
+    "official_urls": ["https://www.energyv.or.kr/info/support_info.do", "https://www.energy.or.kr/front/board/View3.do?boardMngNo=3&boardNo=10024988"],
+    "serp_urls": ["https://www.korea.kr/news/policyNewsView.do?newsId=148967198", "https://www.savingio.com/articles/energy-voucher-2026-application"],
+    "reviewed_at": "2026-09-13",
+    "review_until": "2026-09-20",
+    "search_volume": null,
+    "competition": "공식 및 민간 설명글 존재; 검색량·순위 난이도 미측정"
+  }
+]
