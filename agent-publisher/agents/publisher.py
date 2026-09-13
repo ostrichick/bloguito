@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from config import POST_STATUS, POSTS_INDEX_FILE, SITE_URL
+from config import POST_STATUS, POSTS_INDEX_FILE, DRAFTS_INDEX_FILE, SITE_URL
 
 
 class PublisherAgent:
@@ -12,15 +12,22 @@ class PublisherAgent:
     def __init__(self, container_name: str = "wordpress_app"):
         self.container_name = container_name
 
-    def _record_published_post(self, post_id: int, title: str, category_id: int, category_name: str):
-        """성공적으로 발행된 포스트 정보를 로컬 색인 파일에 기록하여 차후 타 포스트의 내부 링크(Interlinking) 추천에 활용"""
-        posts = []
-        if POSTS_INDEX_FILE.exists():
-            try:
-                with open(POSTS_INDEX_FILE, "r", encoding="utf-8") as f:
-                    posts = json.load(f)
-            except Exception:
-                posts = []
+    def _record_post(self, post_id: int, title: str, category_id: int, category_name: str, status: str = "publish", expires_at: str = None):
+        """발행 상태(publish vs draft)에 따라 색인 파일을 분리하여 기록하고, 상태 전환 시 기존 색인에서 자동 이전"""
+        target_file = POSTS_INDEX_FILE if status == "publish" else DRAFTS_INDEX_FILE
+        other_file = DRAFTS_INDEX_FILE if status == "publish" else POSTS_INDEX_FILE
+
+        def _load_json(p: Path):
+            if p.exists():
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception:
+                    return []
+            return []
+
+        target_posts = _load_json(target_file)
+        other_posts = _load_json(other_file)
 
         # 워드프레스 고유주소(URL) 조회
         url_cmd = [
@@ -32,21 +39,36 @@ class PublisherAgent:
         res = subprocess.run(url_cmd, capture_output=True, text=True)
         post_url = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"{SITE_URL}/?p={post_id}"
 
-        # 중복 제거 후 추가
-        posts = [p for p in posts if p.get("id") != post_id]
-        posts.append({
+        # 반대쪽 색인에서 해당 post_id가 있으면 제거 (예: draft -> publish 승격)
+        other_posts_cleaned = [p for p in other_posts if p.get("id") != post_id]
+        if len(other_posts_cleaned) != len(other_posts):
+            other_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(other_file, "w", encoding="utf-8") as f:
+                json.dump(other_posts_cleaned, f, ensure_ascii=False, indent=2)
+
+        # 대상 색인에 중복 제거 후 추가
+        target_posts = [p for p in target_posts if p.get("id") != post_id]
+        target_posts.append({
             "id": post_id,
             "title": title,
             "url": post_url,
             "category_id": category_id,
             "category_name": category_name,
+            "status": status,
+            "expires_at": expires_at,
             "published_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
 
-        POSTS_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(POSTS_INDEX_FILE, "w", encoding="utf-8") as f:
-            json.dump(posts, f, ensure_ascii=False, indent=2)
-        print(f"[PublisherAgent] 📚 내부 링크 색인(Interlinking Index) 업데이트 완료 ({len(posts)}개 글 등록)")
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_file, "w", encoding="utf-8") as f:
+            json.dump(target_posts, f, ensure_ascii=False, indent=2)
+
+        label = "공개 글 색인(Published)" if status == "publish" else "초안 색인(Drafts)"
+        print(f"[PublisherAgent] 📚 {label} 업데이트 완료 ({len(target_posts)}개 글 등록)")
+
+    def _record_published_post(self, post_id: int, title: str, category_id: int, category_name: str, status: str = "publish", expires_at: str = None):
+        """하위 호환성을 위한 래퍼 메서드"""
+        self._record_post(post_id, title, category_id, category_name, status=status, expires_at=expires_at)
 
     def publish(self, article: dict, image_path: Path = None) -> int:
         title = article["title"]
@@ -107,7 +129,8 @@ class PublisherAgent:
 
             # 5. 내부 링크 색인 저장
             try:
-                self._record_published_post(post_id, title, cat_id, cat_name)
+                expires_at = article.get("expires_at") or article.get("event_date")
+                self._record_post(post_id, title, cat_id, cat_name, status=status, expires_at=expires_at)
             except Exception as rec_err:
                 print(f"[PublisherAgent] ⚠️ 색인 저장 중 오류: {rec_err}")
 

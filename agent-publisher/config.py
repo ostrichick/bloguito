@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 HISTORY_FILE = DATA_DIR / "history.json"
 POSTS_INDEX_FILE = DATA_DIR / "published_posts.json"
+DRAFTS_INDEX_FILE = DATA_DIR / "draft_posts.json"
 
 load_dotenv(BASE_DIR / ".env")
 

@@ -208,21 +208,22 @@ crontab -l
 | **2026-09-13** | **로컬 개발 환경 점검 및 Python 3.12 가상환경 구축** | Windows PC 로컬 환경 점검: Python 3.12.10 신규 설치(`winget --scope user`), `agent-publisher/.venv` 가상환경 생성 및 `requirements.txt` 9개 런타임 의존성 설치/import 검증 완료 (100% 통과). Git Bash(GNU bash 5.3.9) 실행 가능 확인. WSL 2 / Ubuntu / Docker Desktop은 관리자 권한 및 PC 재부팅이 필요한 미설치 상태임을 확인하고 요구사항 및 디스크(여유 957GB) 상태 문서화. 운영 오라클 서버 및 운영 데이터는 완벽 격리 보존하고 로컬 테스트용 환경파일(`.env.local`) 생성 완료. |
 | **2026-09-13** | **WSL 2·Ubuntu·Docker 설치 및 에디터 관리자 권한 자동 승격 등록** | 관리자 터미널을 통해 WSL 2(2.7.14), Ubuntu-24.04, Docker Desktop(4.90.0) 설치 완료 확인. Antigravity 에디터 실행 파일(`Antigravity.exe`)을 Windows 레지스트리(`HKCU AppCompatFlags\Layers`)에 `~ RUNASADMIN`으로 정식 등록하여 다음 실행부터 항상 관리자 권한으로 자동 실행되도록 설정 완료. 커널 가상화 반영을 위해 Windows 재부팅 필요 상태 문서화. |
 | **2026-09-13** | **유지보수 7단계: 백업 범위 확대(DB+업로드+설정) 및 원클릭 복구 구축** | 기존 DB 단독 백업에서 MariaDB(`db.sql.gz`), WordPress 미디어 업로드(`uploads.tar.gz`), 에이전트 설정/런타임 데이터(`configs.tar.gz`), 무결성 메타데이터(`manifest.json`, SHA256)를 단일 스냅샷(`bloguito_backup_*.tar.gz`)으로 묶는 완전 통합 백업 시스템(`backup_daily.sh`) 구축. SHA256 체크섬 사전 검증 기반 원클릭 복구 도구(`restore_backup.sh`) 신설. 단위/회귀 테스트(`test_backup_restore.py`) 3종 추가하여 총 31개 테스트 100% 통과 확인. |
+| **2026-09-13** | **유지보수 5단계 & 6단계: 색인 분리, 마감 글 추천 제외, 스크립트 정리 및 회귀 테스트 확장** | 초안과 공개 글 색인(`published_posts.json` vs `draft_posts.json`) 분리 구현. `expires_at < today` 또는 `is_closed == True`인 과거 마감 글을 본문 내부 추천 카드에서 배제하는 필터링 엔진 탑재. 과거 핫픽스/일회성 스크립트 12종을 `scripts/archive/`로 안전 격리 아카이빙. 신규 단위/회귀 테스트(`test_indexing_and_interlinking.py`) 추가하여 총 35개 테스트 100% 통과 확인. |
 
 ## 8. 협업용 현재 작업 상태 (2026-09-13)
 
 - **완료 범위:**
   - **1단계**: 비밀정보 분리, `.gitignore`, `.env.example`, `requirements.txt` 완료.
   - **2단계**: NOL 티켓 후보의 공연명·지역·날짜 일치 검증 (`ticket_validation.py`, 28개 테스트) 완료.
-  - **7단계**: 백업 범위 확대 (MariaDB + WordPress 업로드 미디어 + 에이전트 설정/데이터 스냅샷 번들링, `manifest.json` SHA256 체크섬, `restore_backup.sh` 복구 도구 신설, 3개 테스트 추가하여 총 31개 테스트 통과) 완료.
+  - **5단계**: 초안/공개 글 색인 분리(`published_posts.json` vs `draft_posts.json`) 및 마감 글 내부 추천 제외 필터링 완료.
+  - **6단계**: 과거 핫픽스/임시 스크립트 12종 정리(`scripts/archive/`) 및 색인/추천 회귀 테스트 추가 완료 (총 35개 테스트 전수 통과).
+  - **7단계**: 백업 범위 확대 (MariaDB + WordPress 업로드 미디어 + 에이전트 설정/데이터 스냅샷 번들링, `manifest.json` SHA256 체크섬, `restore_backup.sh` 복구 도구 신설) 완료.
   - **로컬 인프라**: Python 3.12.10, Git Bash, WSL 2 Ubuntu-24.04, Docker Desktop 4.90.0 정상 가동 확인. 에디터 관리자 권한 자동 승격 레지스트리 등록 완료.
 - **운영 서버 안전성 및 격리 상태:**
   - 운영 오라클 클라우드 인스턴스(`<YOUR_ORACLE_SERVER_IP>`), 실제 WordPress 데이터, MariaDB, API 키 등은 로컬 설정 및 개발 작업 중 100% 격리 보존되었으며 무단 변경 없음.
 - **다음 작업:**
-  - 3단계: 날짜·신청 기간·판매 상태를 Gemini 응답과 별도로 코드에서 검사하기
-  - 4단계: 모든 핵심 사실과 출처 URL 구조화 및 원고 일치 검증
-  - 5단계: 초안/공개 글 색인 분리 및 마감된 글 내부 추천 제외
-  - 6단계: 과거 스크립트 정리 및 회귀 테스트 확장
+  - 3단계: 날짜·신청 기간·판매 상태를 Gemini 응답과 별도로 코드에서 검사하기 (Gemini 적합)
+  - 4단계: 모든 핵심 사실과 출처 URL 구조화 및 원고 일치 검증 (★ GPT 6 ASTRA 추천)
   - 8단계: 도메인 및 HTTPS 연결 후 공개 운영 준비
 
 ## 9. 로컬 실행 환경 실측 결과 (2026-09-13, Codex)

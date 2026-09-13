@@ -1,7 +1,7 @@
 import json
 import re
 import urllib.parse
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 from config import GEMINI_API_KEY, POSTS_INDEX_FILE
@@ -75,8 +75,8 @@ class CopywriterAgent:
             "gov24_search": f"https://www.gov.kr/portal/service/serviceExSearch?searchTotalQ={encoded}",
         }
 
-    def _inject_internal_links(self, content: str, current_cat_id: int, current_title: str) -> str:
-        """기존 발행된 관련 글(Interlinking)을 본문 하단에 자동 삽입하여 체류시간 및 SEO 극대화"""
+    def _inject_internal_links(self, content: str, current_cat_id: int, current_title: str, reference_date: date = None) -> str:
+        """기존 발행된 공개 글(Interlinking) 중 유효한 글만 본문 하단에 자동 삽입하여 체류시간 및 SEO 극대화"""
         if not POSTS_INDEX_FILE.exists():
             return content
 
@@ -86,7 +86,30 @@ class CopywriterAgent:
         except Exception:
             return content
 
-        candidates = [p for p in posts if p.get("title") != current_title and p.get("url")]
+        today = reference_date or date.today()
+
+        # 1. 유효성 필터링: URL 필수, 현재 글 제외, 초안 제외, 마감글/만료글 제외
+        candidates = []
+        for p in posts:
+            if not p.get("url") or p.get("title") == current_title:
+                continue
+            # 초안(draft) 배제
+            if p.get("status") == "draft":
+                continue
+            # 명시적 마감 플래그 배제
+            if p.get("is_closed") is True:
+                continue
+            # 만료일(공연일/접수마감일) 비교 배제
+            exp_str = p.get("expires_at")
+            if exp_str:
+                try:
+                    exp_date = datetime.strptime(str(exp_str)[:10], "%Y-%m-%d").date()
+                    if exp_date < today:
+                        continue
+                except Exception:
+                    pass
+            candidates.append(p)
+
         if not candidates:
             return content
 
