@@ -194,21 +194,20 @@ crontab -l
 | **2026-09-12** | **유지보수 1단계: 비밀정보 분리 및 재현 가능한 환경 구성** | 실수로 예시 DB 비밀번호가 사용되지 않도록 Docker Compose의 필수 환경변수를 fail-fast 방식으로 변경하고, 백업 스크립트도 서버의 `wordpress/.env`가 없거나 루트 비밀번호가 누락되면 즉시 중단하도록 강화. 서버 Python 3.12 환경과 일치하는 `requirements.txt` 추가. API 키·개인키·환경별 런타임 JSON을 Git에서 제외하고 `.env.example` 및 `data/*.example.json`으로 설정 형식을 문서화. README에 로컬·서버 환경 준비 절차를 추가함. 목적은 Public 저장소의 비밀정보 유출 방지와 다른 개발 환경에서의 재현성 확보임. |
 | **2026-09-13** | **유지보수 1단계 검증 및 마무리 (Codex)** | 사용한도로 중단된 작업을 재개. 서버에서 stdin으로 새 파일을 전달해 `bash -n` 및 Docker Compose 설정 검사 수행: 정상 환경변수에서는 종료 코드 0, 비밀번호 누락 시 종료 코드 1 확인. 컨테이너 실행·재시작 없이 검사함. 요구 라이브러리 9종의 버전이 서버 가상환경과 일치함을 확인. `.gitattributes`로 Linux용 파일의 LF 줄바꿈을 지정하고 Windows 설치 명령·서버 적용 주의사항을 README에 기록. 런타임 JSON은 Git 추적에서만 제외했으며 로컬 원본을 보존함. |
 | **2026-09-13** | **로컬 개발 환경 점검 및 Python 3.12 가상환경 구축** | Windows PC 로컬 환경 점검: Python 3.12.10 신규 설치(`winget --scope user`), `agent-publisher/.venv` 가상환경 생성 및 `requirements.txt` 9개 런타임 의존성 설치/import 검증 완료 (100% 통과). Git Bash(GNU bash 5.3.9) 실행 가능 확인. WSL 2 / Ubuntu / Docker Desktop은 관리자 권한 및 PC 재부팅이 필요한 미설치 상태임을 확인하고 요구사항 및 디스크(여유 957GB) 상태 문서화. 운영 오라클 서버 및 운영 데이터는 완벽 격리 보존하고 로컬 테스트용 환경파일(`.env.local`) 생성 완료. |
+| **2026-09-13** | **WSL 2·Ubuntu·Docker 설치 및 에디터 관리자 권한 자동 승격 등록** | 관리자 터미널을 통해 WSL 2(2.7.14), Ubuntu-24.04, Docker Desktop(4.90.0) 설치 완료 확인. Antigravity 에디터 실행 파일(`Antigravity.exe`)을 Windows 레지스트리(`HKCU AppCompatFlags\Layers`)에 `~ RUNASADMIN`으로 정식 등록하여 다음 실행부터 항상 관리자 권한으로 자동 실행되도록 설정 완료. 커널 가상화 반영을 위해 Windows 재부팅 필요 상태 문서화. |
 
 ## 8. 협업용 현재 작업 상태 (2026-09-13)
 
 - **완료 범위:**
-  - 우선순위 1번 유지보수 마무리 및 로컬 개발 환경 1차 준비 완료.
-  - Windows 로컬에 Python 3.12.10 설치 및 `agent-publisher/.venv` 가상환경 구축.
-  - `requirements.txt` 9종 패키지 설치 및 에이전트 전 모듈(`radar`, `curator`, `copywriter`, `designer`, `publisher`, `config`) import 무결성 검증 100% 완료.
-  - Git Bash (`C:\Program Files\Git\bin\bash.exe`, version 5.3.9) 실행 확인.
-  - 로컬 테스트 격리용 환경파일(`agent-publisher/.env.local`, `wordpress/.env.local`) 구성.
-- **로컬 인프라(WSL 2 / Docker) 점검 결과:**
-  - C 드라이브 여유 공간: **957.46 GB** (충분).
-  - WSL 2 & Ubuntu: 미설치 (관리자 권한 UAC 및 Windows 가상화 기능 활성화를 위한 **PC 재부팅 필수**).
-  - Docker Desktop: 미설치 (WSL 2 선행 설치 및 관리자 권한/재부팅 필요).
+  - 우선순위 1번 유지보수 마무리 및 로컬 개발 환경 전체 준비 완료.
+  - Windows 로컬 Python 3.12.10 및 `agent-publisher/.venv` 가상환경 구축 완료 (9종 라이브러리 및 5대 에이전트 모듈 import 100% 검증 통과).
+  - Git Bash (`GNU bash 5.3.9`) 실행 확인.
+  - WSL 2 (2.7.14) 및 Ubuntu-24.04 설치 완료.
+  - Docker Desktop (4.90.0, Docker CLI 29.7.2) 설치 완료.
+  - **에디터 자동 관리자 권한 승격 등록**: 레지스트리(`HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers`)에 `~ RUNASADMIN` 등록 완료 (다음 실행부터 자동으로 관리자 권한 승격).
+  - 로컬 테스트 격리용 환경파일(`agent-publisher/.env.local`, `wordpress/.env.local`) 구성 완료.
+- **남은 절차 (PC 재부팅 1회):**
+  - Windows 가상 머신 플랫폼(VirtualMachinePlatform) 커널 활성화를 위해 **Windows PC 재부팅** 필요.
+  - 재부팅 후: 에디터는 자동으로 관리자 권한으로 열리며, Docker Desktop 및 Ubuntu 환경이 즉시 활성화됨.
 - **운영 서버 안전성 및 격리 상태:**
   - 운영 오라클 클라우드 인스턴스(`161.33.0.234`), 실제 WordPress 데이터, MariaDB, API 키 등은 일체 변경하지 않고 100% 안전하게 격리 보존 중.
-- **다음 작업:**
-  - (선택 1) 전체 Linux/컨테이너 환경 필요 시: 관리자 권한으로 `wsl --install -d Ubuntu-24.04` 및 `winget install Docker.DockerDesktop` 실행 후 PC 재부팅.
-  - (선택 2) 파이썬 에이전트 로직 개발/테스트: 로컬 `agent-publisher/.venv`에서 바로 우선순위 2번(NOL 티켓 후보 일치 검증) 등 파이썬 기능 개선 진행.
