@@ -210,4 +210,17 @@ crontab -l
   - Windows 가상 머신 플랫폼(VirtualMachinePlatform) 커널 활성화를 위해 **Windows PC 재부팅** 필요.
   - 재부팅 후: 에디터는 자동으로 관리자 권한으로 열리며, Docker Desktop 및 Ubuntu 환경이 즉시 활성화됨.
 - **운영 서버 안전성 및 격리 상태:**
-  - 운영 오라클 클라우드 인스턴스(`161.33.0.234`), 실제 WordPress 데이터, MariaDB, API 키 등은 일체 변경하지 않고 100% 안전하게 격리 보존 중.
+  - 운영 오라클 클라우드 인스턴스(`<YOUR_ORACLE_SERVER_IP>`), 실제 WordPress 데이터, MariaDB, API 키 등은 로컬 설정 작업에서 변경하지 않음.
+
+## 9. 로컬 실행 환경 실측 결과 (2026-09-13, Codex)
+
+앞 절의 설치 완료 기록보다 아래 실제 실행 검증 결과를 우선한다.
+
+- Python: `agent-publisher/.venv/Scripts/python.exe`는 Python 3.12.10. `pip check` 및 의존 라이브러리와 5개 에이전트 모듈 import 검사 통과. 외부 API 호출이나 글 발행은 하지 않음.
+- Docker: Desktop 4.90.0, Engine 29.7.2, Compose v5.5.1 정상 응답. `docker run --rm hello-world` 성공 후 테스트 컨테이너 자동 제거. 작은 hello-world 이미지는 로컬에 남아 있음.
+- Bash: `C:/Program Files/Git/bin/bash.exe` 사용 가능. 백업 스크립트 `bash -n` 통과.
+- Compose: 로컬에서 예제 환경파일을 사용한 `config --quiet` 통과. WordPress/MariaDB 컨테이너는 생성하지 않음.
+- PATH: 일반 Windows 터미널에서도 Docker CLI를 찾도록 사용자 PATH에 Docker `resources/bin`을 추가함. 새 터미널부터 적용됨.
+- WSL: `docker-desktop` 배포판은 WSL 2에서 실행 중. 사용자용 Ubuntu-24.04 배포판은 목록에 없음. 일반 설치와 웹 다운로드 방식 모두 진행 출력 없이 지연돼 해당 설치 프로세스만 중단함. WSL 기본 배포판을 기존 docker-desktop으로 복구하고 Docker 엔진 응답을 재확인함. Docker 데이터나 기존 배포판을 삭제하지 않음. Ubuntu 설치 완료로 기록하지 말 것.
+- 초기 화면: Docker Welcome의 `Skip`으로 로그인 안내를 넘길 수 있음. 현재 엔진은 이 안내 화면이 열려 있어도 이미 테스트 실행에 성공함. WSL 시작 창은 도움말 화면이며 닫아도 됨.
+- 현재 가능한 작업: Windows Python에서 코드·회귀 테스트, Git Bash에서 셸 문법 검사, Docker에서 Linux 컨테이너 테스트. 사용자용 WSL Ubuntu 초기화와 전체 Linux 발행 환경 구성은 별도 미완료 항목임.
