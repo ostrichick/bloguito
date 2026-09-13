@@ -51,7 +51,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 # 3. 인포머티브 딥다이브 원고 집필 (Copywriter)
                 article = copywriter.write_article(curated)
                 if not article:
-                    print(f"[Pipeline] ⏩ 시점 만료/부적격 판정으로 발행을 건너뛰고 다음 기사를 탐색합니다.")
+                    print(f"[Pipeline] ⏩ 검증 미완료/시점 만료/부적격 소식은 발행하지 않고 다음 후보를 탐색합니다.")
                     time.sleep(2)
                     continue
 

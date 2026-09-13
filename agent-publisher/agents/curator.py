@@ -3,12 +3,14 @@ import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 from googlenewsdecoder import new_decoderv1
+from agents.ticket_validation import extract_expectation, parse_product, select_product
 
 
 class CuratorAgent:
     """기사 원본 링크를 디코딩하여 실제 본문을 충실히 추출하고 공식 예매처 상세 정보를 능동 수집하는 큐레이터 에이전트"""
 
     def __init__(self):
+        self.last_ticket_verification = {"status": "not_checked"}
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -58,8 +60,11 @@ class CuratorAgent:
 
         return "", real_url
 
-    def discover_nol_ticket_info(self, query: str) -> dict | None:
-        """NOL 티켓(구 인터파크)에서 공연/가수명을 실시간 검색하여 공식 상세페이지와 좌석별 가격 정보 능동 수집 (판매중 필터 적용)"""
+    def discover_nol_ticket_info(self, query: str, expected: dict | None = None) -> dict | None:
+        """Select a unique verified product, never the first search hit."""
+        self.last_ticket_verification = {"status": "needs_review", "reason": "article_identity_incomplete_or_ambiguous"}
+        if not expected or not expected.get("entity") or not expected.get("region") or len(expected.get("event_dates", [])) != 1:
+            return None
         encoded = urllib.parse.quote(query)
         # 현재 판매중(ENTERTAINMENT_SALE_STATUS_SALE) 필터 토큰 적용
         active_sale_filter = "Iiw0JwQnH3WmtXGyJ5rdjj3dkKg0FXd382IRSpxwfSefDnXepYDTL8Fbf88Yu1xaNDouUSnvHowixDLzJK8W8b8oBZfFTgLW5uxL8G3ULvpZtka7hxVmXkMUAtZAWLYFxnpmSA7fdJ4cOuenY9A0QODtkZVxKtNV"
@@ -67,36 +72,39 @@ class CuratorAgent:
         try:
             resp = requests.get(search_url, headers=self.headers, timeout=10)
             if resp.status_code != 200:
+                self.last_ticket_verification["reason"] = f"search_http_{resp.status_code}"
                 return None
 
-            product_ids = re.findall(r"/ticket/products/(\d+)", resp.text)
+            product_ids = list(dict.fromkeys(re.findall(r"/ticket/products/(\d+)", resp.text)))
             if not product_ids:
+                self.last_ticket_verification["reason"] = "search_has_no_product_links"
                 return None
-
-            product_id = product_ids[0]
-            product_url = f"https://nol.yanolja.com/ticket/products/{product_id}"
-
-            p_resp = requests.get(product_url, headers=self.headers, timeout=10)
-            if p_resp.status_code != 200:
+            if len(product_ids) > 8:
+                self.last_ticket_verification["reason"] = "candidate_limit_exceeded"
                 return None
-
-            html = p_resp.text
-            ticket_info = {"product_url": product_url, "product_id": product_id}
-
-            ticket_match = re.search(r"-\s*티켓:\s*([^<]+)", html)
-            if ticket_match:
-                ticket_info["price_str"] = ticket_match.group(1).strip()
-
-            date_match = re.search(r"-\s*일시:\s*([^<]+)", html)
-            if date_match:
-                ticket_info["date_str"] = date_match.group(1).strip()
-
-            place_match = re.search(r"-\s*장소:\s*([^<]+)", html)
-            if place_match:
-                ticket_info["place_str"] = place_match.group(1).strip()
-
-            return ticket_info
+            products = []
+            failed = []
+            for product_id in product_ids:
+                url = f"https://nol.yanolja.com/ticket/products/{product_id}"
+                try:
+                    p_resp = requests.get(url, headers=self.headers, timeout=10, allow_redirects=False)
+                    if p_resp.status_code != 200:
+                        failed.append({"product_url": url, "reasons": [f"product_http_{p_resp.status_code}"]})
+                        continue
+                    if p_resp.encoding and p_resp.encoding.lower() in ["iso-8859-1", "ascii"]:
+                        p_resp.encoding = p_resp.apparent_encoding or "utf-8"
+                    products.append(parse_product(p_resp.text, product_id))
+                except requests.RequestException:
+                    failed.append({"product_url": url, "reasons": ["product_fetch_failed"]})
+            result = select_product(expected, products)
+            result["checks"].extend(failed)
+            # An unreadable candidate might be a second match; uniqueness is unproven.
+            if failed:
+                result.update(status="needs_review", reason="candidate_fetch_incomplete", product=None)
+            self.last_ticket_verification = result
+            return result["product"]
         except Exception as e:
+            self.last_ticket_verification["reason"] = "search_or_parse_failed"
             print(f"[CuratorAgent] ⚠️ NOL 티켓 상세 가격 조회 중 오류: {e}")
             return None
 
@@ -117,7 +125,9 @@ class CuratorAgent:
         kw = raw_item.get("keyword", "")
 
         ticket_data = None
+        self.last_ticket_verification = {"status": "not_applicable"}
         if cat_key == "concert" or any(w in title or w in kw for w in ["콘서트", "티켓", "예매", "NOL", "인터파크"]):
+            self.last_ticket_verification = {"status": "needs_review", "reason": "article_identity_incomplete_or_ambiguous"}
             known_entities = [
                 "무명전설", "임영웅", "이찬원", "영탁", "나훈아", "정동원", "장민호",
                 "김호중", "송가인", "양지은", "박서진", "진해성", "안성훈", "손태진",
@@ -147,8 +157,15 @@ class CuratorAgent:
                 target_entity = clean_kw if len(clean_kw) >= 2 else kw
 
             if target_entity:
-                print(f"[CuratorAgent] 🔍 공식 티켓 예매처(NOL 티켓)에서 '{target_entity}' 실시간 가격 및 상품 탐색...")
-                ticket_data = self.discover_nol_ticket_info(target_entity)
+                expected = extract_expectation(target_entity, title, body)
+                is_free = re.search(r"(?:관람료|입장료|전석)\s*[:：]?\s*무료(?!\s*(?:가\s*)?(?:아니|아닌|아님|아닙))", body)
+                if is_free:
+                    self.last_ticket_verification = {"status": "not_required_free_event"}
+                else:
+                    print(f"[CuratorAgent] 🔍 NOL 티켓 '{target_entity}' 공연명·지역·공연일 대조: {expected}")
+                    ticket_data = self.discover_nol_ticket_info(target_entity, expected)
+                    if not ticket_data:
+                        print(f"[CuratorAgent] ⏸ 검토 필요: {self.last_ticket_verification}")
                 if ticket_data:
                     print(f"[CuratorAgent] 🎯 공식 티켓 상세 확인 완료: {ticket_data.get('product_url')} (가격: {ticket_data.get('price_str')})")
                     body += (
@@ -165,5 +182,6 @@ class CuratorAgent:
             "full_content": body,
             "direct_product_url": ticket_data.get("product_url") if ticket_data else None,
             "ticket_prices": ticket_data.get("price_str") if ticket_data else None,
+            "ticket_verification": self.last_ticket_verification,
         }
         return curated_data

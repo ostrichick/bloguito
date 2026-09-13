@@ -3,6 +3,7 @@ import re
 import urllib.parse
 from datetime import datetime
 from pydantic import BaseModel, Field
+from bs4 import BeautifulSoup
 from config import GEMINI_API_KEY, POSTS_INDEX_FILE
 
 
@@ -115,9 +116,27 @@ class CopywriterAgent:
         return content + interlink_box
 
     def write_article(self, curated_item: dict) -> dict | None:
+        if curated_item.get("ticket_verification", {}).get("status") == "needs_review":
+            print("[CopywriterAgent] ⏸ 공연 상품 일치 검증이 완료되지 않아 집필·발행을 보류합니다.")
+            return None
         print(f"[CopywriterAgent] ✍️ 인포머티브 딥다이브 원고 집필 및 시점 검증 시작: {curated_item['title']}")
         if self.client:
-            return self._generate_with_gemini(curated_item)
+            article = self._generate_with_gemini(curated_item)
+            if not article:
+                return None
+            verification = curated_item.get("ticket_verification", {})
+            links = [urllib.parse.urlparse(a.get("href", "")) for a in BeautifulSoup(article["content"], "html.parser").find_all("a")]
+            if verification.get("status") == "not_required_free_event":
+                if any(link.hostname in {"nol.yanolja.com", "tickets.interpark.com", "ticket.yes24.com", "www.ticketlink.co.kr"} for link in links):
+                    print("[CopywriterAgent] ⏸ 무료 행사 원고에 티켓 판매처 링크가 있어 발행을 보류합니다.")
+                    return None
+            if verification.get("status") == "matched":
+                target = urllib.parse.urlparse(curated_item["direct_product_url"])
+                product_links = [link for link in links if link.hostname == target.hostname and link.path.startswith("/ticket/products/")]
+                if not product_links or any(link.path != target.path or link.scheme != "https" for link in product_links):
+                    print("[CopywriterAgent] ⏸ 원고의 상품 링크가 검증된 공연 상세페이지와 달라 발행을 보류합니다.")
+                    return None
+            return article
         else:
             print("[CopywriterAgent] ❌ Gemini 클라이언트가 없어 팩트 검증이 불가하므로 발행을 중단합니다.")
             return None
