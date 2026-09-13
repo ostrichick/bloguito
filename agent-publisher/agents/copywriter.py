@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 from config import GEMINI_API_KEY, POSTS_INDEX_FILE
 from agents.temporal_validation import validate_availability
+from agents.fact_validation import render_content, verify_article, verify_temporal_binding
 
 
 class BlogPostSchema(BaseModel):
@@ -16,11 +17,11 @@ class BlogPostSchema(BaseModel):
         default="",
         description="is_valid_and_active가 false인 경우, 거부 사유 (예: '2026년 4월에 이미 종료된 콘서트임', '신청 마감일이 5월이었음')"
     )
-    title: str = Field(description="클릭률(CTR)과 SEO를 극대화한 매력적인 완성형 포스팅 제목 (어르신, 독자 등 인위적 호칭 금지)")
+    title: str = Field(description="제공된 출처 제목과 정확히 동일한 제목")
     content: str = Field(
-        description="풍부한 가독성을 제공하는 완결된 HTML 본문 (표, 요약 박스, STEP 1~5 가이드, 새창 하이퍼링크 버튼 필수 포함)"
+        description="제공된 검증 HTML의 구조·텍스트·출처 링크를 그대로 유지한 본문"
     )
-    tags: list[str] = Field(description="검색 유입을 위한 관련 핵심 태그 5~7개")
+    tags: list[str] = Field(description="빈 배열. 근거 없는 태그를 추가하지 않음")
 
 
 class CopywriterAgent:
@@ -148,10 +149,25 @@ class CopywriterAgent:
         if temporal["status"] != "active":
             print(f"[CopywriterAgent] ⏸ 기간·상태 검증 보류: {temporal['reasons']}")
             return None
+        manifest = curated_item.get("fact_manifest")
+        if not manifest or manifest.get("status") != "verified":
+            print("[CopywriterAgent] ⏸ 핵심 사실·출처 구조화 미완료로 집필을 보류합니다.")
+            return None
+        if not verify_temporal_binding(curated_item.get("temporal_source", {}), manifest):
+            print("[CopywriterAgent] ⏸ 기간 검사 근거가 원문 기록과 일치하지 않습니다.")
+            return None
         if self.client:
             article = self._generate_with_gemini(curated_item)
             if not article:
                 return None
+            facts = verify_article(article, manifest)
+            if facts["status"] != "verified":
+                print(f"[CopywriterAgent] ⏸ 원고·근거 불일치: {facts['reasons']}")
+                return None
+            # Publish only the escaped canonical markup, never model-supplied attributes.
+            article["content"] = render_content(manifest)
+            article["fact_manifest"] = manifest
+            article["fact_verification"] = facts
             verification = curated_item.get("ticket_verification", {})
             links = [urllib.parse.urlparse(a.get("href", "")) for a in BeautifulSoup(article["content"], "html.parser").find_all("a")]
             if verification.get("status") == "not_required_free_event":
@@ -175,91 +191,14 @@ class CopywriterAgent:
     def _generate_with_gemini(self, item: dict) -> dict | None:
         from google.genai import types
 
-        today_str = datetime.now().strftime("%Y년 %m월 %d일")
-        deep_links = self._build_targeted_deep_links(item)
-        target_direct_url = item.get("direct_product_url") or deep_links["nol_search"]
-
-        ticket_notice = ""
-        if item.get("ticket_prices") and item.get("direct_product_url"):
-            ticket_notice = f"""
-[🎯 공식 예매처 실시간 가격 및 상세페이지 수집 완료 - 반드시 본문에 반영!]
-- 공식 좌석별 티켓 가격: {item['ticket_prices']}
-- 공식 단독 예매 상품 링크: {item['direct_product_url']}
-- [작성 필수]: 표(Table)와 한눈에 보는 요약 박스, FAQ에 "가격 미정"이나 "원문 미표기"라고 적지 말고, 반드시 위 공식 가격({item['ticket_prices']})을 명확히 기재하세요!
-- [버튼 필수]: 바로가기 버튼의 연결 링크는 반드시 공식 상세 URL({item['direct_product_url']})로 연결하세요!
-"""
-
-        prompt = f"""
-당신은 대한민국 최고 수준의 고품질 생활 정보 전문 블로거입니다. (벤치마크: infolspot.com 스타일의 완전 백과사전식 딥다이브 정보 + 무결점 새창 하이퍼링크)
-블로그 이름은 '생활정보 24'입니다.
-
-[🚨 팩트체크 및 무단 날조(Hallucination) 절대 금지 규칙]
-1. 오늘 기준 현재 날짜: '{today_str}'
-2. [원문 팩트 100% 엄수]:
-   - 반드시 아래 제공된 [본문/상세 내용]에 실제로 존재하는 사실(Fact)에만 기반하여 글을 작성하세요.
-   - ❌ 원문에 없는 가상의 티켓 가격(예: R석 5만원, VIP석 15만원 등)을 절대로 지어내지 마세요!
-   - ❌ 무료 행사(지자체 무료 문화사업, 야외 특설무대 등)를 유료 콘서트로 둔갑시키거나 인터파크/예스24 티켓 구매 링크를 달지 마세요!
-   - 관람료가 무료인 경우: 반드시 "관람료: 전석 무료 (현장 선착순 무료 관람)"로 정직하게 안내하고, 바로가기 버튼도 인터파크가 아니라 공식 주최 기관 공고 링크({item['link']})로 연결하세요.
-   - 대형 상업 콘서트(인터파크 공식 판매 등)인 경우에만 실제 예매처 링크와 공식 가격을 작성하세요.
-3. [시점 및 날짜 팩트 검증]:
-   - 기사에 언급된 모든 행사/공연/신청 일자가 오늘 날짜({today_str}) 이전에 이미 종료된 과거 일정이면, 절대로 향후 일정인 것처럼 날조하지 말고 `is_valid_and_active: false`로 즉시 거부(Drop)하세요.
-   - 만약 여러 회차 중 오늘({today_str}) 이후에 예정된 일정이 원문에 실제로 남아있는 경우라면, 앞으로 열릴 일정만 집중 안내하고 지난 회차(예: 9월 4일 공연)는 이미 종료되었음을 사실대로 명시하세요.
-
-{ticket_notice}
-
-아래 뉴스 원문 정보를 철저하게 분석하여, 독자에게 100% 진실되고 유익한 완결형 블로그 글을 작성해 주세요.
-
-[원본 정보]
-- 카테고리: {item['category_name']}
-- 핵심 키워드: {item['keyword']}
-- 원본 기사 제목: {item['title']}
-- 본문/상세 내용 (이 팩트에만 기반할 것): {item['full_content']}
-- 출처/관련 링크: {item['link']}
-
-
-[🚨 링크 작성 및 바로가기 버튼 필수 규칙 - 메인 홈 링크 절대 금지, 타겟 딥링크(Deep Link) 의무화]
-1. ❌ 절대로 예매처나 포털의 메인 홈(예: https://tickets.interpark.com, https://www.gov.kr 메인 등)을 걸지 마세요!
-   사용자가 메인으로 이동하면 다시 검색창을 찾아 헤매야 하므로 극히 불친절한 저품질 글이 됩니다.
-2. ⭕ 반드시 사용자가 버튼을 눌렀을 때 해당 공연/가수/지원금의 [공식 상세 페이지]나 [직접 검색 결과 목록]으로 바로 이동할 수 있는 완성형 딥링크를 연결하세요:
-   - 상업 유료 콘서트 예매인 경우:
-     공식 상세페이지 URL이 있다면 반드시 1순위로 상세페이지 연결:
-     👉 우선 권장 상세 URL: {target_direct_url}
-     공연 검색 목록(현재 판매중인 회차 모아보기):
-     👉 NOL 티켓 현재 판매중 전체 검색 URL: {deep_links['nol_search']}
-     예스24인 경우:
-     👉 권장 예스24 검색 URL: {deep_links['yes24_search']}
-   - 정부 복지/지원금 신청인 경우:
-     👉 권장 정부24 검색 URL: {deep_links['gov24_search']} 또는 복지로(https://www.bokjiro.go.kr)
-   - 무료 공공 행사/지자체 사업인 경우:
-     원문 출처 및 주최 지자체 공식 안내 링크 ({item['link']})
-3. 필수 바로가기 버튼 예시:
-   `<div style="text-align: center; margin: 30px 0;"><a href="{target_direct_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #2b6cb0; color: #ffffff; padding: 16px 36px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 1.15em; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">👉 [{deep_links['entity']}] 공식 예매 페이지 바로가기 (새창)</a></div>`
-
-[🚨 호칭 및 톤앤매너 필수 규칙]
-1. ❌ 인위적인 호칭 절대 금지: '어르신', '노인', '선생님', '독자 여러분' 금지.
-2. ⭕ 호칭은 가급적 생략하고 담백하게 서술하되, 굳이 부를 때는 오직 '여러분'만 사용.
-   - 인삿말: "안녕하세요, 생활정보 24입니다."
-   - 제도 대상: '만 65세 이상 대상자', '신청 대상 가구', '신청인'
-   - 문체: 친절하고 정중한 '해요체'
-
-[글 작성 및 SEO 목차 구성 가이드라인]
-1. 제목: 핵심 키워드와 혜택/방법 명확 명시 (어르신, 선생님 등 호칭 금지)
-2. 본문 목차:
-   - 📌 [한눈에 보는 핵심 요약 박스]
-   - 1. 기본 개요 및 특징
-   - 2. 상세 정보 및 일정·가격표 (table 태그 필수)
-   - 3. 단계별 실전 가이드 (STEP 1 ~ STEP 5) 및 [새창 바로가기 버튼]
-   - 4. 장소/교통 안내 및 신청 경로
-   - 5. 신청/관람 전 필수 체크리스트 & 주의사항
-   - 6. 자주 묻는 질문 (FAQ)
-   - 7. 공식 접수처 및 문의 채널 안내 (실제 새창 링크 포함)
-
-3. 출력 형식 (JSON):
-   - title: 매력적인 검색 최적화 제목
-   - content: 완성된 무결점 고밀도 HTML 본문
-   - tags: 관련 태그 5~7개 배열
-"""
         import time
+        prompt = f"""아래 출처 검증 원고를 JSON으로 반환하세요. 새로운 사실이나 설명을 추가하지 마세요.
+title은 아래 제목과 정확히 같아야 하고 content는 아래 HTML의 구조·행·텍스트·링크를 유지해야 합니다.
+tags는 빈 배열입니다. is_valid_and_active는 추가 적합성 검토 결과이며 false로 거부할 수 있습니다.
+제목: {item['fact_manifest']['sources'][0]['title']}
+HTML: {render_content(item['fact_manifest'])}
+구조화된 근거: {json.dumps(item['fact_manifest'], ensure_ascii=False)}
+"""
         models_to_try = ["gemini-flash-latest", "gemini-3.5-flash"]
         last_err = None
 
@@ -281,10 +220,8 @@ class CopywriterAgent:
                             print(f"[CopywriterAgent] 🛑 시점 만료/부적격 소식으로 판정되어 발행 제외: {parsed.rejection_reason}")
                             return None
 
-                        title = self._clean_titles_and_terms(parsed.title, item)
-                        content = self._clean_titles_and_terms(parsed.content, item)
-                        # 내부 링크(Interlinking) 자동 주입
-                        content = self._inject_internal_links(content, item.get("category_id", 0), title)
+                        title = parsed.title
+                        content = parsed.content
 
                         return {
                             "title": title,
@@ -300,9 +237,8 @@ class CopywriterAgent:
                             print(f"[CopywriterAgent] 🛑 시점 만료/부적격 소식으로 판정: {data.get('rejection_reason', '만료됨')}")
                             return None
 
-                        title = self._clean_titles_and_terms(data.get("title", item["title"]), item)
-                        content = self._clean_titles_and_terms(data.get("content", ""), item)
-                        content = self._inject_internal_links(content, item.get("category_id", 0), title)
+                        title = data.get("title", "")
+                        content = data.get("content", "")
 
                         return {
                             "title": title,

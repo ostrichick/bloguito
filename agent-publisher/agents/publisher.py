@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from config import POST_STATUS, POSTS_INDEX_FILE, DRAFTS_INDEX_FILE, SITE_URL
 from agents.temporal_validation import validate_availability
+from agents.fact_validation import verify_article, render_content, verify_temporal_binding
 
 
 class PublisherAgent:
@@ -13,7 +14,7 @@ class PublisherAgent:
     def __init__(self, container_name: str = "wordpress_app"):
         self.container_name = container_name
 
-    def _record_post(self, post_id: int, title: str, category_id: int, category_name: str, status: str = "publish", expires_at: str = None):
+    def _record_post(self, post_id: int, title: str, category_id: int, category_name: str, status: str = "publish", expires_at: str = None, fact_manifest: dict = None):
         """발행 상태(publish vs draft)에 따라 색인 파일을 분리하여 기록하고, 상태 전환 시 기존 색인에서 자동 이전"""
         target_file = POSTS_INDEX_FILE if status == "publish" else DRAFTS_INDEX_FILE
         other_file = DRAFTS_INDEX_FILE if status == "publish" else POSTS_INDEX_FILE
@@ -57,6 +58,7 @@ class PublisherAgent:
             "category_name": category_name,
             "status": status,
             "expires_at": expires_at,
+            "fact_manifest": fact_manifest,
             "published_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
 
@@ -76,6 +78,12 @@ class PublisherAgent:
         if temporal["status"] != "active":
             raise ValueError(f"기간·상태 미검증으로 발행 보류: {temporal['reasons']}")
         article["expires_at"] = temporal["expires_at"]
+        facts = verify_article(article, article.get("fact_manifest"))
+        if facts["status"] != "verified":
+            raise ValueError(f"핵심 사실·원고 불일치로 발행 보류: {facts['reasons']}")
+        if not verify_temporal_binding(article.get("temporal_source", {}), article["fact_manifest"]):
+            raise ValueError("기간 검사 근거가 원문 기록과 일치하지 않습니다.")
+        article["content"] = render_content(article["fact_manifest"])
         title = article["title"]
         content = article["content"]
         cat_id = article["category_id"]
@@ -135,7 +143,7 @@ class PublisherAgent:
             # 5. 내부 링크 색인 저장
             try:
                 expires_at = article.get("expires_at") or article.get("event_date")
-                self._record_post(post_id, title, cat_id, cat_name, status=status, expires_at=expires_at)
+                self._record_post(post_id, title, cat_id, cat_name, status=status, expires_at=expires_at, fact_manifest=article["fact_manifest"])
             except Exception as rec_err:
                 print(f"[PublisherAgent] ⚠️ 색인 저장 중 오류: {rec_err}")
 

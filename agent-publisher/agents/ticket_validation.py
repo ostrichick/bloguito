@@ -6,6 +6,7 @@ from datetime import date
 
 from bs4 import BeautifulSoup
 from agents.temporal_validation import extract_evidence
+from agents.fact_validation import snapshot
 
 
 REGIONS = (
@@ -108,6 +109,7 @@ def parse_product(html: str, product_id: str) -> dict:
         "price_str": price_str or None,
         "event_dates": extract_dates(date_str, year),
         "temporal_evidence": extract_evidence("공연일시: " + date_str + "\n" + text, f"https://nol.yanolja.com/ticket/products/{product_id}"),
+        "fact_source": snapshot(f"https://nol.yanolja.com/ticket/products/{product_id}", title, "공연일시: " + date_str + "\n" + text, "ticket_product"),
     }
 
 

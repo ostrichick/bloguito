@@ -105,6 +105,15 @@ class NetworkAndPipelineTests(unittest.TestCase):
         self.temporal_patch = patch("agents.copywriter.validate_availability", return_value={"status": "active", "expires_at": "2099-12-25"})
         self.temporal_patch.start()
         self.addCleanup(self.temporal_patch.stop)
+        self.fact_patch = patch("agents.copywriter.verify_article", return_value={"status": "verified", "reasons": []})
+        self.fact_patch.start()
+        self.addCleanup(self.fact_patch.stop)
+        self.binding_patch = patch("agents.copywriter.verify_temporal_binding", return_value=True)
+        self.binding_patch.start()
+        self.addCleanup(self.binding_patch.stop)
+        self.render_patch = patch("agents.copywriter.render_content", side_effect=lambda manifest: manifest["content"])
+        self.render_patch.start()
+        self.addCleanup(self.render_patch.stop)
     @patch("agents.curator.requests.get")
     def test_discovery_checks_all_candidates_not_first(self, get):
         get.side_effect = [response('<a href="/ticket/products/1000">부산</a><a href="/ticket/products/1001">수원</a>'), response(HTML.replace("수원", "부산")), response(HTML)]
@@ -143,20 +152,20 @@ class NetworkAndPipelineTests(unittest.TestCase):
         writer = object.__new__(CopywriterAgent)
         writer.client = True
         writer._generate_with_gemini = Mock(return_value={"content": '<a href="https://nol.yanolja.com/ticket/products/9999">예매</a>'})
-        self.assertIsNone(writer.write_article({"title": "테스트 공연", "ticket_verification": {"status": "matched"}, "direct_product_url": "https://nol.yanolja.com/ticket/products/1001"}))
+        self.assertIsNone(writer.write_article({"title": "테스트 공연", "fact_manifest": {"status": "verified", "content": writer._generate_with_gemini.return_value["content"]}, "ticket_verification": {"status": "matched"}, "direct_product_url": "https://nol.yanolja.com/ticket/products/1001"}))
 
     def test_verified_link_is_preserved(self):
         writer = object.__new__(CopywriterAgent)
         writer.client = True
         article = {"content": '<a href="https://nol.yanolja.com/ticket/products/1001">예매</a>'}
         writer._generate_with_gemini = Mock(return_value=article)
-        self.assertEqual(writer.write_article({"title": "테스트 공연", "temporal_source": {}, "ticket_verification": {"status": "matched"}, "direct_product_url": "https://nol.yanolja.com/ticket/products/1001"}), article)
+        self.assertEqual(writer.write_article({"title": "테스트 공연", "temporal_source": {}, "fact_manifest": {"status": "verified", "content": article["content"]}, "ticket_verification": {"status": "matched"}, "direct_product_url": "https://nol.yanolja.com/ticket/products/1001"}), article)
 
     def test_free_article_with_paid_link_is_rejected(self):
         writer = object.__new__(CopywriterAgent)
         writer.client = True
         writer._generate_with_gemini = Mock(return_value={"content": '<a href="https://tickets.interpark.com/search?q=test">구매</a>'})
-        self.assertIsNone(writer.write_article({"title": "무료 공연", "ticket_verification": {"status": "not_required_free_event"}}))
+        self.assertIsNone(writer.write_article({"title": "무료 공연", "fact_manifest": {"status": "verified", "content": writer._generate_with_gemini.return_value["content"]}, "ticket_verification": {"status": "not_required_free_event"}}))
 
     def test_candidate_limit_does_not_silently_truncate(self):
         with patch("agents.curator.requests.get", return_value=response(''.join(f'<a href="/ticket/products/{i}"></a>' for i in range(9)))) as get:
