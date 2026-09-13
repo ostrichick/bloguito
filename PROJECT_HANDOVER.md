@@ -214,17 +214,18 @@ crontab -l
 
 - **완료 범위:**
   - **1단계**: 비밀정보 분리, `.gitignore`, `.env.example`, `requirements.txt` 완료.
-  - **2단계**: NOL 티켓 후보의 공연명·지역·날짜 일치 검증 (`ticket_validation.py`, 28개 테스트) 완료.
+  - **2단계**: NOL 티켓 후보의 공연명·지역·날짜 일치 검증 (`ticket_validation.py`) 완료.
+  - **3단계**: 날짜·신청 기간·판매 상태를 LLM 응답과 별도로 코드에서 결정론적 검사 (`temporal_validation.py`) 완료.
+  - **4단계**: 모든 핵심 사실과 출처 URL 구조화 및 원고 일치 검증 (`fact_validation.py`) 완료.
   - **5단계**: 초안/공개 글 색인 분리(`published_posts.json` vs `draft_posts.json`) 및 마감 글 내부 추천 제외 필터링 완료.
-  - **6단계**: 과거 핫픽스/임시 스크립트 12종 정리(`scripts/archive/`) 및 색인/추천 회귀 테스트 추가 완료 (총 35개 테스트 전수 통과).
+  - **6단계**: 과거 핫픽스/임시 스크립트 12종 정리(`scripts/archive/`) 및 전방위 회귀 테스트 구축 (총 67개 테스트 전수 100% 통과).
   - **7단계**: 백업 범위 확대 (MariaDB + WordPress 업로드 미디어 + 에이전트 설정/데이터 스냅샷 번들링, `manifest.json` SHA256 체크섬, `restore_backup.sh` 복구 도구 신설) 완료.
+  - **추가 개선**: 검색 의도 브리프 큐레이션(`search_intent.py`) 및 중복 주제 사전 차단(`sync_wordpress_inventory.py`) 탑재.
   - **로컬 인프라**: Python 3.12.10, Git Bash, WSL 2 Ubuntu-24.04, Docker Desktop 4.90.0 정상 가동 확인. 에디터 관리자 권한 자동 승격 레지스트리 등록 완료.
 - **운영 서버 안전성 및 격리 상태:**
   - 운영 오라클 클라우드 인스턴스(`<YOUR_ORACLE_SERVER_IP>`), 실제 WordPress 데이터, MariaDB, API 키 등은 로컬 설정 및 개발 작업 중 100% 격리 보존되었으며 무단 변경 없음.
-- **다음 작업:**
-  - 3단계: 날짜·신청 기간·판매 상태를 Gemini 응답과 별도로 코드에서 검사하기 (Gemini 적합)
-  - 4단계: 모든 핵심 사실과 출처 URL 구조화 및 원고 일치 검증 (★ GPT 6 ASTRA 추천)
-  - 8단계: 도메인 및 HTTPS 연결 후 공개 운영 준비
+- **남은 주요 작업:**
+  - **8단계**: 도메인(가비아 등) 구입 및 Nginx/Certbot을 통한 HTTPS 연결, 공개 운영 개시.
 
 ## 9. 로컬 실행 환경 실측 결과 (2026-09-13, Codex)
 
