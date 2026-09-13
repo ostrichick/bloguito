@@ -44,7 +44,7 @@
 
 ## ⏰ 자동화 스케줄 (KST 기준)
 
-- **매일 새벽 04:00**: MariaDB 데이터베이스 자동 압축 백업 및 7일 롤링 보관 (`backup_daily.sh`)
+- **매일 새벽 04:00**: MariaDB DB + WordPress 미디어 업로드 + 에이전트 설정/런타임 데이터 통합 스냅샷 자동 백업 및 7일 롤링 보관 (`backup_daily.sh`)
 - **매일 아침 08:00**: 3대 카테고리 자율 발행 파이프라인 무인 가동 (`run_daily.sh`)
 
 ---
@@ -108,4 +108,29 @@ $env:PYTHONIOENCODING='utf-8'
 ./agent-publisher/.venv/Scripts/python.exe -m unittest discover -s agent-publisher/tests -v
 ```
 
-테스트 HTML은 가상 데이터입니다. 2026-09-13에 28개 테스트를 통과했고 실제 NOL 페이지에 대한 읽기 전용 대조도 성공했습니다. 실제 뉴스 수집부터 Gemini 원고 생성·WordPress 발행까지의 전체 검증은 수행하지 않았습니다. 이 변경은 로컬 코드에 적용했으며 운영 서버 배포는 별도로 진행해야 합니다.
+테스트 HTML은 가상 데이터입니다. 2026-09-13에 31개 단위/회귀 테스트(NOL 티켓 28개 + 백업 3개)를 전수 통과했고 실제 NOL 페이지에 대한 읽기 전용 대조도 성공했습니다. 실제 뉴스 수집부터 Gemini 원고 생성·WordPress 발행까지의 전체 검증은 수행하지 않았습니다. 이 변경은 로컬 코드에 적용했으며 운영 서버 배포는 별도로 진행해야 합니다.
+ 
+## 통합 백업 및 원클릭 복구 시스템 (유지보수 7단계)
+ 
+`agent-publisher/backup_daily.sh`는 데이터베이스 단독 백업에서 **3대 핵심 자산 통합 스냅샷 백업**으로 전면 확대되었습니다:
+1. **MariaDB 데이터베이스 (`db.sql.gz`)**: 워드프레스 전체 테이블 및 데이터 덤프.
+2. **워드프레스 미디어 업로드 (`uploads.tar.gz`)**: 카드뉴스 썸네일, 타이포 배너, 본문 첨부 이미지.
+3. **에이전트 설정 및 런타임 데이터 (`configs.tar.gz`)**: `config.py`, `data/*.json` (기사 중복 방지 이력 및 내부 링크 색인), Docker 설정 파일.
+4. **체크섬 및 메타데이터 (`manifest.json`)**: SHA256 체크섬과 생성 시각, 컴포넌트별 바이트 크기 명세.
+ 
+모든 컴포넌트는 단일 통합 아카이브 `bloguito_backup_YYYYMMDD_HHMMSS.tar.gz`로 원자적(Atomic) 묶음 압축되어 7일간 롤링 보관됩니다.
+ 
+### 1) 수동 백업 실행
+```bash
+./agent-publisher/backup_daily.sh
+```
+ 
+### 2) 원클릭 복구(Restore) 실행
+```bash
+# 아카이브 체크섬 검증 및 대화형 복원
+./agent-publisher/restore_backup.sh /home/ubuntu/backups/bloguito_backup_20260913_040001.tar.gz
+ 
+# 프롬프트 없이 즉시 복원 (--yes)
+./agent-publisher/restore_backup.sh /home/ubuntu/backups/bloguito_backup_20260913_040001.tar.gz --yes
+```
+복구 시 `manifest.json`의 SHA256 체크섬을 사전 대조하여 파일 변조나 손상이 감지되면 작업을 즉시 중단합니다.
