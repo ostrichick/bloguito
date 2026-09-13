@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from googlenewsdecoder import new_decoderv1
 from agents.ticket_validation import extract_expectation, parse_product, select_product
+from agents.temporal_validation import extract_evidence, validate_availability
 
 
 class CuratorAgent:
@@ -125,6 +126,7 @@ class CuratorAgent:
         kw = raw_item.get("keyword", "")
 
         ticket_data = None
+        temporal_evidence = extract_evidence(body, real_url)
         self.last_ticket_verification = {"status": "not_applicable"}
         if cat_key == "concert" or any(w in title or w in kw for w in ["콘서트", "티켓", "예매", "NOL", "인터파크"]):
             self.last_ticket_verification = {"status": "needs_review", "reason": "article_identity_incomplete_or_ambiguous"}
@@ -167,6 +169,7 @@ class CuratorAgent:
                     if not ticket_data:
                         print(f"[CuratorAgent] ⏸ 검토 필요: {self.last_ticket_verification}")
                 if ticket_data:
+                    temporal_evidence.extend(ticket_data.get("temporal_evidence", []))
                     print(f"[CuratorAgent] 🎯 공식 티켓 상세 확인 완료: {ticket_data.get('product_url')} (가격: {ticket_data.get('price_str')})")
                     body += (
                         f"\n\n[🚨 공식 예매처(NOL 티켓) 실시간 연동 정보]\n"
@@ -183,5 +186,7 @@ class CuratorAgent:
             "direct_product_url": ticket_data.get("product_url") if ticket_data else None,
             "ticket_prices": ticket_data.get("price_str") if ticket_data else None,
             "ticket_verification": self.last_ticket_verification,
+            "temporal_source": {"evidence": temporal_evidence, "requires_sale": self.last_ticket_verification.get("status") == "matched", "sale_source_url": ticket_data.get("product_url") if ticket_data else None},
         }
+        curated_data["temporal_verification"] = validate_availability(curated_data["temporal_source"])
         return curated_data

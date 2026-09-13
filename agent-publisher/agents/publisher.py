@@ -4,6 +4,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from config import POST_STATUS, POSTS_INDEX_FILE, DRAFTS_INDEX_FILE, SITE_URL
+from agents.temporal_validation import validate_availability
 
 
 class PublisherAgent:
@@ -71,6 +72,10 @@ class PublisherAgent:
         self._record_post(post_id, title, category_id, category_name, status=status, expires_at=expires_at)
 
     def publish(self, article: dict, image_path: Path = None) -> int:
+        temporal = validate_availability(article.get("temporal_source", {}))
+        if temporal["status"] != "active":
+            raise ValueError(f"기간·상태 미검증으로 발행 보류: {temporal['reasons']}")
+        article["expires_at"] = temporal["expires_at"]
         title = article["title"]
         content = article["content"]
         cat_id = article["category_id"]

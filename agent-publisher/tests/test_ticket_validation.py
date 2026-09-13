@@ -100,6 +100,11 @@ def response(text="", status=200):
 
 
 class NetworkAndPipelineTests(unittest.TestCase):
+    def setUp(self):
+        # Isolate link regressions; temporal gates are covered in test_temporal_validation.
+        self.temporal_patch = patch("agents.copywriter.validate_availability", return_value={"status": "active", "expires_at": "2099-12-25"})
+        self.temporal_patch.start()
+        self.addCleanup(self.temporal_patch.stop)
     @patch("agents.curator.requests.get")
     def test_discovery_checks_all_candidates_not_first(self, get):
         get.side_effect = [response('<a href="/ticket/products/1000">부산</a><a href="/ticket/products/1001">수원</a>'), response(HTML.replace("수원", "부산")), response(HTML)]
@@ -145,7 +150,7 @@ class NetworkAndPipelineTests(unittest.TestCase):
         writer.client = True
         article = {"content": '<a href="https://nol.yanolja.com/ticket/products/1001">예매</a>'}
         writer._generate_with_gemini = Mock(return_value=article)
-        self.assertEqual(writer.write_article({"title": "테스트 공연", "ticket_verification": {"status": "matched"}, "direct_product_url": "https://nol.yanolja.com/ticket/products/1001"}), article)
+        self.assertEqual(writer.write_article({"title": "테스트 공연", "temporal_source": {}, "ticket_verification": {"status": "matched"}, "direct_product_url": "https://nol.yanolja.com/ticket/products/1001"}), article)
 
     def test_free_article_with_paid_link_is_rejected(self):
         writer = object.__new__(CopywriterAgent)

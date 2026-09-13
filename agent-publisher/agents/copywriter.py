@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 from config import GEMINI_API_KEY, POSTS_INDEX_FILE
+from agents.temporal_validation import validate_availability
 
 
 class BlogPostSchema(BaseModel):
@@ -143,6 +144,10 @@ class CopywriterAgent:
             print("[CopywriterAgent] ⏸ 공연 상품 일치 검증이 완료되지 않아 집필·발행을 보류합니다.")
             return None
         print(f"[CopywriterAgent] ✍️ 인포머티브 딥다이브 원고 집필 및 시점 검증 시작: {curated_item['title']}")
+        temporal = validate_availability(curated_item.get("temporal_source", {}))
+        if temporal["status"] != "active":
+            print(f"[CopywriterAgent] ⏸ 기간·상태 검증 보류: {temporal['reasons']}")
+            return None
         if self.client:
             article = self._generate_with_gemini(curated_item)
             if not article:
@@ -159,6 +164,9 @@ class CopywriterAgent:
                 if not product_links or any(link.path != target.path or link.scheme != "https" for link in product_links):
                     print("[CopywriterAgent] ⏸ 원고의 상품 링크가 검증된 공연 상세페이지와 달라 발행을 보류합니다.")
                     return None
+            article["temporal_source"] = curated_item["temporal_source"]
+            article["temporal_verification"] = temporal
+            article["expires_at"] = temporal["expires_at"]
             return article
         else:
             print("[CopywriterAgent] ❌ Gemini 클라이언트가 없어 팩트 검증이 불가하므로 발행을 중단합니다.")
@@ -288,7 +296,7 @@ class CopywriterAgent:
                         }
                     else:
                         data = json.loads(response.text)
-                        if not data.get("is_valid_and_active", True):
+                        if data.get("is_valid_and_active") is not True:
                             print(f"[CopywriterAgent] 🛑 시점 만료/부적격 소식으로 판정: {data.get('rejection_reason', '만료됨')}")
                             return None
 

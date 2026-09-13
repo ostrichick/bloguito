@@ -134,3 +134,21 @@ $env:PYTHONIOENCODING='utf-8'
 ./agent-publisher/restore_backup.sh /home/ubuntu/backups/bloguito_backup_20260913_040001.tar.gz --yes
 ```
 복구 시 `manifest.json`의 SHA256 체크섬을 사전 대조하여 파일 변조나 손상이 감지되면 작업을 즉시 중단합니다.
+
+## 기간·판매 상태 독립 검사 (유지보수 3단계)
+
+`agents/temporal_validation.py`가 출처 텍스트의 명시적 필드(예: `신청기간: 2026.09.01 ~ 09.30`, `공연일시: 2026.12.25`, `판매상태: 판매중`)를 추출하고 코드로 검사합니다. `active`만 집필·발행을 허용하며 `closed`와 `needs_review`는 보류합니다. 시작 전 신청/판매, 지난 마감, 매진·취소·종료, 불명확한 연도, 잘못된 날짜, 상충하는 기간·상태는 통과시키지 않습니다. 날짜만 있는 마감은 한국시간 당일 끝까지 유효하고 시간이 명시되면 해당 시각을 적용합니다.
+
+유료 NOL 공연은 선택된 상품 URL에서 가져온 판매 기간과 판매 상태를 모두 요구합니다. 검색 필터나 기사에만 적힌 판매중 문구는 근거로 인정하지 않습니다. 현재 파서는 상세정보의 명시적 필드를 읽으므로 판매 상태를 다른 방식으로 제공하는 페이지는 보류됩니다. 자연어만 있는 일정, 상시·예산 소진 시 종료, 복수 회차 등은 별도 파서 개선이 필요합니다. `active`는 수집 정보의 기간 검사 통과를 뜻하며 실시간 좌석 재고 보장은 아닙니다.
+
+Curator가 출처 URL을 포함한 `temporal_source`를 전달하고 Copywriter가 집필 전에 재검사합니다. Publisher도 쓰기 직전에 현재 시간으로 다시 검사하며 계산된 `expires_at`을 기존 색인에 전달합니다. 발행 직전 재검사는 보관된 근거를 사용하며 웹페이지를 다시 조회하지 않습니다. Gemini의 적합 판정은 이 검사를 우회할 수 없고 JSON 응답에 적합 판정이 없으면 보류합니다.
+
+프로젝트 루트에서 전체 회귀 테스트를 실행합니다. 현재 PC의 가상환경은 `.venv`입니다.
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+$env:PYTHONPATH=(Resolve-Path './agent-publisher').Path
+./agent-publisher/.venv/Scripts/python.exe -m unittest discover -s agent-publisher/tests
+```
+
+2026-09-13 전체 50개 테스트 통과. 외부 API 호출·운영 글 발행 없이 검사했으며 OCI 배포는 별도 작업입니다.

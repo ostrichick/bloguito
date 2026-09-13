@@ -5,6 +5,7 @@ import unicodedata
 from datetime import date
 
 from bs4 import BeautifulSoup
+from agents.temporal_validation import extract_evidence
 
 
 REGIONS = (
@@ -106,6 +107,7 @@ def parse_product(html: str, product_id: str) -> dict:
         "place_str": place_str,
         "price_str": price_str or None,
         "event_dates": extract_dates(date_str, year),
+        "temporal_evidence": extract_evidence("공연일시: " + date_str + "\n" + text, f"https://nol.yanolja.com/ticket/products/{product_id}"),
     }
 
 
