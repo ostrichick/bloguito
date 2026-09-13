@@ -1,8 +1,14 @@
 import unittest
 from datetime import date
+from unittest.mock import patch
 from agents.search_intent import load_briefs, matches_brief
 
 class SearchIntentTests(unittest.TestCase):
+    def setUp(self):
+        self.inventory = patch('agents.search_intent.INVENTORY')
+        mocked = self.inventory.start()
+        mocked.read_text.return_value = '{"checked_on":"2026-09-13","posts":[]}'
+        self.addCleanup(self.inventory.stop)
     def test_review_expiry(self):
         self.assertTrue(load_briefs('concert', date(2026,9,13)))
         self.assertEqual(load_briefs('concert', date(2026,9,16)), [])

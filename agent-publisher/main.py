@@ -7,6 +7,7 @@ from agents.curator import CuratorAgent
 from agents.copywriter import CopywriterAgent
 from agents.designer import DesignerAgent
 from agents.publisher import PublisherAgent
+from sync_wordpress_inventory import sync_inventory
 
 
 def run_pipeline(category_keys: list, limit_per_cat: int = 1):
@@ -14,6 +15,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     print("📢 [생활정보 24] 5대 멀티 에이전트 자율 발행 파이프라인 가동")
     print("=" * 60)
 
+    sync_inventory()
     radar = RadarAgent()
     curator = CuratorAgent()
     copywriter = CopywriterAgent()

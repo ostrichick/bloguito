@@ -32,3 +32,5 @@ backups/
 agent-publisher/data/history.json
 agent-publisher/data/published_posts.json
 agent-publisher/data/designer_state.json
+agent-publisher/data/wordpress_inventory.json
+agent-publisher/data/wordpress_inventory.tmp

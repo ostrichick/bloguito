@@ -193,6 +193,8 @@ class CopywriterAgent:
 
         import time
         prompt = f"""아래 출처 검증 원고를 JSON으로 반환하세요. 새로운 사실이나 설명을 추가하지 마세요.
+확인되지 않은 주차·시야·재고 등은 언급하거나 FAQ로 만들지 마세요. 독자에게 사실 검증을 넘기지 마세요.
+출처 링크는 근거 또는 신청·예매 실행 경로입니다. 핵심 답을 대신하는 확인 요청으로 사용하지 마세요.
 title은 아래 제목과 정확히 같아야 하고 content는 아래 HTML의 구조·행·텍스트·링크를 유지해야 합니다.
 tags는 빈 배열입니다. is_valid_and_active는 추가 적합성 검토 결과이며 false로 거부할 수 있습니다.
 제목: {item['fact_manifest']['sources'][0]['title']}

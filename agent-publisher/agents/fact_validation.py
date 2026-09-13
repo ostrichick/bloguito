@@ -18,7 +18,7 @@ FIELDS = {**{label: kind for kind, expression in LABELS.items() for label in exp
           "신청대상": "eligibility", "지원대상": "eligibility", "접종대상": "eligibility",
           "신청조건": "condition", "지원조건": "condition", "제외대상": "exclusion",
           "신청방법": "method", "접수처": "method", "문의": "contact"}
-INTRO = "아래 정보는 수집한 출처의 명시적 항목을 정리한 내용입니다. 변경 여부와 자세한 조건은 출처에서 확인하세요."
+INTRO = "아래는 출처에서 확인한 핵심 정보입니다. 각 항목에 근거 링크를 함께 표시했습니다."
 
 
 def _url(value):
