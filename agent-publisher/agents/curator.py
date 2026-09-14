@@ -13,6 +13,7 @@ class CuratorAgent:
 
     def __init__(self):
         self.last_ticket_verification = {"status": "not_checked"}
+        self.last_article_image_url = None
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -42,6 +43,12 @@ class CuratorAgent:
                     resp.encoding = resp.apparent_encoding or "utf-8"
 
                 soup = BeautifulSoup(resp.text, "html.parser")
+
+                og_img = soup.find("meta", property="og:image") or soup.find("meta", {"name": "twitter:image"})
+                if og_img and og_img.get("content"):
+                    img_src = og_img.get("content").strip()
+                    if img_src.startswith("http"):
+                        self.last_article_image_url = img_src
 
                 for s in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
                     s.decompose()
@@ -183,12 +190,20 @@ class CuratorAgent:
                         f"- 공식 공연 장소: {ticket_data.get('place_str', '')}\n"
                     )
 
+        poster_url = None
+        if ticket_data and ticket_data.get("poster_url"):
+            poster_url = ticket_data["poster_url"]
+        elif self.last_article_image_url:
+            poster_url = self.last_article_image_url
+
         curated_data = {
             **raw_item,
             "link": real_url,
             "full_content": body,
             "direct_product_url": ticket_data.get("product_url") if ticket_data else None,
             "ticket_prices": ticket_data.get("price_str") if ticket_data else None,
+            "poster_url": poster_url,
+            "article_image_url": self.last_article_image_url,
             "ticket_verification": self.last_ticket_verification,
             "temporal_source": {"evidence": temporal_evidence, "requires_sale": self.last_ticket_verification.get("status") == "matched", "sale_source_url": ticket_data.get("product_url") if ticket_data else None},
         }

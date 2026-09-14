@@ -209,8 +209,9 @@ crontab -l
 | **2026-09-13** | **WSL 2·Ubuntu·Docker 설치 및 에디터 관리자 권한 자동 승격 등록** | 관리자 터미널을 통해 WSL 2(2.7.14), Ubuntu-24.04, Docker Desktop(4.90.0) 설치 완료 확인. Antigravity 에디터 실행 파일(`Antigravity.exe`)을 Windows 레지스트리(`HKCU AppCompatFlags\Layers`)에 `~ RUNASADMIN`으로 정식 등록하여 다음 실행부터 항상 관리자 권한으로 자동 실행되도록 설정 완료. 커널 가상화 반영을 위해 Windows 재부팅 필요 상태 문서화. |
 | **2026-09-13** | **유지보수 7단계: 백업 범위 확대(DB+업로드+설정) 및 원클릭 복구 구축** | 기존 DB 단독 백업에서 MariaDB(`db.sql.gz`), WordPress 미디어 업로드(`uploads.tar.gz`), 에이전트 설정/런타임 데이터(`configs.tar.gz`), 무결성 메타데이터(`manifest.json`, SHA256)를 단일 스냅샷(`bloguito_backup_*.tar.gz`)으로 묶는 완전 통합 백업 시스템(`backup_daily.sh`) 구축. SHA256 체크섬 사전 검증 기반 원클릭 복구 도구(`restore_backup.sh`) 신설. 단위/회귀 테스트(`test_backup_restore.py`) 3종 추가하여 총 31개 테스트 100% 통과 확인. |
 | **2026-09-13** | **유지보수 5단계 & 6단계: 색인 분리, 마감 글 추천 제외, 스크립트 정리 및 회귀 테스트 확장** | 초안과 공개 글 색인(`published_posts.json` vs `draft_posts.json`) 분리 구현. `expires_at < today` 또는 `is_closed == True`인 과거 마감 글을 본문 내부 추천 카드에서 배제하는 필터링 엔진 탑재. 과거 핫픽스/일회성 스크립트 12종을 `scripts/archive/`로 안전 격리 아카이빙. 신규 단위/회귀 테스트(`test_indexing_and_interlinking.py`) 추가하여 총 35개 테스트 100% 통과 확인. |
+| **2026-09-14** | **🎨 스마트 썸네일 멀티 비주얼 엔진 개편 (대안 1~4 통합)** | 저품질 AI 그림을 대체하기 위해 글의 주제·카테고리·수집 팩트에 따라 **[대안 1: 클린 공식 포스터]**, **[대안 2: 토스풍 모바일 타이포 카드]**, **[대안 3: 키워드 매칭 실사스톡]**, **[대안 4: 하이브리드 포스터+브랜드 프레임]**을 지능적으로 자율 라우팅하는 4대 비주얼 엔진 구축. NOL 티켓 상세 `og:image` 및 언론사 대표 이미지 크롤링 연동. 외부 이미지 다운로드 실패 시 대안 2(토스 타이포)로 무중단 안전 폴백 및 크로스 플랫폼(Windows/Linux) 폰트 로더 적용. 회귀 테스트(`test_designer_routing.py`) 10종 추가하여 총 77개 테스트 전수 100% 통과 확인. |
 
-## 8. 협업용 현재 작업 상태 (2026-09-13)
+## 8. 협업용 현재 작업 상태 (2026-09-14)
 
 - **완료 범위:**
   - **1단계**: 비밀정보 분리, `.gitignore`, `.env.example`, `requirements.txt` 완료.
@@ -218,8 +219,9 @@ crontab -l
   - **3단계**: 날짜·신청 기간·판매 상태를 LLM 응답과 별도로 코드에서 결정론적 검사 (`temporal_validation.py`) 완료.
   - **4단계**: 모든 핵심 사실과 출처 URL 구조화 및 원고 일치 검증 (`fact_validation.py`) 완료.
   - **5단계**: 초안/공개 글 색인 분리(`published_posts.json` vs `draft_posts.json`) 및 마감 글 내부 추천 제외 필터링 완료.
-  - **6단계**: 과거 핫픽스/임시 스크립트 12종 정리(`scripts/archive/`) 및 전방위 회귀 테스트 구축 (총 67개 테스트 전수 100% 통과).
+  - **6단계**: 과거 핫픽스/임시 스크립트 12종 정리(`scripts/archive/`) 및 전방위 회귀 테스트 구축 (총 77개 테스트 전수 100% 통과).
   - **7단계**: 백업 범위 확대 (MariaDB + WordPress 업로드 미디어 + 에이전트 설정/데이터 스냅샷 번들링, `manifest.json` SHA256 체크섬, `restore_backup.sh` 복구 도구 신설) 완료.
+  - **비주얼 엔진 혁신**: 대안 1~4 스마트 라우팅 및 렌더러(하이브리드 포스터, 토스 타이포, 키워드 스톡) 탑재 완료.
   - **추가 개선**: 검색 의도 브리프 큐레이션(`search_intent.py`) 및 중복 주제 사전 차단(`sync_wordpress_inventory.py`) 탑재.
   - **로컬 인프라**: Python 3.12.10, Git Bash, WSL 2 Ubuntu-24.04, Docker Desktop 4.90.0 정상 가동 확인. 에디터 관리자 권한 자동 승격 레지스트리 등록 완료.
 - **운영 서버 안전성 및 격리 상태:**

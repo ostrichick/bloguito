@@ -100,9 +100,12 @@ def parse_product(html: str, product_id: str) -> dict:
     # Product title may supply the year for a labelled date that omits it.
     years = set(re.findall(r"(?<!\d)(20\d{2})(?!\d)", title))
     year = int(next(iter(years))) if len(years) == 1 else None
+    og_img = soup.find("meta", property="og:image") or soup.find("meta", {"name": "twitter:image"})
+    poster_url = og_img.get("content", "").strip() if og_img else ""
     return {
         "product_id": product_id,
         "product_url": f"https://nol.yanolja.com/ticket/products/{product_id}",
+        "poster_url": poster_url or None,
         "title": title,
         "date_str": date_str,
         "place_str": place_str,

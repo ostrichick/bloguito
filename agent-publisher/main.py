@@ -62,6 +62,8 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     title=article["title"],
                     category_name=cat_info["name"],
                     keyword=raw_item["keyword"],
+                    curated=curated,
+                    category_key=cat_key,
                 )
 
                 # 5. 워드프레스 포스팅 및 썸네일 등록 (Publisher)
