@@ -34,3 +34,5 @@ agent-publisher/data/published_posts.json
 agent-publisher/data/designer_state.json
 agent-publisher/data/wordpress_inventory.json
 agent-publisher/data/wordpress_inventory.tmp
+agent-publisher/data/editorial_runs/
+agent-publisher/data/.editorial-publish.lock/

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "default_status": "draft",
+  "min_remaining_days": 30,
+  "source_max_age_hours": 24,
+  "review_max_age_hours": 24,
+  "max_revisions": 2,
+  "writer_model": "gemini-3.5-flash",
+  "reviewer_model": "gemini-3.5-flash",
+  "review_checks": ["source_support", "conditions_preserved", "question_answered", "useful_lifetime", "no_reader_deflection", "no_unsupported_claims"],
+  "blocked_patterns": ["(?:공식\\s*(?:안내|홈페이지|사이트)|상품\\s*페이지|위\\s*표).{0,25}(?:확인|참고)하세요", "보장하지\\s*않습니다", "(?:신청|접수)기간\\s*안에\\s*해당", "이\\s*글.{0,20}(?:판단|확정)할\\s*수\\s*없", "공식\\s*자료\\s*확인\\s*[:：]"]
+}

@@ -4,7 +4,7 @@ import time
 from config import CATEGORIES
 from agents.radar import RadarAgent
 from agents.curator import CuratorAgent
-from agents.copywriter import CopywriterAgent
+from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent
 from agents.designer import DesignerAgent
 from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import sync_inventory

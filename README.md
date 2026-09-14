@@ -164,3 +164,6 @@ $env:PYTHONPATH=(Resolve-Path './agent-publisher').Path
 Copywriter와 Publisher 양쪽에서 원문 기록으로 manifest를 재생성해 대조하고 기간 검사 근거도 같은 출처 기록 전체와 일치해야 합니다. 발행 색인의 `fact_manifest`에 근거를 보관합니다. 출처 자체의 오류·본문 추출 누락·실시간 정보 변경까지 보장하는 검사는 아닙니다.
 
 2026-09-13 전체 회귀 테스트 61개 통과. 외부 API 호출 없이 Gemini의 구조화 응답과 JSON 응답 경로를 모의 검증했습니다. 운영 서버 배포 및 실제 뉴스부터 발행까지의 검증은 별도로 필요합니다.
+# 공통 글 작성 기준
+
+글 작성과 자동화는 [공통 편집 시스템](docs/EDITORIAL_SYSTEM.md)을 사용합니다. Codex는 루트 AGENTS.md, Antigravity는 `.agents/rules/bloguito-editorial.md`, Gemini 계열은 GEMINI.md에서 같은 기준을 읽습니다. 기본 임시글, 공식 출처 기반 문단, 별도 의미 검토, 중복·최소 잔여기간·출처·검토 무결성 검사를 거칩니다. 모델 설정과 검사 수치는 `agent-publisher/editorial_policy.json`에서 관리합니다. 이전 고정 표 발행 경로는 직접 등록을 허용하지 않습니다.

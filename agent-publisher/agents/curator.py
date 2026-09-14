@@ -119,6 +119,13 @@ class CuratorAgent:
 
     def curate(self, raw_item: dict) -> dict | None:
         """기사 본문을 실시간 추출하고, 예매처 정보를 능동 수집하여 팩트 기반 데이터 가공"""
+        if raw_item.get('editorial_direct'):
+            from agents.editorial import topic_reasons
+            brief = raw_item.get('search_brief', {})
+            if topic_reasons(brief) or brief.get('content_type') != 'evergreen':
+                return None
+            # The shared writer fetches each reviewed official URL itself.
+            return {**raw_item, 'ticket_verification': {'status': 'not_applicable'}}
         print(f"[CuratorAgent] 📋 원문 기사 디코딩 및 팩트 추출: {raw_item['title']}")
 
         body, real_url = self.fetch_article_content(raw_item["link"])

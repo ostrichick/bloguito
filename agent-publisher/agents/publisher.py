@@ -34,8 +34,7 @@ class PublisherAgent:
         # 워드프레스 고유주소(URL) 조회
         url_cmd = [
             "sudo", "docker", "exec", self.container_name,
-            "wp", "post", "get", str(post_id),
-            "--field=url",
+            "wp", "eval", f"echo get_permalink({int(post_id)});",
             "--allow-root"
         ]
         res = subprocess.run(url_cmd, capture_output=True, text=True)
@@ -74,85 +73,65 @@ class PublisherAgent:
         self._record_post(post_id, title, category_id, category_name, status=status, expires_at=expires_at)
 
     def publish(self, article: dict, image_path: Path = None) -> int:
-        temporal = validate_availability(article.get("temporal_source", {}))
-        if temporal["status"] != "active":
-            raise ValueError(f"기간·상태 미검증으로 발행 보류: {temporal['reasons']}")
-        article["expires_at"] = temporal["expires_at"]
-        facts = verify_article(article, article.get("fact_manifest"))
-        if facts["status"] != "verified":
-            raise ValueError(f"핵심 사실·원고 불일치로 발행 보류: {facts['reasons']}")
-        if not verify_temporal_binding(article.get("temporal_source", {}), article["fact_manifest"]):
-            raise ValueError("기간 검사 근거가 원문 기록과 일치하지 않습니다.")
-        article["content"] = render_content(article["fact_manifest"])
-        title = article["title"]
-        content = article["content"]
-        cat_id = article["category_id"]
-        cat_name = article.get("category_name", "")
-        tags_str = ",".join(article.get("tags", []))
-        status = POST_STATUS  # 'draft' or 'publish'
-
-        print(f"[PublisherAgent] 🚀 워드프레스 포스트 등록: '{title}' (상태: {status})")
-
-        # 1. HTML 본문 임시 파일 저장 및 컨테이너 복사
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".html") as f:
-            f.write(content)
-            temp_path = Path(f.name)
-
-        try:
-            container_file = f"/tmp/post_content_{temp_path.stem}.html"
-            cp_cmd = f"sudo docker cp {temp_path} {self.container_name}:{container_file}"
-            subprocess.run(cp_cmd, shell=True, check=True, stdout=subprocess.DEVNULL)
-
-            # 2. WP-CLI 명령으로 포스트 생성
-            wp_cmd = [
-                "sudo", "docker", "exec", self.container_name,
-                "wp", "post", "create", container_file,
-                f"--post_type=post",
-                f"--post_status={status}",
-                f"--post_title={title}",
-                f"--post_category={cat_id}",
-                f"--tags_input={tags_str}",
-                "--allow-root",
-                "--porcelain",
-            ]
-
-            res = subprocess.run(wp_cmd, capture_output=True, text=True, check=True)
-            post_id = int(res.stdout.strip())
-
-            # 3. 임시 파일 정리
-            subprocess.run(f"sudo docker exec {self.container_name} rm -f {container_file}", shell=True, stdout=subprocess.DEVNULL)
-
-            # 4. 특성 이미지(썸네일) 연결
-            if image_path and image_path.exists():
-                try:
-                    container_img = f"/tmp/feat_{post_id}.jpg"
-                    subprocess.run(f"sudo docker cp {image_path} {self.container_name}:{container_img}", shell=True, check=True, stdout=subprocess.DEVNULL)
-                    img_cmd = [
-                        "sudo", "docker", "exec", self.container_name,
-                        "wp", "media", "import", container_img,
-                        f"--post_id={post_id}",
-                        "--featured_image",
-                        "--allow-root",
-                    ]
-                    subprocess.run(img_cmd, capture_output=True, text=True, check=True)
-                    subprocess.run(f"sudo docker exec {self.container_name} rm -f {container_img}", shell=True, stdout=subprocess.DEVNULL)
-                    print(f"[PublisherAgent] 🖼️ 대표 썸네일(Featured Image) 등록 완료! (Post #{post_id})")
-                except Exception as img_err:
-                    print(f"[PublisherAgent] ⚠️ 썸네일 등록 중 오류: {img_err}")
-
-            # 5. 내부 링크 색인 저장
+        if 'editorial_bundle' in article:
+            from agents.editorial import ROOT
+            lock = ROOT / 'data' / '.editorial-publish.lock'
+            lock.parent.mkdir(parents=True, exist_ok=True)
             try:
-                expires_at = article.get("expires_at") or article.get("event_date")
-                self._record_post(post_id, title, cat_id, cat_name, status=status, expires_at=expires_at, fact_manifest=article["fact_manifest"])
-            except Exception as rec_err:
-                print(f"[PublisherAgent] ⚠️ 색인 저장 중 오류: {rec_err}")
+                lock.mkdir()
+            except FileExistsError:
+                raise ValueError('editorial_publication_busy: concurrent run or stale lock requires review')
+            try:
+                return self._publish_editorial(article, image_path)
+            finally:
+                lock.rmdir()
+        raise ValueError('editorial_bundle_required: 기존 표 원고도 공통 편집 검토 후 등록해야 합니다.')
 
-            print(f"[PublisherAgent] 🎉 포스팅 완료! (Post ID: {post_id}, 상태: {status})")
+    def _publish_editorial(self, article, image_path=None):
+        from agents.editorial import validate_bundle, render
+        from agents.editorial_writer import load_inventory
+        from sync_wordpress_inventory import sync_inventory
+        from config import CATEGORIES
+        # Never accept a caller-supplied inventory or a cached quality status here.
+        sync_inventory()
+        bundle = article['editorial_bundle']
+        report = validate_bundle(bundle, load_inventory())
+        if report['status'] != 'ready':
+            raise ValueError(f"편집 검사 보류: {report['reasons']}")
+        content = render(bundle['plan'], bundle['sources'])
+        title = bundle['plan']['title']
+        if article.get('content') != content or article.get('title') != title:
+            raise ValueError('editorial_content_changed_after_review')
+        category = CATEGORIES[bundle['brief']['category_key']]
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', delete=False, suffix='.html') as f:
+            f.write(content)
+            local = Path(f.name)
+        remote = f'/tmp/editorial_{local.stem}.html'
+        try:
+            subprocess.run(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'], check=True, capture_output=True)
+            result = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'create', remote,
+                '--post_type=post', '--post_status=draft', f'--post_title={title}',
+                f'--post_category={category["id"]}', '--comment_status=closed', '--allow-root', '--porcelain'],
+                check=True, capture_output=True, text=True)
+            post_id = int(result.stdout.strip())
+            actual = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
+                '--fields=post_status,post_content', '--format=json', '--allow-root'], check=True, capture_output=True, text=True)
+            saved = json.loads(actual.stdout)
+            if saved['post_status'] != 'draft' or saved['post_content'] != content:
+                raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
+            self._record_post(post_id, title, category['id'], category['name'], status='draft',
+                expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})
+            # Persist the new draft before another candidate can be selected in this run.
+            sync_inventory()
+            if image_path and image_path.exists():
+                remote_image = f'/tmp/editorial_cover_{post_id}{image_path.suffix}'
+                try:
+                    subprocess.run(['sudo', 'docker', 'cp', str(image_path), f'{self.container_name}:{remote_image}'], check=True, capture_output=True)
+                    subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'media', 'import', remote_image,
+                        f'--post_id={post_id}', '--featured_image', '--allow-root'], check=True, capture_output=True)
+                finally:
+                    subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote_image], capture_output=True)
             return post_id
-
-        except Exception as e:
-            print(f"[PublisherAgent] ❌ 발행 실패: {e}")
-            raise e
         finally:
-            if temp_path.exists():
-                temp_path.unlink()
+            local.unlink(missing_ok=True)
+            subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote], capture_output=True)

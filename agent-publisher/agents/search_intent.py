@@ -20,7 +20,10 @@ def duplicate_posts(brief, posts):
 
 
 def load_briefs(category, today=None):
-    today = today or date.today()
+    from agents.editorial import topic_reasons
+    from agents.temporal_validation import KST
+    from datetime import datetime
+    today = today or datetime.now(KST).date()
     briefs = json.loads(BRIEFS.read_text(encoding='utf-8'))
     try:
         inventory = json.loads(INVENTORY.read_text(encoding='utf-8'))
@@ -34,6 +37,8 @@ def load_briefs(category, today=None):
     result = []
     for brief in briefs:
         if brief.get('category_key') != category or not brief.get('approved'):
+            continue
+        if topic_reasons(brief, today):
             continue
         if duplicate_posts(brief, posts):
             continue

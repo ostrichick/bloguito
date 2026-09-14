@@ -56,6 +56,14 @@ class RadarAgent:
         briefs = load_briefs(category_key)
         if not briefs:
             print("[RadarAgent] 검색 의도 검토가 완료된 유효 주제가 없어 보류합니다.")
+        # Evergreen service questions need not have a recent news article.
+        for brief in briefs:
+            if brief.get('content_type') == 'evergreen':
+                collected.append({'category_key': category_key, 'category_id': cat_info['id'],
+                    'category_name': cat_info['name'], 'keyword': brief['primary_keyword'],
+                    'title': brief['primary_keyword'], 'link': brief['official_urls'][0],
+                    'search_brief': brief, 'editorial_direct': True})
+        briefs = [b for b in briefs if b.get('content_type') != 'evergreen']
         seen = set()
         for brief, keyword in [(b, q) for b in briefs for q in b['queries']]:
             encoded_query = urllib.parse.quote(keyword)

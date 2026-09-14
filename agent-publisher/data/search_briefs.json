@@ -1,6 +1,9 @@
 [
   {
     "id": "mumyeong-suwon-2026",
+    "content_type": "dated",
+    "useful_until": "2026-12-25",
+    "reader_questions": [{"id": "q1", "question": "공연 날짜와 예매 방법은 무엇인가?"}, {"id": "q2", "question": "수원 회차의 가격은 얼마인가?"}],
     "category_key": "concert",
     "approved": true,
     "entity": "무명전설",
@@ -19,6 +22,9 @@
   },
   {
     "id": "energy-voucher-deadline-2026",
+    "content_type": "dated",
+    "useful_until": "2026-12-31",
+    "reader_questions": [{"id": "q1", "question": "신청 마감일과 신청 방법은 무엇인가?"}, {"id": "q2", "question": "사용기간과 지급 방식은 무엇인가?"}],
     "category_key": "welfare",
     "approved": true,
     "entity": "에너지바우처",
