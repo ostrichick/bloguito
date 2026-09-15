@@ -3,17 +3,37 @@
     "id": "mumyeong-suwon-2026",
     "content_type": "dated",
     "useful_until": "2026-12-25",
-    "reader_questions": [{"id": "q1", "question": "공연 날짜와 예매 방법은 무엇인가?"}, {"id": "q2", "question": "수원 회차의 가격은 얼마인가?"}],
+    "reader_questions": [
+      {
+        "id": "q1",
+        "question": "공연 날짜와 예매 방법은 무엇인가?"
+      },
+      {
+        "id": "q2",
+        "question": "수원 회차의 가격은 얼마인가?"
+      }
+    ],
     "category_key": "concert",
     "approved": true,
     "entity": "무명전설",
     "primary_keyword": "무명전설 수원 앵콜 예매",
     "question": "티켓은 언제 열리고 공연 날짜와 가격은 무엇인가?",
     "angle": "오픈일과 공연일 구분, 수원 회차만 설명, 가격과 직접 예매 링크",
-    "required_title_terms": ["무명전설", "수원", "앵콜"],
-    "queries": ["2026 무명전설 수원 앵콜 티켓 오픈"],
-    "official_urls": ["https://nol.yanolja.com/ticket/products/26013136"],
-    "serp_urls": ["https://sports.donga.com/ent/article/all/20260908/134629535/1", "https://trot2.blogspot.com/2026/09/2026.html"],
+    "required_title_terms": [
+      "무명전설",
+      "수원",
+      "앵콜"
+    ],
+    "queries": [
+      "2026 무명전설 수원 앵콜 티켓 오픈"
+    ],
+    "official_urls": [
+      "https://nol.yanolja.com/ticket/products/26013136"
+    ],
+    "serp_urls": [
+      "https://sports.donga.com/ent/article/all/20260908/134629535/1",
+      "https://trot2.blogspot.com/2026/09/2026.html"
+    ],
     "reviewed_at": "2026-09-13",
     "review_until": "2026-09-15",
     "search_volume": null,
@@ -24,20 +44,132 @@
     "id": "energy-voucher-deadline-2026",
     "content_type": "dated",
     "useful_until": "2026-12-31",
-    "reader_questions": [{"id": "q1", "question": "신청 마감일과 신청 방법은 무엇인가?"}, {"id": "q2", "question": "사용기간과 지급 방식은 무엇인가?"}],
+    "reader_questions": [
+      {
+        "id": "q1",
+        "question": "신청 마감일과 신청 방법은 무엇인가?"
+      },
+      {
+        "id": "q2",
+        "question": "사용기간과 지급 방식은 무엇인가?"
+      }
+    ],
     "category_key": "welfare",
     "approved": true,
     "entity": "에너지바우처",
     "primary_keyword": "2026 에너지바우처 신청기간",
     "question": "지금 신청 가능한가, 언제 마감이며 사용기간과 어떻게 다른가?",
     "angle": "신청 마감과 사용기간, 접수 일시 중단, 대상 확인 경로",
-    "required_title_terms": ["2026", "에너지바우처"],
-    "queries": ["2026 에너지바우처 신청기간 신청 대상"],
-    "official_urls": ["https://www.energyv.or.kr/info/support_info.do", "https://www.energy.or.kr/front/board/View3.do?boardMngNo=3&boardNo=10024988"],
-    "serp_urls": ["https://www.korea.kr/news/policyNewsView.do?newsId=148967198", "https://www.savingio.com/articles/energy-voucher-2026-application"],
+    "required_title_terms": [
+      "2026",
+      "에너지바우처"
+    ],
+    "queries": [
+      "2026 에너지바우처 신청기간 신청 대상"
+    ],
+    "official_urls": [
+      "https://www.energyv.or.kr/info/support_info.do",
+      "https://www.energy.or.kr/front/board/View3.do?boardMngNo=3&boardNo=10024988"
+    ],
+    "serp_urls": [
+      "https://www.korea.kr/news/policyNewsView.do?newsId=148967198",
+      "https://www.savingio.com/articles/energy-voucher-2026-application"
+    ],
     "reviewed_at": "2026-09-13",
     "review_until": "2026-09-20",
     "search_volume": null,
     "competition": "공식 및 민간 설명글 존재; 검색량·순위 난이도 미측정"
+  },
+  {
+    "id": "passport-online-collection-0915",
+    "category_key": "life-health",
+    "approved": true,
+    "entity": "여권",
+    "primary_keyword": "온라인 여권 재발급 수령 준비물 대리수령",
+    "question": "국내 온라인 재발급 여권은 누가 어디에서 무엇을 지참해 수령하는가?",
+    "angle": "국내 수령에 한정. 신청 대상 전체나 해외 입국 요건으로 확장하지 않는다. 성인 본인 방문과 법정대리인 신청 미성년자의 예외를 구분한다.",
+    "required_title_terms": [
+      "여권",
+      "온라인",
+      "수령"
+    ],
+    "official_urls": [
+      "https://passport.go.kr/home/kor/contents.do?menuPos=11",
+      "https://passport.go.kr/home/kor/contents.do?menuPos=44"
+    ],
+    "queries": [
+      "온라인 여권 재발급 수령 준비물 대리수령"
+    ],
+    "serp_urls": [
+      "https://www.dobong.go.kr/Contents.asp?code=10009953"
+    ],
+    "reviewed_at": "2026-09-15",
+    "review_until": "2026-09-22",
+    "content_type": "evergreen",
+    "useful_until": null,
+    "evergreen_reason": "특정 신청 마감에 종속되지 않는 상시 민원 절차",
+    "reader_questions": [
+      {
+        "id": "q1",
+        "question": "성인 여권의 대리수령과 미성년자 예외는?"
+      },
+      {
+        "id": "q2",
+        "question": "수령 준비물은?"
+      },
+      {
+        "id": "q3",
+        "question": "수령기관을 바꿀 수 있는가?"
+      },
+      {
+        "id": "q4",
+        "question": "우편으로 받을 수 있는가?"
+      }
+    ],
+    "search_volume": null
+  },
+  {
+    "id": "postal-paid-forwarding-extension-0915",
+    "category_key": "life-health",
+    "approved": true,
+    "entity": "우체국",
+    "primary_keyword": "우체국 주거이전 서비스 연장 방법",
+    "question": "전입신고 때 신청한 개인 유료 우편물 전입지 전송서비스는 언제 어디서 연장하는가?",
+    "angle": "서비스 페이지의 유료 우편물 전입지 전송서비스 결제/취소 부분에 한정한다. 인터넷우체국 직접 신청/기간추가라는 다른 서비스와 혼동하지 않는다. 소송 서류는 별도 송달장소 신고 예외를 간략히 보존한다.",
+    "required_title_terms": [
+      "우체국",
+      "전송서비스",
+      "연장"
+    ],
+    "official_urls": [
+      "https://service.epost.go.kr/front.RetrieveAddressMoveInfo.postal"
+    ],
+    "queries": [
+      "우체국 주거이전 서비스 연장 방법"
+    ],
+    "serp_urls": [
+      "https://www.koreapost.go.kr/kpost/subIndex/225.do",
+      "https://eroke.kr/postal-address-forwarding-service/"
+    ],
+    "reviewed_at": "2026-09-15",
+    "review_until": "2026-09-22",
+    "content_type": "evergreen",
+    "useful_until": null,
+    "evergreen_reason": "특정 신청 마감에 종속되지 않는 상시 민원 절차",
+    "reader_questions": [
+      {
+        "id": "q1",
+        "question": "전입신고 때 신청한 유료 서비스 연장 경로는?"
+      },
+      {
+        "id": "q2",
+        "question": "개인의 연장 수수료와 권역 구분은?"
+      },
+      {
+        "id": "q3",
+        "question": "연장 기한을 놓치면 어떻게 되는가?"
+      }
+    ],
+    "search_volume": null
   }
 ]
