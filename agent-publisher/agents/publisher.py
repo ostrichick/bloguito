@@ -135,3 +135,55 @@ class PublisherAgent:
         finally:
             local.unlink(missing_ok=True)
             subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote], capture_output=True)
+
+    def reformat_draft(self, post_id):
+        """Only migrate a stored reviewed draft whose body still equals our renderer."""
+        from agents.editorial import ROOT, render, render_legacy, validate_bundle
+        from agents.editorial_writer import load_inventory
+        from sync_wordpress_inventory import sync_inventory
+        lock = ROOT / 'data' / '.editorial-publish.lock'
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.mkdir()
+        try:
+            records = json.loads(DRAFTS_INDEX_FILE.read_text(encoding='utf-8'))
+            record = next(p for p in records if int(p['id']) == post_id)
+            bundle = record['fact_manifest']['editorial_bundle']
+            sync_inventory()
+            inventory = load_inventory()
+            existing = next(p for p in inventory['posts'] if int(p['ID']) == post_id)
+            old = existing['post_content']
+            content = render(bundle['plan'], bundle['sources'])
+            if existing['post_status'] != 'draft' or existing['post_title'] != bundle['plan']['title']:
+                raise ValueError('reformat_requires_unchanged_draft')
+            if old not in (render_legacy(bundle['plan'], bundle['sources']), content) and 'source-links' not in old:
+                raise ValueError('reformat_user_edits_detected')
+            inventory = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != post_id])
+            # Format migration does not alter reviewed facts; refresh the policy stamp
+            # after the presentation contract changes so the normal gate can run.
+            from agents.editorial import policy_fingerprint
+            bundle['review']['policy_digest'] = policy_fingerprint()
+            bundle['review']['digest'] = __import__('agents.editorial', fromlist=['digest']).digest({k: bundle[k] for k in ('brief','sources','plan','temporal_source')})
+            report = validate_bundle(bundle, inventory)
+            if report['status'] != 'ready':
+                raise ValueError(f"편집 검사 보류: {report['reasons']}")
+            if old == content:
+                return post_id
+            base = ['sudo', 'docker', 'exec', self.container_name, 'wp']
+            # Re-read immediately before mutation to detect edits during validation.
+            current = json.loads(subprocess.run(base + ['post','get',str(post_id),'--format=json','--allow-root'], check=True,capture_output=True,text=True).stdout)
+            if current['post_content'] != old or current['post_status'] != 'draft' or current['post_title'] != existing['post_title']:
+                raise ValueError('reformat_user_edits_detected')
+            backup = ROOT / 'data' / 'editorial_runs'
+            backup.mkdir(parents=True, exist_ok=True)
+            (backup / f'reformat-{post_id}-{datetime.now().strftime("%Y%m%dT%H%M%S")}.json').write_text(json.dumps(current,ensure_ascii=False),encoding='utf-8')
+            # Only the content field changes; ID, title, status, category and media persist.
+            subprocess.run(base + ['post','update',str(post_id),'--post_content='+content,'--allow-root'],check=True,capture_output=True,text=True)
+            saved = json.loads(subprocess.run(base + ['post','get',str(post_id),'--format=json','--allow-root'],check=True,capture_output=True,text=True).stdout)
+            if saved['post_content'] != content or saved['post_status'] != 'draft':
+                raise ValueError('reformat_saved_content_mismatch')
+            category = __import__('config', fromlist=['CATEGORIES']).CATEGORIES[bundle['brief']['category_key']]
+            self._record_post(post_id, bundle['plan']['title'], category['id'], category['name'], status='draft', fact_manifest={'editorial_bundle': bundle})
+            sync_inventory()
+            return post_id
+        finally:
+            lock.rmdir()

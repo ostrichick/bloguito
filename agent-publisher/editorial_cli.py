@@ -8,11 +8,18 @@ from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, l
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish'])
-    parser.add_argument('file', type=Path, help='brief JSON for sources; editorial bundle JSON otherwise')
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat'])
+    parser.add_argument('file', help='post ID for reformat; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    if args.action == 'reformat':
+        if args.inventory:
+            parser.error('reformat always queries WordPress')
+        from agents.publisher import PublisherAgent
+        print('Reformatted draft ID:', PublisherAgent().reformat_draft(int(args.file)))
+        return
+    args.file = Path(args.file)
     data = json.loads(args.file.read_text(encoding='utf-8'))
     if args.action == 'sources':
         from agents.editorial import topic_reasons

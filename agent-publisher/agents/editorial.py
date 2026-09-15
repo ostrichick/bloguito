@@ -171,7 +171,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
     return {'status': 'ready' if not reasons else 'needs_review', 'reasons': sorted(set(reasons)), 'details': details}
 
 
-def render(plan, sources):
+def render_legacy(plan, sources):
     source_map = {s['id']: s for s in sources}
     def paragraph(block):
         urls = list(dict.fromkeys(source_map[e['source_id']]['url'] for e in block['evidence']))
@@ -186,6 +186,32 @@ def render(plan, sources):
         for faq in plan['faq']:
             result += '<h3>'+html.escape(faq['question'])+'</h3>'+paragraph(faq['answer'])
     return result
+
+
+def render(plan, sources):
+    """Presentation is deterministic: retain every reviewed sentence and condition."""
+    source_map = {s['id']: s for s in sources}
+    def paragraph(block):
+        ids = list(dict.fromkeys(e['source_id'] for e in block['evidence']))
+        return f'<p style="margin:12px 0;line-height:1.85">{html.escape(block["text"])}</p>'
+    result = ('<div class="bloguito-article" style="line-height:1.85;overflow-wrap:anywhere">'
+              '<div class="bloguito-summary" style="padding:20px 24px;margin:24px 0 32px;background:#edf7f4;border-left:5px solid #147d64;border-radius:8px;color:#173d34">'
+              '<strong style="font-size:20px">핵심요약</strong>' + paragraph(plan['lead']) + '</div>')
+    for number, section in enumerate(plan['sections'], 1):
+        heading = re.sub(r'^\s*\d+[.)]\s*', '', section['heading'])
+        result += (f'<h2 style="font-size:25px;line-height:1.45;margin:36px 0 16px;padding-bottom:10px;border-bottom:2px solid #dcebe5">{number}. {html.escape(heading)}</h2>'
+                   + ''.join(paragraph(b) for b in section['paragraphs']))
+    if plan.get('faq'):
+        result += '<h2 style="font-size:25px;margin:36px 0 16px">자주 묻는 질문</h2>'
+        for faq in plan['faq']:
+            result += ('<div class="bloguito-faq" style="padding:16px 20px;margin:16px 0;background:#f7f8fa;border-radius:8px">'
+                       '<h3 style="font-size:20px;line-height:1.5;margin:0 0 12px">' + html.escape(faq['question']) + '</h3>' + paragraph(faq['answer']) + '</div>')
+    ids = []
+    for block in [plan['lead']] + [b for s in plan['sections'] for b in s['paragraphs']] + [f['answer'] for f in plan.get('faq', [])]:
+        ids.extend(e['source_id'] for e in block['evidence'])
+    ids = list(dict.fromkeys(ids))
+    links = ''.join(f'<li><a href="{html.escape(source_map[i]["url"], quote=True)}" rel="noopener noreferrer">{html.escape(source_map[i]["title"].splitlines()[0][:100])}</a></li>' for i in ids)
+    return result + '<h2 style="font-size:22px;margin:40px 0 12px">공식 출처</h2><ul class="source-list" style="padding-left:22px">' + links + '</ul></div>'
 
 
 def save_report(bundle, report):

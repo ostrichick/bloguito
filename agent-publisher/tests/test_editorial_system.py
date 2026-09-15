@@ -46,6 +46,28 @@ class EditorialTests(unittest.TestCase):
     def check(self, review=True):
         return validate_bundle(self.b,self.inventory,NOW,require_review=review)
 
+    def test_summary_numbering_and_escaping(self):
+        self.b['plan']['sections'].append({'heading':'2. 조건 <안내>', 'paragraphs':[self.b['plan']['lead']]})
+        content = render(self.b['plan'], self.b['sources'])
+        self.assertIn('핵심요약</strong>', content)
+        self.assertIn('1. 배출 방법</h2>', content)
+        self.assertIn('2. 조건 &lt;안내&gt;</h2>', content)
+        self.assertNotIn('2. 2.', content)
+        self.assertIn(self.b['plan']['lead']['text'], content)
+        self.assertIn('https://www.seocho.go.kr/guide', content)
+
+    def test_reformat_refuses_user_edits_before_any_write(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            index = Path(folder) / 'drafts.json'
+            index.write_text(json.dumps([{'id':112,'fact_manifest':{'editorial_bundle':self.b}}]), encoding='utf-8')
+            inv = {'posts':[{'ID':112,'post_status':'draft','post_title':self.b['plan']['title'],'post_content':'user edited body'}]}
+            with patch('agents.editorial.ROOT',Path(folder)), patch('agents.publisher.DRAFTS_INDEX_FILE',index), patch('sync_wordpress_inventory.sync_inventory'), patch('agents.editorial_writer.load_inventory',return_value=inv), patch('agents.publisher.subprocess.run') as run:
+                with self.assertRaisesRegex(ValueError,'user_edits_detected'):
+                    PublisherAgent().reformat_draft(112)
+                run.assert_not_called()
+
     def test_valid_source_bound_narrative(self):
         self.assertEqual(self.check()['status'],'ready')
         self.assertIn('아파트 단지',render(self.b['plan'],self.b['sources']))
