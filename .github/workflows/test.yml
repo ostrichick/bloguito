@@ -24,7 +24,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-nanum
+          sudo apt-get install -y fonts-nanum php-cli
 
       - name: Install Python dependencies
         run: |
@@ -37,6 +37,12 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: |
           python -m unittest discover -s agent-publisher/tests
+
+      - name: Check WordPress admin post ID column
+        run: |
+          php -l wordpress/mu-plugins/bloguito-post-id-column.php
+          php -l wordpress/tests/post-id-column-test.php
+          php wordpress/tests/post-id-column-test.php
 
   bridge-test:
     runs-on: ubuntu-latest
