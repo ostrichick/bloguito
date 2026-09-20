@@ -164,14 +164,19 @@ class PublisherAgent:
             content = render(bundle['plan'], bundle['sources'])
             if existing['post_status'] != 'draft' or existing['post_title'] != bundle['plan']['title']:
                 raise ValueError('reformat_requires_unchanged_draft')
-            if old not in (render_legacy(bundle['plan'], bundle['sources']), content) and 'source-links' not in old:
+            # A change limited to the renderer-generated recommendation card is
+            # safe to reformat; all user-authored/article content must match exactly.
+            import re
+            strip_auto_links = lambda value: re.sub(r'<div class="bloguito-interlink"[^>]*>.*?</div>', '', value, flags=re.DOTALL)
+            only_auto_links_changed = strip_auto_links(old) == strip_auto_links(content)
+            if old not in (render_legacy(bundle['plan'], bundle['sources']), content) and not only_auto_links_changed and 'source-links' not in old:
                 raise ValueError('reformat_user_edits_detected')
             inventory = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != post_id])
             # Format migration does not alter reviewed facts; refresh the policy stamp
             # after the presentation contract changes so the normal gate can run.
             from agents.editorial import policy_fingerprint
             bundle['review']['policy_digest'] = policy_fingerprint()
-            bundle['review']['digest'] = __import__('agents.editorial', fromlist=['digest']).digest({k: bundle[k] for k in ('brief','sources','plan','temporal_source')})
+            bundle['review']['digest'] = __import__('agents.editorial', fromlist=['digest']).digest({k: bundle[k] for k in ('brief','sources','plan','temporal_source') if k in bundle})
             report = validate_bundle(bundle, inventory)
             if report['status'] != 'ready':
                 raise ValueError(f"편집 검사 보류: {report['reasons']}")

@@ -118,16 +118,14 @@ class SystemImprovementsTest(unittest.TestCase):
         html = render(self.plan, self.sources, category_key='life-health')
         self.assertNotIn('무명전설 크리스마스 콘서트', html)
         self.assertNotIn('공연/콘서트 예매', html)
-        self.assertIn('함께 보면 유익한 생활 정보 추천', html)
-        self.assertIn('독감 예방접종', html)
+        self.assertNotIn('bloguito-interlink', html)  # No topical match; unrelated flu posts are not useful.
 
     def test_interlink_concert_isolation(self):
         """콘서트 글에는 콘서트 관련 글만 추천되는지 검증"""
         concert_plan = dict(self.plan)
         concert_plan['title'] = '2026 임영웅 콘서트 티켓 예매 일정'
         html = render(concert_plan, self.sources, category_key='concert')
-        self.assertIn('함께 보면 좋은 추천 공연·티켓 정보', html)
-        self.assertIn('무명전설 크리스마스 콘서트', html)
+        self.assertNotIn('bloguito-interlink', html)  # A different performer is not a topical match.
         self.assertNotIn('독감 예방접종', html)
 
 

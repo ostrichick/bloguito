@@ -288,6 +288,21 @@ def render(plan, sources, category_key=None):
             for p in posts:
                 if not p.get('url') or p.get('title') == plan.get('title'):
                     continue
+                # The local post index may contain legacy IP/HTTP links. Only link
+                # canonical public HTTPS posts, and never treat category alone as relevance.
+                parsed = urlparse(p['url'])
+                if parsed.scheme != 'https' or parsed.hostname != 'lifeinfo24.org':
+                    continue
+                generic = {'2026', '2027', '안내', '정보', '방법', '총정리', '가이드',
+                           '무료', '신청', '조회', '기간', '혜택', '이용', '확인',
+                           '전국', '서울', '2026년', '2027년', '기준', '절차',
+                           '관련', '대상', '공식', '받는', '찾기', '오늘', '예약'}
+                words = lambda title: {t for t in re.findall(r'[가-힣a-zA-Z]{2,}', title.casefold())
+                                       if t not in generic and not t.endswith('년')}
+                current_terms = words(plan.get('title', ''))
+                candidate_terms = words(p.get('title', ''))
+                if not any(len(a) >= 3 and (a in b or b in a) for a in current_terms for b in candidate_terms):
+                    continue
                 if p.get('status') == 'draft' or p.get('is_closed') is True:
                     continue
                 exp_str = p.get('expires_at')

@@ -73,8 +73,10 @@ class EditorialTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         posts_data = [
-            {'title': '기초연금 안내', 'url': 'https://bloguito.kr/p1', 'category_name': '정부 복지/지원금', 'status': 'publish'},
-            {'title': self.b['plan']['title'], 'url': 'https://bloguito.kr/p2', 'category_name': '생활/건강', 'status': 'publish'},
+            {'title': '서초구 선풍기 배출 상세 안내', 'url': 'https://lifeinfo24.org/p1', 'category_name': '생활/건강', 'status': 'publish'},
+            {'title': '기초연금 안내', 'url': 'https://lifeinfo24.org/p3', 'category_name': '정부 복지/지원금', 'status': 'publish'},
+            {'title': '서초구 선풍기 오래된 글', 'url': 'http://161.33.0.234/p4', 'category_name': '생활/건강', 'status': 'publish'},
+            {'title': self.b['plan']['title'], 'url': 'https://lifeinfo24.org/p2', 'category_name': '생활/건강', 'status': 'publish'},
         ]
         with tempfile.TemporaryDirectory() as folder:
             data_folder = Path(folder) / 'data'
@@ -84,8 +86,10 @@ class EditorialTests(unittest.TestCase):
             with patch('agents.editorial.ROOT', Path(folder)):
                 content = render(self.b['plan'], self.b['sources'])
                 self.assertIn('bloguito-interlink', content)
-                self.assertIn('기초연금 안내', content)
-                self.assertNotIn('https://bloguito.kr/p2', content)
+                self.assertIn('서초구 선풍기 배출 상세 안내', content)
+                self.assertNotIn('기초연금 안내', content)
+                self.assertNotIn('http://161.33.0.234', content)
+                self.assertNotIn('https://lifeinfo24.org/p2', content)
 
     def test_reformat_refuses_user_edits_before_any_write(self):
         import tempfile
