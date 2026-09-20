@@ -4,7 +4,8 @@
   "description": "WhatsApp Remote Control Bridge for Bloguito",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test command_policy.test.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.8",

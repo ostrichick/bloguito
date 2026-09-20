@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Bloguito - WhatsApp Remote Control Bridge
  * Powered by @whiskeysockets/baileys (Pure WebSocket Multi-Device Client)
  */
@@ -10,6 +10,9 @@ const qrcodeTerminal = require('qrcode-terminal');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { isAuthorizedChat, parsePublishCommand } = require('./command_policy');
+
+process.umask(0o077);
 
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const QR_PATH = path.join(__dirname, 'qr.png');
@@ -30,6 +33,13 @@ function runCommand(command) {
 }
 
 async function startBridge() {
+    // Auth material is account access, not ordinary cache data.
+    fs.mkdirSync(AUTH_DIR, { recursive: true, mode: 0o700 });
+    fs.chmodSync(AUTH_DIR, 0o700);
+    for (const entry of fs.readdirSync(AUTH_DIR, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) throw new Error('WhatsApp auth directory contains an unexpected symlink');
+        if (entry.isFile()) fs.chmodSync(path.join(AUTH_DIR, entry.name), 0o600);
+    }
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const sentMessageIds = new Set();
 
@@ -51,6 +61,8 @@ async function startBridge() {
             try {
                 await qrcode.toFile(QR_PATH, qr, { width: 350, margin: 2 });
                 await qrcode.toFile(QR_TMP_PATH, qr, { width: 350, margin: 2 });
+                fs.chmodSync(QR_PATH, 0o600);
+                fs.chmodSync(QR_TMP_PATH, 0o600);
                 console.log(`[WhatsApp Bridge] 🖼️ QR 이미지 저장 완료: ${QR_PATH}`);
             } catch (err) {
                 console.error('[WhatsApp Bridge] QR 파일 저장 오류:', err);
@@ -85,6 +97,8 @@ async function startBridge() {
 
     sock.ev.on('messages.upsert', async (m) => {
         try {
+            // Reconnected devices may replay old commands as historical messages.
+            if (m.type !== 'notify') return;
             const msg = m.messages[0];
             if (!msg || !msg.message) return;
             if (sentMessageIds.has(msg.key.id)) return;
@@ -105,11 +119,14 @@ async function startBridge() {
 
             if (!text) return;
 
-            // Security check: only owner (fromMe or matching phone/LID)
+            // Only an own-account self-chat or an explicitly permitted owner chat.
             const ownerIds = (process.env.BLOGUITO_WHATSAPP_OWNER_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
-            const senderId = sender.split('@')[0].split(':')[0];
-            const isOwner = isFromMe || ownerIds.includes(senderId);
-            if (!isOwner) {
+            if (!isAuthorizedChat({
+                remoteJid: sender,
+                fromMe: isFromMe,
+                ownJids: [sock.user?.id, sock.user?.lid],
+                ownerIds,
+            })) {
                 console.log(`[WhatsApp Bridge] 🛑 인가되지 않은 발신자 차단 (${sender})`);
                 return;
             }
@@ -161,23 +178,22 @@ async function startBridge() {
             }
 
             // 3. Promote Draft
-            if (lower.startsWith('/publish') || lower.startsWith('/발행') || text.endsWith('발행')) {
-                const matchedId = text.match(/\d+/);
-                if (!matchedId) {
-                    await reply("⚠️ 발행할 포스트 ID를 입력해 주세요. (예: /publish 81)");
-                    return;
-                }
-                const postId = matchedId[0];
-                await reply(`⏳ 포스트 #${postId} 정식 공개(Publish) 및 캐시 갱신을 시작합니다...`);
+            const postId = parsePublishCommand(text);
+            if (postId !== null) {
+                await reply(`⏳ 포스트 #${postId} 정식 공개 전 원고·출처 검증을 시작합니다...`);
 
                 const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
                 const res = await runCommand(`${pythonBin} ${CLI_PATH} promote-draft ${postId} --confirm-publish`);
 
                 if (res.success) {
-                    await reply(`🎉 *포스트 #${postId} 정식 공개 완료!*\n\n• 링크: https://lifeinfo24.org/?p=${postId}\n• 편집 근거 재확인 및 게시물 색인 갱신이 완료되었습니다.`);
+                    await reply(`🎉 *포스트 #${postId} 정식 공개 완료!*\n\n• 링크: https://lifeinfo24.org/?p=${postId}\n• 편집 근거 재확인과 WordPress 게시 상태·내부 색인 확인이 완료되었습니다.`);
                 } else {
                     await reply(`❌ 발행 처리 중 오류 발생:\n${res.output}`);
                 }
+                return;
+            }
+            if (/^\/publish(?:\s|$)/i.test(text)) {
+                await reply("⚠️ 공개 명령 형식은 /publish 81 입니다. 글 ID 하나만 입력해 주세요.");
                 return;
             }
 
@@ -192,7 +208,7 @@ async function startBridge() {
                     `• ${memRes.output}\n` +
                     `• ${diskRes.output}\n` +
                     `• 가동 시간: ${uptimeRes.output}\n` +
-                    "• 도메인: https://lifeinfo24.org (HTTPS 정상)\n" +
+                    "• 도메인: https://lifeinfo24.org\n" +
                     "• 관리자: https://lifeinfo24.org/wp-admin";
                 await reply(statusMsg);
                 return;
@@ -200,11 +216,11 @@ async function startBridge() {
 
             // 5. Backup
             if (lower === '/backup' || text === '백업') {
-                await reply("⏳ MariaDB 데이터베이스 및 미디어 백업을 시작합니다...");
+                await reply("⏳ 통합 백업 스크립트를 실행합니다...");
                 const backupScript = path.join(__dirname, '..', 'backup_daily.sh');
                 const res = await runCommand(`bash ${backupScript}`);
                 if (res.success) {
-                    await reply("💾 *백업 완료!* 원격 백업 아카이브가 안전하게 생성되었습니다.");
+                    await reply("💾 *백업 명령 완료.* 백업 파일의 오프사이트 보관과 실제 복원 성공 여부는 별도로 확인해야 합니다.");
                 } else {
                     await reply(`⚠️ 백업 실패:\n${res.output}`);
                 }

@@ -37,3 +37,35 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: |
           python -m unittest discover -s agent-publisher/tests
+
+  bridge-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "agent-publisher/whatsapp-bridge/package-lock.json"
+      - name: Install locked bridge dependencies
+        working-directory: agent-publisher/whatsapp-bridge
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check bridge syntax and authorization tests
+        working-directory: agent-publisher/whatsapp-bridge
+        run: |
+          node --check index.js
+          node --check command_policy.js
+          npm test
+
+  infrastructure-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check shell syntax and Compose configuration
+        run: |
+          bash -n agent-publisher/backup_daily.sh agent-publisher/restore_backup.sh
+          MYSQL_PASSWORD=ci-placeholder MYSQL_ROOT_PASSWORD=ci-placeholder \
+            docker compose -f wordpress/docker-compose.yml config --quiet

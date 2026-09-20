@@ -11,9 +11,15 @@ class DesignerRoutingTests(unittest.TestCase):
     def setUp(self):
         self.designer = DesignerAgent()
 
-    def test_mode_selection_concert_with_poster(self):
+    def test_mode_selection_concert_with_unreviewed_poster(self):
         curated = {"poster_url": "https://example.com/poster.jpg", "title": "임영웅 콘서트"}
         mode = self.designer.select_mode("concert", curated=curated, title="임영웅 콘서트", keyword="콘서트 예매")
+        self.assertEqual(mode, 2)
+
+    def test_mode_selection_concert_with_explicitly_reviewed_poster(self):
+        mode = self.designer.select_mode(
+            "concert", title="임영웅 콘서트", reviewed_poster_url="https://example.com/poster.jpg"
+        )
         self.assertEqual(mode, 4)
 
     def test_mode_selection_concert_without_poster(self):
@@ -96,8 +102,9 @@ class DesignerRoutingTests(unittest.TestCase):
                 title="2026 단독 콘서트 예매",
                 category_name="공연/콘서트 예매",
                 keyword="콘서트",
-                curated={"poster_url": "https://example.com/broken_poster.jpg"},
+                curated={"poster_url": "https://example.com/unreviewed.jpg"},
                 category_key="concert",
+                reviewed_poster_url="https://example.com/broken_poster.jpg",
             )
 
         self.assertTrue(res_path.exists())

@@ -1,6 +1,7 @@
 services:
   db:
-    image: mariadb:10.11
+    # Digest of the amd64 MariaDB image observed on the running server 2026-09-20.
+    image: mariadb@sha256:07c0aaff7396b74cb7975cba78257178d188e30f531a5db2b617c48beef13c41
     container_name: wordpress_db
     restart: always
     environment:
@@ -13,13 +14,16 @@ services:
       - ./mysql_custom.cnf:/etc/mysql/conf.d/custom.cnf:ro
 
   wordpress:
-    image: wordpress:latest
+    # Digest of the amd64 image observed on the running server 2026-09-20.
+    # Update only after verifying a new version and an isolated restore.
+    image: wordpress@sha256:5a93c470ae8220fddf71f6ebe3bc94e615ddc2ae4d9810f795b830fb11c41a17
     container_name: wordpress_app
     restart: always
     depends_on:
       - db
     ports:
-      - "80:80"
+      # Match the live reverse-proxy deployment; do not bypass HTTPS on public port 80.
+      - "127.0.0.1:8080:80"
     environment:
       WORDPRESS_DB_HOST: db:3306
       WORDPRESS_DB_NAME: wordpress

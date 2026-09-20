@@ -12,6 +12,11 @@ CONTAINER_APP="${CONTAINER_APP:-wordpress_app}"
 FINAL_ARCHIVE="${BACKUP_DIR}/bloguito_backup_${TIMESTAMP}.tar.gz"
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+if [ -e "$FINAL_ARCHIVE" ]; then
+    echo "[BACKUP] ERROR: Snapshot already exists; refusing to overwrite it."
+    exit 1
+fi
 
 echo "=================================================="
 echo "[BACKUP] Bloguito Unified Backup Started at: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -45,6 +50,7 @@ fi
 
 # 2. Create isolated staging directory
 STAGING_DIR=$(mktemp -d "${BACKUP_DIR}/staging_${TIMESTAMP}_XXXXXX")
+PARTIAL_ARCHIVE="${STAGING_DIR}/snapshot.tar.gz"
 cleanup() {
     rm -rf "$STAGING_DIR"
 }
@@ -77,14 +83,23 @@ fi
 UPLOADS_SIZE=$(wc -c < "$UPLOADS_ARCHIVE")
 echo "[BACKUP]   ✅ Uploads archive completed ($UPLOADS_SIZE bytes)"
 
-# Component C: Agent Configurations and Runtime Data
-echo "[BACKUP] ⚙️ (3/3) Archiving agent configurations and runtime data..."
+# Component C: WordPress extensions and active theme files from the persistent wp_data volume.
+# MU plugins are optional, but plugins and themes must be readable or the snapshot fails.
+echo "[BACKUP] Archiving WordPress plugins and themes..."
+WP_CONTENT_ARCHIVE="${STAGING_DIR}/wp-content.tar.gz"
+$DOCKER_CMD exec "$CONTAINER_APP" sh -c 'cd /var/www/html/wp-content && test -d plugins && test -d themes && if test -d mu-plugins; then tar -czf - plugins themes mu-plugins; else tar -czf - plugins themes; fi' > "$WP_CONTENT_ARCHIVE" || {
+    echo "[BACKUP] ERROR: WordPress plugin/theme archive failed."
+    exit 1
+}
+test -s "$WP_CONTENT_ARCHIVE" || { echo "[BACKUP] ERROR: Empty WordPress plugin/theme archive."; exit 1; }
+WP_CONTENT_SIZE=$(wc -c < "$WP_CONTENT_ARCHIVE")
+
+# Component D: Non-credential configuration and runtime data.
+echo "[BACKUP] Archiving configuration and runtime data..."
 CONFIGS_ARCHIVE="${STAGING_DIR}/configs.tar.gz"
 CONFIG_STAGING="${STAGING_DIR}/configs_staging"
 mkdir -p "${CONFIG_STAGING}/agent-publisher" "${CONFIG_STAGING}/wordpress"
 
-[ -f "${AGENT_DIR}/config.py" ] && cp "${AGENT_DIR}/config.py" "${CONFIG_STAGING}/agent-publisher/"
-[ -f "${AGENT_DIR}/.env" ] && cp "${AGENT_DIR}/.env" "${CONFIG_STAGING}/agent-publisher/"
 if [ -d "${AGENT_DIR}/data" ]; then
     mkdir -p "${CONFIG_STAGING}/agent-publisher/data"
     cp -r "${AGENT_DIR}/data/"*.json "${CONFIG_STAGING}/agent-publisher/data/" 2>/dev/null || true
@@ -93,14 +108,42 @@ fi
 [ -f "${WORDPRESS_DIR}/docker-compose.yml" ] && cp "${WORDPRESS_DIR}/docker-compose.yml" "${CONFIG_STAGING}/wordpress/"
 [ -f "${WORDPRESS_DIR}/mysql_custom.cnf" ] && cp "${WORDPRESS_DIR}/mysql_custom.cnf" "${CONFIG_STAGING}/wordpress/"
 [ -f "${WORDPRESS_DIR}/uploads.ini" ] && cp "${WORDPRESS_DIR}/uploads.ini" "${CONFIG_STAGING}/wordpress/"
-[ -f "${WORDPRESS_DIR}/.env" ] && cp "${WORDPRESS_DIR}/.env" "${CONFIG_STAGING}/wordpress/"
-
 tar -czf "$CONFIGS_ARCHIVE" -C "$STAGING_DIR" configs_staging
 rm -rf "$CONFIG_STAGING"
 CONFIGS_SIZE=$(wc -c < "$CONFIGS_ARCHIVE")
 echo "[BACKUP]   ✅ Configurations archive completed ($CONFIGS_SIZE bytes)"
 
-# Component D: Generate manifest.json with SHA256 checksums
+# Component E: Credentials and optionally an explicitly selected Nginx configuration tree.
+# This component is never automatically installed during restore.
+echo "[BACKUP] Archiving protected configuration separately..."
+SECRETS_ARCHIVE="${STAGING_DIR}/secrets.tar.gz"
+SECRET_STAGING="${STAGING_DIR}/secrets_staging"
+mkdir -p "${SECRET_STAGING}/agent-publisher" "${SECRET_STAGING}/wordpress"
+[ ! -f "${AGENT_DIR}/config.py" ] || cp "${AGENT_DIR}/config.py" "${SECRET_STAGING}/agent-publisher/"
+[ ! -f "${AGENT_DIR}/.env" ] || cp "${AGENT_DIR}/.env" "${SECRET_STAGING}/agent-publisher/"
+[ ! -f "${WORDPRESS_DIR}/.env" ] || cp "${WORDPRESS_DIR}/.env" "${SECRET_STAGING}/wordpress/"
+if $DOCKER_CMD exec "$CONTAINER_APP" test -f /var/www/html/wp-config.php; then
+    $DOCKER_CMD exec "$CONTAINER_APP" cat /var/www/html/wp-config.php > "${SECRET_STAGING}/wordpress/wp-config.php"
+fi
+if [ -n "${NGINX_CONFIG_DIR:-}" ]; then
+    if [[ "$NGINX_CONFIG_DIR" != /* || ! -d "$NGINX_CONFIG_DIR" ]]; then
+        echo "[BACKUP] ERROR: NGINX_CONFIG_DIR must identify an existing absolute directory."
+        exit 1
+    fi
+    # Nginx sites-enabled commonly holds symlinks; require an operator-prepared
+    # regular-file copy to prevent accidentally following links to private keys.
+    if [ -n "$(find "$NGINX_CONFIG_DIR" -type l -print -quit)" ]; then
+        echo "[BACKUP] ERROR: Nginx snapshot directory contains symlinks; use a reviewed regular-file copy."
+        exit 1
+    fi
+    mkdir -p "${SECRET_STAGING}/nginx"
+    cp -a "$NGINX_CONFIG_DIR"/. "${SECRET_STAGING}/nginx/"
+fi
+tar -czf "$SECRETS_ARCHIVE" -C "$STAGING_DIR" secrets_staging
+rm -rf "$SECRET_STAGING"
+SECRETS_SIZE=$(wc -c < "$SECRETS_ARCHIVE")
+
+# Component F: Generate manifest.json with SHA256 checksums.
 echo "[BACKUP] 📜 Generating manifest.json..."
 MANIFEST_FILE="${STAGING_DIR}/manifest.json"
 
@@ -117,10 +160,12 @@ sha256_file() {
 DB_SHA=$(sha256_file "$DB_ARCHIVE")
 UPLOADS_SHA=$(sha256_file "$UPLOADS_ARCHIVE")
 CONFIGS_SHA=$(sha256_file "$CONFIGS_ARCHIVE")
+WP_CONTENT_SHA=$(sha256_file "$WP_CONTENT_ARCHIVE")
+SECRETS_SHA=$(sha256_file "$SECRETS_ARCHIVE")
 
 cat <<EOF > "$MANIFEST_FILE"
 {
-  "version": "2.0",
+  "version": "3.0",
   "created_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
   "timestamp": "${TIMESTAMP}",
   "components": {
@@ -134,10 +179,20 @@ cat <<EOF > "$MANIFEST_FILE"
       "size_bytes": ${UPLOADS_SIZE},
       "sha256": "${UPLOADS_SHA}"
     },
+    "wp_content": {
+      "file": "wp-content.tar.gz",
+      "size_bytes": ${WP_CONTENT_SIZE},
+      "sha256": "${WP_CONTENT_SHA}"
+    },
     "configs": {
       "file": "configs.tar.gz",
       "size_bytes": ${CONFIGS_SIZE},
       "sha256": "${CONFIGS_SHA}"
+    },
+    "secrets": {
+      "file": "secrets.tar.gz",
+      "size_bytes": ${SECRETS_SIZE},
+      "sha256": "${SECRETS_SHA}"
     }
   }
 }
@@ -146,7 +201,9 @@ echo "[BACKUP]   ✅ manifest.json created"
 
 # 3. Package into final unified snapshot archive
 echo "[BACKUP] 📦 Bundling into final snapshot: $FINAL_ARCHIVE..."
-tar -czf "$FINAL_ARCHIVE" -C "$STAGING_DIR" db.sql.gz uploads.tar.gz configs.tar.gz manifest.json
+tar -czf "$PARTIAL_ARCHIVE" -C "$STAGING_DIR" db.sql.gz uploads.tar.gz wp-content.tar.gz configs.tar.gz secrets.tar.gz manifest.json
+tar -tzf "$PARTIAL_ARCHIVE" >/dev/null
+mv "$PARTIAL_ARCHIVE" "$FINAL_ARCHIVE"
 chmod 600 "$FINAL_ARCHIVE"
 
 FINAL_SIZE=$(ls -lh "$FINAL_ARCHIVE" | awk '{print $5}')
