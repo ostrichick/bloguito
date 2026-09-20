@@ -1,5 +1,8 @@
 # 📢 [Bloguito] 대한민국 생활정보 24 - AI 멀티 에이전트 자동화 블로그
 
+> **현행 검증 결과 (2026-09-20):** 아래 과거 작업 이력의 “100% 검증”, “발행 완료”, “고단가”, “SEO 극대화” 등은 당시 작업자 기록이며 검색성과·사실 정확성의 실측 보증이 아닙니다. 운영 공개 글 12편과 개인정보처리방침 1편을 실제 수정·재조회했습니다. 로컬 단위·회귀 테스트 137개 통과, 통합 백업 생성과 3개 구성요소 SHA256 검증 완료(실제 운영 DB 복구는 시행하지 않음). 현행 사실관계 및 남은 과제는 [2026-09-20 감사·수정 기록](docs/audit-remediation-2026-09-20.md)을 우선 참조합니다.
+
+
 본 디렉터리는 오라클 클라우드(OCI) 인스턴스에 구축된 **워드프레스 및 5대 멀티 에이전트 자율 포스팅 시스템('생활정보 24')**의 핵심 문서 및 프로젝트 저장소입니다.
 
 ---
@@ -16,28 +19,30 @@
 
 ## 🖥️ 서버 접속 및 기본 정보
 
+- **공식 블로그 주소**: `https://lifeinfo24.org` (Let's Encrypt 와일드카드 SSL 적용)
+- **관리자 페이지**: `https://lifeinfo24.org/wp-admin/`
 - **서버 공용 IP**: `<YOUR_ORACLE_SERVER_IP>`
-- **블로그 주소**: `http://<YOUR_ORACLE_SERVER_IP>/`
-- **관리자 페이지**: `http://<YOUR_ORACLE_SERVER_IP>/wp-admin/`
 - **SSH 접속 명령어 (PowerShell)**:
   ```powershell
-  ssh -i "<PATH_TO_SSH_KEY>/ssh-key.key" ubuntu@<YOUR_ORACLE_SERVER_IP>
+  ssh bloguito  # 2026-09-20 확인: Windows 사용자 SSH config의 IdentityFile을 기존 OneDrive 개인키로 지정. 비밀키는 Git에 복사하지 않음
   ```
 
 ---
 
-## 🤖 5대 멀티 에이전트 파이프라인
+## 🤖 자율 멀티 에이전트 & 에디토리얼 파이프라인
 
 ```text
-[1. Radar Agent]      구글 뉴스 RSS 실시간 탐색 및 중복 필터링 (키워드당 2개 버퍼)
+[1. Radar Agent]            구글 뉴스 RSS 및 고단가 검색 브리프 실시간 탐색 & 중복 필터링
        ↓
-[2. Curator Agent]    Protobuf 암호화 링크 디코딩, 본문 추출, NOL 티켓 예매처 능동 가격 발굴
+[2. Curator Agent]          Protobuf 디코딩, 본문 추출(한글 인코딩 보정), NOL 티켓 능동 가격 대조
        ↓
-[3. Copywriter Agent] Gemini 3.6 Flash 기반 팩트 100% 원고 집필 & 내부 링크(Interlinking) 자동 주입
+[3. Editorial Writer Agent] 기본 Gemini 3.5 Flash → (429/503 오류 시) 3.6 Flash → 3.5 Flash Lite. 로컬 호출량만 추정(실제 API 할당량 아님)
        ↓
-[4. Designer Agent]   1번 카드뉴스 인포그래픽 / 2번 4K 실사 스톡+매거진 타이포 배너 자동 교차 생성
+[4. Designer Agent]         대안 1~4 스마트 라우팅 (공식포스터 / 토스타이포 / 실사스톡 / 하이브리드)
        ↓
-[5. Publisher Agent]  워드프레스 포스팅 등록, 특성 썸네일 장착, 내부 링크 색인 자동 누적
+[5. Publisher Agent]        WordPress 임시글(draft) 생성, 썸네일, Rank Math SEO 메타, TOC, 내부링크(공개는 별도 수동 단계)
+       ↓
+[📡 Notifier & WhatsApp]   일일 요약 보고 & WhatsApp 원격 제어 비서 (/status, /list, /publish, /quota)
 ```
 
 ---
@@ -45,7 +50,7 @@
 ## ⏰ 자동화 스케줄 (KST 기준)
 
 - **매일 새벽 04:00**: MariaDB DB + WordPress 미디어 업로드 + 에이전트 설정/런타임 데이터 통합 스냅샷 자동 백업 및 7일 롤링 보관 (`backup_daily.sh`)
-- **매일 아침 08:00**: 3대 카테고리 자율 발행 파이프라인 무인 가동 (`run_daily.sh`)
+- **매일 아침 08:00**: 4대 카테고리 임시글 생성 파이프라인 가동(자동 공개하지 않음) (`run_daily.sh`)
 
 ---
 
@@ -151,7 +156,7 @@ $env:PYTHONPATH=(Resolve-Path './agent-publisher').Path
 ./agent-publisher/.venv/Scripts/python.exe -m unittest discover -s agent-publisher/tests
 ```
 
-2026-09-13 전체 50개 테스트 통과. 외부 API 호출·운영 글 발행 없이 검사했으며 OCI 배포는 별도 작업입니다.
+2026-09-20 로컬 137개 단위·회귀 테스트 통과 (`Ran 137 tests`, 최종 출력 `OK`). 9월 18일 기록은 과거 시점 결과. 외부 API 호출·운영 글 발행 없이 검사했으며 안전한 모의 검증을 포함합니다.
 
 ## 핵심 사실·출처와 원고 대조 (유지보수 4단계)
 

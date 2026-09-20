@@ -4,9 +4,17 @@ import urllib.parse
 from datetime import date, datetime
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
-from config import GEMINI_API_KEY, POSTS_INDEX_FILE
+from config import GEMINI_API_KEY, POSTS_INDEX_FILE, KNOWN_ENTITIES, NOL_ACTIVE_SALE_FILTER_TOKEN
 from agents.temporal_validation import validate_availability
 from agents.fact_validation import render_content, verify_article, verify_temporal_binding
+
+
+# =============================================================================
+# [LEGACY] CopywriterAgent
+# NOTE: The primary production pipeline now uses EditorialWriterAgent
+# (agents.editorial_writer) under docs/EDITORIAL_SYSTEM.md.
+# This legacy module is preserved for backward compatibility and test coverage.
+# =============================================================================
 
 
 class BlogPostSchema(BaseModel):
@@ -43,12 +51,7 @@ class CopywriterAgent:
 
         entity = ""
         # 1. 잘 알려진 주요 트로트/대형 가수 우선 매칭
-        known_singers = [
-            "무명전설", "임영웅", "이찬원", "영탁", "나훈아", "정동원", "장민호",
-            "김호중", "송가인", "양지은", "박서진", "진해성", "안성훈", "손태진",
-            "아이유", "성시경", "싸이", "데이식스", "헤드윅", "지킬앤하이드"
-        ]
-        for singer in known_singers:
+        for singer in KNOWN_ENTITIES:
             if singer in title or singer in kw:
                 entity = singer
                 break
@@ -67,11 +70,9 @@ class CopywriterAgent:
             entity = clean_kw if len(clean_kw) >= 2 else kw
 
         encoded = urllib.parse.quote(entity)
-        # NOL 티켓 판매중 필터 토큰 적용 (마감/종료 공연 배제, 실구매 가능 콘서트만 노출)
-        active_sale_filter = "Iiw0JwQnH3WmtXGyJ5rdjj3dkKg0FXd382IRSpxwfSefDnXepYDTL8Fbf88Yu1xaNDouUSnvHowixDLzJK8W8b8oBZfFTgLW5uxL8G3ULvpZtka7hxVmXkMUAtZAWLYFxnpmSA7fdJ4cOuenY9A0QODtkZVxKtNV"
         return {
             "entity": entity,
-            "nol_search": f"https://nol.yanolja.com/discovery/list/search/PRODUCT_CATEGORY_ENTERTAINMENT?filter={active_sale_filter}&q={encoded}",
+            "nol_search": f"https://nol.yanolja.com/discovery/list/search/PRODUCT_CATEGORY_ENTERTAINMENT?filter={NOL_ACTIVE_SALE_FILTER_TOKEN}&q={encoded}",
             "interpark_search": f"https://tickets.interpark.com/search?q={encoded}",
             "yes24_search": f"http://ticket.yes24.com/Search/SearchResult.aspx?SearchText={encoded}",
             "gov24_search": f"https://www.gov.kr/portal/service/serviceExSearch?searchTotalQ={encoded}",
@@ -164,8 +165,17 @@ class CopywriterAgent:
             if facts["status"] != "verified":
                 print(f"[CopywriterAgent] ⏸ 원고·근거 불일치: {facts['reasons']}")
                 return None
-            # Publish only the escaped canonical markup, never model-supplied attributes.
-            article["content"] = render_content(manifest)
+            # Publish only the escaped canonical markup, prepending senior-friendly reader widget
+            senior_widget = """<div class="senior-reader-controls" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 16px;margin:16px 0 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span style="font-size:14px;font-weight:700;color:#1e293b;">👓 어르신 편한 읽기:</span>
+    <button onclick="(function(){var c=document.querySelector('.entry-content')||document.body;var s=parseInt(window.getComputedStyle(c).fontSize)||16;c.style.fontSize=(s+2)+'px'})()" style="padding:4px 10px;background:#ffffff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;color:#0f172a;">글자 크게 (+)</button>
+    <button onclick="(function(){var c=document.querySelector('.entry-content')||document.body;var s=parseInt(window.getComputedStyle(c).fontSize)||16;c.style.fontSize=Math.max(14,s-2)+'px'})()" style="padding:4px 10px;background:#ffffff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;color:#0f172a;">글자 작게 (-)</button>
+  </div>
+  <button id="tts-read-btn" onclick="(function(){if(window.speechSynthesis.speaking){window.speechSynthesis.cancel();document.getElementById('tts-read-btn').innerText='🔊 기사 읽어주기';return}var t=(document.querySelector('.entry-content')||document.body).innerText;var u=new SpeechSynthesisUtterance(t.slice(0,3000));u.lang='ko-KR';u.rate=0.9;u.onend=function(){document.getElementById('tts-read-btn').innerText='🔊 기사 읽어주기'};window.speechSynthesis.speak(u);document.getElementById('tts-read-btn').innerText='⏹ 읽기 중지'})()" style="padding:5px 12px;background:#059669;color:#ffffff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;display:flex;align-items:center;gap:5px;">🔊 기사 읽어주기</button>
+</div>
+"""
+            article["content"] = senior_widget + render_content(manifest)
             article["fact_manifest"] = manifest
             article["fact_verification"] = facts
             verification = curated_item.get("ticket_verification", {})

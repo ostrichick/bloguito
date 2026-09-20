@@ -6,6 +6,7 @@ from googlenewsdecoder import new_decoderv1
 from agents.ticket_validation import extract_expectation, parse_product, select_product
 from agents.temporal_validation import extract_evidence, validate_availability
 from agents.fact_validation import snapshot, build_manifest
+from config import KNOWN_ENTITIES, NOL_ACTIVE_SALE_FILTER_TOKEN
 
 
 class CuratorAgent:
@@ -75,9 +76,7 @@ class CuratorAgent:
         if not expected or not expected.get("entity") or not expected.get("region") or len(expected.get("event_dates", [])) != 1:
             return None
         encoded = urllib.parse.quote(query)
-        # 현재 판매중(ENTERTAINMENT_SALE_STATUS_SALE) 필터 토큰 적용
-        active_sale_filter = "Iiw0JwQnH3WmtXGyJ5rdjj3dkKg0FXd382IRSpxwfSefDnXepYDTL8Fbf88Yu1xaNDouUSnvHowixDLzJK8W8b8oBZfFTgLW5uxL8G3ULvpZtka7hxVmXkMUAtZAWLYFxnpmSA7fdJ4cOuenY9A0QODtkZVxKtNV"
-        search_url = f"https://nol.yanolja.com/discovery/list/search/PRODUCT_CATEGORY_ENTERTAINMENT?filter={active_sale_filter}&q={encoded}"
+        search_url = f"https://nol.yanolja.com/discovery/list/search/PRODUCT_CATEGORY_ENTERTAINMENT?filter={NOL_ACTIVE_SALE_FILTER_TOKEN}&q={encoded}"
         try:
             resp = requests.get(search_url, headers=self.headers, timeout=10)
             if resp.status_code != 200:
@@ -146,13 +145,8 @@ class CuratorAgent:
         self.last_ticket_verification = {"status": "not_applicable"}
         if cat_key == "concert" or any(w in title or w in kw for w in ["콘서트", "티켓", "예매", "NOL", "인터파크"]):
             self.last_ticket_verification = {"status": "needs_review", "reason": "article_identity_incomplete_or_ambiguous"}
-            known_entities = [
-                "무명전설", "임영웅", "이찬원", "영탁", "나훈아", "정동원", "장민호",
-                "김호중", "송가인", "양지은", "박서진", "진해성", "안성훈", "손태진",
-                "아이유", "성시경", "싸이", "데이식스", "헤드윅", "지킬앤하이드"
-            ]
             target_entity = None
-            for cand in known_entities:
+            for cand in KNOWN_ENTITIES:
                 if cand in title or cand in kw:
                     target_entity = cand
                     break

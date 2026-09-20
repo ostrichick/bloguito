@@ -36,6 +36,11 @@ class DesignerRoutingTests(unittest.TestCase):
         mode = self.designer.select_mode("life-health", curated=curated, title="환절기 건강 관리 팁", keyword="건강 관리")
         self.assertEqual(mode, 3)
 
+    def test_mode_selection_tax(self):
+        curated = {"poster_url": None, "title": "2026 연말정산 환급금 조회 및 소득공제"}
+        mode = self.designer.select_mode("tax", curated=curated, title="2026 연말정산 환급금 조회", keyword="연말정산 환급금")
+        self.assertEqual(mode, 2)
+
     def test_font_loader_returns_valid_font(self):
         font_bold = _load_font(24, bold=True)
         font_reg = _load_font(18, bold=False)

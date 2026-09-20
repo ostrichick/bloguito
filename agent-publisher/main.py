@@ -8,6 +8,7 @@ from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent
 from agents.designer import DesignerAgent
 from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import sync_inventory
+from notifier import notify_published, notify_error, notify_pipeline_summary
 
 
 def run_pipeline(category_keys: list, limit_per_cat: int = 1):
@@ -22,7 +23,14 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     designer = DesignerAgent()
     publisher = PublisherAgent()
 
-    total_published = 0
+    stats = {
+        "categories": [],
+        "candidates": 0,
+        "published": 0,
+        "held": 0,
+        "errors": 0,
+        "held_reasons": []
+    }
 
     for cat_key in category_keys:
         if cat_key not in CATEGORIES:
@@ -30,6 +38,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
             continue
 
         cat_info = CATEGORIES[cat_key]
+        stats["categories"].append(cat_info["name"])
         print(f"\n📂 [{cat_info['name']}] 카테고리 작업 시작")
 
         # 1. 탐색 (Radar) - 키워드당 2개 후보 수집하여 팩트 검증 탈락 시 예비 버퍼 확보
@@ -38,6 +47,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
             print(f"ℹ️ 새로운 소식이 없습니다.")
             continue
 
+        stats["candidates"] += len(candidates)
         processed_for_this_cat = 0
         for raw_item in candidates:
             if processed_for_this_cat >= limit_per_cat:
@@ -48,12 +58,16 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 curated = curator.curate(raw_item)
                 if not curated:
                     print("[Pipeline] ⏩ 기사 원문 추출 실패/품질 미달로 다음 기사를 탐색합니다.")
+                    stats["held"] += 1
+                    stats["held_reasons"].append(f"[{cat_info['name']}] 원문 추출 실패/품질 미달")
                     continue
 
                 # 3. 인포머티브 딥다이브 원고 집필 (Copywriter)
                 article = copywriter.write_article(curated)
                 if not article:
                     print(f"[Pipeline] ⏩ 검증 미완료/시점 만료/부적격 소식은 발행하지 않고 다음 후보를 탐색합니다.")
+                    stats["held"] += 1
+                    stats["held_reasons"].append(f"[{cat_info['name']}] 팩트/기간/중복 검증 보류")
                     time.sleep(2)
                     continue
 
@@ -73,22 +87,32 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 radar.save_to_history(raw_item.get("link", ""), curated.get("link", ""))
 
                 processed_for_this_cat += 1
-                total_published += 1
-                print(f"✅ 처리 완료 ({processed_for_this_cat}/{limit_per_cat}): Post #{post_id} - {article['title']}")
+                stats["published"] += 1
+                print(f"🎉 처리 완료 ({processed_for_this_cat}/{limit_per_cat}): Post #{post_id} - {article['title']}")
+                notify_published(article['title'], cat_info['name'], f"Post #{post_id}", used_model=article.get('used_model'))
 
             except Exception as e:
                 print(f"❌ 작업 중 에러 발생: {e}")
+                stats["errors"] += 1
+                stats["held_reasons"].append(f"[{cat_info['name']}] 오류: {str(e)[:30]}")
+                notify_error(f"{cat_info['name']} 발행 단계", str(e))
 
     print("\n" + "=" * 60)
-    print(f"🎉 총 {total_published}건의 썸네일 포함 포스팅 작업이 성공적으로 완료되었습니다!")
+    print(f"🎉 총 {stats['published']}건의 포스팅 작업 완료 (탐색: {stats['candidates']}건, 보류: {stats['held']}건, 에러: {stats['errors']}건)")
     print("=" * 60)
+
+    # 파이프라인 일일 종합 리포트 발송 (사일런트 실패 방지)
+    try:
+        notify_pipeline_summary(stats)
+    except Exception as e:
+        print(f"⚠️ 요약 리포트 발송 실패: {e}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="생활정보 24 멀티 에이전트 발행기")
     parser.add_argument(
         "--category",
-        choices=["concert", "welfare", "life-health", "all"],
+        choices=["concert", "welfare", "life-health", "tax", "all"],
         default="all",
         help="발행할 카테고리 선택 (기본: all)",
     )

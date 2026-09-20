@@ -31,8 +31,16 @@ backups/
 # Runtime state (examples remain versioned)
 agent-publisher/data/history.json
 agent-publisher/data/published_posts.json
+agent-publisher/data/draft_posts.json
 agent-publisher/data/designer_state.json
 agent-publisher/data/wordpress_inventory.json
 agent-publisher/data/wordpress_inventory.tmp
 agent-publisher/data/editorial_runs/
 agent-publisher/data/.editorial-publish.lock/
+
+# Node & WhatsApp Bridge
+node_modules/
+**/node_modules/
+**/auth_info_baileys/
+**/whatsapp-bridge/*.png
+agent-publisher/data/quota_usage.json

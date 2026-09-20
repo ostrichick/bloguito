@@ -84,6 +84,12 @@ for COMP in db uploads configs; do
     echo "  ✅ Component '$COMP' checksum verified."
 done
 
+# Integrity-only mode never modifies WordPress, database, files or services.
+if [ "$AUTO_CONFIRM" = "--verify-only" ]; then
+    echo "[RESTORE] VERIFY_ONLY_OK: manifest and three SHA256 checks passed; no restore performed."
+    exit 0
+fi
+
 # Confirmation prompt unless --yes
 if [ "$AUTO_CONFIRM" != "--yes" ]; then
     echo ""

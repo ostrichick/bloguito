@@ -1,5 +1,8 @@
 # [생활정보 24] 프로젝트 전체 컨텍스트 & 인계 핸드오버 가이드 (Project Handover Document)
 
+> **현행 검증 결과 (2026-09-20):** 아래 과거 작업 이력의 “100% 검증”, “발행 완료”, “고단가”, “SEO 극대화” 등은 당시 작업자 기록이며 검색성과·사실 정확성의 실측 보증이 아닙니다. 운영 공개 글 12편과 개인정보처리방침 1편을 실제 수정·재조회했습니다. 로컬 단위·회귀 테스트 137개 통과, 통합 백업 생성과 3개 구성요소 SHA256 검증 완료(실제 운영 DB 복구는 시행하지 않음). 현행 사실관계 및 남은 과제는 [2026-09-20 감사·수정 기록](docs/audit-remediation-2026-09-20.md)을 우선 참조합니다.
+
+
 > **안내**: 본 문서는 **Claude**, **ChatGPT** 등 다른 AI 모델이나 다른 개발 환경으로 작업을 이전할 때, 이 문서 하나만 복사해서 프롬프트에 넣으면 이전의 모든 작업 내역, 인프라, 아키텍처, 코드베이스, 비즈니스 전략을 100% 즉시 이해할 수 있도록 작성된 종합 인계서입니다. **앞으로의 모든 중요 변경 사항도 이 문서의 최하단 [7. 작업 변경 이력(Changelog)]에 지속적으로 누적 기록됩니다.**
 
 ---
@@ -32,7 +35,7 @@
 - **로컬 SSH 비밀키 경로**: `<PATH_TO_SSH_KEY>/ssh-key.key`
 - **접속 명령어**:
   ```powershell
-  ssh -i "<PATH_TO_SSH_KEY>/ssh-key.key" ubuntu@<YOUR_ORACLE_SERVER_IP>
+  ssh bloguito  # 사용자 ~/.ssh/config에 기존 개인키 지정, 2026-09-20 무인 인증 성공
   ```
 - **인프라 튜닝 내역**:
   - **가상 메모리(Swap)**: 1GB 물리 램 한계 극복을 위해 `4GB Swap` 생성 및 `/etc/fstab` 영구 마운트 완료
@@ -46,18 +49,25 @@
 - **컨테이너 목록**:
   - 웹 컨테이너: `wordpress_app` (WordPress Latest + Apache PHP 8.3)
   - DB 컨테이너: `wordpress_db` (MariaDB 10.11)
+- **운영 도메인 및 접속 정보**:
+  - **공식 사이트 주소**: `https://lifeinfo24.org` (Let's Encrypt 와일드카드 SSL 인증서 적용, Host Nginx 리버스 프록시)
+  - **관리자 페이지**: `https://lifeinfo24.org/wp-admin/`
 - **데이터베이스 정보**:
   - 호스트: `db:3306` | DB명: `wordpress` | 사용자: `wordpress`
   - 패스워드: `<YOUR_WP_DB_PASSWORD>` (Root: `<YOUR_WP_ROOT_PASSWORD>`)
 - **워드프레스 최적화 설정**:
-  - **테마**: `GeneratePress` (초경량 초고속 1위 블로그 테마 적용)
-  - **플러그인**: `Rank Math SEO`, `WP Super Cache`
+  - **테마**: `GeneratePress` (초경량 초고속 1위 블로그 테마 적용, 커스텀 E-E-A-T 푸터 및 작성자 메타 제거)
+  - **플러그인**: `Rank Math SEO`, `WP Super Cache` (정적 HTML 캐싱 가동), `WP Statistics` (v14.16, 관리자 제외 및 봇 필터링 완료)
   - **시간대 / 주소 구조**: `Asia/Seoul` (KST), 고유주소 구조 `/%postname%/`
   - **PHP 설정**: 테마/대용량 이미지 업로드를 위한 `upload_max_filesize = 64M`, `post_max_size = 64M`
-- **카테고리 구성**:
+- **카테고리 구성 (4대 핵심 카테고리)**:
   - `ID 2`: **공연/콘서트 예매** (slug: `concert`) - *기본 카테고리*
   - `ID 3`: **정부 복지/지원금** (slug: `welfare`)
   - `ID 4`: **생활/건강 정보** (slug: `life-health`)
+  - `ID 102`: **생활 세금/절세 정보** (slug: `tax`) - *고단가 High-CPC 타깃 신설*
+- **마스터 대표 콘텐츠 (Pillar Content)**:
+  - **포스트 #101**: `2026년 기초연금 수급자격 및 소득인정액 모의계산 완벽 가이드` (4,200자급, 홈 상단 `Sticky Post` 고정)
+  - **포스트 #139**: `2026 잠자는 정부 환급금 5종 통합 조회 및 비대면 신청 총정리` (4,000자급 대백과형 가이드)
 - **애드센스 승인 필수 정적 페이지**:
   - `/about/` (사이트 소개)
   - `/privacy-policy/` (개인정보처리방침)
@@ -66,80 +76,112 @@
 
 ---
 
-## 4. 5대 자율 멀티 에이전트 시스템 (`~/agent-publisher`)
+## 4. 자율 멀티 에이전트 & 에디토리얼 시스템 (`~/agent-publisher`)
 
 오라클 서버 내 독립 Python 패키지(`/home/ubuntu/agent-publisher`)로 가동 중입니다.
 
 ```mermaid
-flowchart LR
-    A["1. Radar Agent<br/>(Google News RSS)"] --> B["2. Curator Agent<br/>(팩트 추출 & 스크랩)"]
-    B --> C["3. Copywriter Agent<br/>(Gemini 3.6 Flash 원고)"]
-    C --> D["🎨 4. Designer Agent<br/>(고화질 썸네일 AI 생성)"]
-    D --> E["5. Publisher Agent<br/>(WP 포스트 + 썸네일 결합)"]
+flowchart TD
+    A["1. Radar Agent<br/>(Google News RSS & Briefs)"] --> B["2. Curator Agent<br/>(팩트 추출, 인코딩 보정, NOL 티켓 대조)"]
+    B --> C["3. Editorial Writer Agent<br/>(Gemini 3.6 Flash ↔ 3.5 Flash Lite 캐스케이딩)"]
+    C --> D["📊 Quota Tracker<br/>(KST 16:00 리셋 잔여량 추적)"]
+    C --> E["🎨 4. Designer Agent<br/>(대안 1~4 스마트 비주얼 엔진)"]
+    E --> F["5. Publisher Agent<br/>(WP 포스트 + Rank Math SEO + TOC + 내부링크)"]
+    F --> G["📡 Notifier & WhatsApp Bridge<br/>(원격 상태/발행 제어 & 일일 요약 보고)"]
 ```
 
 ### 디렉토리 구조
 ```text
 /home/ubuntu/agent-publisher/
 ├── agents/
-│   ├── radar.py       # 최신 뉴스 실시간 탐색 & 중복 필터
-│   ├── curator.py     # 기사 본문 추출 & 불필요한 광고 제거
-│   ├── copywriter.py  # Gemini 3.6 Flash 기반 딥다이브 원고 집필 (새창 버튼 의무화)
-│   ├── designer.py    # AI 비주얼 엔진 기반 고해상도 대표 썸네일 자율 디자인
-│   └── publisher.py   # WP-CLI를 통한 포스트 생성 및 Featured Image 자동 등록
+│   ├── radar.py            # 최신 뉴스 실시간 탐색 & 중복 필터
+│   ├── curator.py          # 기사 본문 추출, 인코딩 자동 보정 & NOL 티켓 능동 발굴
+│   ├── copywriter.py       # (레거시/폴백) 원고 집필 에이전트
+│   ├── editorial.py        # 에디토리얼 렌더러 (TOC, 3초 요약 카드, STEP 앵커, 내부링크)
+│   ├── editorial_writer.py # 지능형 모델 캐스케이딩 기반 에디토리얼 원고 집필기
+│   ├── designer.py         # 대안 1~4 스마트 라우팅 멀티 비주얼 엔진
+│   ├── publisher.py        # WP-CLI, Rank Math SEO 메타 주입, 대표 썸네일 등록
+│   └── quota_tracker.py    # KST 16:00 기준 Gemini 일일 모델별 호출 한도 추적기
+├── whatsapp-bridge/        # @whiskeysockets/baileys 기반 왓츠앱 원격 제어 비서 (66MB 점유)
 ├── data/
-│   └── history.json   # 이미 발행한 기사 URL 영구 저장 (중복 방지)
-├── config.py          # 카테고리, 키워드, 환경 설정
-├── main.py            # 5대 에이전트 파이프라인 통합 실행기
-├── run_daily.sh       # 크론 스케줄러 배치 스크립트
-├── .env               # Gemini API Key 및 POST_STATUS 설정
-└── venv/              # Python 가상환경 (Pillow 포함)
+│   ├── history.json        # 이미 발행한 기사 URL 영구 저장 (중복 방지)
+│   ├── published_posts.json# 발행된 글 색인 (내부 링크 추천 풀)
+│   ├── draft_posts.json    # 임시글 색인
+│   ├── quota_usage.json    # 실시간 API 사용량 및 잔여 할당량 데이터
+│   └── search_briefs.json  # 고단가 High-CPC 키워드 브리프 풀
+├── editorial_cli.py        # 원고 검토, 임시글 조회(`list-drafts`), 승격(`promote-draft`) CLI
+├── notifier.py             # 텔레그램/디스코드/왓츠앱 일일 요약 알림 모듈
+├── editorial_policy.json   # 공통 편집 정책 및 검증 임계값 설정
+├── config.py               # 4대 카테고리, 키워드, 환경 설정 일원화
+├── main.py                 # 멀티 에이전트 파이프라인 통합 실행기
+├── run_daily.sh            # 크론 스케줄러 배치 스크립트 (로그 자동 로테이션)
+├── backup_daily.sh         # DB+업로드+설정 3대 핵심 자산 일일 통합 압축 백업기
+├── restore_backup.sh       # SHA256 사전 검증 기반 원클릭 복구 도구
+├── .env                    # Gemini API Key, POST_STATUS, 사이트 설정
+└── venv/                   # Python 3.12 가상환경
 ```
 
-### 핵심 에이전트별 구현 특징
+### 핵심 에이전트 및 컴포넌트별 구현 특징
 1. **Radar Agent (`agents/radar.py`)**:
-   - Google News RSS(대한민국, 한국어)를 카테고리별 핵심 키워드로 실시간 파싱.
+   - Google News RSS(대한민국, 한국어) 및 사전 승인된 고단가 검색 브리프(`data/search_briefs.json`) 실시간 파싱.
    - `data/history.json`을 조회하여 이미 발행했던 URL은 100% 스킵.
 2. **Curator Agent (`agents/curator.py`)**:
-   - **Google News Protobuf 암호화 URL 디코딩 (`googlenewsdecoder`)**: 구글 뉴스 RSS의 consent/리다이렉션 장벽을 돌파하여 실제 언론사 원문 URL을 완벽하게 디코딩.
-   - BeautifulSoup을 사용해 언론사 웹페이지에서 메뉴, 광고, 푸터를 걷어내고 순수 본문 텍스트 추출.
-   - **본문 150자 미만 즉시 폐기 규칙**: 본문 추출이 실패하거나 150자 미만인 기사는 헤드라인 날조 방지를 위해 즉시 `None`으로 폐기.
-   - **🎯 공식 예매처(NOL 티켓) 실시간 능동 수집 엔진**: 보도자료에 가격이 없더라도 공연/가수명을 추출하여 NOL 티켓 플랫폼을 실시간 자동 검색, **실제 단독 상품 상세페이지 URL(`https://nol.yanolja.com/ticket/products/{id}`)과 공식 좌석별 티켓 가격(R석, S석, A석 등)을 능동 발굴하여 원고에 자동 결합**.
-3. **Copywriter Agent (`agents/copywriter.py`)**:
-   - **Google Gemini Flash 최신 모델 듀얼 페일오버 (`gemini-flash-latest` ↔ `gemini-3.5-flash`)**: 429 한도 및 503 일시적 장애 자동 대응.
-   - **현재 시점(오늘 날짜) 엄격 주입 & 시점 유효성 검증**: 오늘 날짜(`2026년 09월 12일`)를 기준으로 기사 내 모든 일정이 과거면 `is_valid_and_active: false`로 즉시 거부(Drop).
-   - **공식 예매처 직결 링크 & 확정 가격 반영**: 능동 수집된 공식 단독 상품 URL과 좌석별 확정 가격을 표(Table), 3줄 요약, FAQ에 100% 명확히 기재.
-   - **원문 팩트 100% 엄수 (할루시네이션 원천 차단)**: 원문에 없는 가상의 티켓 가격(R석 5만원 등) 및 무료 지자체 행사에 인터파크 허위 티켓 링크 삽입을 엄격히 금지. 무료 행사는 전석 무료 명시 및 주최기관 공고 연결.
-   - **미검증 템플릿 발행 전면 폐기**: API 오류 시 과거 만료글이 템플릿으로 우회 발행되는 취약점을 차단하여, 팩트 검증이 통과되지 않은 글은 일체 발행하지 않음.
-   - `infolspot.com` 벤치마크: [한눈에 보는 요약 박스] + [개요] + [상세 일정/가격 표(Table)] + [STEP 1~5 가이드] + [교통/신청 경로] + [체크리스트] + [FAQ] + [공식 문의처] 완벽 구조화.
-   - **새창 링크 필수화 & 필터링된 딥링크 의무화**: 공식 예매처/접수처는 반드시 `target="_blank"` 속성 및 입체형 CSS 버튼 적용. 특히 검색 목록 링크는 판매종료된 과거 티켓이 섞이지 않도록 "현재 판매중" 필터 파라미터를 반드시 결합하여 제공.
-   - **🔗 자동 내부 링크 (Internal Interlinking) 추천 엔진**: `data/published_posts.json` 색인을 조회하여 동일/유관 카테고리의 기존 발행글을 본문 하단에 [🔗 함께 보면 유익한 생활 정보 추천] 카드로 자동 삽입. 체류 시간(Dwell Time) 증대 및 SEO/애드센스 가산점 극대화.
-   - 인위적 호칭 전면 배제, 담백한 '여러분/호칭 생략' 톤 유지.
-4. **🎨 Designer Agent (`agents/designer.py`) (Dual Engine v3)**:
-   - **1번 모드 (카드뉴스형 인포그래픽)**: Gemini Flash가 핵심 헤드라인과 3줄 개조식 요약을 추출하고, Pillow(PIL)와 나눔스퀘어 볼드 폰트로 1200x675 초고해상도 카드뉴스 썸네일 자율 렌더링.
-   - **2번 모드 (고화질 실사 스톡 사진 + 매거진 타이포그래피 배너)**: 4K 실사 사진 위에 하단 다크 그라데이션 오버레이 및 나눔스퀘어 폰트로 카테고리 뱃지와 핵심 타이틀을 합성한 에디토리얼 매거진형 썸네일 자동 생성.
-   - **자동 교차(A/B 번갈아가기) 시스템**: `data/designer_state.json`을 통해 1번과 2번 모드가 글 발행 시마다 번갈아가며 자동 교차 적용.
+   - **Google News Protobuf 암호화 URL 디코딩 (`googlenewsdecoder`)**: 언론사 원문 URL을 완벽하게 디코딩.
+   - BeautifulSoup을 사용해 메뉴, 광고를 제거하고 순수 본문 추출. EUC-KR/CP949 한글 깨짐 자동 방지(`apparent_encoding`).
+   - **본문 150자 미만 즉시 폐기 규칙**: 헤드라인 날조 방지.
+   - **NOL 티켓 능동 대조**: 공연/가수명을 추출하여 NOL 단독 상품 상세 URL 및 공식 좌석별 티켓 가격 능동 발굴 결합.
+3. **Editorial Writer Agent (`agents/editorial_writer.py`) & Quota Tracker**:
+   - **지능형 모델 캐스케이딩**:
+     - **실제 기본 선호**: `editorial_policy.json`의 `gemini-3.5-flash`. `EDITORIAL_WRITER_MODEL`·`EDITORIAL_REVIEWER_MODEL` 환경변수로 덮어쓰기 가능. 아래 수치는 로컬 가정이며 실제 API 제한을 조회하지 않음
+     - **실제 폴백 순서**: 선호 모델 → `gemini-3.6-flash` → `gemini-3.5-flash-lite`; 429/503에 다음 모델로 전환. 로컬 설정 한도 20/500은 제공자 실시간 할당량이 아님
+     - 429 한도 또는 503 혼잡 시 즉각 백업 모델로 자동 전환하여 글 생성을 중단 없이 완수.
+   - **일일 할당량 추적기 (`agents/quota_tracker.py`)**: Google AI Studio 일일 리셋 시점(KST 16:00)을 기준으로 모델별 잔여량을 `data/quota_usage.json`에 정밀 기록.
+   - **공통 편집 규약 (`docs/EDITORIAL_SYSTEM.md`) 100% 준수**:
+     - 독자가 3초 안에 핵심을 파악할 수 있는 **[3초 핵심요약 카드]** 두괄식 배치.
+     - 메뉴 이동 경로를 명시한 **[STEP 1~5 실행 절차]** 및 점프 링크 앵커(`id="step-N"`).
+     - 원문 근거가 명확한 수치만 보존하고 계산/날조/인위적 호칭('어르신', '독자' 등) 엄격 배제.
+     - 공식 출처 기관 검증 배지 및 Q&A 카드형 FAQ 구성.
+4. **🎨 Designer Agent (`agents/designer.py`) (4대 멀티 비주얼 엔진)**:
+   - 주제와 카테고리에 따라 **[대안 1: 클린 공식 포스터]**, **[대안 2: 토스풍 모바일 타이포 카드]**, **[대안 3: 키워드 매칭 실사스톡]**, **[대안 4: 하이브리드 포스터+브랜드 프레임]**을 지능적 자율 라우팅.
+   - 외부 이미지 실패 시 대안 2(토스풍 타이포 카드)로 안전 폴백(Fallback).
 5. **Publisher Agent (`agents/publisher.py`)**:
-   - 완성된 원고를 워드프레스에 포스팅하고, Designer Agent가 만든 이미지를 `wp media import --post_id={id} --featured_image`로 연결하여 **대표 썸네일(Featured Image)로 자동 장착**.
-   - 성공적으로 발행된 포스트 정보를 `data/published_posts.json`에 영구 기록하여 후속 글들의 내부 링크 추천 풀로 자동 누적.
+   - KST aware ISO 타임존 포맷 적용, 대표 썸네일 자동 등록.
+   - **Rank Math SEO 메타 자동 주입**: 포커스 키워드(`rank_math_focus_keyword`), 설명(`rank_math_description`) 자동 설정.
+   - **TOC & 내부 링크(Interlinking)**: 경량 목차 자동 생성 및 `published_posts.json` 기반 하단 추천 카드 결합.
+6. **WhatsApp 원격 제어 비서 (`agent-publisher/whatsapp-bridge/`)**:
+   - `@whiskeysockets/baileys` 웹소켓 기반 스마트폰 원격 제어 데몬 (`whatsapp-bridge.service`).
+   - 명령어: `/status`(서버 상태), `/list`(임시글 목록), `/publish <ID>`(즉시 정식 발행), `/backup`(즉시 DB 백업), `/quota`(실시간 사용량이 아닌 로컬 추정치), `/help`.
 
 ---
 
 ## 5. 실행 및 제어 명령어 레퍼런스
 
-### 1) 수동 포스팅 실행
+### 1) 수동 포스팅 및 초안 관리 CLI
 ```bash
 # 서버 접속 후
 cd ~/agent-publisher
 
-# 특정 카테고리 1개 발행 (concert / welfare / life-health)
-./venv/bin/python main.py --category concert --limit 1
+# 특정 카테고리 임시글 1개 생성 (concert / welfare / life-health / tax)
+./venv/bin/python main.py --category tax --limit 1
 
-# 모든 카테고리 전수 1개씩 썸네일 포함 자동 발행
+# 모든 카테고리별 검토 후 임시글 1개씩 생성 (자동 공개 아님)
 ./venv/bin/python main.py --category all --limit 1
+
+# 워드프레스 내 대기 중인 임시글(Draft) 목록 열람
+./venv/bin/python editorial_cli.py list-drafts
+
+# 개별 콘텐츠를 사람이 검토한 뒤에만 실행; 최신 공식 원문이 변경되었거나 레거시 초안이면 거부
+./venv/bin/python editorial_cli.py promote-draft <REVIEWED_DRAFT_ID> --confirm-publish
 ```
 
-### 2) 자동화 크론(Cron) 스케줄러 등록 현황 (KST 기준)
+### 2) WhatsApp 원격 제어 명령어 (스마트폰 메신저)
+* `/status` (또는 `상태`): 서버 메모리, 디스크, Uptime, 도메인 연결 상태 확인
+* `/list` (또는 `초안`, `목록`): 현재 발행 대기 중인 임시글 목록 열람
+* `/publish <ID>` (또는 `/발행 <ID>`): 작성 근거·검토 시점·초안 내용이 모두 유효할 때만 사용자 명령으로 공개
+* `/quota` (또는 `사용량`): 로컬 가정 한도를 이용한 추정 호출량 표시. 실제 API 잔여 할당량 아님
+* `/backup` (또는 `백업`): DB·미디어·설정 통합 백업 트리거
+
+### 3) 자동화 크론(Cron) 스케줄러 등록 현황 (KST 기준)
 ```bash
 crontab -l
 # 1. 매일 새벽 4시 DB+업로드+설정 통합 스냅샷 자동 백업 및 7일 롤링 보관
@@ -149,13 +191,17 @@ crontab -l
 0 8 * * * /home/ubuntu/agent-publisher/run_daily.sh
 ```
 
-### 3) 수동 백업 및 원클릭 복구(Restore) 명령어
+### 4) 수동 백업 및 원클릭 복구(Restore) 명령어
 ```bash
 # 1. 수동 통합 백업 실행 (db.sql.gz + uploads.tar.gz + configs.tar.gz + manifest.json)
 ./agent-publisher/backup_daily.sh
 
 # 2. 원클릭 복구 실행 (SHA256 체크섬 사전 검증 후 대화형 복구)
 ./agent-publisher/restore_backup.sh /home/ubuntu/backups/bloguito_backup_20260913_040001.tar.gz
+
+# 3. 로컬 PC로 원격 오라클 백업 파일 동기화 (Windows PowerShell)
+python scripts/sync_backups.py
+```
 
 # 3. 비대화형 자동 승인 복구
 ./agent-publisher/restore_backup.sh /home/ubuntu/backups/bloguito_backup_20260913_040001.tar.gz --yes
@@ -210,24 +256,41 @@ crontab -l
 | **2026-09-13** | **유지보수 7단계: 백업 범위 확대(DB+업로드+설정) 및 원클릭 복구 구축** | 기존 DB 단독 백업에서 MariaDB(`db.sql.gz`), WordPress 미디어 업로드(`uploads.tar.gz`), 에이전트 설정/런타임 데이터(`configs.tar.gz`), 무결성 메타데이터(`manifest.json`, SHA256)를 단일 스냅샷(`bloguito_backup_*.tar.gz`)으로 묶는 완전 통합 백업 시스템(`backup_daily.sh`) 구축. SHA256 체크섬 사전 검증 기반 원클릭 복구 도구(`restore_backup.sh`) 신설. 단위/회귀 테스트(`test_backup_restore.py`) 3종 추가하여 총 31개 테스트 100% 통과 확인. |
 | **2026-09-13** | **유지보수 5단계 & 6단계: 색인 분리, 마감 글 추천 제외, 스크립트 정리 및 회귀 테스트 확장** | 초안과 공개 글 색인(`published_posts.json` vs `draft_posts.json`) 분리 구현. `expires_at < today` 또는 `is_closed == True`인 과거 마감 글을 본문 내부 추천 카드에서 배제하는 필터링 엔진 탑재. 과거 핫픽스/일회성 스크립트 12종을 `scripts/archive/`로 안전 격리 아카이빙. 신규 단위/회귀 테스트(`test_indexing_and_interlinking.py`) 추가하여 총 35개 테스트 100% 통과 확인. |
 | **2026-09-14** | **🎨 스마트 썸네일 멀티 비주얼 엔진 개편 (대안 1~4 통합)** | 저품질 AI 그림을 대체하기 위해 글의 주제·카테고리·수집 팩트에 따라 **[대안 1: 클린 공식 포스터]**, **[대안 2: 토스풍 모바일 타이포 카드]**, **[대안 3: 키워드 매칭 실사스톡]**, **[대안 4: 하이브리드 포스터+브랜드 프레임]**을 지능적으로 자율 라우팅하는 4대 비주얼 엔진 구축. NOL 티켓 상세 `og:image` 및 언론사 대표 이미지 크롤링 연동. 외부 이미지 다운로드 실패 시 대안 2(토스 타이포)로 무중단 안전 폴백 및 크로스 플랫폼(Windows/Linux) 폰트 로더 적용. 회귀 테스트(`test_designer_routing.py`) 10종 추가하여 총 77개 테스트 전수 100% 통과 확인. |
+| **2026-09-15** | **도메인 연결 & HTTPS(SSL) 완비** | 독립 도메인 `lifeinfo24.org` 연결, 호스트 Nginx 리버스 프록시 및 Let's Encrypt 와일드카드 인증서 발급(certbot.timer 자동 갱신), HTTP->HTTPS 301 리다이렉트 및 WordPress siteurl/home SSL 동기화 완료 |
+| **2026-09-15** | **블로그 UI & E-E-A-T 푸터 개편** | 1인 미디어 환경에 맞춰 작성자 메타 제거, 사이트 전역 댓글 비활성화(`closed`) 및 '최신 댓글' 위젯 제거, 사이드바 카테고리 바로가기 블록 추가, 애드센스 승인 필수 3대 정책 링크가 포함된 전문 미디어형 커스텀 푸터 적용 |
+| **2026-09-15** | **검색엔진(네이버/구글) 소유권 인증 & GA4 연동** | 네이버 서치어드바이저 HTML 태그 및 파일 검증 완료, 구글 서치콘솔 메타태그 주입, WordPress 테마 `<head>` 최상단 GA4 `gtag.js` 연동 훅 탑재 (`ga4_measurement_id` 옵션 연동) |
+| **2026-09-15** | **🎨 브랜드 파비콘(Favicon) 제작 및 공식 장착** | '생활정보 24' 브랜드 정체성을 담은 4대 파비콘 후보 디자인 후 최상위 가독성의 [후보 2: 시그니처 24 & 골든 스타]를 선정. 512x512 PNG(ID 134), 멀티 해상도 `/favicon.ico`, 32x32/180x180/192x192 반응형 아이콘을 워드프레스 코어 `site_icon`으로 공식 장착 완료 |
+| **2026-09-16** | **📊 워드프레스 대시보드 내장 방문자 통계(`WP Statistics`) 구축** | 관리자 화면(`wp-admin`)에서 즉시 실시간/일별 방문자 수, 유입 검색어, 인기 글 순위를 열람할 수 있도록 `wp-statistics`(v14.16) 플러그인 설치 및 활성화 완료 |
+| **2026-09-16** | **⚙️ [Step 1] 시스템 정합성 강화 & 초안 관리 CLI 신설** | `publisher.py` 타임존을 KST aware ISO 포맷으로 통일, `notifier.py` 절대경로 기반 .env 로딩 보정, `editorial_cli.py`에 `list-drafts` 및 `promote-draft` 공식 액션 추가 및 2편(#101, #125) 안전 공개 승격 |
+| **2026-09-16** | **🧹 [Step 2] 레거시 정리, 설정 일원화 & GitHub Actions CI 구축** | `KNOWN_ENTITIES` 및 `NOL_ACTIVE_SALE_FILTER_TOKEN` 매직스트링을 `config.py`로 집중 일원화. `copywriter.py`에 `@deprecated` 공식 마킹. `designer.py` 미사용 레거시 함수 5종 제거. 임시 테스트 스크립트 4종 `archive/scripts/` 격리. `.gitignore`에 `draft_posts.json` 보완. `.github/workflows/test.yml` 추가. 로컬 108개, 서버 41개 테스트 100% 통과 확인 |
+| **2026-09-16** | **📡 [Step 3] 파이프라인 모니터링 강화 & 오프사이트 백업 구축** | 사일런트 실패를 방지하는 `notify_pipeline_summary` 일일 요약 리포트(수집/발행/보류/에러 집계) 탑재. 원격 오라클 서버의 MariaDB 백업본을 로컬 PC로 원클릭 자동 동기화하는 `scripts/sync_backups.py` 및 PowerShell 런처 구축 완료 |
+| **2026-09-16** | **🚀 AI SEO & 트래픽 증대 3대 핵심 전략 통합 (TOC, 내부링크, Rank Math)** | 외부 벤치마크(AI SEO 및 트래픽 증대 5대 전략)를 Bloguito 에디토리얼 파이프라인에 완벽 통합: ①`editorial.py` 내 경량 네이티브 목차(TOC) 및 점프 링크 앵커(`id="step-N"`) 자동 생성(구글 사이트링크 및 체류시간 극대화), ②`published_posts.json` 기반 하단 내부 링크 추천 카드 자동 결합(자가 링크 및 만료 글 제외), ③`publisher.py` 내 WP-CLI를 통한 Rank Math SEO 메타데이터(`rank_math_focus_keyword`, `rank_math_description`) 자동 주입 완료. 관련 단위 테스트 32개 전수 100% 통과 확인. |
+| **2026-09-16** | **💎 고단가(High CPC) 복지·의료 키워드 브리프 풀 3종 확충** | 애드센스 고수익화 및 E-E-A-T 필러 콘텐츠 강화를 위해 `data/search_briefs.json`에 고단가 키워드 3종 신설: ①`senior-implant-insurance-guide`(65세 이상 임플란트 건강보험 본인부담금 기준, 에버그린), ②`long-term-care-grade-guide`(노인장기요양보험 등급 신청 방법 및 혜택, 에버그린), ③`national-pension-silver-loan`(국민연금 실버론 긴급자금 대출 자격 및 금리, 2026-12-31 유효). 에디토리얼 정책 규칙 및 단위 테스트 무결성 통과 확인. |
+| **2026-09-16** | **📱 WhatsApp 원격 제어 비서 시스템 구축** | `@whiskeysockets/baileys` 웹소켓 클라이언트 기반 스마트폰 원격 제어 데몬(`whatsapp-bridge.service`, 66MB) 가동. `/status`, `/list`, `/publish <ID>`, `/backup`, `/quota`, `/help` 지원 |
+| **2026-09-16** | **🏛️ 고단가 [생활 세금/절세 정보] 카테고리(ID 102) 신설 & 필러 콘텐츠 구축** | 금융·절세 분야 고단가 카테고리(`term_id: 102`, `slug: tax`) 신설 및 4,000자급 마스터 필러 콘텐츠 2편 구축: [#101] 기초연금 수급자격(홈 상단 고정 `Sticky`), [#139] 정부 환급금 5종 통합 조회 발행 |
+| **2026-09-16** | **⚡ 지능형 모델 캐스케이딩 & 일일 할당량 추적기(Quota Tracker) 탑재** | 기본 `gemini-3.5-flash` 사용, 429/503일 때 `gemini-3.6-flash` 다음 `gemini-3.5-flash-lite`로 전환. 추적기는 성공 호출을 UTC 날짜별로 기록하고 로컬 가정 한도로 추정할 뿐 실제 API 잔여량·리셋시각을 확인하지 못함(`agents/quota_tracker.py`, `data/quota_usage.json`) 및 알림 연동 |
+| **2026-09-18** | **📊 WP Statistics 방문자 통계 최적화 & 봇 필터링 적용** | 허수 트래픽 왜곡 방지를 위해 관리자 계정 추적 제외 활성화, 일반 크롤러 기본 필터 유지, 위장 스캐너 봇 차단을 위한 로봇 보기 임계값(`50`) 및 악성 IP(`161.33.0.234`) 제외 목록 등록 |
+| **2026-09-18** | **🌐 AI 에이전트 전역 웹 네트워크 접근 와일드카드(`read_url(*)`) 등록** | 에이전트의 외부 공공기관 및 레퍼런스 웹페이지 탐색 시 도메인 승인 팝업 차단 방지를 위해 Antigravity 설정(`~/.gemini/config/config.json`)에 `read_url(*)` 와일드카드 권한 영구 등록 |
+| **2026-09-18** | **🧪 121개 단위·회귀 테스트 100% 통과 & 다중 AI 인계 문서 최신화** | Quota Tracker, WhatsApp Bridge, 에디토리얼 시스템, 비주얼 라우팅 등 총 121개 단위/회귀 테스트 전수 통과 확인 및 다른 AI(Claude, ChatGPT, Codex 등) 협업을 위한 인계 가이드(`PROJECT_HANDOVER.md`, `README.md`, `GEMINI.md`, `.clinerules`) 전면 동기화 |
 
-## 8. 협업용 현재 작업 상태 (2026-09-14)
+## 8. 협업용 현재 작업 상태 (2026-09-18 기준)
 
 - **완료 범위:**
-  - **1단계**: 비밀정보 분리, `.gitignore`, `.env.example`, `requirements.txt` 완료.
-  - **2단계**: NOL 티켓 후보의 공연명·지역·날짜 일치 검증 (`ticket_validation.py`) 완료.
-  - **3단계**: 날짜·신청 기간·판매 상태를 LLM 응답과 별도로 코드에서 결정론적 검사 (`temporal_validation.py`) 완료.
-  - **4단계**: 모든 핵심 사실과 출처 URL 구조화 및 원고 일치 검증 (`fact_validation.py`) 완료.
-  - **5단계**: 초안/공개 글 색인 분리(`published_posts.json` vs `draft_posts.json`) 및 마감 글 내부 추천 제외 필터링 완료.
-  - **6단계**: 과거 핫픽스/임시 스크립트 12종 정리(`scripts/archive/`) 및 전방위 회귀 테스트 구축 (총 77개 테스트 전수 100% 통과).
-  - **7단계**: 백업 범위 확대 (MariaDB + WordPress 업로드 미디어 + 에이전트 설정/데이터 스냅샷 번들링, `manifest.json` SHA256 체크섬, `restore_backup.sh` 복구 도구 신설) 완료.
-  - **비주얼 엔진 혁신**: 대안 1~4 스마트 라우팅 및 렌더러(하이브리드 포스터, 토스 타이포, 키워드 스톡) 탑재 완료.
-  - **추가 개선**: 검색 의도 브리프 큐레이션(`search_intent.py`) 및 중복 주제 사전 차단(`sync_wordpress_inventory.py`) 탑재.
-  - **로컬 인프라**: Python 3.12.10, Git Bash, WSL 2 Ubuntu-24.04, Docker Desktop 4.90.0 정상 가동 확인. 에디터 관리자 권한 자동 승격 레지스트리 등록 완료.
+  - **인프라 & 도메인 완비**: 오라클 OCI 인스턴스, 독립 도메인 `https://lifeinfo24.org` 연결, Let's Encrypt SSL(HTTPS) 와일드카드 발급 및 자동 갱신(`certbot.timer`), Nginx 리버스 프록시 연동 완료.
+  - **워드프레스 최적화 & 보안**: `GeneratePress` 초경량 테마, E-E-A-T 전문 푸터(3대 필수 약관 링크), 브랜드 파비콘(ID 134), `Rank Math SEO`, `WP Super Cache` 정적 캐싱, `WP Statistics` 봇/관리자 필터링, `xmlrpc.php` 403 차단, 네이버/구글 서치콘솔 및 GA4 연동 완료.
+  - **카테고리 4종 체제 완성**: 공연/콘서트(ID 2), 복지/지원금(ID 3), 생활/건강(ID 4), 생활 세금/절세 정보(ID 102).
+  - **대표 필러 콘텐츠 2편 탑재**: [#101] 2026 기초연금 수급자격 완벽 가이드 (홈 상단 고정 `Sticky`), [#139] 2026 정부 환급금 5종 통합 조회.
+  - **에디토리얼 자율 파이프라인**: 팩트 검증, 3초 요약 카드, STEP 절차, 출처 보존, 점프 링크 목차(TOC), 내부 추천 링크 카드, Rank Math 메타 자동 주입.
+  - **지능형 모델 캐스케이딩**: 1순위 `gemini-3.6-flash` ➡️ 2순위 `gemini-3.5-flash-lite`(500 RPD) 자동 페일오버, KST 16:00 리셋 기준 할당량 추적기(`agents/quota_tracker.py`).
+  - **스마트 멀티 비주얼 엔진**: 4대 대안(클린 공식 포스터, 토스풍 타이포 카드, 키워드 실사스톡, 하이브리드 포스터) 자율 라우팅 및 무중단 폴백.
+  - **원격 모니터링 & 백업**: WhatsApp 원격 제어 비서(`whatsapp-bridge.service`), 일일 요약 알림(`notifier.py`), DB+업로드+설정 통합 백업(`backup_daily.sh`), 원클릭 복구(`restore_backup.sh`), 로컬 PC 오프사이트 동기화(`scripts/sync_backups.py`).
+  - **테스트 및 안정성**: 2026-09-18 기준 121개 통과 기록. 2026-09-20 로컬 137개 테스트 통과; 운영 서버 적용 여부와 테스트 범위는 감사 기록 참고.
 - **운영 서버 안전성 및 격리 상태:**
-  - 운영 오라클 클라우드 인스턴스(`<YOUR_ORACLE_SERVER_IP>`), 실제 WordPress 데이터, MariaDB, API 키 등은 로컬 설정 및 개발 작업 중 100% 격리 보존되었으며 무단 변경 없음.
-- **남은 주요 작업:**
-  - **8단계**: 도메인(가비아 등) 구입 및 Nginx/Certbot을 통한 HTTPS 연결, 공개 운영 개시.
+  - 운영 오라클 서버(`<YOUR_ORACLE_SERVER_IP>`), 실제 WordPress 데이터, MariaDB, API 키 등은 완벽 격리 보호 중.
+- **남은 주요 운영 과제:**
+  - **구글 애드센스 정식 심사 제출 & 승인 대기**: 마스터 필러 글 2편 및 정적 페이지(About/Privacy/Contact)가 완비되었으므로 정식 검토 요청 및 승인 모니터링.
+  - **에버그린 60% / 시즌형 40% 발행 운영**: 크론 스케줄(매일 아침 8시) 및 WhatsApp 원격 발행을 통한 고품질 글 누적.
+  - **검색엔진 색인 및 트래픽 순위 모니터링**: 구글 서치콘솔 및 WP Statistics를 통한 오가닉 유입 추이 관찰.
 
 ## 9. 로컬 실행 환경 실측 결과 (2026-09-13, Codex)
 

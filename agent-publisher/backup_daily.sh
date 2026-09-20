@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077 # database, uploads and credentials in configs must never be world-readable
 
 # Configurable paths with defaults
 BACKUP_DIR="${BACKUP_DIR:-/home/ubuntu/backups}"
@@ -66,7 +67,8 @@ echo "[BACKUP]   ✅ DB dump completed ($DB_SIZE bytes)"
 echo "[BACKUP] 🖼️ (2/3) Archiving WordPress media uploads (wp-content/uploads)..."
 UPLOADS_ARCHIVE="${STAGING_DIR}/uploads.tar.gz"
 $DOCKER_CMD exec "$CONTAINER_APP" tar -czf - -C /var/www/html/wp-content uploads > "$UPLOADS_ARCHIVE" 2>/dev/null || {
-    tar -czf "$UPLOADS_ARCHIVE" -T /dev/null
+    echo "[BACKUP] ERROR: Media archive failed; refusing to create an incomplete backup."
+    exit 1
 }
 if [ ! -s "$UPLOADS_ARCHIVE" ]; then
     echo "[BACKUP] ❌ Media uploads archive failed or empty!"
@@ -145,6 +147,7 @@ echo "[BACKUP]   ✅ manifest.json created"
 # 3. Package into final unified snapshot archive
 echo "[BACKUP] 📦 Bundling into final snapshot: $FINAL_ARCHIVE..."
 tar -czf "$FINAL_ARCHIVE" -C "$STAGING_DIR" db.sql.gz uploads.tar.gz configs.tar.gz manifest.json
+chmod 600 "$FINAL_ARCHIVE"
 
 FINAL_SIZE=$(ls -lh "$FINAL_ARCHIVE" | awk '{print $5}')
 echo "[BACKUP] ✅ Backup completed successfully: $FINAL_ARCHIVE ($FINAL_SIZE)"

@@ -4,13 +4,17 @@ import json
 import os
 import random
 import re
+import sys
 import tempfile
 import urllib.request
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from config import GEMINI_API_KEY
 
-STATE_FILE = Path(__file__).parent.parent / "data" / "designer_state.json"
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 
 def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -46,6 +50,51 @@ def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont | Im
     except Exception:
         return ImageFont.load_default()
 
+
+def split_title(text: str, max_first_line: int = 22) -> list[str]:
+    """문맥(쉼표, 및, 괄호, 어절 균형)에 따라 제목을 1~2줄로 자연스럽게 분할 (말줄임표 절대 금지)"""
+    text = text.strip()
+    if len(text) <= max_first_line:
+        return [text]
+
+    # 1. 쉼표 기준 분할
+    if ", " in text:
+        parts = text.split(", ", 1)
+        if 10 <= len(parts[0]) <= 28 and len(parts[1]) <= 34:
+            return [parts[0] + ",", parts[1]]
+
+    # 2. ' 및 ' 기준 분할
+    if " 및 " in text:
+        idx = text.find(" 및 ")
+        before = text[:idx].strip()
+        after = text[idx + 1:].strip()
+        if 12 <= len(before) <= 24 and len(after) <= 30:
+            return [before, after]
+
+    # 3. 괄호 기준 분할
+    if " (" in text:
+        parts = text.split(" (", 1)
+        if 15 <= len(parts[0]) <= 32 and len(parts[1]) <= 32:
+            return [parts[0], "(" + parts[1]]
+
+    # 4. 어절 단위 최적 중간 분할
+    words = text.split()
+    best_split = len(words) // 2
+    min_diff = 999
+    for i in range(1, len(words)):
+        l1 = " ".join(words[:i])
+        l2 = " ".join(words[i:])
+        if len(l1) > 28:
+            continue
+        diff = abs(len(l1) - len(l2))
+        if diff < min_diff:
+            min_diff = diff
+            best_split = i
+    l1 = " ".join(words[:best_split])
+    l2 = " ".join(words[best_split:])
+    return [l1, l2] if l2 else [l1]
+
+
 # 고화질(4K) 검증된 테마별 실사 스톡 사진 라이브러리 (Unsplash CDN 직결)
 STOCK_PHOTOS = {
     "concert": [
@@ -68,6 +117,13 @@ STOCK_PHOTOS = {
         "photo-1506126613408-eca07ce68773",  # 맑은 아침 건강 요가/스트레칭
         "photo-1518611012118-696072aa579a",  # 야외 피트니스 및 활력
         "photo-1540420773420-3366772f4999",  # 신선한 웰빙 건강 식단
+    ],
+    "tax": [
+        "photo-1554224155-6726b3ff858f",  # 세금 계산기 및 서류
+        "photo-1554224154-26032ffc0d07",  # 세무 신고 서류 및 펜
+        "photo-1559526324-4b87b5e36e44",  # 재정 분석 및 절세 계획
+        "photo-1579621970563-ebec7560ff3e",  # 세액공제 및 환급 저축
+        "photo-1450133064473-71024230f91b",  # 금융 자산 및 세금 안내
     ],
 }
 
@@ -119,34 +175,19 @@ class DesignerAgent:
 
         # 3. 생활/건강 카테고리
         if category_key == "life-health":
-            # 수치나 명확한 대상이 있는 정보는 대안 2(토스 타이포)
-            if any(w in search_target for w in ["무료", "환급", "대상", "자격", "검진", "기준", "요금제", "접종"]):
+            # 수치나 명확한 대상/의료·비상 정보는 대안 2(토스 타이포)
+            if any(w in search_target for w in ["무료", "환급", "대상", "자격", "검진", "기준", "요금제", "접종", "병원", "약국", "응급", "진료", "의료", "비상", "소아", "연휴", "명절"]):
                 return 2
             # 일상 관리나 생활 가이드는 감성 실사스톡(대안 3)
             return 3
 
+        # 4. 생활 세금/절세 카테고리
+        if category_key == "tax" or any(w in search_target for w in ["세금", "절세", "연말정산", "종합소득세", "자동차세", "환급금", "소득공제", "세액공제"]):
+            # 세금/환급 정보는 환급액, 공제 항목, 신청 기한이 핵심이므로 토스풍 타이포 카드(대안 2)가 최상
+            return 2
+
         # 기본값: 신뢰도 높은 토스풍 타이포 카드 (대안 2)
         return 2
-
-    def _get_next_mode(self) -> int:
-        """레거시 호환용 순환 모드 조회"""
-        last_mode = 2
-        try:
-            if STATE_FILE.exists():
-                with open(STATE_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    last_mode = data.get("last_mode", 2)
-        except Exception:
-            pass
-
-        next_mode = 1 if last_mode == 2 else 2
-        try:
-            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump({"last_mode": next_mode}, f)
-        except Exception:
-            pass
-        return next_mode
 
     # =========================================================================
     # 대안 4: 하이브리드 (공식 포스터 + 블로그 인증 배지 & 티켓팅 띠지)
@@ -216,14 +257,17 @@ class DesignerAgent:
             alpha = int(240 * ((y - scrim_y) / (height - scrim_y)))
             t_draw.line([(0, y), (width, y)], fill=(5, 10, 20, alpha))
 
-        font_title = _load_font(34, bold=True)
-        font_sub = _load_font(22, bold=False)
+        lines = split_title(title.strip())
+        max_l = max(len(l) for l in lines)
+        if len(lines) == 1:
+            font_title = _load_font(34 if max_l <= 24 else 30, bold=True)
+            t_draw.text((45, height - 120), lines[0], font=font_title, fill=(255, 255, 255))
+        else:
+            font_title = _load_font(28 if max_l <= 24 else 25, bold=True)
+            t_draw.text((45, height - 138), lines[0], font=font_title, fill=(255, 255, 255))
+            t_draw.text((45, height - 104), lines[1], font=font_title, fill=(255, 255, 255))
 
-        clean_title = title.strip()
-        if len(clean_title) > 32:
-            clean_title = clean_title[:31] + "..."
-        t_draw.text((45, height - 125), clean_title, font=font_title, fill=(255, 255, 255))
-
+        font_sub = _load_font(21, bold=False)
         sub_items = []
         if curated and curated.get("ticket_prices"):
             sub_items.append(f"티켓 가격: {curated['ticket_prices']}")
@@ -236,7 +280,8 @@ class DesignerAgent:
             sub_items.append("일정 및 예매 성공 팁")
 
         sub_text = "  ·  ".join(sub_items)
-        t_draw.text((45, height - 65), f"✓ {sub_text}", font=font_sub, fill=(147, 197, 253))
+        t_draw.ellipse([45, height - 60, 53, height - 52], fill=(147, 197, 253))
+        t_draw.text((60, height - 66), sub_text, font=font_sub, fill=(147, 197, 253))
 
         final_img = Image.alpha_composite(base.convert("RGBA"), top_bar).convert("RGB")
         final_img.save(output_path, "JPEG", quality=95)
@@ -256,25 +301,57 @@ class DesignerAgent:
         """군더더기 없는 배경 위에 핵심 수치와 자격 체크리스트를 극대화한 현대적 타이포 카드"""
         width, height = 1200, 675
         curated = curated or {}
+        combined_text = f"{title} {keyword} {category_name}"
 
-        if "공연" in category_name or "콘서트" in category_name:
+        # 0. 카테고리 및 주제별 테마 색상 & 태그 라벨 결정
+        if "공연" in category_name or "콘서트" in category_name or any(w in combined_text for w in ["콘서트", "티켓", "예매", "뮤지컬"]):
             bg_start = (18, 16, 42)
             bg_end = (34, 24, 60)
             badge_bg = (245, 158, 11)
             accent_col = (251, 191, 36)
             tag_label = "2026 티켓예매"
-        elif "건강" in category_name or "생활" in category_name:
-            bg_start = (10, 32, 38)
-            bg_end = (18, 52, 58)
+        elif any(w in combined_text for w in ["통행료", "고속도로", "하이패스", "교통"]):
+            bg_start = (12, 28, 46)
+            bg_end = (20, 48, 76)
             badge_bg = (14, 165, 233)
             accent_col = (56, 189, 248)
-            tag_label = "생활·건강 정보"
-        else:
+            tag_label = "2026 교통·명절 정보"
+        elif any(w in combined_text for w in ["병원", "약국", "응급", "진료", "의료", "달빛어린이"]):
+            bg_start = (8, 36, 40)
+            bg_end = (16, 56, 62)
+            badge_bg = (13, 148, 136)
+            accent_col = (45, 212, 191)
+            tag_label = "2026 비상진료 안내"
+        elif "세금" in category_name or "절세" in category_name or any(w in combined_text for w in ["재산세", "세금", "절세", "세액공제"]):
+            bg_start = (6, 32, 28)
+            bg_end = (12, 54, 46)
+            badge_bg = (16, 185, 129)
+            accent_col = (52, 211, 153)
+            tag_label = "2026 세무·절세 가이드"
+        elif any(w in combined_text for w in ["환급금", "미환급금"]):
+            bg_start = (10, 30, 44)
+            bg_end = (18, 50, 72)
+            badge_bg = (14, 165, 233)
+            accent_col = (56, 189, 248)
+            tag_label = "2026 정부 환급금"
+        elif any(w in combined_text for w in ["근로장려금", "자녀장려금", "장려금"]):
+            bg_start = (10, 26, 50)
+            bg_end = (18, 46, 84)
+            badge_bg = (59, 130, 246)
+            accent_col = (96, 165, 250)
+            tag_label = "2026 근로장려금"
+        elif "복지" in category_name or any(w in combined_text for w in ["기초연금", "바우처", "지원금"]):
             bg_start = (10, 24, 52)
             bg_end = (18, 44, 88)
             badge_bg = (59, 130, 246)
             accent_col = (52, 211, 153)
             tag_label = "2026 정부지원금"
+        else:
+            bg_start = (12, 28, 44)
+            bg_end = (20, 46, 70)
+            badge_bg = (14, 165, 233)
+            accent_col = (56, 189, 248)
+            tag_label = "생활정보 24 공식 가이드"
 
         base = Image.new("RGB", (width, height))
         draw = ImageDraw.Draw(base)
@@ -288,7 +365,7 @@ class DesignerAgent:
             draw.line([(0, y), (width, y)], fill=(r, g, b))
 
         # 2. 모던한 카드 쉘
-        margin_x, margin_y = 60, 45
+        margin_x, margin_y = 60, 42
         card_w, card_h = width - (margin_x * 2), height - (margin_y * 2)
 
         card_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -308,16 +385,15 @@ class DesignerAgent:
         draw = ImageDraw.Draw(base)
 
         # 3. 폰트 세팅
-        font_badge = _load_font(22, bold=True)
+        font_badge = _load_font(21, bold=True)
         font_brand = _load_font(20, bold=False)
-        font_callout = _load_font(24, bold=False)
-        font_title = _load_font(44, bold=True)
-        font_highlight = _load_font(38, bold=True)
-        font_bullet = _load_font(26, bold=False)
+        font_callout = _load_font(23, bold=False)
+        font_highlight = _load_font(34, bold=True)
+        font_bullet = _load_font(25, bold=False)
 
         # 4. 상단 배지 바
         pad_x = margin_x + 50
-        pad_y = margin_y + 40
+        pad_y = margin_y + 36
 
         badge_text = f"  {tag_label}  "
         bbox = font_badge.getbbox(badge_text)
@@ -328,66 +404,154 @@ class DesignerAgent:
         draw.text((pad_x + 8, pad_y + 3), badge_text, font=font_badge, fill=(255, 255, 255))
         draw.text((margin_x + card_w - 180, pad_y + 6), "생활정보 24", font=font_brand, fill=(160, 180, 205))
 
-        # 5. 서브 콜아웃
-        callout_y = pad_y + bh + 25
-        callout_text = "공식 기준에 따른 핵심 요약 가이드"
-        if "공연" in category_name:
-            callout_text = "공식 예매처 티켓 오픈 및 일정 안내"
-        elif "복지" in category_name:
-            callout_text = "지원 대상자 및 신청 방법 필수 확인"
-        draw.text((pad_x, callout_y), callout_text, font=font_callout, fill=(180, 200, 220))
+        # 5. 서브 콜아웃 (curated 최우선, 없으면 맥락별 정밀 fallback)
+        callout_y = pad_y + bh + 20
+        if curated.get("callout"):
+            callout_text = curated["callout"]
+        elif any(w in combined_text for w in ["통행료", "고속도로", "하이패스", "교통"]):
+            callout_text = "국토교통부·한국도로공사 공식 명절 특별대책"
+        elif any(w in combined_text for w in ["병원", "약국", "응급", "진료", "의료", "달빛어린이"]):
+            callout_text = "응급의료포털(E-Gen) 및 비상진료 공식 가이드"
+        elif "공연" in category_name or "콘서트" in category_name:
+            callout_text = "공식 예매처 티켓 오픈 및 관람 일정 안내"
+        elif "세금" in category_name or "절세" in category_name or any(w in combined_text for w in ["재산세", "세금포인트"]):
+            callout_text = "행정안전부 위택스·국세청 홈택스 공식 기준 가이드"
+        elif any(w in combined_text for w in ["환급금", "미환급금"]):
+            callout_text = "행정안전부·국세청 잠자는 돈 찾기 공식 통합 가이드"
+        elif any(w in combined_text for w in ["근로장려금", "자녀장려금"]):
+            callout_text = "국세청 홈택스 근로·자녀장려금 공식 심사 기준"
+        elif "복지" in category_name or any(w in combined_text for w in ["기초연금", "지원금"]):
+            callout_text = "보건복지부 복지로 공식 수급 자격 요건 안내"
+        else:
+            callout_text = "공식 주관처 최신 기준 핵심 요약 가이드"
 
-        # 6. 메인 타이틀
-        title_y = callout_y + 35
-        clean_title = title.strip()
-        if len(clean_title) > 26:
-            clean_title = clean_title[:25] + "..."
-        draw.text((pad_x, title_y), clean_title, font=font_title, fill=(255, 255, 255))
+        draw.text((pad_x, callout_y), callout_text, font=font_callout, fill=(180, 205, 230))
 
-        # 7. 핵심 수치 강조 박스
-        stat_box_y = title_y + 65
-        stat_box_h = 75
+        # 6. 메인 타이틀 (말줄임표 절대 금지! 1~2줄 스마트 래핑)
+        title_y = callout_y + 32
+        title_lines = split_title(title.strip())
+        max_line_len = max(len(l) for l in title_lines)
+
+        if len(title_lines) == 1:
+            font_size = 40 if max_line_len <= 20 else 36
+            font_title = _load_font(font_size, bold=True)
+            draw.text((pad_x, title_y), title_lines[0], font=font_title, fill=(255, 255, 255))
+            stat_box_y = title_y + 58
+        else:
+            if max_line_len <= 22:
+                font_size = 33
+                line_height = 42
+            elif max_line_len <= 28:
+                font_size = 30
+                line_height = 39
+            else:
+                font_size = 27
+                line_height = 36
+
+            font_title = _load_font(font_size, bold=True)
+            for i, line in enumerate(title_lines):
+                draw.text((pad_x, title_y + (i * line_height)), line, font=font_title, fill=(255, 255, 255))
+            stat_box_y = title_y + (len(title_lines) * line_height) + 18
+
+        # 7. 핵심 수치 강조 박스 (curated 최우선, 없으면 맥락별 수치 매칭)
+        stat_box_h = 70
         stat_box_w = card_w - 100
 
         draw.rounded_rectangle(
             [pad_x, stat_box_y, pad_x + stat_box_w, stat_box_y + stat_box_h],
             radius=12,
-            fill=(0, 0, 0, 80),
-            outline=(*accent_col, 100),
+            fill=(0, 0, 0, 90),
+            outline=(*accent_col, 110),
             width=1,
         )
 
-        money_match = re.search(r"(\d+만\s*\d*원?|\d+,\d+원|\d+만원|최대\s*[\d,]+원)", f"{title} {curated.get('ticket_prices', '')}")
-        if money_match:
-            stat_text = f"★ 핵심 혜택: {money_match.group(1)} 지원/오픈"
-        elif "공연" in category_name and curated.get("ticket_prices"):
-            stat_text = f"★ 좌석 가격: {curated['ticket_prices']}"
+        if curated.get("stat_text"):
+            stat_text = curated["stat_text"]
         else:
-            stat_text = "★ 2026년 최신 기준 반영 및 온라인 간편 신청"
+            money_match = re.search(r"(\d+만\s*\d*원?|\d+,\d+원|\d+만원|최대\s*[\d,]+원)", f"{title} {curated.get('ticket_prices', '')}")
+            if money_match:
+                stat_text = f"★ 핵심 혜택: {money_match.group(1)} 지원/환급"
+            elif any(w in combined_text for w in ["통행료", "고속도로", "하이패스"]):
+                stat_text = "★ 전국 고속도로 통행료 100% 전면 면제"
+            elif any(w in combined_text for w in ["병원", "약국", "응급", "진료", "의료", "달빛어린이"]):
+                stat_text = "★ 응급의료포털(E-Gen) 전국 실시간 비상진료 조회"
+            elif any(w in combined_text for w in ["재산세"]):
+                stat_text = "★ 위택스·카카오페이 간편납부 및 분할납부 지원"
+            elif any(w in combined_text for w in ["환급금", "미환급금"]):
+                stat_text = "★ 잠자는 정부 환급금 원스톱 비대면 통합 조회"
+            elif any(w in combined_text for w in ["근로장려금", "자녀장려금"]):
+                stat_text = "★ 최대 330만원 지급 (가구 유형별 산정)"
+            elif "공연" in category_name and curated.get("ticket_prices"):
+                stat_text = f"★ 좌석 가격: {curated['ticket_prices']}"
+            elif "세금" in category_name or "절세" in category_name:
+                stat_text = "★ 국세청 홈택스·정부24 비대면 원스톱 조회"
+            else:
+                stat_text = "★ 2026년 최신 공식 기준 반영 완벽 총정리"
 
-        draw.text((pad_x + 25, stat_box_y + 16), stat_text, font=font_highlight, fill=accent_col)
+        draw.text((pad_x + 22, stat_box_y + 15), stat_text, font=font_highlight, fill=accent_col)
 
-        # 8. 체크리스트 3개 항목
-        bullets_y = stat_box_y + stat_box_h + 30
-        bullets = [
-            "자격 요건 및 지원 대상자 기준 확인",
-            "정부24 및 공식 주관처 간편 신청",
-            "필수 제출 서류 및 유의사항 총정리",
-        ]
-        if "공연" in category_name:
+        # 8. 체크리스트 3개 항목 (curated 최우선, 없으면 맥락별 정밀 fallback)
+        bullets_y = stat_box_y + stat_box_h + 24
+        if curated.get("bullets") and isinstance(curated["bullets"], list) and len(curated["bullets"]) >= 3:
+            bullets = curated["bullets"][:3]
+        elif any(w in combined_text for w in ["통행료", "고속도로", "하이패스"]):
+            bullets = [
+                "연휴 기간 전면 면제 적용 일정 및 시간 확인",
+                "일반차로(통행권) 및 하이패스 정상 통과 방법",
+                "민자고속도로 및 지자체 유료도로 적용 여부",
+            ]
+        elif any(w in combined_text for w in ["병원", "약국", "응급", "진료", "의료", "달빛어린이"]):
+            bullets = [
+                "응급의료포털(E-Gen) 실시간 문 여는 병의원·약국 찾기",
+                "소아 야간 진료를 위한 달빛어린이병원 안내",
+                "119·129 전화 유선 연결 및 공휴일 진료비 가산 기준",
+            ]
+        elif any(w in combined_text for w in ["재산세"]):
+            bullets = [
+                "납부 기한: 9월 16일 ~ 9월 30일까지 확인",
+                "카카오페이·네이버페이 포인트 적립 및 무이자 혜택",
+                "납부세액 250만원 초과 시 2개월 분할납부 신청",
+            ]
+        elif any(w in combined_text for w in ["환급금", "미환급금"]):
+            bullets = [
+                "정부24·홈택스·위택스 비대면 본인인증 즉시 조회",
+                "5년 경과 시 국고 귀속되는 소멸시효 유의",
+                "신청 즉시 2~3일 내 본인 명의 계좌 직결 입금",
+            ]
+        elif any(w in combined_text for w in ["근로장려금", "자녀장려금"]):
+            bullets = [
+                "단독 165만원, 홑벌이 285만원, 맞벌이 330만원 기준",
+                "국세청 홈택스·손택스·ARS 1544-9944 간편신청",
+                "정기·반기 심사 일정 및 법정 지급일 총정리",
+            ]
+        elif "공연" in category_name:
             bullets = [
                 "공식 단독 예매처(NOL/인터파크) 직결",
                 "전 좌석 배치도 및 관람 회차 안내",
                 "선예매 인증 및 티켓팅 성공 꿀팁",
             ]
+        elif "세금" in category_name or "절세" in category_name:
+            bullets = [
+                "공제 대상 및 환급 자격 요건 정밀 검토",
+                "국세청 홈택스/손택스 간편 신청 방법",
+                "신고 기한 내 필수 서류 및 가산세 방지 팁",
+            ]
+        else:
+            bullets = [
+                "주요 핵심 혜택 및 변경 기준 확인",
+                "공식 포털을 통한 실시간 정보 조회",
+                "이용 시 필수 유의사항 및 활용 팁 총정리",
+            ]
 
         for i, b in enumerate(bullets):
-            by = bullets_y + (i * 38)
-            draw.text((pad_x, by), "✓", font=font_bullet, fill=accent_col)
-            draw.text((pad_x + 30, by), b, font=font_bullet, fill=(225, 235, 245))
+            by = bullets_y + (i * 36)
+            # 깔끔한 원형 불릿 포인트 직접 드로잉
+            draw.ellipse([pad_x + 4, by + 8, pad_x + 16, by + 20], fill=accent_col)
+            draw.text((pad_x + 28, by), b, font=font_bullet, fill=(225, 235, 245))
 
         base.save(output_path, "JPEG", quality=98)
         print(f"[DesignerAgent] 📱 [대안 2: 토스풍 타이포 카드] 생성 완료: {output_path}")
+
 
     # =========================================================================
     # 대안 3: 키워드 매칭 감성 실사스톡
@@ -406,6 +570,8 @@ class DesignerAgent:
             theme_key = "concert"
         elif "복지" in category_name:
             theme_key = "welfare"
+        elif "세금" in category_name or "절세" in category_name:
+            theme_key = "tax"
 
         pool = STOCK_PHOTOS.get(theme_key, STOCK_PHOTOS["life-health"])
         chosen_id = random.choice(pool)
@@ -441,10 +607,16 @@ class DesignerAgent:
         draw.text((badge_x + 8, badge_y + 3), badge_text, font=font_badge, fill=(255, 255, 255))
         draw.text((badge_x + bw + 16, badge_y + 6), "생활정보 24 공식 에디토리얼", font=font_brand, fill=(203, 213, 225))
 
-        clean_title = title.strip()
-        if len(clean_title) > 30:
-            clean_title = clean_title[:29] + "..."
-        draw.text((badge_x, badge_y + bh + 16), clean_title, font=font_title, fill=(255, 255, 255))
+        title_lines = split_title(title.strip())
+        max_line_len = max(len(l) for l in title_lines)
+        if len(title_lines) == 1:
+            font_title = _load_font(36 if max_line_len <= 20 else 32, bold=True)
+            draw.text((badge_x, badge_y + bh + 16), title_lines[0], font=font_title, fill=(255, 255, 255))
+        else:
+            font_title = _load_font(30 if max_line_len <= 24 else 26, bold=True)
+            line_h = 38 if max_line_len <= 24 else 34
+            for i, line in enumerate(title_lines):
+                draw.text((badge_x, badge_y + bh + 14 + (i * line_h)), line, font=font_title, fill=(255, 255, 255))
 
         final_img = Image.alpha_composite(img, overlay).convert("RGB")
         final_img.save(output_path, "JPEG", quality=95)
@@ -545,27 +717,3 @@ class DesignerAgent:
             draw.text((60, 300), title[:25], fill=(255, 255, 255))
             img.save(output_path, "JPEG")
             return output_path
-
-    # 레거시 호환 메서드
-    def _render_card_image(self, card_data: dict, output_path: Path):
-        title = card_data.get("main_title", "")
-        category_name = card_data.get("category_badge", "")
-        self._render_toss_typography(title, category_name, "", {}, output_path)
-
-    def _generate_card_data(self, title: str, category_name: str, keyword: str) -> dict:
-        return {"category_badge": category_name, "main_title": title[:22], "sub_title": "핵심 가이드", "highlights": []}
-
-    def _download_stock_image(self, category_name: str, output_path: Path):
-        theme_key = "life-health"
-        if "공연" in category_name:
-            theme_key = "concert"
-        elif "복지" in category_name:
-            theme_key = "welfare"
-        chosen_id = random.choice(STOCK_PHOTOS.get(theme_key, STOCK_PHOTOS["welfare"]))
-        url = f"https://images.unsplash.com/{chosen_id}?w=1200&h=675&fit=crop&q=85"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            output_path.write_bytes(resp.read())
-
-    def _apply_editorial_banner(self, img_path: Path, category_name: str, title: str):
-        pass

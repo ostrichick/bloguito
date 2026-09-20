@@ -8,11 +8,55 @@ from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, l
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat'])
-    parser.add_argument('file', help='post ID for reformat; brief JSON for sources; editorial bundle JSON otherwise')
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat', 'list-drafts', 'promote-draft'])
+    parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
+    parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
+    parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+
+    if args.action == 'list-drafts':
+        from agents.publisher import PublisherAgent
+        drafts = PublisherAgent().list_drafts()
+        if not drafts:
+            print("현재 대기 중인 초안이 없습니다.")
+            return
+        print(f"\n[대기 중인 초안 목록] (총 {len(drafts)}편)")
+        print("-" * 75)
+        print(f"{'ID':<6} | {'카테고리':<14} | {'등록일시':<19} | 제목")
+        print("-" * 75)
+        for d in drafts:
+            print(f"{str(d.get('ID', '')):<6} | {str(d.get('category_name', '')):<14} | {str(d.get('post_date', '')):<19} | {d.get('post_title', '')}")
+        print("-" * 75)
+        return
+
+    if args.action == 'promote-draft':
+        from agents.publisher import PublisherAgent
+        target_ids = []
+        if args.ids:
+            target_ids.extend(args.ids)
+        if args.file:
+            for item in str(args.file).split(','):
+                item = item.strip()
+                if item.isdigit():
+                    target_ids.append(int(item))
+        if not target_ids:
+            parser.error("promote-draft requires at least one post ID (e.g. editorial_cli.py promote-draft 101,125 or --ids 101 125)")
+        if not args.confirm_publish:
+            parser.error('promote-draft requires --confirm-publish and a current reviewed editorial bundle')
+        agent = PublisherAgent()
+        results = []
+        for pid in target_ids:
+            print(f"\n[Promoting Post #{pid}]")
+            res = agent.promote_draft(pid, confirmed=True)
+            results.append(res)
+        print(f"\n총 {len(results)}편 정식 공개(Publish) 전환 완료!")
+        return
+
+    if not args.file:
+        parser.error(f"{args.action} requires a file argument")
+
     if args.action == 'reformat':
         if args.inventory:
             parser.error('reformat always queries WordPress')

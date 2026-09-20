@@ -1,4 +1,4 @@
-import json
+﻿import json
 import subprocess
 import tempfile
 from datetime import datetime
@@ -91,7 +91,7 @@ class PublisherAgent:
         from agents.editorial import validate_bundle, render
         from agents.editorial_writer import load_inventory
         from sync_wordpress_inventory import sync_inventory
-        from config import CATEGORIES
+        from config import CATEGORIES, resolve_category
         # Never accept a caller-supplied inventory or a cached quality status here.
         sync_inventory()
         bundle = article['editorial_bundle']
@@ -102,7 +102,7 @@ class PublisherAgent:
         title = bundle['plan']['title']
         if article.get('content') != content or article.get('title') != title:
             raise ValueError('editorial_content_changed_after_review')
-        category = CATEGORIES[bundle['brief']['category_key']]
+        category = resolve_category(bundle['brief'].get('category_key', ''))
         with tempfile.NamedTemporaryFile('w', encoding='utf-8', delete=False, suffix='.html') as f:
             f.write(content)
             local = Path(f.name)
@@ -121,6 +121,15 @@ class PublisherAgent:
                 raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
             self._record_post(post_id, title, category['id'], category['name'], status='draft',
                 expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})
+            # Rank Math SEO 메타데이터 자동 주입 (포커스 키워드 & 메타 설명)
+            focus_keyword = bundle['brief'].get('primary_keyword', '').strip()
+            meta_desc = bundle['plan']['lead']['text'][:160].strip()
+            if focus_keyword:
+                subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+                    str(post_id), 'rank_math_focus_keyword', focus_keyword, '--allow-root'], check=False, capture_output=True)
+            if meta_desc:
+                subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+                    str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=False, capture_output=True)
             # Persist the new draft before another candidate can be selected in this run.
             sync_inventory()
             if image_path and image_path.exists():
@@ -185,5 +194,87 @@ class PublisherAgent:
             self._record_post(post_id, bundle['plan']['title'], category['id'], category['name'], status='draft', fact_manifest={'editorial_bundle': bundle})
             sync_inventory()
             return post_id
+        finally:
+            lock.rmdir()
+
+    def list_drafts(self):
+        """Return the live WordPress drafts; indexes are optional metadata only."""
+        args = ['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'list',
+                '--post_type=post', '--post_status=draft',
+                '--fields=ID,post_title,post_date,post_status', '--format=json', '--allow-root']
+        rows = json.loads(subprocess.run(args, check=True, capture_output=True, text=True).stdout)
+        if not isinstance(rows, list) or any(not isinstance(p, dict) or p.get('post_status') != 'draft' for p in rows):
+            raise ValueError('wordpress_drafts_invalid_response')
+        index = []
+        if DRAFTS_INDEX_FILE.exists():
+            try:
+                index = json.loads(DRAFTS_INDEX_FILE.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                index = []  # The live WordPress list is authoritative.
+        by_id = {int(p['id']):p for p in index if isinstance(p,dict) and str(p.get('id','')).isdigit()}
+        return [{**row, 'category_name':by_id.get(int(row['ID']),{}).get('category_name','미분류')}
+                for row in rows]
+
+    def promote_draft(self, post_id, *, confirmed=False):
+        """Publish only a reviewed, unchanged draft after an explicit user confirmation.
+
+        Older/manual drafts without a current source-bound editorial bundle are
+        intentionally not eligible for one-step promotion.
+        """
+        if not confirmed:
+            raise ValueError('explicit_publication_confirmation_required: pass --confirm-publish after reviewing this draft')
+        from agents.editorial import ROOT, render, validate_bundle
+        from agents.editorial_writer import load_inventory, fetch_sources
+        from sync_wordpress_inventory import sync_inventory
+        from config import resolve_category
+        lock = ROOT / 'data' / '.editorial-publish.lock'
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lock.mkdir()
+        except FileExistsError:
+            raise ValueError('editorial_publication_busy: check running process before removing stale lock')
+        try:
+            if not DRAFTS_INDEX_FILE.exists():
+                raise ValueError('tracked_editorial_draft_required')
+            records = json.loads(DRAFTS_INDEX_FILE.read_text(encoding='utf-8'))
+            item = next((p for p in records if int(p.get('id',-1)) == int(post_id)), None)
+            if not item or not item.get('fact_manifest',{}).get('editorial_bundle'):
+                raise ValueError('reviewed_editorial_bundle_required: legacy or unreviewed draft must be rebuilt')
+            bundle = item['fact_manifest']['editorial_bundle']
+            expected = render(bundle['plan'],bundle['sources'])
+            title = bundle['plan']['title']
+            sync_inventory()
+            inventory = load_inventory()
+            actual = next((p for p in inventory['posts'] if int(p['ID']) == int(post_id)),None)
+            same=lambda a,b: a.replace(chr(13)+chr(10),chr(10)) == b.replace(chr(13)+chr(10),chr(10))
+            if not actual or actual['post_status'] != 'draft' or actual['post_title'] != title or not same(actual['post_content'], expected):
+                raise ValueError('draft_changed_or_not_draft: review WordPress edits before publishing')
+            others = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != int(post_id)])
+            report = validate_bundle(bundle,others)
+            if report['status'] != 'ready':
+                raise ValueError(f'editorial_review_not_current: {report["reasons"]}')
+            # A recent fetch timestamp does not imply the document is up to date;
+            # compare a newly retrieved official source to the signed snapshot.
+            current_sources = fetch_sources(bundle['brief'])
+            orig = {s['url']:s['sha256'] for s in bundle['sources']}
+            observed = {s['url']:s['sha256'] for s in current_sources}
+            if orig != observed:
+                raise ValueError('official_source_changed_since_review: fresh review required')
+            base = ['sudo','docker','exec',self.container_name,'wp']
+            final = json.loads(subprocess.run(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
+                                              check=True,capture_output=True,text=True).stdout)
+            if final['post_status'] != 'draft' or final['post_title'] != title or not same(final['post_content'],expected):
+                raise ValueError('draft_changed_during_review')
+            subprocess.run(base+['post','update',str(int(post_id)),'--post_status=publish','--allow-root'],
+                           check=True,capture_output=True,text=True)
+            saved = json.loads(subprocess.run(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
+                                              check=True,capture_output=True,text=True).stdout)
+            if saved['post_status'] != 'publish' or saved['post_title'] != title or not same(saved['post_content'],expected):
+                raise ValueError('publication_verification_failed: inspect WordPress state before retrying')
+            category = resolve_category(bundle['brief']['category_key'])
+            self._record_post(int(post_id),title,category['id'],category['name'],status='publish',
+                              expires_at=bundle['brief'].get('useful_until'),fact_manifest={'editorial_bundle':bundle})
+            sync_inventory()
+            return int(post_id)
         finally:
             lock.rmdir()

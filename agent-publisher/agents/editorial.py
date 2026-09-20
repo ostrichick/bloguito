@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from agents.temporal_validation import KST, validate_availability, extract_evidence
 from agents.search_intent import duplicate_posts
+from agents.critical_facts import critical_fact_reasons
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -123,6 +124,8 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                 reasons.append('availability_not_verified')
             if decision.get('expires_at') and (datetime.fromisoformat(decision['expires_at']).date()-now.date()).days < rules['min_remaining_days']:
                 reasons.append('source_deadline_too_close')
+        # Version-specific official policy evidence is separate from a fresh fetch and a valid quote.
+        reasons.extend(critical_fact_reasons(brief, sources, plan))
         title = plan['title']
         if not all(normalized(t) in normalized(title) for t in brief['required_title_terms']):
             reasons.append('title_missing_entity_or_region')
@@ -188,30 +191,166 @@ def render_legacy(plan, sources):
     return result
 
 
-def render(plan, sources):
+def render(plan, sources, category_key=None):
     """Presentation is deterministic: retain every reviewed sentence and condition."""
     source_map = {s['id']: s for s in sources}
     def paragraph(block):
-        ids = list(dict.fromkeys(e['source_id'] for e in block['evidence']))
-        return f'<p style="margin:12px 0;line-height:1.85">{html.escape(block["text"])}</p>'
-    result = ('<div class="bloguito-article" style="line-height:1.85;overflow-wrap:anywhere">'
-              '<div class="bloguito-summary" style="padding:20px 24px;margin:24px 0 32px;background:#edf7f4;border-left:5px solid #147d64;border-radius:8px;color:#173d34">'
-              '<strong style="font-size:20px">핵심요약</strong>' + paragraph(plan['lead']) + '</div>')
+        return f'<p style="margin:14px 0;line-height:1.85;color:#2d3748;font-size:16.5px">{html.escape(block["text"])}</p>'
+
+    # 1. 3초 핵심 요약 박스
+    result = ('<div class="bloguito-article" style="line-height:1.85;font-size:17px;color:#2d3748;overflow-wrap:anywhere;word-break:keep-all">'
+              '<div class="bloguito-summary" style="padding:22px 24px;margin:24px 0 36px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:6px solid #0d7d59;border-radius:10px;box-shadow:0 2px 8px rgba(13,125,89,0.06)">'
+              '<div style="display:flex;align-items:center;margin-bottom:10px"><span style="background:#0d7d59;color:#ffffff;font-size:12px;font-weight:700;padding:3px 8px;border-radius:4px;margin-right:8px;letter-spacing:0.5px">3초 요약</span><strong style="font-size:20px;color:#134e4a">핵심요약</strong></div>'
+              + f'<p style="margin:10px 0 0;line-height:1.85;color:#1f2937;font-size:16.5px;font-weight:500">{html.escape(plan["lead"]["text"])}</p></div>')
+
+    # 2. 공식 신청 및 조회 대형 CTA 바로가기 박스 (공식 출처가 있을 경우 자동 생성)
+    official_sources = [s for s in sources if s.get('source_type') == 'official' and s.get('url')]
+    if official_sources:
+        buttons = []
+        for idx, s in enumerate(official_sources[:3]):
+            label = s.get('cta_label')
+            if not label:
+                title_short = s.get('title', '공식 바로가기').splitlines()[0][:35]
+                label = re.sub(r'^[^\w가-힣]+', '', title_short).strip()
+            if not label.endswith('바로가기'):
+                label = f"{label} 바로가기"
+            mb = '0' if idx == min(len(official_sources), 3) - 1 else '10px'
+            buttons.append(
+                f'<a href="{html.escape(s["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
+                f'style="display:flex;align-items:center;justify-content:space-between;padding:16px 22px;background:#0d7d59;color:#ffffff !important;text-decoration:none !important;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 4px 12px rgba(13,125,89,0.3);letter-spacing:0.2px;margin-bottom:{mb}">'
+                f'<span style="font-size:20px;margin-right:8px">🏛️</span>'
+                f'<span style="flex-grow:1;text-align:center">{html.escape(label)}</span>'
+                f'<span style="font-size:18px;margin-left:8px">➔</span></a>'
+            )
+        result += ('<div class="bloguito-cta" style="margin:28px 0 36px;padding:22px 20px;background:#f8fafc;border:1.5px solid #0d7d59;border-radius:14px;text-align:center;box-shadow:0 6px 16px rgba(13,125,89,0.08)">'
+                   '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:6px">🚨 공식 신청 및 조회 서비스 바로가기</div>'
+                   '<p style="font-size:14px;color:#475569;margin:0 0 16px;line-height:1.5">아래 공식 링크를 누르시면 정부·공공기관 누리집으로 안전하게 연결됩니다.</p>'
+                   f'<div style="max-width:500px;margin:0 auto">{"".join(buttons)}</div></div>')
+
+    # 3. 경량 네이티브 목차 (Table of Contents - 구글 사이트링크 및 모바일 UX 최적화)
+    toc_items = []
     for number, section in enumerate(plan['sections'], 1):
-        heading = re.sub(r'^\s*\d+[.)]\s*', '', section['heading'])
-        result += (f'<h2 style="font-size:25px;line-height:1.45;margin:36px 0 16px;padding-bottom:10px;border-bottom:2px solid #dcebe5">{number}. {html.escape(heading)}</h2>'
-                   + ''.join(paragraph(b) for b in section['paragraphs']))
+        clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
+        toc_items.append(f'<li style="margin:6px 0"><a href="#step-{number}" style="color:#0d7d59;text-decoration:none;font-weight:500">STEP {number}. {html.escape(clean_heading)}</a></li>')
     if plan.get('faq'):
-        result += '<h2 style="font-size:25px;margin:36px 0 16px">자주 묻는 질문</h2>'
+        toc_items.append('<li style="margin:6px 0"><a href="#faq" style="color:#0d7d59;text-decoration:none;font-weight:500">자주 묻는 질문 (FAQ)</a></li>')
+    toc_items.append('<li style="margin:6px 0"><a href="#sources" style="color:#0d7d59;text-decoration:none;font-weight:500">공식 출처 및 사실 검증 자료</a></li>')
+
+    result += ('<div class="bloguito-toc" style="padding:18px 22px;margin:24px 0 36px;background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:8px">'
+               '<div style="font-weight:700;font-size:16px;color:#1e293b;margin-bottom:10px;display:flex;align-items:center">'
+               '<span style="margin-right:8px">📋</span>핵심 목차 한눈에 보기</div>'
+               '<ul style="margin:0;padding-left:22px;line-height:1.75;color:#475569;font-size:15px">'
+               + ''.join(toc_items) + '</ul></div>')
+
+    # 4. 본문 섹션 (각 소제목에 점프 링크 앵커 ID 매핑)
+    for number, section in enumerate(plan['sections'], 1):
+        clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
+        result += (f'<h2 id="step-{number}" style="font-size:24px;line-height:1.45;margin:42px 0 18px;padding-bottom:12px;border-bottom:2px solid #e2e8f0;color:#1a202c;display:flex;align-items:center;flex-wrap:wrap">'
+                   f'<span style="background:#e6f4ea;color:#0d7d59;font-size:13px;font-weight:700;padding:4px 10px;border-radius:20px;margin-right:10px;letter-spacing:0.5px">STEP {number}</span>'
+                   f'{html.escape(clean_heading)}</h2>'
+                   + ''.join(paragraph(b) for b in section['paragraphs']))
+
+    # 4. 자주 묻는 질문 (FAQ)
+    if plan.get('faq'):
+        result += '<h2 id="faq" style="font-size:24px;margin:42px 0 20px;padding-bottom:12px;border-bottom:2px solid #e2e8f0;color:#1a202c">자주 묻는 질문</h2>'
         for faq in plan['faq']:
-            result += ('<div class="bloguito-faq" style="padding:16px 20px;margin:16px 0;background:#f7f8fa;border-radius:8px">'
-                       '<h3 style="font-size:20px;line-height:1.5;margin:0 0 12px">' + html.escape(faq['question']) + '</h3>' + paragraph(faq['answer']) + '</div>')
+            result += ('<div class="bloguito-faq" style="padding:20px 22px;margin:18px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">'
+                       '<div style="display:flex;align-items:flex-start;margin-bottom:12px"><span style="background:#2563eb;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">Q</span>'
+                       f'<h3 style="font-size:19px;line-height:1.5;margin:0;color:#1e293b;font-weight:700">{html.escape(faq["question"])}</h3></div>'
+                       '<div style="display:flex;align-items:flex-start;padding-left:2px"><span style="background:#059669;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">A</span>'
+                       f'<div style="flex-grow:1;color:#334155;line-height:1.8">{html.escape(faq["answer"]["text"])}</div></div></div>')
+
+    # 5. 내부 링크 추천 카드 (체류시간 증대 & 카테고리 연관성 기반 매칭)
+    interlink_html = ''
+    try:
+        posts_file = ROOT / 'data' / 'published_posts.json'
+        if posts_file.exists():
+            posts = json.loads(posts_file.read_text(encoding='utf-8'))
+            today = datetime.now(KST).date()
+
+            # 현재 글의 카테고리 결정
+            cur_cat = category_key or plan.get('category_key')
+            if not cur_cat:
+                t = plan.get('title', '')
+                if any(w in t for w in ['콘서트', '티켓', '앵콜', '뮤지컬', '공연', '페스티벌']):
+                    cur_cat = 'concert'
+                elif any(w in t for w in ['세금', '연말정산', '종합소득세', '자동차세', '취득세']):
+                    cur_cat = 'tax'
+                elif any(w in t for w in ['지원금', '기초연금', '바우처', '장려금', '환급금']):
+                    cur_cat = 'welfare'
+                else:
+                    cur_cat = 'life-health'
+
+            # 카테고리 상호 호환 그룹 정의 (공연/콘서트와 생활/복지/세무 철저 분리)
+            is_concert = (cur_cat == 'concert' or cur_cat == 2 or cur_cat == '공연/콘서트 예매')
+
+            candidates = []
+            for p in posts:
+                if not p.get('url') or p.get('title') == plan.get('title'):
+                    continue
+                if p.get('status') == 'draft' or p.get('is_closed') is True:
+                    continue
+                exp_str = p.get('expires_at')
+                if exp_str:
+                    try:
+                        exp_date = datetime.strptime(str(exp_str)[:10], '%Y-%m-%d').date()
+                        if exp_date < today:
+                            continue
+                    except Exception:
+                        pass
+
+                p_cat_id = p.get('category_id')
+                p_cat_name = p.get('category_name', '')
+
+                # 공연 글 여부 판별
+                p_is_concert = (p_cat_id == 2 or '공연' in p_cat_name or '콘서트' in p_cat_name)
+
+                # 상호 배타성 검사: 공연 글은 공연 글끼리만, 비공연(생활/복지/세무) 글은 비공연 글끼리만 추천!
+                if is_concert != p_is_concert:
+                    continue
+
+                # 점수 부여 (동일 카테고리 최우선)
+                score = 0
+                if cur_cat in {'life-health', 4, '생활/건강 정보'} and (p_cat_id == 4 or '생활' in p_cat_name or '건강' in p_cat_name):
+                    score = 2
+                elif cur_cat in {'welfare', 3, '정부 복지/지원금'} and (p_cat_id == 3 or '복지' in p_cat_name or '지원금' in p_cat_name):
+                    score = 2
+                elif cur_cat in {'tax', 102, '생활 세금/절세 정보'} and (p_cat_id == 102 or '세금' in p_cat_name or '절세' in p_cat_name):
+                    score = 2
+                elif is_concert and p_is_concert:
+                    score = 2
+                else:
+                    score = 1
+
+                candidates.append((score, p))
+
+            if candidates:
+                # 점수 높은 순(동일 카테고리 우선) 정렬 후 최대 2개 선택
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                selected = [x[1] for x in candidates[:2]]
+
+                header_title = '함께 보면 좋은 추천 공연·티켓 정보' if is_concert else '함께 보면 유익한 생활 정보 추천'
+                items = ''.join(
+                    f'<li style="margin-bottom:10px"><a href="{html.escape(item["url"], quote=True)}" target="_blank" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;font-weight:600;font-size:15.5px">👉 [{html.escape(item.get("category_name", "생활정보"))}] {html.escape(item["title"])}</a></li>'
+                    for item in selected
+                )
+                interlink_html = (
+                    '<div class="bloguito-interlink" style="padding:20px 24px;margin:40px 0 20px;background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:10px">'
+                    f'<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;display:flex;align-items:center"><span style="margin-right:8px">{"🎵" if is_concert else "🔗"}</span>{header_title}</h3>'
+                    f'<ul style="margin:0;padding-left:22px;line-height:1.8">{items}</ul></div>'
+                )
+    except Exception:
+        interlink_html = ''
+
+    # 6. 공식 출처 및 사실 검증 자료
     ids = []
     for block in [plan['lead']] + [b for s in plan['sections'] for b in s['paragraphs']] + [f['answer'] for f in plan.get('faq', [])]:
         ids.extend(e['source_id'] for e in block['evidence'])
     ids = list(dict.fromkeys(ids))
-    links = ''.join(f'<li><a href="{html.escape(source_map[i]["url"], quote=True)}" rel="noopener noreferrer">{html.escape(source_map[i]["title"].splitlines()[0][:100])}</a></li>' for i in ids)
-    return result + '<h2 style="font-size:22px;margin:40px 0 12px">공식 출처</h2><ul class="source-list" style="padding-left:22px">' + links + '</ul></div>'
+    links = ''.join(f'<li style="margin:8px 0"><a href="{html.escape(source_map[i]["url"], quote=True)}" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;word-break:break-all">{html.escape(source_map[i]["title"].splitlines()[0][:100])}</a></li>' for i in ids)
+    return (result + interlink_html + '<div style="margin-top:44px;padding:22px 24px;background:#fcfdfd;border:1px dashed #cbd5e1;border-radius:10px">'
+            '<h2 id="sources" style="font-size:20px;margin:0 0 14px;color:#334155;display:flex;align-items:center"><span style="margin-right:8px">🏛️</span>공식 출처 및 사실 검증 자료</h2>'
+            '<ul class="source-list" style="padding-left:22px;margin:0;color:#64748b">' + links + '</ul></div></div>')
 
 
 def save_report(bundle, report):

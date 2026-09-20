@@ -50,11 +50,42 @@ class EditorialTests(unittest.TestCase):
         self.b['plan']['sections'].append({'heading':'2. 조건 <안내>', 'paragraphs':[self.b['plan']['lead']]})
         content = render(self.b['plan'], self.b['sources'])
         self.assertIn('핵심요약</strong>', content)
-        self.assertIn('1. 배출 방법</h2>', content)
-        self.assertIn('2. 조건 &lt;안내&gt;</h2>', content)
-        self.assertNotIn('2. 2.', content)
+        self.assertIn('STEP 1</span>배출 방법</h2>', content)
+        self.assertIn('STEP 2</span>조건 &lt;안내&gt;</h2>', content)
+        self.assertNotIn('STEP 2</span>2.', content)
         self.assertIn(self.b['plan']['lead']['text'], content)
         self.assertIn('https://www.seocho.go.kr/guide', content)
+        # 네이티브 경량 목차(TOC) 및 점프 링크 앵커 검증
+        self.assertIn('class="bloguito-toc"', content)
+        self.assertIn('href="#step-1"', content)
+        self.assertIn('id="step-1"', content)
+        self.assertIn('href="#step-2"', content)
+        self.assertIn('id="step-2"', content)
+        self.assertIn('id="sources"', content)
+
+    def test_render_toc_with_faq(self):
+        self.b['plan']['faq'].append({'question_id':'q1','question':'FAQ 질문','answer':self.b['plan']['lead']})
+        content = render(self.b['plan'], self.b['sources'])
+        self.assertIn('href="#faq"', content)
+        self.assertIn('id="faq"', content)
+
+    def test_render_includes_interlinks_and_excludes_self(self):
+        import tempfile
+        from pathlib import Path
+        posts_data = [
+            {'title': '기초연금 안내', 'url': 'https://bloguito.kr/p1', 'category_name': '정부 복지/지원금', 'status': 'publish'},
+            {'title': self.b['plan']['title'], 'url': 'https://bloguito.kr/p2', 'category_name': '생활/건강', 'status': 'publish'},
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            data_folder = Path(folder) / 'data'
+            data_folder.mkdir()
+            posts_file = data_folder / 'published_posts.json'
+            posts_file.write_text(json.dumps(posts_data), encoding='utf-8')
+            with patch('agents.editorial.ROOT', Path(folder)):
+                content = render(self.b['plan'], self.b['sources'])
+                self.assertIn('bloguito-interlink', content)
+                self.assertIn('기초연금 안내', content)
+                self.assertNotIn('https://bloguito.kr/p2', content)
 
     def test_reformat_refuses_user_edits_before_any_write(self):
         import tempfile
@@ -203,6 +234,8 @@ class EditorialTests(unittest.TestCase):
             self.assertTrue(any('--post_status=draft' in c for c in commands))
             self.assertFalse(any('--post_status=publish' in c for c in commands))
             self.assertEqual(record.call_args.kwargs['status'],'draft')
+            self.assertTrue(any('rank_math_focus_keyword' in c for c in commands))
+            self.assertTrue(any('rank_math_description' in c for c in commands))
 
     def test_evergreen_does_not_require_news_rss(self):
         from agents.radar import RadarAgent
