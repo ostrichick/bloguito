@@ -11,6 +11,9 @@
 
 | 문서 파일 | 설명 및 용도 | 바로가기 |
 | :--- | :--- | :---: |
+| **`draft-content-review-2026-09-20.md`** | **임시글 11편 전수 교정:** 항목별 원인·공식 근거·발행 보류 조건 및 WordPress 반영 기록 | [열기](./docs/draft-content-review-2026-09-20.md) |
+| **`CONTENT_STRATEGY_2026-09-20.md`** | **제안 단계:** 콘텐츠 허브·수요 발굴·품질 검증·2주 파일럿 설계 (사이트/코드에는 아직 미적용) | [열기](./docs/CONTENT_STRATEGY_2026-09-20.md) |
+| **`published-content-review-2026-09-20.md`** | **공개 글 26편 전수 점검:** 수정 13편·유지 13편의 판정/공식 출처/배포 검증/남은 과제 | [열기](./docs/published-content-review-2026-09-20.md) |
 | **`PROJECT_HANDOVER.md`** | **종합 프로젝트 인계서 & 아키텍처 가이드**<br>- 서버 인프라, Docker 환경, 5대 에이전트 구조, 프롬프트 규칙, 크론 스케줄, 전체 히스토리 총정리 | [열기](./PROJECT_HANDOVER.md) |
 | **`implementation_plan.md`** | **시스템 지능화 및 인프라 최적화 계획서**<br>- 긴급 버그 수정, 1GB RAM 튜닝, 내부 링크(Interlinking), 타이포 배너 설계 | [열기](./implementation_plan.md) |
 | **`walkthrough.md`** | **종합 개선 및 최적화 완료 결과 보고서**<br>- 캐싱 가동, 백업 스크립트, DB 메모리 캡, 크론 등록 등 실서버 검증 내역 | [열기](./walkthrough.md) |
