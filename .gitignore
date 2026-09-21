@@ -8,6 +8,7 @@
 *.pem
 *.p12
 *.pfx
+gha-creds-*.json
 
 # Python
 __pycache__/

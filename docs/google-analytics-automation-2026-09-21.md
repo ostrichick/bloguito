@@ -43,6 +43,16 @@
 - 공급자의 존재·조건 확인 및 서비스 계정에 대한 `roles/iam.workloadIdentityUser`의 저장소 한정 바인딩, GitHub Actions 인증 테스트, 비공개 보고서 전송 경로, 수집 스케줄은 **실행/검증하지 않았다**. 특히 현재 GitHub 저장소는 공개 상태이므로 보고서 JSON/검색어를 워크플로 아티팩트나 커밋으로 저장하면 안 된다. 사용자 개입 또는 인증 설정을 수행할 수 있는 신뢰된 환경에서 WIF를 확인한 뒤, 서버에 제한된 수신 경로를 별도로 구현·검증해야 한다.
 - 이 단계에서도 운영 VPS의 `analytics_collector.py`는 존재하고, 인증 파일은 없으며, 분석 전용 cron 행도 없음을 확인했다. 사용자 통계가 자동으로 수집되고 있다고 알리지 않는다.
 
+## 공급자 확인·실 API 인증 성공 및 비공개 전달 준비 (후속)
+
+- 사용자가 제공한 Cloud 콘솔 화면에 `bloguito-reports` 풀의 공급자 1개·활성 표시가 있었다. Cloud Shell `providers describe github-main`으로 실제 공급자 존재 및 GitHub 소유자 ID·저장소 ID·`main`·전용 워크플로 경로·`schedule`/`workflow_dispatch` 제한 조건을 확인했다. 서비스 계정에 `roles/iam.workloadIdentityUser`를 해당 풀의 **저장소 ID 속성 하나에만** 바인딩했고, `get-iam-policy`의 해당 ID 존재를 확인했다. Google 계정 키는 만들지 않았다.
+- 전용 `.github/workflows/google-analytics.yml`을 `main`에 추가하고 수동 인증 검사를 실행했다. GitHub Actions 실행 `35598895966`은 `success`였고 `analytics_collection_ok end=2026-09-18 search_query_rows=1 ga4_day_rows=4`로 두 API의 **실호출 성공**을 입증했다. 이는 검색어 전체 결과가 아니라 반환 행 수이며, 원시 검색어·사용자 데이터·자격증명은 GitHub 아티팩트·커밋·로그로 저장하지 않았다.
+- 운영 서버에 `analytics_receiver.py`/`receive_analytics.sh`를 신규 배포하고, Linux 수신기 테스트 5개·Python 컴파일·Bash 문법 검사를 통과했다. 전용 SSH 공개키는 기존 `authorized_keys`를 백업한 뒤 `restrict,command="/home/ubuntu/agent-publisher/receive_analytics.sh"`로만 추가했다. 별도 키를 이용한 **잘못된 JSON 및 원격 명령 실행 시도 모두 차단**을 직접 확인했다. 수신기는 최대 4 MiB·엄격한 스키마·시간·메트릭·행 수를 검증하고 운영 `data/analytics/`의 0700 디렉터리 안에 원자적으로 JSON/Markdown을 0600으로 저장한다. WordPress/Site Kit/기존 크론은 수정하지 않았다.
+- 다음 워크플로 수정은 임시 러너에서만 단기 OIDC로 조회한 JSON을 호스트 공개키 지문 고정(서버 SSH를 통해 확인한 ED25519 지문) 및 제한 SSH 키로 서버의 강제 수신 명령에 표준입력 전송하도록 설계했다. 개인 데이터는 GitHub 저장소·아티팩트·로그에 게시하지 않고 러너 임시 디렉터리를 정리한다.
+- **현재 남은 수동 의존 단계:** 저장소 Actions 암호화 Secret `BLOGUITO_ANALYTICS_SSH_KEY`에 전용 **SSH 개인키**를 계정 소유자가 GitHub 설정 화면에서 직접 등록해야 한다. 도구의 안전 검사가 개인키를 GitHub Secrets로 전송하는 요청을 차단했으므로 우회하지 않았고, Secret 목록 조회에서도 등록된 항목이 없었다. 개인키의 값은 채팅·출력·Git에 적지 않는다. 사용자는 로컬 사용자 전용 OS 임시 디렉터리의 `bloguito-analytics-report-20260921.key` 파일을 직접 열어 전체 내용을 해당 Secret에 등록하고, 등록 후 키 파일을 폐기해야 한다.
+- **Secret 등록 전 절대 금지:** GitHub Actions에 `schedule` 추가, 자동 실행 성공 표시, 개인정보 포함 아티팩트 게시, VPS `run_analytics.sh` 크론 등록. 등록 이후 수동 `workflow_dispatch`로 전송·파일 권한·내용 존재를 확인한 다음에만 일정 트리거를 추가한다. 현재 원격 VPS의 `/home/ubuntu/agent-publisher/run_analytics.sh`는 서비스 계정 JSON 파일을 요구하는 *다른 경로*로서 이 OIDC 흐름과 무관하다.
+- 롤백: 새 Actions 워크플로 비활성화, `BLOGUITO_ANALYTICS_SSH_KEY` Secret 폐기, `authorized_keys`에서 정확히 `bloguito-analytics-report-ingest` 전용 제한 키 **한 줄만** 검증 후 제거한다. 기존 SSH 키나 WordPress 로그인·Site Kit는 수정하지 않는다. 보고서 보존/삭제는 별도 사용자 지시를 따른다.
+
 ## 공급자 확인 뒤 인증 실험 (2026-09-21 후속)
 
 - 사용자가 전달한 Google Cloud 워크로드 아이덴티티 화면에서 `bloguito-reports` 풀의 공급자 수 1, 사용 설정 상태를 확인했다. Cloud Shell에서 `github-main` 공급자의 이름 및 조건을 직접 조회했으며 저장소/소유자의 불변 ID, `main`, 전용 `.github/workflows/google-analytics.yml`, `schedule`/`workflow_dispatch` 제한이 존재한다.
