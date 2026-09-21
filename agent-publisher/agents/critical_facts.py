@@ -1,4 +1,4 @@
-﻿"""Fail-closed version checks for a small set of frequently changing public-benefit topics.
+"""Fail-closed version checks for a small set of frequently changing public-benefit topics.
 
 A fresh HTTP fetch is not evidence that the source *content* is current. This
 module checks years, official publisher domains, canonical current-year facts,
@@ -98,13 +98,15 @@ def published_content_risks(title, content, today=None):
     from datetime import date
     import html
     today = today or date.today()
+    risks = []
+    if re.search(r'정정\s*안내|(?:자료\s*검토|내용\s*재검토|최종\s*검토일|검토·수정)\s*[:：]|이\s*초안|공식\s*출처\s*및\s*검토\s*기록', html.unescape(content or '')):
+        risks.append('internal_editorial_note_exposed')
     # Correction history may quote a bad *former* value without asserting it.
     # Exclude the explicitly labelled correction note and superseded-date sentence.
     body = re.sub(r'<div\b[^>]*>\s*<strong>정정 안내[^<]*</strong>.*?</div>', ' ', content or '',flags=re.IGNORECASE | re.DOTALL)
     text = html.unescape(re.sub(r"<[^>]+>", " ", body))
     text = re.sub(r'기존의.{0,190}?폐기했습니다\.', ' ', text)
     flat = _flat(text)
-    risks = []
     if "기초연금" in title and "2026" in title and any(x in flat for x in ("213만원", "340만8천", "343510원", "549610원", "110만원")):
         risks.append("pension_known_stale_2026")
     if "세금포인트" in title and re.search(r"(?:연간|최대|한해|부여한도)[^.。\n]{0,35}50(?:점|포인트)|50(?:점|포인트)까지", flat):

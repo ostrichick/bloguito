@@ -1,4 +1,4 @@
-﻿"""Regression tests for known stale-source failures in Bloguito, with no network calls."""
+"""Regression tests for known stale-source failures in Bloguito, with no network calls."""
 import hashlib
 import unittest
 from datetime import date
@@ -63,9 +63,9 @@ class CriticalPolicyRegressionTests(unittest.TestCase):
 
     def test_correction_note_is_not_mistaken_for_active_old_claim(self):
         markup = '<div><strong>정정 안내 (2026년 9월 20일)</strong><p>연간 최대 50점 안내를 수정했습니다.</p></div><p>2025년 부여분부터 연간 1,000포인트입니다.</p>'
-        self.assertEqual(published_content_risks('2026 세금포인트',markup),[])
+        self.assertEqual(published_content_risks('2026 세금포인트',markup),['internal_editorial_note_exposed'])
         flu = '<div><strong>정정 안내 (2026년 9월 20일)</strong>4가 백신 오류</div><p>3가 백신. 기존의 9월 20일부터 일정은 폐기했습니다.</p>'
-        self.assertEqual(published_content_risks('2026 독감',flu),[])
+        self.assertEqual(published_content_risks('2026 독감',flu),['internal_editorial_note_exposed'])
 
     def test_insurance_marketing_guarantee_rejected(self):
         b={'entity':'숨은 보험금','primary_keyword':'2026 숨은 보험금'}

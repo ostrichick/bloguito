@@ -158,10 +158,9 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
         visible = ' '.join([title, *[s['heading'] for s in plan['sections']], *[b['text'] for b in blocks], *[f['question'] for f in plan.get('faq', [])]])
         if any(re.search(p, visible) for p in rules['blocked_patterns']):
             reasons.append('reader_deflection_or_disclaimer')
-        # Editorial decisions belong in the internal review report, not the article.
-        # Match only distinctive process language; legitimate correction details and
-        # source publication dates remain available to the reader.
-        if re.search(r'이\s*(?:초안|원고)(?:에서는|은|와|를)|독립적인\s*검색\s*질문이\s*확인되지\s*않으면|(?:자료\s*검토\s*[:：]|공식\s*출처\s*및\s*검토\s*기록)|링크된\s*자료의\s*적용\s*시점과\s*실제\s*안내\s*화면을\s*확인', visible):
+        # Correction banners, previous-copy change logs and review metadata are
+        # internal records. Keep legitimate source publication dates and rules.
+        if re.search(r'이\s*(?:초안|원고)(?:에서는|은|와|를)|독립적인\s*검색\s*질문이\s*확인되지\s*않으면|(?:자료\s*검토|내용\s*재검토|최종\s*검토일|검토·수정)\s*[:：]|공식\s*출처\s*및\s*검토\s*기록|링크된\s*자료의\s*적용\s*시점과\s*실제\s*안내\s*화면을\s*확인|정정\s*안내|기존\s*수치의\s*정정|(?:기존|과거|종전)\s*(?:글|본문|게시물|공지|안내)[^.。\n]{0,130}(?:삭제|수정|정정|바로잡|폐기)', visible):
             reasons.append('internal_editorial_note_in_prose')
         if re.search(r'<[^>]+>|https?://', visible):
             reasons.append('raw_markup_or_url_in_prose')
