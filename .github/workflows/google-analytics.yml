@@ -1,0 +1,51 @@
+name: Verify private Google analytics access
+
+# A manual, read-only authentication and API smoke test. Do not add a schedule
+# until a private delivery destination has been verified. This public repository
+# must never publish Google query data as commits, artifacts, or job logs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.repository_id == '1367302611' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Authenticate without a service account key
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/955782650127/locations/global/workloadIdentityPools/bloguito-reports/providers/github-main
+          service_account: bloguito-report-reader@bloguito-analytics.iam.gserviceaccount.com
+          create_credentials_file: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install only reporting dependencies
+        run: python -m pip install google-auth==2.58.0 requests==2.34.2
+
+      - name: Verify both read-only report APIs
+        env:
+          REPORT_DIR: ${{ runner.temp }}/bloguito-private-report
+        run: |
+          umask 077
+          mkdir -m 700 -p "$REPORT_DIR"
+          trap 'rm -f "$REPORT_DIR"/*.json "$REPORT_DIR"/*.md' EXIT
+          python agent-publisher/analytics_collector.py \
+            --site-url 'https://lifeinfo24.org/' \
+            --ga4-property '554325332' \
+            --output-dir "$REPORT_DIR"
+          test -s "$REPORT_DIR/google-analytics-"*.json
+          test -s "$REPORT_DIR/google-analytics-"*.md

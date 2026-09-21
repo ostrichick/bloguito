@@ -42,3 +42,10 @@
 - `bloguito-reports` Workload Identity Pool 생성 명령이 `Created workload identity pool`을 반환했다. GitHub의 **변경 불가능한 저장소 ID·소유자 ID, `main` 브랜치, 전용 보고서 워크플로 경로 및 `schedule`/`workflow_dispatch` 이벤트**로 제한된 OIDC 공급자 생성 명령까지 전송했으나, 후속 확인 도구 요청이 보안 상태 불확실로 차단되어 **공급자의 최종 생성 여부는 미확인**이다. 제한 조건을 완화하거나 장기 키 생성으로 우회하지 않았다.
 - 공급자의 존재·조건 확인 및 서비스 계정에 대한 `roles/iam.workloadIdentityUser`의 저장소 한정 바인딩, GitHub Actions 인증 테스트, 비공개 보고서 전송 경로, 수집 스케줄은 **실행/검증하지 않았다**. 특히 현재 GitHub 저장소는 공개 상태이므로 보고서 JSON/검색어를 워크플로 아티팩트나 커밋으로 저장하면 안 된다. 사용자 개입 또는 인증 설정을 수행할 수 있는 신뢰된 환경에서 WIF를 확인한 뒤, 서버에 제한된 수신 경로를 별도로 구현·검증해야 한다.
 - 이 단계에서도 운영 VPS의 `analytics_collector.py`는 존재하고, 인증 파일은 없으며, 분석 전용 cron 행도 없음을 확인했다. 사용자 통계가 자동으로 수집되고 있다고 알리지 않는다.
+
+## 공급자 확인 뒤 인증 실험 (2026-09-21 후속)
+
+- 사용자가 전달한 Google Cloud 워크로드 아이덴티티 화면에서 `bloguito-reports` 풀의 공급자 수 1, 사용 설정 상태를 확인했다. Cloud Shell에서 `github-main` 공급자의 이름 및 조건을 직접 조회했으며 저장소/소유자의 불변 ID, `main`, 전용 `.github/workflows/google-analytics.yml`, `schedule`/`workflow_dispatch` 제한이 존재한다.
+- 서비스 계정에 `roles/iam.workloadIdentityUser`를 `attribute.repository_id/1367302611`로 한정해 연결했다. Cloud Shell에서 서비스 계정 IAM 정책을 다시 조회해 해당 저장소 ID 포함 여부 `IAM_BOUND`를 확인했다. Google Cloud 프로젝트의 광범위한 IAM 역할은 추가하지 않았다.
+- 신규 `.github/workflows/google-analytics.yml`은 **일단 수동 실행만 허용**한다. GitHub Actions OIDC → 서비스 계정 가장 → 두 Google API 조회를 시험한다. 결과 JSON/MD는 러너의 임시 디렉터리에만 작성해 작업 종료 시 삭제하며, 로그는 행 수·성공/실패 코드만 포함하고 쿼리나 보고서 원문을 공개 아티팩트/커밋으로 내보내지 않는다.
+- 수동 실조회에 성공하더라도 **VPS 영구 보관·매일 예약 실행·ChatGPT 자동 연동은 별개**다. 공개 저장소에서는 비공개 전달 경로가 구축·검증되기 전까지 `schedule`을 추가하지 않는다. 기존 VPS cron을 바꾸거나 서비스 계정 키를 만들지 않는다.
