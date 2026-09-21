@@ -63,35 +63,32 @@ class SystemImprovementsTest(unittest.TestCase):
         self.assertIn('STEP 2. 위택스 온라인 신청 방법 총정리</a>', html)
         self.assertIn('STEP 3. 지급 일정 및 가산세 유의사항</a>', html)
 
-    def test_render_official_cta_box(self):
-        """공식 출처가 있는 경우 상단에 대형 바로가기 CTA 배너 박스가 렌더링되는지 검증"""
+    def test_informational_sources_are_not_action_buttons(self):
+        """출처가 공식 누리집이어도 확인된 신청·예매 목적지가 아니면 버튼으로 만들지 않는다."""
         html = render(self.plan, self.sources)
-
-        # CTA 박스 컨테이너 확인
-        self.assertIn('class="bloguito-cta"', html)
-        self.assertIn('공식 신청 및 조회 서비스 바로가기', html)
-
-        # 공식 출처 링크(s1: wetax) 버튼이 렌더링되었는지 확인
+        self.assertNotIn('class="bloguito-cta"', html)
         self.assertIn('href="https://www.wetax.go.kr/main/"', html)
-        self.assertIn('위택스 공식 누리집 바로가기', html)
+        self.assertNotIn('위택스 공식 누리집 바로가기', html)
 
-        # 비공식 출처(s2: press)는 CTA 메인 버튼에 들어가지 않아야 함
-        self.assertNotIn('news.example.com/article" target="_blank" rel="noopener noreferrer" style="display:flex', html)
-
-    def test_render_official_cta_with_custom_labels(self):
-        """cta_label이 명시된 경우 해당 문구로 버튼이 생성되고 최대 3개까지 지원되는지 검증"""
+    def test_render_only_explicit_actions_with_functional_destinations(self):
+        """공식 원문과 예매·앱 설치 목적지를 분리한다."""
         custom_sources = [
-            {'id': 's1', 'source_type': 'official', 'url': 'https://www.e-gen.or.kr/egen/search_hospital.do', 'title': '병원조회', 'cta_label': '문 여는 병원·의원 실시간 조회'},
-            {'id': 's2', 'source_type': 'official', 'url': 'https://www.e-gen.or.kr/egen/search_pharmacy.do', 'title': '약국조회', 'cta_label': '문 여는 당직 약국 실시간 조회'},
-            {'id': 's3', 'source_type': 'official', 'url': 'https://www.e-gen.or.kr/moonlight/main.do', 'title': '달빛병원', 'cta_label': '달빛어린이병원 비상진료 조회'},
+            {'id': 's1', 'source_type': 'official', 'url': 'https://www.tmoney.co.kr/intro', 'title': '티머니 사업 소개',
+             'actions': [{'kind': 'booking', 'label': '고속버스 조회·예매', 'url': 'https://www.kobus.co.kr/main.do'},
+                         {'kind': 'install', 'label': '티머니GO Android 설치', 'url': 'https://play.google.com/store/apps/details?id=kr.co.tmoney.tia'},
+                         {'kind': 'install', 'label': '티머니GO iPhone 설치', 'url': 'https://apps.apple.com/kr/app/id1483433931'}]},
+            {'id': 's2', 'source_type': 'press', 'url': 'https://news.example.com/article', 'title': '관련 보도자료', 'cta_label': '잘못된 자동 버튼'},
         ]
         html = render(self.plan, custom_sources)
-        self.assertIn('문 여는 병원·의원 실시간 조회 바로가기', html)
-        self.assertIn('https://www.e-gen.or.kr/egen/search_hospital.do', html)
-        self.assertIn('문 여는 당직 약국 실시간 조회 바로가기', html)
-        self.assertIn('https://www.e-gen.or.kr/egen/search_pharmacy.do', html)
-        self.assertIn('달빛어린이병원 비상진료 조회 바로가기', html)
-        self.assertIn('https://www.e-gen.or.kr/moonlight/main.do', html)
+        self.assertIn('class="bloguito-cta"', html)
+        self.assertIn('바로 예매·조회 또는 앱 설치하기', html)
+        self.assertIn('고속버스 조회·예매', html)
+        self.assertIn('https://www.kobus.co.kr/main.do', html)
+        self.assertIn('https://play.google.com/store/apps/details?id=kr.co.tmoney.tia', html)
+        self.assertIn('https://apps.apple.com/kr/app/id1483433931', html)
+        self.assertNotIn('잘못된 자동 버튼', html)
+        self.assertNotIn('정부·공공기관 누리집', html)
+        self.assertIn('티머니 사업 소개', html)
 
     def test_resolve_category_aliases(self):
         """다양한 카테고리 alias가 올바른 표준 카테고리로 안전 매핑되는지 검증"""

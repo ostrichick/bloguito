@@ -133,6 +133,9 @@ class EditorialWriterAgent:
             '신청과 사용기간을 대조하고 중요한 조건 누락·출처 간 충돌을 거부하라. '
             'reader_questions마다 답이 본문에 충분히 있는지 검토하라. '
             'evergreen으로 분류한 시한부 안내와 확인되지 않은 현재 구매/신청 가능 주장을 거부하라. '
+            'sources.actions가 있으면 링크가 실제 조회·신청·예매·구매·설치 목적지인지 점검하고, '
+            '소개·홍보·보도자료 페이지나 기능과 맞지 않는 이름을 버튼으로 제공하면 거부하라. '
+            '링크 접근을 직접 확인하지 못했다면 검증했다고 추정하지 말 것. '
             '각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
             body, Review, 'reviewer')
         return {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),

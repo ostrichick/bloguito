@@ -90,6 +90,39 @@ def all_blocks(plan):
     return [plan['lead'], *[b for s in plan['sections'] for b in s['paragraphs']], *[f['answer'] for f in plan.get('faq', [])]]
 
 
+def actionable_links(sources):
+    """Return explicitly verified action destinations; evidence URLs are never CTAs."""
+    links = []
+    for source in sources:
+        if source.get('actions') and source.get('source_type') != 'official':
+            raise ValueError('action_source_must_be_official')
+        for action in source.get('actions', []):
+            if not isinstance(action, dict):
+                raise ValueError('invalid_action_link')
+            label, url, kind = (action.get(key) for key in ('label', 'url', 'kind'))
+            if (not isinstance(label, str) or not 4 <= len(label.strip()) <= 60
+                    or re.search(r'[<>\r\n]', label)
+                    or re.search(r'소개|홍보|보도자료|기사|사업\s*영역', label)
+                    or kind not in {'booking', 'install', 'lookup', 'apply', 'purchase'}
+                    or not isinstance(url, str)):
+                raise ValueError('invalid_action_link')
+            parsed = urlparse(url)
+            if (parsed.scheme != 'https' or not parsed.hostname or parsed.username
+                    or parsed.password or parsed.fragment or any(ch.isspace() for ch in url)):
+                raise ValueError('invalid_action_link')
+            if kind == 'install' and not (
+                (parsed.hostname == 'play.google.com' and parsed.path == '/store/apps/details' and re.search(r'(?:^|&)id=[a-zA-Z0-9._]+(?:&|$)', parsed.query))
+                or (parsed.hostname == 'apps.apple.com' and re.search(r'/app/(?:[^/]+/)?id\d+$', parsed.path))
+            ):
+                raise ValueError('invalid_action_link')
+            if any(other['url'] == url for other in links):
+                raise ValueError('duplicate_action_link')
+            links.append({'label': label.strip(), 'url': url, 'kind': kind})
+    if len(links) > 4:
+        raise ValueError('too_many_action_links')
+    return links
+
+
 def validate_bundle(bundle, inventory, now=None, require_review=True):
     now = now or datetime.now(KST)
     rules = policy()
@@ -112,6 +145,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                 reasons.append('source_hash_mismatch')
             if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
                 reasons.append('source_stale')
+        try:
+            actionable_links(sources)
+        except (TypeError, ValueError):
+            reasons.append('invalid_action_links')
         if brief.get('content_type') == 'dated':
             temporal = bundle.get('temporal_source', {})
             if brief.get('category_key') == 'concert' and (temporal.get('requires_sale') is not True or temporal.get('sale_source_url') not in brief['official_urls']):
@@ -207,28 +244,22 @@ def render(plan, sources, category_key=None):
               '<div style="display:flex;align-items:center;margin-bottom:10px"><span style="background:#0d7d59;color:#ffffff;font-size:12px;font-weight:700;padding:3px 8px;border-radius:4px;margin-right:8px;letter-spacing:0.5px">3초 요약</span><strong style="font-size:20px;color:#134e4a">핵심요약</strong></div>'
               + f'<p style="margin:10px 0 0;line-height:1.85;color:#1f2937;font-size:16.5px;font-weight:500">{html.escape(plan["lead"]["text"])}</p></div>')
 
-    # 2. 공식 신청 및 조회 대형 CTA 바로가기 박스 (공식 출처가 있을 경우 자동 생성)
-    official_sources = [s for s in sources if s.get('source_type') == 'official' and s.get('url')]
-    if official_sources:
+    # 2. Only confirmed booking/apply/lookup/purchase/install destinations are actions.
+    # Informational sources remain in the citations below, never in the CTA.
+    actions = actionable_links(sources)
+    if actions:
         buttons = []
-        for idx, s in enumerate(official_sources[:3]):
-            label = s.get('cta_label')
-            if not label:
-                title_short = s.get('title', '공식 바로가기').splitlines()[0][:35]
-                label = re.sub(r'^[^\w가-힣]+', '', title_short).strip()
-            if not label.endswith('바로가기'):
-                label = f"{label} 바로가기"
-            mb = '0' if idx == min(len(official_sources), 3) - 1 else '10px'
+        for idx, action in enumerate(actions):
+            mb = '0' if idx == len(actions) - 1 else '10px'
             buttons.append(
-                f'<a href="{html.escape(s["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
+                f'<a href="{html.escape(action["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
                 f'style="display:flex;align-items:center;justify-content:space-between;padding:16px 22px;background:#0d7d59;color:#ffffff !important;text-decoration:none !important;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 4px 12px rgba(13,125,89,0.3);letter-spacing:0.2px;margin-bottom:{mb}">'
-                f'<span style="font-size:20px;margin-right:8px">🏛️</span>'
-                f'<span style="flex-grow:1;text-align:center">{html.escape(label)}</span>'
+                f'<span style="font-size:20px;margin-right:8px">{"📲" if action["kind"] == "install" else "🎫"}</span>'
+                f'<span style="flex-grow:1;text-align:center">{html.escape(action["label"])}</span>'
                 f'<span style="font-size:18px;margin-left:8px">➔</span></a>'
             )
         result += ('<div class="bloguito-cta" style="margin:28px 0 36px;padding:22px 20px;background:#f8fafc;border:1.5px solid #0d7d59;border-radius:14px;text-align:center;box-shadow:0 6px 16px rgba(13,125,89,0.08)">'
-                   '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:6px">🚨 공식 신청 및 조회 서비스 바로가기</div>'
-                   '<p style="font-size:14px;color:#475569;margin:0 0 16px;line-height:1.5">아래 공식 링크를 누르시면 정부·공공기관 누리집으로 안전하게 연결됩니다.</p>'
+                   '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:6px">바로 예매·조회 또는 앱 설치하기</div>'
                    f'<div style="max-width:500px;margin:0 auto">{"".join(buttons)}</div></div>')
 
     # 3. 경량 네이티브 목차 (Table of Contents - 구글 사이트링크 및 모바일 UX 최적화)

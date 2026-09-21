@@ -26,7 +26,7 @@ class LegacyDraftCopyTests(unittest.TestCase):
                 reasons = validate_bundle(bundle, inventory, NOW, require_review=False)['reasons']
                 self.assertIn('internal_editorial_note_in_prose', reasons)
 
-    def test_all_revision_copies_match_manifest_and_remain_unapproved(self):
+    def test_all_revision_copies_match_manifest_and_current_review_state(self):
         manifest = json.loads((REVISIONS / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(len(manifest), 11)
         self.assertEqual(len({entry['wp_id'] for entry in manifest}), 11)
@@ -35,12 +35,20 @@ class LegacyDraftCopyTests(unittest.TestCase):
                 content = (REVISIONS / entry['revision_path']).read_text(encoding='utf-8')
                 checksum = hashlib.sha256(content.replace('\r\n', '\n').rstrip('\n').encode()).hexdigest()
                 self.assertEqual(entry['sha256_normalized'], checksum)
-                self.assertEqual(entry['publication_status'], 'draft')
-                self.assertEqual(entry['review_status'], 'human_final_review_required')
-                self.assertIn('<h2>공식 출처</h2><ul>', content)
+                if entry['publication_status'] == 'draft':
+                    self.assertEqual(entry['review_status'], 'human_final_review_required')
+                else:
+                    self.assertEqual(entry['wp_id'], 243)
+                    self.assertEqual(entry['publication_status'], 'publish')
+                    self.assertTrue(entry['review_status'].startswith('editorial_review_passed_'))
+                if entry['publication_status'] == 'publish':
+                    self.assertIn('class="source-list"', content)
+                else:
+                    self.assertIn('<h2>공식 출처</h2><ul>', content)
                 self.assertIn('https://', content)
-                self.assertEqual(content.count('<article'), 1)
-                self.assertEqual(content.count('</article>'), 1)
+                if entry['publication_status'] == 'draft':
+                    self.assertEqual(content.count('<article'), 1)
+                    self.assertEqual(content.count('</article>'), 1)
                 for internal in ('공식 출처 및 검토 기록', '자료 검토:',
                                  '링크된 자료의 적용 시점과 실제 안내 화면을 확인해 사용하세요',
                                  '이 초안', '이 원고에서는', '근거가 없어 삭제했습니다'):
