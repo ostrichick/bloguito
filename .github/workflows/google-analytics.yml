@@ -50,10 +50,21 @@ jobs:
           set -euo pipefail
           umask 077
           mkdir -m 700 -p "$REPORT_DIR"
-          trap 'rm -f "$REPORT_DIR"/*.json "$REPORT_DIR"/*.md "$REPORT_DIR"/ssh-key "$REPORT_DIR"/known_hosts' EXIT
+          trap 'rm -f "$REPORT_DIR"/*.json "$REPORT_DIR"/*.md "$REPORT_DIR"/ssh-key "$REPORT_DIR"/key.pub "$REPORT_DIR"/known_hosts' EXIT
           test -n "$REPORT_SSH_KEY"
-          printf '%s\n' "$REPORT_SSH_KEY" > "$REPORT_DIR/ssh-key"
+          # Windows clipboard/Notepad may turn LF into CRLF; keep private key
+          # entirely in runner.temp and never echo its content to public logs.
+          printf '%s\n' "$REPORT_SSH_KEY" | tr -d '\r' > "$REPORT_DIR/ssh-key"
           chmod 600 "$REPORT_DIR/ssh-key"
+          ssh-keygen -y -f "$REPORT_DIR/ssh-key" > "$REPORT_DIR/key.pub" 2>/dev/null || {
+            echo 'analytics_delivery_failed:invalid_ssh_secret_format' >&2
+            exit 1
+          }
+          test "$(ssh-keygen -lf "$REPORT_DIR/key.pub" | awk '{print $2}')" = \
+            'SHA256:B+6UdlxcxeGD1PSGzP3BJQ+HtwWXBXepu7hAO8geowQ' || {
+            echo 'analytics_delivery_failed:unexpected_ssh_key' >&2
+            exit 1
+          }
           # A public host fingerprint verified via the pre-existing trusted
           # operator SSH connection. Never accept a changed host key silently.
           ssh-keyscan -T 10 -t ed25519 161.33.0.234 2>/dev/null > "$REPORT_DIR/known_hosts"
