@@ -59,3 +59,11 @@
 - 서비스 계정에 `roles/iam.workloadIdentityUser`를 `attribute.repository_id/1367302611`로 한정해 연결했다. Cloud Shell에서 서비스 계정 IAM 정책을 다시 조회해 해당 저장소 ID 포함 여부 `IAM_BOUND`를 확인했다. Google Cloud 프로젝트의 광범위한 IAM 역할은 추가하지 않았다.
 - 신규 `.github/workflows/google-analytics.yml`은 **일단 수동 실행만 허용**한다. GitHub Actions OIDC → 서비스 계정 가장 → 두 Google API 조회를 시험한다. 결과 JSON/MD는 러너의 임시 디렉터리에만 작성해 작업 종료 시 삭제하며, 로그는 행 수·성공/실패 코드만 포함하고 쿼리나 보고서 원문을 공개 아티팩트/커밋으로 내보내지 않는다.
 - 수동 실조회에 성공하더라도 **VPS 영구 보관·매일 예약 실행·ChatGPT 자동 연동은 별개**다. 공개 저장소에서는 비공개 전달 경로가 구축·검증되기 전까지 `schedule`을 추가하지 않는다. 기존 VPS cron을 바꾸거나 서비스 계정 키를 만들지 않는다.
+
+## GitHub SSH Secret 등록 후 실전 검증 (2026-09-21 후속)
+
+- 사용자 완료 보고 뒤 `gh secret list`에서 `BLOGUITO_ANALYTICS_SSH_KEY`의 등록 시각만 확인했다. GitHub Secret 값 자체는 조회할 수 없으며 값을 채팅·Git·로그에 내보내지 않았다. 운영 수신기, 전용 `authorized_keys` 항목, 0700 저장 디렉터리가 존재하고 보고서 디렉터리는 비어 있음을 확인했다.
+- 수동 실행 `35602115419`: Google OIDC 및 양쪽 API 조회 성공(`search_query_rows=1`, `ga4_day_rows=4`), SSH 전송 실패(`libcrypto`, `Permission denied`). 로컬 원본 `.key`는 `ssh-keygen -y -f` 검사에 성공하고 전용 업로드 키의 공개 지문과 일치했다. Secret의 실제 형식은 불명확하다.
+- `9eca66e`에서는 Windows CRLF를 정규화하고 로컬 키의 공개 지문과 일치하는지 확인하도록 변경했다. 수동 실행 `35602337056`은 본문 조회 전에 `analytics_delivery_failed:invalid_ssh_secret_format`으로 실패했다. `7e507d0`에서는 BOM/주변 공백 및 문자 그대로의 `\\n` 복사도 정규화하고 비밀값 내용 없이 완전한 OpenSSH 개인키 헤더·푸터를 검사하도록 변경했다. 수동 실행 `35602509717`은 `analytics_delivery_failed:ssh_secret_is_not_complete_private_key`로 종료됐다.
+- 따라서 **현재 GitHub에 입력된 값은 완전한 개인키로 인식되지 않는다.** 사용자가 GitHub Secret 값에 로컬 `.key` 파일의 **전체 텍스트(시작/끝 마커 포함)**를 다시 붙여 넣어 교체해야 한다. `.pub` 또는 파일 경로 문자열을 입력하지 않는다. 성공한 업로드가 없으므로 일일 `schedule`을 추가하지 않았으며 VPS `run_analytics.sh` 크론도 설치하지 않았다. 임시 개인키는 재등록 필요로 아직 폐기하지 않았다.
+- 복구 후 수동 `workflow_dispatch` 성공 및 서버의 실제 JSON/MD 존재·0600 권한·원문 비공개 검사를 완료해야 예약 실행을 활성화한다. 사용자 데이터는 공개 작업 로그·아티팩트·커밋에 게시하지 않는다.
