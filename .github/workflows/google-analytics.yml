@@ -52,9 +52,24 @@ jobs:
           mkdir -m 700 -p "$REPORT_DIR"
           trap 'rm -f "$REPORT_DIR"/*.json "$REPORT_DIR"/*.md "$REPORT_DIR"/ssh-key "$REPORT_DIR"/key.pub "$REPORT_DIR"/known_hosts' EXIT
           test -n "$REPORT_SSH_KEY"
-          # Windows clipboard/Notepad may turn LF into CRLF; keep private key
-          # entirely in runner.temp and never echo its content to public logs.
-          printf '%s\n' "$REPORT_SSH_KEY" | tr -d '\r' > "$REPORT_DIR/ssh-key"
+          # Canonicalize Windows line endings and an accidentally escaped
+          # single-line paste. Never print the secret or any derived key.
+          python - "$REPORT_DIR/ssh-key" <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+
+          secret = os.environ['REPORT_SSH_KEY'].strip().lstrip('\ufeff')
+          secret = secret.replace('\r\n', '\n').replace('\r', '\n')
+          if '\n' not in secret and '\\n' in secret:
+              secret = secret.replace('\\n', '\n')
+          if (not secret.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n')
+                  or not secret.endswith('\n-----END OPENSSH PRIVATE KEY-----')):
+              print('analytics_delivery_failed:ssh_secret_is_not_complete_private_key',
+                    file=sys.stderr)
+              sys.exit(1)
+          Path(sys.argv[1]).write_text(secret + '\n', encoding='utf-8')
+          PY
           chmod 600 "$REPORT_DIR/ssh-key"
           ssh-keygen -y -f "$REPORT_DIR/ssh-key" > "$REPORT_DIR/key.pub" 2>/dev/null || {
             echo 'analytics_delivery_failed:invalid_ssh_secret_format' >&2
