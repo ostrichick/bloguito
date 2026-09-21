@@ -28,9 +28,22 @@ class Paragraph(BaseModel):
     answers: list[str] = Field(default_factory=list)
 
 
+class InformationTableRow(BaseModel):
+    cells: list[str]
+    evidence: list[Evidence]
+    answers: list[str] = Field(default_factory=list)
+
+
+class InformationTable(BaseModel):
+    caption: str
+    headers: list[str]
+    rows: list[InformationTableRow]
+
+
 class Section(BaseModel):
     heading: str
     paragraphs: list[Paragraph]
+    table: InformationTable | None = None
 
 
 class FAQ(BaseModel):
@@ -134,7 +147,7 @@ class EditorialWriterAgent:
     def review(self, bundle):
         body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
         result = self._call(
-            '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, FAQ를 원문과 대조하라. '
+            '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, 표의 각 행·셀, FAQ를 원문과 대조하라. '
             '인용이 존재해도 해당 주장을 뒷받침하지 않으면 실패다. 수치의 단위, 부정/긍정, 예외, 대상·지역, '
             '신청과 사용기간을 대조하고 중요한 조건 누락·출처 간 충돌을 거부하라. '
             'reader_questions마다 답이 본문에 충분히 있는지 검토하라. '
@@ -159,6 +172,10 @@ class EditorialWriterAgent:
                 '신청 절차와 실행 방법은 모호한 안내 대신 실제 공식 사이트의 메뉴 이동 경로(예: 홈택스 로그인 > [조회/발급] > [국세환급금 찾기])를 단계별로 명확히 명시하라. '
                 '원고는 순수 텍스트 문단과 절, 필요한 FAQ로 구성하고 각 문단에 실제 원문 인용 evidence와 '
                 '답한 질문의 ID인 answers를 붙여라. 인용은 원문의 연속 발췌이며 뜻을 바꾸지 말 것. '
+                '지역별 공연일·공연장이나 금액·조건처럼 여러 항목을 비교할 때는 장문 나열 대신 섹션의 table에 '
+                'caption, headers, rows를 작성하라. 각 row에는 cells와 해당 행 전체를 뒷받침하는 실제 원문 연속 발췌 '
+                'evidence, answers를 연결하라. table이 있는 섹션은 paragraphs를 빈 배열로 둘 수 있다. '
+                '확인되지 않은 시간·가격·할인을 빈 표 셀에 지어내지 말고 원고 본문에도 자유 HTML을 넣지 말 것. '
                 'FAQ question_id도 반드시 reader_questions의 기존 ID를 사용하고 answer.answers에 같은 ID를 넣어라. '
                 '본문의 숫자는 해당 문단의 인용으로 증명해야 한다. 제품 개수는 5개 미만 같은 명시적 범위에 '
                 '속하는 1개 등으로 설명할 수 있으나 반드시 그 범위가 있는 인용을 연결하라. 금액·날짜는 원문 수치 표기를 유지하라. '

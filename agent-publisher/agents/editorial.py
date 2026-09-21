@@ -7,7 +7,7 @@ from datetime import datetime, date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from agents.temporal_validation import KST, validate_availability, extract_evidence
+from agents.temporal_validation import KST, validate_availability, extract_evidence, extract_yes24_schedule
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 
@@ -87,7 +87,11 @@ def fresh(value, now, hours):
 
 
 def all_blocks(plan):
-    return [plan['lead'], *[b for s in plan['sections'] for b in s['paragraphs']], *[f['answer'] for f in plan.get('faq', [])]]
+    return [plan['lead'],
+            *[b for s in plan['sections'] for b in s['paragraphs']],
+            *[{'text': ' '.join(row['cells']), 'evidence': row['evidence'], 'answers': row.get('answers', [])}
+              for s in plan['sections'] for row in (s.get('table') or {}).get('rows', [])],
+            *[f['answer'] for f in plan.get('faq', [])]]
 
 
 def actionable_links(sources):
@@ -151,23 +155,67 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             reasons.append('invalid_action_links')
         if brief.get('content_type') == 'dated':
             temporal = bundle.get('temporal_source', {})
-            if brief.get('category_key') == 'concert' and (temporal.get('requires_sale') is not True or temporal.get('sale_source_url') not in brief['official_urls']):
-                reasons.append('concert_sale_evidence_required')
             available = [field for s in sources for field in extract_evidence(s['text'], s['url'])]
-            if not available or temporal.get('evidence') != available:
+            listing_only = temporal.get('schedule_listing_only') is True
+            if temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')
-            decision = validate_availability(temporal, now=now)
-            if decision['status'] != 'active':
-                reasons.append('availability_not_verified')
-            if decision.get('expires_at') and (datetime.fromisoformat(decision['expires_at']).date()-now.date()).days < rules['min_remaining_days']:
-                reasons.append('source_deadline_too_close')
+            if listing_only:
+                # For an event schedule and booking *destinations*, evidence of an
+                # actual sale deadline is not available from the public listing.
+                # This mode cannot certify ticket availability or sale periods.
+                listing_url = temporal.get('listing_source_url')
+                listing_source = next((s for s in sources if s['url'] == listing_url), None)
+                if (brief.get('category_key') != 'concert' or temporal.get('requires_sale') is not False
+                        or not listing_source or urlparse(listing_url).hostname != 'm.ticket.yes24.com'):
+                    reasons.append('schedule_listing_provenance_missing')
+                else:
+                    rows = extract_yes24_schedule(listing_source['text'], brief['entity'].split()[0])
+                    table_rows = [row['cells'] for section in plan['sections']
+                                  for row in (section.get('table') or {}).get('rows', [])]
+                    if (not rows or rows != temporal.get('listing_entries')
+                            or any([item['region'], item['date'], item['venue']] not in table_rows for item in rows)):
+                        reasons.append('schedule_listing_not_bound')
+                    elif max(date.fromisoformat(item['date'].replace('.', '-')) for item in rows) < now.date():
+                        reasons.append('availability_not_verified')
+                    elif (max(date.fromisoformat(item['date'].replace('.', '-')) for item in rows)
+                          - now.date()).days < rules['min_remaining_days']:
+                        reasons.append('source_deadline_too_close')
+                    public_text = ' '.join([plan['lead']['text'], *[p['text'] for sec in plan['sections']
+                                                                   for p in sec['paragraphs']],
+                                            *[faq['answer']['text'] for faq in plan.get('faq', [])]])
+                    if re.search(r'예매\s*중|판매\s*중|예매\s*기간|판매\s*기간|매진|잔여\s*좌석', public_text):
+                        reasons.append('sale_status_claim_without_evidence')
+            else:
+                if brief.get('category_key') == 'concert' and (temporal.get('requires_sale') is not True or temporal.get('sale_source_url') not in brief['official_urls']):
+                    reasons.append('concert_sale_evidence_required')
+                if not available:
+                    reasons.append('temporal_source_not_bound')
+                decision = validate_availability(temporal, now=now)
+                if decision['status'] != 'active':
+                    reasons.append('availability_not_verified')
+                if decision.get('expires_at') and (datetime.fromisoformat(decision['expires_at']).date()-now.date()).days < rules['min_remaining_days']:
+                    reasons.append('source_deadline_too_close')
         # Version-specific official policy evidence is separate from a fresh fetch and a valid quote.
         reasons.extend(critical_fact_reasons(brief, sources, plan))
         title = plan['title']
         if not all(normalized(t) in normalized(title) for t in brief['required_title_terms']):
             reasons.append('title_missing_entity_or_region')
-        if not plan['sections'] or not all(s['heading'] and s['paragraphs'] for s in plan['sections']):
+        if not plan['sections'] or not all(s['heading'] and (s['paragraphs'] or s.get('table')) for s in plan['sections']):
             reasons.append('article_structure_incomplete')
+        for section in plan['sections']:
+            table = section.get('table')
+            if table is None:
+                continue
+            headers, rows = table.get('headers'), table.get('rows')
+            if (not isinstance(table.get('caption'), str) or not table['caption'].strip()
+                    or not isinstance(headers, list) or not 2 <= len(headers) <= 5
+                    or not isinstance(rows, list) or not 1 <= len(rows) <= 20
+                    or any(not isinstance(h, str) or not 1 <= len(h.strip()) <= 60 for h in headers)
+                    or any(not isinstance(row, dict) or not isinstance(row.get('cells'), list)
+                           or len(row['cells']) != len(headers)
+                           or any(not isinstance(cell, str) or not 1 <= len(cell.strip()) <= 160
+                                  for cell in row['cells']) for row in rows)):
+                reasons.append('invalid_information_table')
         blocks = all_blocks(plan)
         answered = set()
         for block_index, b in enumerate(blocks):
@@ -192,7 +240,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
         if any(f['question_id'] not in questions or f['question_id'] not in f['answer'].get('answers', []) for f in plan.get('faq', [])):
             reasons.append('faq_answer_missing')
             details.append(f'FAQ question_id는 새 ID가 아니라 reader_questions의 ID {sorted(questions)} 중 하나여야 하며 answer.answers에도 같은 ID가 필요함.')
-        visible = ' '.join([title, *[s['heading'] for s in plan['sections']], *[b['text'] for b in blocks], *[f['question'] for f in plan.get('faq', [])]])
+        table_labels = [label for section in plan['sections'] if section.get('table')
+                        for label in [section['table']['caption'], *section['table']['headers']]]
+        visible = ' '.join([title, *[s['heading'] for s in plan['sections']], *table_labels,
+                            *[b['text'] for b in blocks], *[f['question'] for f in plan.get('faq', [])]])
         if any(re.search(p, visible) for p in rules['blocked_patterns']):
             reasons.append('reader_deflection_or_disclaimer')
         # Correction banners, previous-copy change logs and review metadata are
@@ -283,7 +334,24 @@ def render(plan, sources, category_key=None):
         result += (f'<h2 id="step-{number}" style="font-size:24px;line-height:1.45;margin:42px 0 18px;padding-bottom:12px;border-bottom:2px solid #e2e8f0;color:#1a202c;display:flex;align-items:center;flex-wrap:wrap">'
                    f'<span style="background:#e6f4ea;color:#0d7d59;font-size:13px;font-weight:700;padding:4px 10px;border-radius:20px;margin-right:10px;letter-spacing:0.5px">STEP {number}</span>'
                    f'{html.escape(clean_heading)}</h2>'
-                   + ''.join(paragraph(b) for b in section['paragraphs']))
+                   )
+        table = section.get('table')
+        if table:
+            headers = ''.join(f'<th scope="col" style="padding:12px;border-bottom:2px solid #cbd5e1;text-align:left;white-space:nowrap">{html.escape(h)}</th>'
+                              for h in table['headers'])
+            rows = ''.join('<tr>' + ''.join(
+                (f'<th scope="row" style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700">{html.escape(cell)}</th>'
+                 if index == 0 else
+                 f'<td style="padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top">{html.escape(cell)}</td>')
+                for index, cell in enumerate(row['cells'])) + '</tr>' for row in table['rows'])
+            result += ('<div class="bloguito-info-table" role="region" aria-label="'
+                       + html.escape(table['caption'], quote=True)
+                       + '" tabindex="0" style="overflow-x:auto;margin:18px 0 24px;max-width:100%">'
+                       + '<table style="border-collapse:collapse;width:100%;min-width:580px;font-size:15px;line-height:1.6">'
+                       + '<caption style="text-align:left;font-weight:700;margin-bottom:8px">'
+                       + html.escape(table['caption']) + '</caption><thead style="background:#edf7f3"><tr>'
+                       + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
+        result += ''.join(paragraph(b) for b in section['paragraphs'])
 
     # 4. 자주 묻는 질문 (FAQ)
     if plan.get('faq'):
@@ -394,7 +462,7 @@ def render(plan, sources, category_key=None):
 
     # 6. 공식 출처 및 사실 검증 자료
     ids = []
-    for block in [plan['lead']] + [b for s in plan['sections'] for b in s['paragraphs']] + [f['answer'] for f in plan.get('faq', [])]:
+    for block in all_blocks(plan):
         ids.extend(e['source_id'] for e in block['evidence'])
     ids = list(dict.fromkeys(ids))
     links = ''.join(f'<li style="margin:8px 0"><a href="{html.escape(source_map[i]["url"], quote=True)}" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;word-break:break-all">{html.escape(source_map[i]["title"].splitlines()[0][:100])}</a></li>' for i in ids)

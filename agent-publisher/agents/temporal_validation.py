@@ -1,6 +1,6 @@
 """Deterministic KST availability policy using labelled source evidence only."""
 import re
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
 STAMP = re.compile(r"(?<!\d)(?:(\d{4})\s*(?:년\s*|[./-]\s*))?(\d{1,2})\s*(?:월\s*|[./-]\s*)(\d{1,2})\s*일?(?:\s*\([^)]*\))?(?:\s*(오전|오후)?\s*(\d{1,2})(?:시|:)(?:(\d{1,2})\s*분?)?)?")
@@ -10,6 +10,33 @@ LABELS = {
     "sale": r"예매기간|판매기간|예매오픈|티켓오픈",
     "status": r"판매상태|예매상태|접수상태|신청상태",
 }
+
+YES24_LISTING = re.compile(
+    r'(?m)^\[(?P<region>[가-힣]{2,12})\] (?P<title>[^\n]{4,130})\n'
+    r'(?P<start>\d{4}\.\d{2}\.\d{2}) ~ (?P<end>\d{4}\.\d{2}\.\d{2})ㅣ'
+    r'(?P<venue>[^\n]{3,120})\n예매(?=\n|$)'
+)
+
+
+def extract_yes24_schedule(text: str, artist: str) -> list[dict]:
+    """Read only dated venue rows with an actual booking button on a YES24 listing.
+
+    A visible booking link is not evidence of tickets remaining or a sale deadline.
+    No estimated sale period is derived from the last concert date.
+    """
+    if not isinstance(artist, str) or len(artist.strip()) < 2:
+        return []
+    rows = []
+    for match in YES24_LISTING.finditer(text):
+        if artist not in match['title'] or match['start'] != match['end']:
+            continue
+        try:
+            date.fromisoformat(match['start'].replace('.', '-'))
+        except ValueError:
+            continue
+        rows.append({'region': match['region'], 'date': match['start'],
+                     'venue': match['venue']})
+    return rows
 
 
 def extract_evidence(text: str, url: str) -> list[dict]:
