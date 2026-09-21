@@ -251,7 +251,7 @@ def markdown_report(snapshot):
             "| QA 태그: 에이전트 | " + str(identity["agent_sessions"]) + " |",
             "| QA 태그: 소유자 비로그인 테스트 | " + str(identity["owner_sessions"]) + " |",
             "| 태그 없는 Direct (사람/봇 미확인) | " + str(identity["unverified_direct_sessions"]) + " |",
-            "| 그 외 출처 미확인 (실제 사람 확정 아님) | " + str(identity["unverified_other_sessions"]) + " |",
+            "| QA 태그 없는 기타 유입 (실제 사람 확정 아님) | " + str(identity["unverified_other_sessions"]) + " |",
         ]
         if identity["unaccounted_sessions"]:
             lines.append("| 출처 보고서와 채널 보고서 차이 (미분류) | "

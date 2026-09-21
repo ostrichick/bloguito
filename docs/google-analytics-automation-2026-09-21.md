@@ -87,3 +87,11 @@
 - 일일 스케줄 커밋 `4e38f09`를 `main`에 푸시한 뒤 원격 워크플로 YAML에서 `schedule: 17 2 * * *`를 확인했다. 해당 커밋의 수동 재실행 [35606725963](https://github.com/ostrichick/bloguito/actions/runs/35606725963)은 전체 성공하고 `analytics_collection_ok` 및 `analytics_ingest_ok`를 반환했다. 같은 커밋의 GitHub `Test Suite` [35606673535](https://github.com/ostrichick/bloguito/actions/runs/35606673535)도 성공했다. 로컬 관련 테스트 13개 실행에서 실패 0건·Windows 심볼릭 링크 권한으로 1개 건너뜀을 확인했다.
 - 재실행 후 서버에서 JSON·Markdown의 존재와 0600/0700 권한, 기간·행 수를 다시 확인했다. VPS crontab에는 기존 백업 및 초안 생성 항목 2개만 남아 있다. OS 임시 폴더에 있던 업로드용 전용 개인키와 대응 공개키 파일을 올바른 공개 지문과 일치하는지 확인한 뒤 각각 삭제했다. GitHub Secret과 서버 강제명령 수신 공개키는 유지했다.
 - **예약 실행 자체의 첫 실제 실행과 장기 신뢰성은 아직 관측하지 않았다.** GitHub의 예약 시각은 지연될 수 있다. WordPress/Site Kit 및 기존 글·서버 크론을 건드리지 않았으며, 민감한 보고서의 자동 ChatGPT 전달 기능은 별도 단계다.
+
+### QA 방문 구분 배포 및 실 API 검증 결과
+
+- 기존 무관한 `agents/curator.py`, `agents/publisher.py`, 다른 에이전트의 테스트 및 `docs/INDEX.md` 미커밋 변경은 보존하고, `AGENTS.md`·분석 수집기/수신기 및 전용 테스트/이 문서만 커밋 `4a67eec`로 푸시했다. 필터를 활성화하거나 WordPress의 Site Kit 옵션을 변경하지 않았다.
+- Windows 관련 테스트 **17개, 실패 0·symlink 권한으로 1개 건너뜀**; 서버 격리 디렉터리의 Linux 관련 테스트 **17개 모두 통과**, Python 컴파일 검사 통과. 기존 운영 수집기와 수신기는 격리 백업 후 신규 버전으로 교체했으며 배포 파일과 격리 검증본의 SHA256이 각각 같음을 확인했다. 구형 스냅샷 형식도 수신기에서 테스트했다.
+- 실제 Google 조회·비공개 업로드 수동 실행 [35668182242](https://github.com/ostrichick/bloguito/actions/runs/35668182242) **성공** (`analytics_collection_ok`, `analytics_ingest_ok`), 수신 서버에 스냅샷 v2가 생성됐다. 서버 `/home/ubuntu/agent-publisher/data/analytics/google-analytics-2026-09-18.json` 7999바이트 및 `.md` 1314바이트, 폴더 0700·파일 0600 재확인. 원시 방문 데이터·인증 정보는 GitHub 로그·아티팩트·커밋에 업로드하지 않았다.
+- 과거 집계 2026-08-22~09-18을 v2로 재조회한 보고서는 `QA 에이전트 0세션`, `QA 소유자 0세션`, `태그 없는 Direct 53세션`, `QA 태그 없는 기타 4세션`으로 표시한다. **0건은 이전에 에이전트/소유자가 방문하지 않았다는 증거가 아니라, 과거 세션에 전용 QA UTM이 없었다는 의미**다. 현재 비로그인 QA URL로 실제 GA4 세션이 발생했는지는 미검증이다. GA4 처리 지연 및 수집 종료일 UTC 3일 전 조건상 향후 새 태그 방문이 보고서에 나타날 때 확인해야 한다.
+- GitHub 예약 실행 `17 2 * * *`는 유지했고 기존 VPS cron·WordPress 게시물·사용자 트래픽은 수정하지 않았다. 실제 GA4 IP 내부 트래픽 **테스트** 필터는 별개이며 미설정 상태다. 스스로 식별하지 않은 방문은 일반 독자 수로 산정하지 않는다.
