@@ -23,7 +23,7 @@
 | 분야 | 기록 |
 | --- | --- |
 | 9월 12일 초기 계획·구현 | [초기 계획 원본](history/implementation_plan-2026-09-12.md), [초기 결과 원본](history/walkthrough-2026-09-20.md), [구 종합 인계 이력](history/PROJECT_HANDOVER-2026-09-20.md) |
-| 편집 시스템 구축·설계 | [검색 의도](search-editorial-policy.md), [공통 시스템 구현](editorial-system-implementation-2026-09-14.md), [벤치마크 반영](benchmark-reflection-2026-09-15.md), [콘텐츠 전략 제안](CONTENT_STRATEGY_2026-09-20.md) |
+| 편집 시스템 구축·설계 | [검색 의도](search-editorial-policy.md), [공통 시스템 구현](editorial-system-implementation-2026-09-14.md), [벤치마크 반영](benchmark-reflection-2026-09-15.md), [콘텐츠 전략 제안](CONTENT_STRATEGY_2026-09-20.md), [생활정보 본문 UX 비교](article-layout-benchmark-2026-09-21.md) |
 | 자동화·안전성 | [운영 감사·수정](audit-remediation-2026-09-20.md), [1~5순위 코드 개선 당시 상태](implementation-execution-2026-09-20.md), [백업·복구 v3 당시 구현과 미검증](backup-recovery-2026-09-20.md), [Site Kit 이관](sitekit-and-editorial-handoff-2026-09-20.md) |
 | 공개 콘텐츠 품질 | [2026-09-20 공개 글 점검](published-content-review-2026-09-20.md), [내부 정정 문구 제거](internal-editorial-notes-cleanup-2026-09-21.md), [통신 미환급액 #243](telecom-post-243-revision-2026-09-21.md), [#218 보강·운영 반영](post-218-expansion-2026-09-21.md), [#349 김건모 일정 표·운영 반영](kim-gunmo-schedule-table-2026-09-21.md) |
 | 임시글·편집 보류 | [2026-09-20 임시글 전수 점검](draft-content-review-2026-09-20.md), [원고 사본 문구 정리](editorial-improvements-2026-09-20.md), [버스 취소표](bus-cancellation-draft-2026-09-21.md), [버튼 목적지 #345](action-links-draft-fix-2026-09-21.md) |
