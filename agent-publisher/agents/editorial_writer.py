@@ -5,6 +5,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -44,6 +45,10 @@ class Section(BaseModel):
     heading: str
     paragraphs: list[Paragraph]
     table: InformationTable | None = None
+    kind: str | None = Field(default=None, description=(
+        'Select overview, eligibility, comparison, procedure, exceptions, schedule or general. '
+        'Only procedure is a numbered STEP. Use overview for a short at-a-glance table before links.'
+    ))
 
 
 class FAQ(BaseModel):
@@ -77,6 +82,30 @@ def load_inventory():
     return json.loads(INVENTORY.read_text(encoding='utf-8'))
 
 
+def _koreakr_article_text(soup, url):
+    """Extract only the official policy-news article, not its rotating news rails.
+
+    A changed article structure must fail the source recheck rather than silently
+    hashing unrelated recommendations or dropping the evidence-bearing body.
+    """
+    parsed = urlsplit(url)
+    if parsed.hostname != 'www.korea.kr' or parsed.path != '/news/policyNewsView.do':
+        return None
+    prefix = 'main#main section#container'
+    titles = soup.select(f'{prefix} .view_title h1')
+    subtitles = soup.select(f'{prefix} .article_wrap .article_head > h2')
+    dates = soup.select(f'{prefix} .article_wrap .article_head .variety span')
+    bodies = soup.select(f'{prefix} .article_wrap .article_body .view_cont')
+    if (len(titles) != 1 or len(subtitles) != 1 or len(bodies) != 1 or not dates
+            or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}', dates[0].get_text(' ', strip=True))):
+        raise ValueError('koreakr_article_main_missing_or_ambiguous')
+    parts = [titles[0].get_text('\n', strip=True), subtitles[0].get_text('\n', strip=True),
+             dates[0].get_text(' ', strip=True), bodies[0].get_text('\n', strip=True)]
+    if any(not part for part in parts):
+        raise ValueError('koreakr_article_main_missing_or_ambiguous')
+    return '\n'.join(parts)
+
+
 def fetch_sources(brief):
     sources = []
     for i, url in enumerate(brief['official_urls'][:5]):
@@ -88,7 +117,9 @@ def fetch_sources(brief):
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
-        text = soup.get_text('\n', strip=True)
+        text = _koreakr_article_text(soup, url)
+        if text is None:
+            text = soup.get_text('\n', strip=True)
         # Government article page counters change on every read. They are not
         # policy evidence, so omit only the standalone view-count metadata;
         # any actual article-content change must still alter the source hash.
@@ -170,6 +201,9 @@ class EditorialWriterAgent:
                 '서론의 불필요한 잡담이나 상투적 클리셰(\'알아보겠습니다\', \'유익한 정보가 되길 바랍니다\')는 일절 배제하라. '
                 '문체는 공문서의 딱딱한 용어를 독자 눈높이로 쉽게 풀어주면서도 신뢰감 있고 정중한 경어체(~합니다, ~할 수 있습니다)를 일관되게 유지하라. '
                 '신청 절차와 실행 방법은 모호한 안내 대신 실제 공식 사이트의 메뉴 이동 경로(예: 홈택스 로그인 > [조회/발급] > [국세환급금 찾기])를 단계별로 명확히 명시하라. '
+                '정보글 기본 순서는 핵심 답(lead) → 필요한 경우 한눈에 보기(overview 표) → 대상·예외 또는 상황별 분기(eligibility/comparison) → 실제 행동 절차(procedure) → 실패·문의(exceptions) → 의미 있는 FAQ다. '
+                '절마다 kind를 overview/eligibility/comparison/procedure/exceptions/schedule/general 중 지정하고 실제 시간 순서의 실행 단계에만 procedure를 써라. 공연 일정은 schedule, 병렬 비교는 comparison을 선택하라. '
+                '대상 연령이나 음악 장르를 근거 없이 제목이나 소개에 붙이지 말고, 핵심 조건과 제외 조건을 표 아래에 묻어두지 말 것. '
                 '원고는 순수 텍스트 문단과 절, 필요한 FAQ로 구성하고 각 문단에 실제 원문 인용 evidence와 '
                 '답한 질문의 ID인 answers를 붙여라. 인용은 원문의 연속 발췌이며 뜻을 바꾸지 말 것. '
                 '지역별 공연일·공연장이나 금액·조건처럼 여러 항목을 비교할 때는 장문 나열 대신 섹션의 table에 '

@@ -56,12 +56,13 @@ class SystemImprovementsTest(unittest.TestCase):
         # 2. 정제된 제목이 뱃지 옆에 바로 와야 함
         self.assertIn('STEP 1</span>신청 자격 및 대상자 기준 확인하기</h2>', html)
         self.assertIn('STEP 2</span>위택스 온라인 신청 방법 총정리</h2>', html)
-        self.assertIn('STEP 3</span>지급 일정 및 가산세 유의사항</h2>', html)
+        self.assertIn('>지급 일정 및 가산세 유의사항</h2>', html)
+        self.assertNotIn('STEP 3</span>지급 일정', html)
 
         # 3. 목차(TOC)에도 정제된 텍스트가 표시되어야 함
         self.assertIn('STEP 1. 신청 자격 및 대상자 기준 확인하기</a>', html)
         self.assertIn('STEP 2. 위택스 온라인 신청 방법 총정리</a>', html)
-        self.assertIn('STEP 3. 지급 일정 및 가산세 유의사항</a>', html)
+        self.assertIn('>지급 일정 및 가산세 유의사항</a>', html)
 
     def test_informational_sources_are_not_action_buttons(self):
         """출처가 공식 누리집이어도 확인된 신청·예매 목적지가 아니면 버튼으로 만들지 않는다."""
@@ -81,7 +82,7 @@ class SystemImprovementsTest(unittest.TestCase):
         ]
         html = render(self.plan, custom_sources)
         self.assertIn('class="bloguito-cta"', html)
-        self.assertIn('바로 예매·조회 또는 앱 설치하기', html)
+        self.assertIn('공식 서비스 바로가기', html)
         self.assertIn('고속버스 조회·예매', html)
         self.assertIn('https://www.kobus.co.kr/main.do', html)
         self.assertIn('https://play.google.com/store/apps/details?id=kr.co.tmoney.tia', html)

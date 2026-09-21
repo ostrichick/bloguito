@@ -59,6 +59,41 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'specific_public_post_update_confirmation_required'):
             updater.update_existing_public_post(243, self.bundle, self.sha)
 
+    def test_repairs_only_blank_excerpt_from_existing_summary(self):
+        original = {**self.post, 'post_excerpt': '',
+                    'post_content': '<div class="bloguito-summary"><div>핵심요약</div>'
+                                    '<p>실제 정보가 담긴 본문 핵심 답변입니다. 공식 조회 경로를 확인하세요.</p></div>'
+                                    '<div class="bloguito-cta">광고 같은 버튼 안내</div>'}
+        updated = {**original, 'post_excerpt': '실제 정보가 담긴 본문 핵심 답변입니다. 공식 조회 경로를 확인하세요.'}
+        digest = hashlib.sha256(original['post_content'].encode()).hexdigest()
+        calls = []
+
+        def execute(args, **kwargs):
+            calls.append(args)
+            return Mock(stdout=json.dumps(original if len(calls) == 1 else updated))
+
+        with patch.object(updater, 'ROOT', Path(self.temp.name)), \
+             patch.object(updater.subprocess, 'run', side_effect=execute):
+            self.assertEqual(243, updater.repair_missing_excerpt(243, digest, confirmed=True))
+        update = next(args for args in calls if args[5:7] == ['post', 'update'])
+        self.assertTrue(any(arg.startswith('--post_excerpt=실제 정보') for arg in update))
+        self.assertFalse(any(arg.startswith('--post_content=') for arg in update))
+        self.assertEqual(1, len(list((Path(self.temp.name) / 'data/editorial_runs').glob('excerpt-edit-*.json'))))
+
+    def test_does_not_replace_human_excerpt(self):
+        original = {**self.post, 'post_excerpt': '사람이 직접 설정한 요약'}
+        with patch.object(updater, 'ROOT', Path(self.temp.name)), \
+             patch.object(updater.subprocess, 'run', return_value=Mock(stdout=json.dumps(original))) as command:
+            self.assertEqual(243, updater.repair_missing_excerpt(243, self.sha, confirmed=True))
+        command.assert_called_once()
+
+    def test_excerpt_repair_refuses_stale_content(self):
+        with patch.object(updater, 'ROOT', Path(self.temp.name)), \
+             patch.object(updater.subprocess, 'run', return_value=Mock(stdout=json.dumps(self.post))) as command:
+            with self.assertRaisesRegex(ValueError, 'target_missing_changed_or_not_public'):
+                updater.repair_missing_excerpt(243, 'f' * 64, confirmed=True)
+        command.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

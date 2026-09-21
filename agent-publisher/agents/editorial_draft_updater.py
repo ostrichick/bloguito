@@ -19,7 +19,7 @@ def _hash(text):
 def _without_generated_cards(content):
     """Compare all authored prose while allowing only renderer-owned cards to change."""
     # The CTA has nested <div> nodes; its next sibling is the TOC marker.
-    content = re.sub(r'<div class="bloguito-cta"[^>]*>.*?(?=<div class="bloguito-toc")',
+    content = re.sub(r'<div class="bloguito-cta"[^>]*>.*?(?=<(?:div|nav) class="bloguito-toc")',
                      '', content, flags=re.DOTALL)
     content = re.sub(r'<div class="bloguito-interlink"[^>]*>.*?</div>',
                      '', content, flags=re.DOTALL)

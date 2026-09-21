@@ -88,7 +88,7 @@ class PublisherAgent:
         raise ValueError('editorial_bundle_required: 기존 표 원고도 공통 편집 검토 후 등록해야 합니다.')
 
     def _publish_editorial(self, article, image_path=None):
-        from agents.editorial import validate_bundle, render
+        from agents.editorial import validate_bundle, render, excerpt_from_lead
         from agents.editorial_writer import load_inventory
         from sync_wordpress_inventory import sync_inventory
         from config import CATEGORIES, resolve_category
@@ -100,6 +100,7 @@ class PublisherAgent:
             raise ValueError(f"편집 검사 보류: {report['reasons']}")
         content = render(bundle['plan'], bundle['sources'])
         title = bundle['plan']['title']
+        excerpt = excerpt_from_lead(bundle['plan']['lead'])
         if article.get('content') != content or article.get('title') != title:
             raise ValueError('editorial_content_changed_after_review')
         category = resolve_category(bundle['brief'].get('category_key', ''))
@@ -111,7 +112,8 @@ class PublisherAgent:
             subprocess.run(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'], check=True, capture_output=True)
             result = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'create', remote,
                 '--post_type=post', '--post_status=draft', f'--post_title={title}',
-                f'--post_category={category["id"]}', '--comment_status=closed', '--allow-root', '--porcelain'],
+                f'--post_category={category["id"]}', '--post_excerpt=' + excerpt,
+                '--comment_status=closed', '--allow-root', '--porcelain'],
                 check=True, capture_output=True, text=True)
             post_id = int(result.stdout.strip())
             actual = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),

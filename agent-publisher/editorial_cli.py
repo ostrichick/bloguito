@@ -8,7 +8,7 @@ from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, l
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -55,6 +55,14 @@ def main():
             res = agent.promote_draft(pid, confirmed=True)
             results.append(res)
         print(f"\n총 {len(results)}편 정식 공개(Publish) 전환 완료!")
+        return
+
+    if args.action == 'fix-excerpt':
+        if args.inventory or args.file:
+            parser.error('fix-excerpt requires only --post-id, --expected-content-sha256 and --confirm-update')
+        from agents.editorial_updater import repair_missing_excerpt
+        print('Verified excerpt for post ID:', repair_missing_excerpt(
+            args.post_id, args.expected_content_sha256, confirmed=args.confirm_update))
         return
 
     if not args.file:

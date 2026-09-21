@@ -203,6 +203,9 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
         if not plan['sections'] or not all(s['heading'] and (s['paragraphs'] or s.get('table')) for s in plan['sections']):
             reasons.append('article_structure_incomplete')
         for section in plan['sections']:
+            if section.get('kind') is not None and section['kind'] not in {
+                    'overview', 'eligibility', 'comparison', 'procedure', 'exceptions', 'schedule', 'general'}:
+                reasons.append('invalid_section_kind')
             table = section.get('table')
             if table is None:
                 continue
@@ -283,17 +286,79 @@ def render_legacy(plan, sources):
     return result
 
 
+def section_kind(section):
+    """Explicit editorial intent wins; infer only clear legacy procedure headings."""
+    if section.get('kind'):
+        return section['kind']
+    heading = section['heading'].strip()
+    if re.match(r'^(?:\d+[.)]\s*)?STEP\s*\d+', heading, re.I):
+        return 'procedure'
+    if re.search(r'(?:신청|조회|청구|예약|배출|수령|접수)\s*(?:방법|절차|순서)$', heading):
+        return 'procedure'
+    return 'general'
+
+
+def excerpt_from_lead(lead, limit=240):
+    """Create the archive preview from reviewed answer text, never HTML chrome."""
+    text = normalized(lead['text'])
+    if len(text) <= limit:
+        return text
+    shortened = text[:limit].rsplit(' ', 1)[0]
+    return (shortened or text[:limit]).rstrip('., ') + '…'
+
+
 def render(plan, sources, category_key=None):
     """Presentation is deterministic: retain every reviewed sentence and condition."""
     source_map = {s['id']: s for s in sources}
     def paragraph(block):
         return f'<p style="margin:14px 0;line-height:1.85;color:#2d3748;font-size:16.5px">{html.escape(block["text"])}</p>'
 
-    # 1. 3초 핵심 요약 박스
+    # 1. Immediate answer, with one heading and no repeated decorative badges.
     result = ('<div class="bloguito-article" style="line-height:1.85;font-size:17px;color:#2d3748;overflow-wrap:anywhere;word-break:keep-all">'
-              '<div class="bloguito-summary" style="padding:22px 24px;margin:24px 0 36px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:6px solid #0d7d59;border-radius:10px;box-shadow:0 2px 8px rgba(13,125,89,0.06)">'
-              '<div style="display:flex;align-items:center;margin-bottom:10px"><span style="background:#0d7d59;color:#ffffff;font-size:12px;font-weight:700;padding:3px 8px;border-radius:4px;margin-right:8px;letter-spacing:0.5px">3초 요약</span><strong style="font-size:20px;color:#134e4a">핵심요약</strong></div>'
-              + f'<p style="margin:10px 0 0;line-height:1.85;color:#1f2937;font-size:16.5px;font-weight:500">{html.escape(plan["lead"]["text"])}</p></div>')
+              '<div class="bloguito-summary" style="padding:18px 20px;margin:16px 0 24px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:5px solid #0d7d59;border-radius:10px">'
+              '<div style="font-size:18px;font-weight:700;color:#134e4a">핵심 답변</div>'
+              + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16.5px">{html.escape(plan["lead"]["text"])}</p></div>')
+
+    # A source-reviewed overview table belongs immediately after the answer.
+    sections = plan['sections']
+    overview_first = bool(sections and section_kind(sections[0]) == 'overview')
+    procedure_number = 0
+
+    def section_markup(number, section):
+        nonlocal procedure_number
+        clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
+        procedural = section_kind(section) == 'procedure'
+        if procedural:
+            procedure_number += 1
+        badge = (f'<span style="background:#e6f4ea;color:#0d7d59;font-size:13px;font-weight:700;padding:4px 9px;border-radius:20px;margin-right:9px">STEP {procedure_number}</span>'
+                 if procedural else '')
+        body = (f'<h2 id="step-{number}" style="font-size:clamp(20px,3vw,24px);line-height:1.45;margin:32px 0 14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">'
+                f'{badge}{html.escape(clean_heading)}</h2>')
+        table = section.get('table')
+        if table:
+            headers = ''.join(f'<th scope="col" style="padding:10px;border-bottom:2px solid #cbd5e1;text-align:left">{html.escape(h)}</th>'
+                              for h in table['headers'])
+            rows = ''.join('<tr>' + ''.join(
+                (f'<th scope="row" style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700">{html.escape(cell)}</th>'
+                 if index == 0 else
+                 f'<td style="padding:10px;border-bottom:1px solid #e2e8f0;vertical-align:top">{html.escape(cell)}</td>')
+                for index, cell in enumerate(row['cells'])) + '</tr>' for row in table['rows'])
+            scrolling = len(table['headers']) >= 3
+            hint = ('<p class="bloguito-table-hint" style="font-size:13px;color:#475569;margin:0 0 6px">작은 화면에서는 표를 좌우로 밀어 확인할 수 있습니다.</p>'
+                    if scrolling else '')
+            body += (hint + '<div class="bloguito-info-table" role="region" aria-label="'
+                     + html.escape(table['caption'], quote=True)
+                     + '" tabindex="0" style="overflow-x:auto;margin:8px 0 24px;max-width:100%">'
+                     + '<table style="border-collapse:collapse;width:100%;min-width:'
+                     + ('580px' if scrolling else '0')
+                     + ';font-size:15px;line-height:1.6;overflow-wrap:anywhere;word-break:keep-all">'
+                     + '<caption style="text-align:left;font-weight:700;margin-bottom:8px">'
+                     + html.escape(table['caption']) + '</caption><thead style="background:#edf7f3"><tr>'
+                     + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
+        return body + ''.join(paragraph(b) for b in section['paragraphs'])
+
+    if overview_first:
+        result += section_markup(1, sections[0])
 
     # 2. Only confirmed booking/apply/lookup/purchase/install destinations are actions.
     # Informational sources remain in the citations below, never in the CTA.
@@ -301,57 +366,46 @@ def render(plan, sources, category_key=None):
     if actions:
         buttons = []
         for idx, action in enumerate(actions):
-            mb = '0' if idx == len(actions) - 1 else '10px'
+            primary = idx == 0 and len(actions) <= 2
+            background = '#0d7d59' if primary or len(actions) > 2 else '#ffffff'
+            color = '#ffffff' if primary or len(actions) > 2 else '#0d7d59'
             buttons.append(
                 f'<a href="{html.escape(action["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
-                f'style="display:flex;align-items:center;justify-content:space-between;padding:16px 22px;background:#0d7d59;color:#ffffff !important;text-decoration:none !important;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 4px 12px rgba(13,125,89,0.3);letter-spacing:0.2px;margin-bottom:{mb}">'
-                f'<span style="font-size:20px;margin-right:8px">{"📲" if action["kind"] == "install" else "🎫"}</span>'
+                f'style="display:flex;align-items:center;justify-content:center;gap:10px;min-width:0;padding:13px 16px;background:{background};color:{color} !important;border:1px solid #0d7d59;text-decoration:none !important;border-radius:10px;font-size:16px;font-weight:700;overflow-wrap:anywhere">'
                 f'<span style="flex-grow:1;text-align:center">{html.escape(action["label"])}</span>'
-                f'<span style="font-size:18px;margin-left:8px">➔</span></a>'
+                f'<span aria-hidden="true">↗</span></a>'
             )
-        result += ('<div class="bloguito-cta" style="margin:28px 0 36px;padding:22px 20px;background:#f8fafc;border:1.5px solid #0d7d59;border-radius:14px;text-align:center;box-shadow:0 6px 16px rgba(13,125,89,0.08)">'
-                   '<div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:6px">바로 예매·조회 또는 앱 설치하기</div>'
-                   f'<div style="max-width:500px;margin:0 auto">{"".join(buttons)}</div></div>')
+        result += ('<div class="bloguito-cta" style="margin:20px 0 26px;padding:16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px">'
+                   '<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:12px">공식 서비스 바로가기</div>'
+                   f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">{"".join(buttons)}</div></div>')
 
     # 3. 경량 네이티브 목차 (Table of Contents - 구글 사이트링크 및 모바일 UX 최적화)
     toc_items = []
-    for number, section in enumerate(plan['sections'], 1):
+    toc_procedure_number = 0
+    for number, section in enumerate(sections, 1):
+        if number == 1 and overview_first:
+            continue
         clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
-        toc_items.append(f'<li style="margin:6px 0"><a href="#step-{number}" style="color:#0d7d59;text-decoration:none;font-weight:500">STEP {number}. {html.escape(clean_heading)}</a></li>')
+        if section_kind(section) == 'procedure':
+            toc_procedure_number += 1
+            heading_label = f'STEP {toc_procedure_number}. {clean_heading}'
+        else:
+            heading_label = clean_heading
+        toc_items.append(f'<li style="margin:6px 0"><a href="#step-{number}" style="color:#0d7d59;text-decoration:none;font-weight:500">{html.escape(heading_label)}</a></li>')
     if plan.get('faq'):
         toc_items.append('<li style="margin:6px 0"><a href="#faq" style="color:#0d7d59;text-decoration:none;font-weight:500">자주 묻는 질문 (FAQ)</a></li>')
     toc_items.append('<li style="margin:6px 0"><a href="#sources" style="color:#0d7d59;text-decoration:none;font-weight:500">공식 출처 및 사실 검증 자료</a></li>')
 
-    result += ('<div class="bloguito-toc" style="padding:18px 22px;margin:24px 0 36px;background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:8px">'
-               '<div style="font-weight:700;font-size:16px;color:#1e293b;margin-bottom:10px;display:flex;align-items:center">'
-               '<span style="margin-right:8px">📋</span>핵심 목차 한눈에 보기</div>'
+    result += ('<nav class="bloguito-toc" aria-label="본문 목차" style="padding:16px 20px;margin:20px 0 28px;background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #0d7d59;border-radius:8px">'
+               '<div style="font-weight:700;font-size:16px;color:#1e293b;margin-bottom:8px">목차</div>'
                '<ul style="margin:0;padding-left:22px;line-height:1.75;color:#475569;font-size:15px">'
-               + ''.join(toc_items) + '</ul></div>')
+               + ''.join(toc_items) + '</ul></nav>')
 
     # 4. 본문 섹션 (각 소제목에 점프 링크 앵커 ID 매핑)
-    for number, section in enumerate(plan['sections'], 1):
-        clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
-        result += (f'<h2 id="step-{number}" style="font-size:24px;line-height:1.45;margin:42px 0 18px;padding-bottom:12px;border-bottom:2px solid #e2e8f0;color:#1a202c;display:flex;align-items:center;flex-wrap:wrap">'
-                   f'<span style="background:#e6f4ea;color:#0d7d59;font-size:13px;font-weight:700;padding:4px 10px;border-radius:20px;margin-right:10px;letter-spacing:0.5px">STEP {number}</span>'
-                   f'{html.escape(clean_heading)}</h2>'
-                   )
-        table = section.get('table')
-        if table:
-            headers = ''.join(f'<th scope="col" style="padding:12px;border-bottom:2px solid #cbd5e1;text-align:left;white-space:nowrap">{html.escape(h)}</th>'
-                              for h in table['headers'])
-            rows = ''.join('<tr>' + ''.join(
-                (f'<th scope="row" style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:left;font-weight:700">{html.escape(cell)}</th>'
-                 if index == 0 else
-                 f'<td style="padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top">{html.escape(cell)}</td>')
-                for index, cell in enumerate(row['cells'])) + '</tr>' for row in table['rows'])
-            result += ('<div class="bloguito-info-table" role="region" aria-label="'
-                       + html.escape(table['caption'], quote=True)
-                       + '" tabindex="0" style="overflow-x:auto;margin:18px 0 24px;max-width:100%">'
-                       + '<table style="border-collapse:collapse;width:100%;min-width:580px;font-size:15px;line-height:1.6">'
-                       + '<caption style="text-align:left;font-weight:700;margin-bottom:8px">'
-                       + html.escape(table['caption']) + '</caption><thead style="background:#edf7f3"><tr>'
-                       + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
-        result += ''.join(paragraph(b) for b in section['paragraphs'])
+    for number, section in enumerate(sections, 1):
+        if number == 1 and overview_first:
+            continue
+        result += section_markup(number, section)
 
     # 4. 자주 묻는 질문 (FAQ)
     if plan.get('faq'):

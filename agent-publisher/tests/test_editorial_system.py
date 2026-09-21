@@ -49,10 +49,11 @@ class EditorialTests(unittest.TestCase):
     def test_summary_numbering_and_escaping(self):
         self.b['plan']['sections'].append({'heading':'2. 조건 <안내>', 'paragraphs':[self.b['plan']['lead']]})
         content = render(self.b['plan'], self.b['sources'])
-        self.assertIn('핵심요약</strong>', content)
+        self.assertIn('>핵심 답변</div>', content)
+        self.assertNotIn('3초 요약', content)
         self.assertIn('STEP 1</span>배출 방법</h2>', content)
-        self.assertIn('STEP 2</span>조건 &lt;안내&gt;</h2>', content)
-        self.assertNotIn('STEP 2</span>2.', content)
+        self.assertIn('>조건 &lt;안내&gt;</h2>', content)
+        self.assertNotIn('STEP 2</span>조건', content)
         self.assertIn(self.b['plan']['lead']['text'], content)
         self.assertIn('https://www.seocho.go.kr/guide', content)
         # 네이티브 경량 목차(TOC) 및 점프 링크 앵커 검증
