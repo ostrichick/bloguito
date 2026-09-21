@@ -34,3 +34,11 @@
 - 운영 서버 `/home/ubuntu/agent-publisher/analytics_collector.py`와 `run_analytics.sh`는 이전에 없던 새 파일로 배포했다. 서버의 코드와 스테이징 사본 SHA256이 각각 일치함을 확인했다. 기존 공개 글·WordPress/Site Kit·기존 크론은 수정하지 않았다.
 - 키 파일이 없을 때 실제 런처는 `analytics_collection_failed:credential_file_unavailable`만 출력하고 실패했다. 당시 `data/analytics/` 및 분석 크론 행이 없음을 확인했다. 이후 인증 파일을 안전하게 받을 빈 `data/analytics/` 디렉터리만 모드 0700으로 만들고 키 부재를 재확인했다. **실제 GSC/GA4 API 조회·키 없는 토큰 발급·비공개 보고서 생성·일일 자동 실행은 미검증/미설정**이다.
 - Google Cloud 서비스 계정의 키 화면에는 장기 키 보안 경고가 표시됐다. 장기 키 생성 자동화 요청은 보안 상태를 확인할 수 없어 도구가 차단했으며 이를 우회하거나 키를 생성하지 않았다. 직접 인증 정보가 없으므로 여기서 수집 성공 또는 완전 자동화를 주장하지 않는다. 사용자의 안전한 인증 제공 또는 별도 WIF 실행 플랫폼 결정이 다음 의존 작업이다.
+
+## 추가 진행: 장기 키 없는 GitHub OIDC 경로 (2026-09-21 후속)
+
+- 공개 저장소 `ostrichick/bloguito`의 GitHub Actions OIDC를 이용해 **Actions 작업에서만** 짧은 Google 토큰을 발급하는 경로를 조사했다. VPS 자체는 GitHub OIDC 토큰을 받을 수 없으므로 기존 `run_analytics.sh`의 키 파일 인증을 GitHub 워크플로에서 그대로 쓰거나, GitHub OIDC 인증 성공을 VPS 크론 인증 성공으로 간주하지 않는다. 검색어 원본을 공개 저장소/Actions 아티팩트/로그에 올리지 않는다.
+- Google Cloud Shell에 사용자 승인으로 접속하고, 프로젝트 `bloguito-analytics`의 프로젝트 번호를 확인했다. `iam.googleapis.com`, `iamcredentials.googleapis.com`, `sts.googleapis.com` 사용 설정 명령이 `finished successfully`를 반환했다. 기존 Search Console/GA4 API는 활성 상태로 조회했다.
+- `bloguito-reports` Workload Identity Pool 생성 명령이 `Created workload identity pool`을 반환했다. GitHub의 **변경 불가능한 저장소 ID·소유자 ID, `main` 브랜치, 전용 보고서 워크플로 경로 및 `schedule`/`workflow_dispatch` 이벤트**로 제한된 OIDC 공급자 생성 명령까지 전송했으나, 후속 확인 도구 요청이 보안 상태 불확실로 차단되어 **공급자의 최종 생성 여부는 미확인**이다. 제한 조건을 완화하거나 장기 키 생성으로 우회하지 않았다.
+- 공급자의 존재·조건 확인 및 서비스 계정에 대한 `roles/iam.workloadIdentityUser`의 저장소 한정 바인딩, GitHub Actions 인증 테스트, 비공개 보고서 전송 경로, 수집 스케줄은 **실행/검증하지 않았다**. 특히 현재 GitHub 저장소는 공개 상태이므로 보고서 JSON/검색어를 워크플로 아티팩트나 커밋으로 저장하면 안 된다. 사용자 개입 또는 인증 설정을 수행할 수 있는 신뢰된 환경에서 WIF를 확인한 뒤, 서버에 제한된 수신 경로를 별도로 구현·검증해야 한다.
+- 이 단계에서도 운영 VPS의 `analytics_collector.py`는 존재하고, 인증 파일은 없으며, 분석 전용 cron 행도 없음을 확인했다. 사용자 통계가 자동으로 수집되고 있다고 알리지 않는다.
