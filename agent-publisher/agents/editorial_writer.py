@@ -1,6 +1,7 @@
 """Model-independent plan format; Gemini is a configurable writing/review adapter."""
 import json
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,11 @@ def fetch_sources(brief):
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
         text = soup.get_text('\n', strip=True)
+        # Government article page counters change on every read. They are not
+        # policy evidence, so omit only the standalone view-count metadata;
+        # any actual article-content change must still alter the source hash.
+        text = '\n'.join(line for line in text.splitlines()
+                         if not re.fullmatch(r'조회수\s*:\s*\d+', line.strip()))
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')
         sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})
