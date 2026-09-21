@@ -67,3 +67,11 @@
 - `9eca66e`에서는 Windows CRLF를 정규화하고 로컬 키의 공개 지문과 일치하는지 확인하도록 변경했다. 수동 실행 `35602337056`은 본문 조회 전에 `analytics_delivery_failed:invalid_ssh_secret_format`으로 실패했다. `7e507d0`에서는 BOM/주변 공백 및 문자 그대로의 `\\n` 복사도 정규화하고 비밀값 내용 없이 완전한 OpenSSH 개인키 헤더·푸터를 검사하도록 변경했다. 수동 실행 `35602509717`은 `analytics_delivery_failed:ssh_secret_is_not_complete_private_key`로 종료됐다.
 - 따라서 **현재 GitHub에 입력된 값은 완전한 개인키로 인식되지 않는다.** 사용자가 GitHub Secret 값에 로컬 `.key` 파일의 **전체 텍스트(시작/끝 마커 포함)**를 다시 붙여 넣어 교체해야 한다. `.pub` 또는 파일 경로 문자열을 입력하지 않는다. 성공한 업로드가 없으므로 일일 `schedule`을 추가하지 않았으며 VPS `run_analytics.sh` 크론도 설치하지 않았다. 임시 개인키는 재등록 필요로 아직 폐기하지 않았다.
 - 복구 후 수동 `workflow_dispatch` 성공 및 서버의 실제 JSON/MD 존재·0600 권한·원문 비공개 검사를 완료해야 예약 실행을 활성화한다. 사용자 데이터는 공개 작업 로그·아티팩트·커밋에 게시하지 않는다.
+
+## Secret 파일 직접 등록 및 일일 자동 실행 활성화 (2026-09-21 후속)
+
+- 사용자가 파일 리디렉션을 이용해 GitHub Secret을 교체했다고 보고했고, `gh secret list`에서 `BLOGUITO_ANALYTICS_SSH_KEY`의 수정 시각 `2026-09-21T13:32:33Z`를 확인했다. Secret 값 자체는 조회하거나 출력하지 않았다.
+- 수동 Actions 실행 [35606379576](https://github.com/ostrichick/bloguito/actions/runs/35606379576)은 전체 성공했고, 비공개 전송 명령이 `analytics_ingest_ok end=2026-09-18`을 반환했다. Google API 조회 역시 `analytics_collection_ok end=2026-09-18 search_query_rows=1 ga4_day_rows=4`를 반환했다. 반환 행 수는 전체 방문 수·전체 검색어 수가 아니다.
+- 운영 서버 `/home/ubuntu/agent-publisher/data/analytics/`에 `google-analytics-2026-09-18.json`(7176 bytes)과 `.md`(880 bytes)가 존재하고, 저장 디렉터리 권한 0700·파일별 0600을 확인했다. JSON 파싱, `schema_version=1`, 28일 기간 `2026-08-22 ~ 2026-09-18`, 검색어 1행·GA4 일별 4행, Markdown 비어 있지 않음을 원문을 노출하지 않고 검증했다. 공개 GitHub 로그·아티팩트·커밋에 원시 보고서를 업로드하지 않는다.
+- 위 성공 후 `.github/workflows/google-analytics.yml`의 GitHub Actions 일정 `17 2 * * *`(UTC 02:17 / KST 11:17)를 활성화했다. GitHub 예약 작업은 지연될 수 있으며, 최초 예약 실행은 아직 미래이므로 그 실행의 성공은 별도로 확인해야 한다. 날짜 범위는 실행 시점의 UTC 날짜에서 3일 이전까지 28일이다. 기존 VPS의 서비스 계정 키 기반 `run_analytics.sh` 크론은 설치하지 않고 기존 크론과 WordPress/Site Kit는 변경하지 않는다.
+- 자동화 중지 시 GitHub 워크플로의 `schedule`만 제거하거나 워크플로를 비활성화한다. 향후 인증키 교체 시 `BLOGUITO_ANALYTICS_SSH_KEY`와 서버의 강제명령 전용 공개키를 함께 교체한다. 통계 보고서의 ChatGPT 자동 전달/직접 접근은 별도의 연동이므로 아직 검증한 것으로 간주하지 않는다.

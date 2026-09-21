@@ -2,9 +2,13 @@ name: Private Google analytics collection
 
 # Read-only Google API reporting; deliver via a forced-command-only SSH key.
 # This public repository must never publish query data as commits, artifacts,
-# workflow summaries, or job logs. Add a schedule only after delivery succeeds.
+# workflow summaries, or job logs. Daily schedule enabled after verified
+# end-to-end manual delivery (run 35606379576).
 on:
   workflow_dispatch:
+  # UTC 02:17 = KST 11:17. GitHub may delay scheduled runs.
+  schedule:
+    - cron: '17 2 * * *'
 
 permissions:
   contents: read
