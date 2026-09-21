@@ -22,6 +22,10 @@ SCOPES = (
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = BASE_DIR / "data" / "analytics"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+QA_SOURCE_MEDIUM = {
+    "bloguito_qa_agent / internal_test": "agent",
+    "bloguito_qa_owner / internal_test": "owner",
+}
 
 
 class CollectionError(Exception):
@@ -145,6 +149,8 @@ def collect(site_url, property_id, end_date, requester, days=28):
         ("daily", ["date"], ["activeUsers", "sessions", "screenPageViews"]),
         ("channels", ["sessionDefaultChannelGroup"], ["sessions", "activeUsers"]),
         ("pages", ["pagePath"], ["screenPageViews", "activeUsers"]),
+        ("traffic_identity", ["sessionManualSourceMedium", "sessionDefaultChannelGroup"],
+         ["sessions"]),
     ):
         data = requester(ga_url, {
             "dateRanges": [{"startDate": start, "endDate": end}],
@@ -152,15 +158,19 @@ def collect(site_url, property_id, end_date, requester, days=28):
             "metrics": [{"name": metric} for metric in metrics],
             "limit": "250",
         })
+        if label == "traffic_identity" and data.get("rowCount", len(data.get("rows", []))) > len(data.get("rows", [])):
+            raise CollectionError("ga4_traffic_identity_report_truncated")
         ga4[label] = _rows(data, dimensions=dimensions, metrics=metrics)
     return {
-        "schema_version": 1, "collected_at_utc": datetime.now(timezone.utc).isoformat(),
+        "schema_version": 2, "collected_at_utc": datetime.now(timezone.utc).isoformat(),
         "period": {"start": start, "end": end, "timezone": "Google-property-specific"},
         "search_console": gsc, "ga4": ga4,
         "limitations": [
             "Search Console omits anonymized queries and may omit low-volume rows.",
             "Search Console clicks and GA4 sessions measure different things.",
             "GA4 reporting timezone is defined by the GA4 property.",
+            "QA labels are voluntary URL tags, not bot detection or proof that other visits are human.",
+            "Unmarked Direct traffic remains unverified; historical traffic cannot be reclassified.",
         ],
     }
 
@@ -233,11 +243,54 @@ def markdown_report(snapshot):
                      + row["activeUsers"] + " |")
     if not snapshot["ga4"]["channels"]:
         lines.append("| 조회된 데이터 없음 | — | — |")
+    lines += ["", "## 개발·에이전트 방문 구분", ""]
+    if snapshot["schema_version"] == 2:
+        identity = classify_traffic(snapshot["ga4"])
+        lines += [
+            "| 구분 | 세션 |", "| --- | ---: |",
+            "| QA 태그: 에이전트 | " + str(identity["agent_sessions"]) + " |",
+            "| QA 태그: 소유자 비로그인 테스트 | " + str(identity["owner_sessions"]) + " |",
+            "| 태그 없는 Direct (사람/봇 미확인) | " + str(identity["unverified_direct_sessions"]) + " |",
+            "| 그 외 출처 미확인 (실제 사람 확정 아님) | " + str(identity["unverified_other_sessions"]) + " |",
+        ]
+        if identity["unaccounted_sessions"]:
+            lines.append("| 출처 보고서와 채널 보고서 차이 (미분류) | "
+                         + str(identity["unaccounted_sessions"]) + " |")
+        if not identity["complete"]:
+            lines.append("\n주의: 출처별 세션 합계와 채널별 세션 합계가 달라 분류 결과는 불완전합니다.")
+        lines.append("\nQA 수치는 지정된 UTM 링크로 시작한 세션만 의미하며 "
+                     "과거 비표시 방문·실제 봇·일반 독자를 자동 판별하지 않습니다.")
+    else:
+        lines.append("과거 수집 형식: 개발 방문을 식별하지 않았습니다. Direct를 실제 독자로 간주하지 않습니다.")
     lines += ["", "## 해석 범위", "",
               "- Search Console은 익명화된 검색어와 일부 소량 데이터를 제공하지 않을 수 있습니다.",
               "- Search Console 클릭과 GA4 세션은 정의가 달라 직접 비교할 수 없습니다.",
               "- 이 보고서는 API가 반환한 값만 표시하며 증가 원인이나 검색 순위 개선을 추정하지 않습니다.", ""]
     return "\n".join(lines)
+
+
+def classify_traffic(ga4):
+    """Separate explicitly QA-labelled sessions; never infer human identity.
+
+    Both dimensions and the metric are session-scoped. Do not silently claim
+    that an incomplete GA4 report is a complete population.
+    """
+    counts = {"agent_sessions": 0, "owner_sessions": 0,
+              "unverified_direct_sessions": 0, "unverified_other_sessions": 0}
+    for row in ga4["traffic_identity"]:
+        sessions = int(row["sessions"])
+        label = QA_SOURCE_MEDIUM.get(row["sessionManualSourceMedium"])
+        if label:
+            counts[label + "_sessions"] += sessions
+        elif row["sessionDefaultChannelGroup"] == "Direct":
+            counts["unverified_direct_sessions"] += sessions
+        else:
+            counts["unverified_other_sessions"] += sessions
+    expected = sum(int(row["sessions"]) for row in ga4["channels"])
+    actual = sum(counts.values())
+    counts["unaccounted_sessions"] = expected - actual
+    counts["complete"] = expected == actual
+    return counts
 
 
 def save_report(snapshot, output_dir):

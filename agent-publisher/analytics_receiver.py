@@ -26,6 +26,7 @@ GA4_FIELDS = {
     "channels": ("sessionDefaultChannelGroup", "sessions", "activeUsers"),
     "pages": ("pagePath", "screenPageViews", "activeUsers"),
 }
+GA4_IDENTITY_FIELDS = ("sessionManualSourceMedium", "sessionDefaultChannelGroup", "sessions")
 
 
 def _valid_date(value):
@@ -42,7 +43,7 @@ def validate_snapshot(snapshot, now=None):
     now = now or datetime.now(timezone.utc)
     if not isinstance(snapshot, dict) or set(snapshot) != {
         "schema_version", "collected_at_utc", "period", "search_console", "ga4", "limitations"
-    } or snapshot["schema_version"] != 1:
+    } or snapshot["schema_version"] not in (1, 2):
         raise CollectionError("invalid_snapshot_schema")
     try:
         generated = datetime.fromisoformat(snapshot["collected_at_utc"])
@@ -66,7 +67,9 @@ def validate_snapshot(snapshot, now=None):
 
     for section, groups in (
         ("search_console", GSC_FIELDS),
-        ("ga4", GA4_FIELDS),
+        ("ga4", GA4_FIELDS if snapshot["schema_version"] == 1 else {
+            **GA4_FIELDS, "traffic_identity": GA4_IDENTITY_FIELDS,
+        }),
     ):
         data = snapshot[section]
         if not isinstance(data, dict) or set(data) != set(groups):
@@ -89,7 +92,8 @@ def validate_snapshot(snapshot, now=None):
                     raise CollectionError("invalid_report_row")
                 if section == "ga4" and set(row) != expected:
                     raise CollectionError("invalid_report_row")
-                if not all(isinstance(row[field], str) for field in groups[label][:1]):
+                dimension_count = 2 if section == "ga4" and label == "traffic_identity" else 1
+                if not all(isinstance(row[field], str) for field in groups[label][:dimension_count]):
                     raise CollectionError("invalid_report_label")
                 if section == "search_console":
                     for field in ("clicks", "impressions", "ctr", "position"):
@@ -100,7 +104,7 @@ def validate_snapshot(snapshot, now=None):
                     if row["ctr"] > 1:
                         raise CollectionError("invalid_search_metrics")
                 else:
-                    for field in groups[label][1:]:
+                    for field in groups[label][dimension_count:]:
                         value = row[field]
                         if not isinstance(value, str) or not re.fullmatch(r"\d{1,20}", value):
                             raise CollectionError("invalid_ga4_metrics")
