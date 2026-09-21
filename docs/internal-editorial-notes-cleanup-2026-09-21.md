@@ -21,3 +21,5 @@
 - 공개 글의 알려진 사실 오류 및 내부 공지 회귀 감사 `scripts/audit_published_facts.py --strict`: 탐지 0건. 이는 좁은 규칙 검사이며 전체 사실 정확성 보증이 아니다.
 - 대표 실제 공개 페이지 `https://lifeinfo24.org/?p=218`: HTTP 200, 정정 안내 박스 및 ‘기존 수치의 정정’ 미노출, ‘내보험 찾아줌’ 안내 유지.
 - 관련 단위·편집 회귀검사 46개(critical facts 11, internal notes 2, editorial system 33) 통과. 전체 테스트는 159개 중 1개 실패: `test_legacy_draft_copy`는 ID 243을 여전히 임시글이라고 가정하는 반면 현재 레거시 원고 매니페스트에 `publish`로 변경된 내용이 있어 실패한다. 이 콘텐츠/매니페스트는 다른 작업의 변경으로 이번 정정 안내 제거 작업에서 수정하지 않았다.
+- Git 커밋 `50d6fa1`을 `origin/main`에 푸시. 다른 작업의 미커밋 코드·문서 변경은 포함하지 않았다.
+- 실제 운영 서버의 `/home/ubuntu/agent-publisher/agents/editorial.py`, `agents/critical_facts.py`, `/home/ubuntu/docs/EDITORIAL_SYSTEM.md` 기존 버전과 신규 파일 차이를 확인했다. 대상 세 파일 모두 사전 SHA256이 검토한 서버 원본과 일치한 경우에만 교체하고, 각 원본을 서버의 접근 제한된 `/home/ubuntu/editorial-notes-backups-20260921/`에 백업했다. 반영 후 세 SHA256이 준비한 신규 파일과 일치하고 서버 `python3 -m py_compile`이 통과했다. 기존 실행 중 프로세스의 즉시 재적용 여부는 검증하지 않았으며 다음 원고 생성 시 새 파일을 읽는 경로에 적용된다.
