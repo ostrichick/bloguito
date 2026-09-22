@@ -2,6 +2,15 @@
   "version": 1,
   "default_status": "draft",
   "min_remaining_days": 30,
+  "dated_post_exceptions": {
+    "2026-chuseok-bank-post-225": {
+      "existing_post_id": 225,
+      "useful_until": "2026-09-27",
+      "official_url": "https://fsc.go.kr/no010101/87706",
+      "source_event_phrase": "추석 연휴 기간(9.24~9.27.)",
+      "reason": "The user explicitly requested publication of existing post #225 on 2026-09-22. The exception expires on the final holiday date and cannot be used for another post."
+    }
+  },
   "source_max_age_hours": 24,
   "review_max_age_hours": 24,
   "max_revisions": 2,

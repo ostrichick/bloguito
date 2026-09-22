@@ -49,6 +49,19 @@ def supported_counts(text, quote_text, candidates):
     return result
 
 
+def dated_post_exception(brief, today):
+    """A narrowly scoped, expiring exception for an authorized existing post."""
+    exception = policy().get('dated_post_exceptions', {}).get(brief.get('id'), {})
+    try:
+        return bool(exception and brief.get('content_type') == 'dated'
+                    and brief.get('existing_post_id') == exception['existing_post_id']
+                    and brief.get('useful_until') == exception['useful_until']
+                    and brief.get('official_urls') == [exception['official_url']]
+                    and today <= date.fromisoformat(exception['useful_until']))
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
 def topic_reasons(brief, today=None):
     if not isinstance(brief, dict):
         return ['malformed_topic']
@@ -66,7 +79,8 @@ def topic_reasons(brief, today=None):
             if brief.get('category_key') in {'concert', 'welfare'}:
                 reasons.append('dated_category_cannot_bypass_time_check')
         elif brief.get('content_type') == 'dated':
-            if (date.fromisoformat(brief['useful_until']) - today).days < policy()['min_remaining_days']:
+            if ((date.fromisoformat(brief['useful_until']) - today).days < policy()['min_remaining_days']
+                    and not dated_post_exception(brief, today)):
                 reasons.append('insufficient_useful_lifetime')
         else:
             reasons.append('content_type_missing')
@@ -156,6 +170,13 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
         if brief.get('content_type') == 'dated':
             temporal = bundle.get('temporal_source', {})
             available = [field for s in sources for field in extract_evidence(s['text'], s['url'])]
+            seasonal_exception = dated_post_exception(brief, now.date())
+            if seasonal_exception:
+                exception = rules['dated_post_exceptions'][brief['id']]
+                if (len(sources) != 1 or sources[0]['url'] != exception['official_url']
+                        or exception['source_event_phrase'] not in sources[0]['text']
+                        or '2026-09-14' not in sources[0]['text']):
+                    reasons.append('specific_holiday_window_official_evidence_missing')
             listing_only = temporal.get('schedule_listing_only') is True
             if temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')
@@ -188,13 +209,14 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             else:
                 if brief.get('category_key') == 'concert' and (temporal.get('requires_sale') is not True or temporal.get('sale_source_url') not in brief['official_urls']):
                     reasons.append('concert_sale_evidence_required')
-                if not available:
+                if not available and not seasonal_exception:
                     reasons.append('temporal_source_not_bound')
-                decision = validate_availability(temporal, now=now)
-                if decision['status'] != 'active':
-                    reasons.append('availability_not_verified')
-                if decision.get('expires_at') and (datetime.fromisoformat(decision['expires_at']).date()-now.date()).days < rules['min_remaining_days']:
-                    reasons.append('source_deadline_too_close')
+                if not seasonal_exception:
+                    decision = validate_availability(temporal, now=now)
+                    if decision['status'] != 'active':
+                        reasons.append('availability_not_verified')
+                    if decision.get('expires_at') and (datetime.fromisoformat(decision['expires_at']).date()-now.date()).days < rules['min_remaining_days']:
+                        reasons.append('source_deadline_too_close')
         # Version-specific official policy evidence is separate from a fresh fetch and a valid quote.
         reasons.extend(critical_fact_reasons(brief, sources, plan))
         title = plan['title']

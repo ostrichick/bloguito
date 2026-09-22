@@ -8,7 +8,7 @@ from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, l
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'replace-legacy-draft', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -76,6 +76,13 @@ def main():
         return
     args.file = Path(args.file)
     data = json.loads(args.file.read_text(encoding='utf-8'))
+    if args.action == 'replace-legacy-draft':
+        if args.inventory:
+            parser.error('replace-legacy-draft always queries the live WordPress inventory')
+        from agents.editorial_legacy_draft import upgrade_legacy_draft
+        print('Upgraded legacy draft ID:', upgrade_legacy_draft(
+            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
+        return
     if args.action == 'update-draft':
         if args.inventory:
             parser.error('update-draft always queries WordPress')
