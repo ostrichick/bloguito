@@ -47,3 +47,13 @@
 - 향후 구현 제안(이번 승인 범위 외): *기존 게시물 업데이트 전용* 유효기간 판단에서 공식 원문이 밝힌 `종료된 2026년 상반기 접수`와 `미신청자의 2027년 후속 접수/기한후 신청`을 서로 다른 날짜 필드로 모델링하고, 최신 공식 원문에서 각각의 연도·기간·대상과 FAQ 인용이 결합됐는지 검증하도록 해야 한다. 원문 날짜 표와 자연어를 파싱하지 못하면 명시적으로 `needs_review` 처리하고 사람이 근거를 대조하는 경로를 제공할 수 있다. 신규 게시물의 30일 잔여 유효기간 원칙, 미개시 신청을 접수 중으로 표시하지 않는 원칙, 독립 의미 검토와 출처 재조회 해시 검사는 유지한다. 원고·출처를 임의의 `신청기간:` 증거로 변조하거나 검사를 우회하지 않는다.
 
 **공개 업데이트 전에 필요한 별도 확인:** 실제 WordPress 전체 상태의 최신 중복 목록, 원본 DB 저장 본문 SHA256와 기존 사람 편집 여부, 문단·표·FAQ 전체의 독립 의미 검토, 각 출처 재조회·해시 일치, 360/390px·200% 확대를 포함한 실제 모바일/데스크톱 렌더링 및 로그인 없는 조회 화면, 사용자 승인 범위에 맞는 정상 `editorial_cli.py update-existing` 실행 및 수정 후 재조회. 이번 파일럿에서 어느 단계도 운영 WordPress에 쓰지 않았다.
+
+## 후속 결과 — 2026-09-22 12:51 KST
+
+위 42~47행은 최초 준비 시점의 보류 기록이다. 그 뒤 `agents/temporal_validation.py`에 기존 공개 복지 글의 **종료된 접수와 근거가 있는 후속 신청기간**을 각각 검증하는 제한적 경로를 추가했다. 신규 글의 진행 중 접수·30일 규칙 및 독립 의미 검토는 유지하고, `editorial_updater.py`에는 검토 원고의 `existing_post_id`와 실제 대상 게시물 ID가 일치해야 한다는 선행 차단을 추가했다. 관련 날짜 검증 6건, 기존 날짜 검증 15건, 공개 수정 경로 7건이 통과했다.
+
+최초 독립 모델 검토에서 `jsonAction.do`가 경로명 때문에 JSON 내부 API일 것이라는 추정으로 `source_support=false`가 나왔다. [실제 브라우저 검증](legacy-browser-qa-2026-09-22.md)은 격리된 비로그인 Edge에서 해당 URL이 `HTTP 200`, `text/html`, 제목 `국세청 차세대 모바일`, 실제 `근로장려금 반기 심사진행상황 조회` 화면과 **로그인 필요 안내**를 반환하는 것을 확인했다. `build_pilot.py`에서 해당 관찰과 로그인 후 미검증 범위를 행동 링크 메타데이터에 넣고 기존 원문·날짜·조건은 그대로 둔 채 공통 CLI `review`를 다시 실행했다.
+
+**최종 로컬 결과:** `bundle.reviewed.json`은 별도 모델의 `source_support`, `conditions_preserved`, `question_answered`, `useful_lifetime`, `no_reader_deflection`, `no_unsupported_claims` **6개 모두 true**, `issues=[]`, 검토시각 `2026-09-22T12:51:05.903138+09:00`을 포함한다. `editorial_cli.py check bundle.reviewed.json --inventory public-only-inventory-excluding-137.json` 재실행은 `status=ready`, `reasons=[]`, 종료 코드 **0**. HTML은 `bundle.reviewed.html`, 최초 미검토 원고는 `bundle.unreviewed.json`과 `preview.UNREVIEWED.html`로 구분해 보관한다. 검토 파일 자체의 준비·서명 성공은 현재 공개 본문을 변경했다는 뜻이 아니다.
+
+**아직 필요한 게이트:** 실제 전체 상태 WordPress 인벤토리, 원본 `post_content` SHA256와 백업, 배포 시점 공식 출처 해시 재검증, 글별 사람 승인, 실제 새 HTML의 운영 화면·360/390px·기본 브라우저 200% 확대/키보드 QA 및 정상 `update-existing` 저장 후 확인. 현재 준비된 `public-only` 목록과 공개 REST 렌더링 해시는 이 값을 대체하지 않는다. WordPress 글·서버 파일·운영 설정 변경 없음.

@@ -33,6 +33,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
     """
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError('specific_public_post_update_confirmation_required')
+    if bundle.get('brief', {}).get('existing_post_id') != post_id:
+        raise ValueError('reviewed_bundle_target_id_mismatch')
     if not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or ''):
         raise ValueError('original_content_sha256_required')
     lock = ROOT / 'data' / '.editorial-publish.lock'

@@ -29,7 +29,9 @@ class ArticleLayoutTests(unittest.TestCase):
         self.assertLess(page.index('bloguito-cta'), page.index('bloguito-toc'))
         self.assertEqual(1, page.count('href="#step-2"'))
         self.assertNotIn('href="#step-1"', page)  # The overview is already above the TOC.
-        self.assertIn('STEP 1</span>배출 방법', page)
+        # The article has only one procedure: do not show an orphan STEP 1.
+        self.assertIn('>배출 방법</h2>', page)
+        self.assertNotIn('STEP 1</span>배출 방법', page)
         self.assertIn('min-width:0;font-size:15px', page)
 
     def test_only_procedures_receive_step_numbers(self):
@@ -41,7 +43,9 @@ class ArticleLayoutTests(unittest.TestCase):
         page = render(self.bundle['plan'], self.bundle['sources'])
         self.assertIn('>배출 방법</h2>', page)
         self.assertNotIn('STEP 1</span>배출 방법', page)
-        self.assertIn('STEP 1</span>실제 배출 순서', page)
+        # One actual procedure remains unnumbered even if other sections exist.
+        self.assertIn('>실제 배출 순서</h2>', page)
+        self.assertNotIn('STEP 1</span>실제 배출 순서', page)
         self.assertNotIn('3초 요약', page)
 
     def test_three_column_table_has_visible_scroll_hint(self):

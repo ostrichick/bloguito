@@ -14,7 +14,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.post = {'ID': 243, 'post_status': 'publish', 'post_title': 'Existing title',
                      'post_content': 'Original body', 'post_name': 'stable-slug'}
-        self.bundle = {'brief': {'official_urls': ['https://example.org/official']},
+        self.bundle = {'brief': {'official_urls': ['https://example.org/official'],
+                                 'existing_post_id': 243},
                        'sources': [{'url': 'https://example.org/official', 'sha256': 'verified'}],
                        'plan': {}}
         self.sha = hashlib.sha256(self.post['post_content'].encode()).hexdigest()
@@ -58,6 +59,14 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
     def test_requires_explicit_confirmation(self):
         with self.assertRaisesRegex(ValueError, 'specific_public_post_update_confirmation_required'):
             updater.update_existing_public_post(243, self.bundle, self.sha)
+
+    def test_cannot_update_a_different_post_with_a_reviewed_bundle(self):
+        with patch.object(updater, 'sync_inventory') as inventory, \
+             patch.object(updater.subprocess, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'reviewed_bundle_target_id_mismatch'):
+                updater.update_existing_public_post(244, self.bundle, self.sha, confirmed=True)
+            inventory.assert_not_called()
+            command.assert_not_called()
 
     def test_repairs_only_blank_excerpt_from_existing_summary(self):
         original = {**self.post, 'post_excerpt': '',

@@ -7,7 +7,8 @@ from datetime import datetime, date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from agents.temporal_validation import KST, validate_availability, extract_evidence, extract_yes24_schedule
+from agents.temporal_validation import (KST, validate_availability, extract_evidence,
+                                        extract_yes24_schedule, validate_legacy_followup)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 
@@ -223,9 +224,14 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             else:
                 if brief.get('category_key') == 'concert' and (temporal.get('requires_sale') is not True or temporal.get('sale_source_url') not in brief['official_urls']):
                     reasons.append('concert_sale_evidence_required')
-                if not available and not seasonal_exception:
-                    reasons.append('temporal_source_not_bound')
-                if not seasonal_exception:
+                if temporal.get('legacy_followup') is not None:
+                    # Historical *existing* welfare posts may explain a closed
+                    # period and a cited future application route. No open
+                    # application or sale status is inferred from these dates.
+                    reasons.extend(validate_legacy_followup(brief, sources, temporal, plan, now))
+                elif not seasonal_exception:
+                    if not available:
+                        reasons.append('temporal_source_not_bound')
                     decision = validate_availability(temporal, now=now)
                     if decision['status'] != 'active':
                         reasons.append('availability_not_verified')

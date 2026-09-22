@@ -48,6 +48,85 @@ def extract_evidence(text: str, url: str) -> list[dict]:
             for kind, expression in LABELS.items() if re.fullmatch(expression, m["label"])]
 
 
+def validate_legacy_followup(brief: dict, sources: list[dict], temporal: dict,
+                             plan: dict, now: datetime) -> list[str]:
+    """Check cited past and future dates in a *specific existing* welfare article.
+
+    This does not certify that applications are open. It permits an article about
+    a completed application and officially documented future routes to undergo
+    independent review. No uncited calendar fields or model-generated evidence
+    can satisfy it. New articles still use validate_availability().
+    """
+    reasons = []
+    lifecycle = temporal.get('legacy_followup')
+    if (not isinstance(lifecycle, dict) or brief.get('category_key') != 'welfare'
+            or brief.get('content_type') != 'dated'
+            or not isinstance(brief.get('existing_post_id'), int)
+            or brief['existing_post_id'] <= 0):
+        return ['legacy_followup_not_for_existing_welfare_post']
+    source_map = {s.get('id'): s for s in sources if isinstance(s, dict)}
+
+    def cited_date(item, field):
+        if not isinstance(item, dict):
+            reasons.append('legacy_followup_invalid_item')
+            return None
+        try:
+            day = date.fromisoformat(item[field])
+            evidence = item['evidence']
+            source = source_map[evidence['source_id']]
+            quote = evidence['quote']
+            if (not isinstance(quote, str) or not 16 <= len(quote) <= 600
+                    or quote not in source['text']
+                    or source.get('source_type') != 'official'
+                    or source.get('url') not in brief['official_urls']):
+                raise ValueError('unbound')
+            year2 = str(day.year)[-2:]
+            year = re.search(r'(?<!\d)(?:'+str(day.year)+r'|[’\']?'+year2
+                             +r')\s*(?:년|[./-])', quote)
+            month_day = re.search(r'(?<!\d)0?'+str(day.month)+r'\s*(?:월|[./-])\s*0?'
+                                  +str(day.day)+r'\s*(?:일|[.\s~∼～)\-]|$)', quote)
+            if not year or not month_day:
+                raise ValueError('date_not_in_quote')
+            return day
+        except (KeyError, TypeError, ValueError):
+            reasons.append('legacy_followup_date_or_evidence_unverified')
+            return None
+
+    ended = lifecycle.get('ended')
+    ended_day = cited_date(ended, 'end_date')
+    if ended_day is not None and ended_day >= now.date():
+        reasons.append('legacy_followup_original_application_not_closed')
+    if not isinstance(ended, dict) or '종료' not in plan.get('lead', {}).get('text', ''):
+        reasons.append('legacy_followup_closed_status_missing_from_answer')
+    next_windows = lifecycle.get('next_windows')
+    if not isinstance(next_windows, list) or not next_windows or len(next_windows) > 4:
+        reasons.append('legacy_followup_future_windows_missing')
+        next_windows = []
+    last_end = None
+    for window in next_windows:
+        end = cited_date(window, 'end_date')
+        if not isinstance(window, dict):
+            continue
+        start = cited_date(window, 'start_date') if window.get('start_date') else None
+        if end is not None:
+            if (end <= now.date() or (ended_day is not None and end <= ended_day)
+                    or (start is not None and (start > end or
+                        (ended_day is not None and start <= ended_day)))):
+                reasons.append('legacy_followup_window_not_future')
+            last_end = max(last_end, end) if last_end else end
+        if window.get('start_date') and start is None:
+            reasons.append('legacy_followup_start_unverified')
+    try:
+        if not last_end or date.fromisoformat(brief['useful_until']) > last_end:
+            reasons.append('legacy_followup_useful_after_last_official_window')
+    except (ValueError, TypeError, KeyError):
+        reasons.append('legacy_followup_useful_until_invalid')
+    if re.search(r'현재\s*(?:신청|접수)\s*(?:가능|중)|(?:접수|신청)\s*진행\s*중',
+                 ' '.join([plan.get('title', ''), plan.get('lead', {}).get('text', '')])):
+        reasons.append('legacy_followup_misleading_open_claim')
+    return sorted(set(reasons))
+
+
 def _bounds(field: dict) -> tuple[datetime | None, datetime | None]:
     value = field["value"]
     matches = list(STAMP.finditer(value))
