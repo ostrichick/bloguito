@@ -44,6 +44,20 @@ jobs:
           php -l wordpress/tests/post-id-column-test.php
           php wordpress/tests/post-id-column-test.php
 
+      - name: Check legacy table-of-contents renderer
+        run: |
+          php -l wordpress/mu-plugins/bloguito-legacy-toc.php
+          php -l wordpress/tests/legacy-toc-contract-test.php
+          php wordpress/tests/legacy-toc-contract-test.php
+
+      - name: Syntax-check legacy layout plugins
+        run: |
+          php -l wordpress/mu-plugins/bloguito-legacy-callout-spacing.php
+          php -l wordpress/mu-plugins/bloguito-legacy-table-accessibility.php
+          # This fixture-based harness is run locally against preserved public
+          # HTML, which is intentionally excluded from the public repository.
+          php -l wordpress/tests/legacy-table85-accessibility-test.php
+
   bridge-test:
     runs-on: ubuntu-latest
     steps:
