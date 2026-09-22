@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -168,6 +169,18 @@ class SnapshotRecoveryTests(unittest.TestCase):
         nginx.mkdir()
         (nginx / "nginx.conf").write_text("events {}")
         destination = self.root / "generated-backups"
+        destination.mkdir()
+        # Daily retention must never delete explicitly isolated deployment
+        # snapshots in nested folders, even when their names are identical.
+        protected = destination / "isolated-postdeploy"
+        protected.mkdir()
+        protected_archive = protected / "bloguito_backup_20260901_040000.tar.gz"
+        protected_archive.write_bytes(b"independent archive kept outside daily rotation")
+        old_daily = destination / "bloguito_backup_20260901_040000.tar.gz"
+        old_daily.write_bytes(b"expired daily archive")
+        old_time = time.time() - 10 * 24 * 60 * 60
+        os.utime(protected_archive, (old_time, old_time))
+        os.utime(old_daily, (old_time, old_time))
 
         # BASH_ENV injects a local function, so the backup script cannot access a
         # real Docker daemon even if one is running on the developer's computer.
@@ -201,6 +214,8 @@ class SnapshotRecoveryTests(unittest.TestCase):
         result = subprocess.run([str(bash), str(BACKUP)], capture_output=True,
                                 text=True, encoding="utf-8", errors="replace", env=env, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(protected_archive.read_bytes(), b"independent archive kept outside daily rotation")
+        self.assertFalse(old_daily.exists(), "expired root daily archive should be pruned")
         archives = list(destination.glob("bloguito_backup_*.tar.gz"))
         self.assertEqual(len(archives), 1)
         self.assertEqual(sync_module.verify_archive(archives[0]), "3.0")

@@ -210,8 +210,10 @@ FINAL_SIZE=$(ls -lh "$FINAL_ARCHIVE" | awk '{print $5}')
 echo "[BACKUP] ✅ Backup completed successfully: $FINAL_ARCHIVE ($FINAL_SIZE)"
 
 # 4. Purge snapshots older than 7 days
-DELETED_SNAPS=$(find "$BACKUP_DIR" -type f -name "bloguito_backup_*.tar.gz" -mtime +7 -print -delete 2>/dev/null | wc -l || echo 0)
-DELETED_LEGACY=$(find "$BACKUP_DIR" -type f -name "db_backup_*.sql.gz" -mtime +7 -print -delete 2>/dev/null | wc -l || echo 0)
+# Retain isolated pre/post-deploy and manually protected snapshots in nested
+# folders. The daily policy owns only regular backup files at this root.
+DELETED_SNAPS=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name "bloguito_backup_*.tar.gz" -mtime +7 -print -delete 2>/dev/null | wc -l || echo 0)
+DELETED_LEGACY=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name "db_backup_*.sql.gz" -mtime +7 -print -delete 2>/dev/null | wc -l || echo 0)
 TOTAL_PURGED=$((DELETED_SNAPS + DELETED_LEGACY))
 echo "[BACKUP] 🧹 Cleaned up $TOTAL_PURGED old backup archive(s) (>7 days)"
 echo "[BACKUP] Daily Backup Finished at: $(date '+%Y-%m-%d %H:%M:%S')"
