@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -113,6 +114,19 @@ def fetch_sources(brief):
         response = requests.get(url, timeout=25, allow_redirects=False)
         if response.status_code != 200:
             raise ValueError(f'official_source_http_{response.status_code}')
+        if response.content.startswith(b'%PDF-'):
+            # Some agencies serve PDFs as application/octet-stream from a
+            # download endpoint with no .pdf suffix. Preserve page boundaries
+            # and layout so row-specific quotations remain reproducible.
+            from pypdf import PdfReader
+            pages = PdfReader(BytesIO(response.content)).pages
+            text = '\n\n'.join(page.extract_text(extraction_mode='layout') or ''
+                             for page in pages).strip()
+            if not 80 <= len(text) <= 60000:
+                raise ValueError('official_pdf_text_missing_or_too_large')
+            title = brief['entity'] + ' 공식 첨부 PDF'
+            sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})
+            continue
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
@@ -182,6 +196,9 @@ class EditorialWriterAgent:
             '인용이 존재해도 해당 주장을 뒷받침하지 않으면 실패다. 수치의 단위, 부정/긍정, 예외, 대상·지역, '
             '신청과 사용기간을 대조하고 중요한 조건 누락·출처 간 충돌을 거부하라. '
             'reader_questions마다 답이 본문에 충분히 있는지 검토하라. '
+            '원문이 참고번호나 첨부파일의 지점·날짜·시간·조건 등 핵심 표를 가리키는데 그 첨부를 실제 읽지 않고 '
+            '독자에게 찾아보라고 하거나 직접 대조하라고 넘긴 원고는 no_reader_deflection과 question_answered를 false로 하라. '
+            '자료 본문과 첨부 표의 수량·날짜 충돌은 감추지 말고 쟁점으로 적어라. '
             'evergreen으로 분류한 시한부 안내와 확인되지 않은 현재 구매/신청 가능 주장을 거부하라. '
             'sources.actions가 있으면 링크가 실제 조회·신청·예매·구매·설치 목적지인지 점검하고, '
             '소개·홍보·보도자료 페이지나 기능과 맞지 않는 이름을 버튼으로 제공하면 거부하라. '
@@ -201,6 +218,9 @@ class EditorialWriterAgent:
                 '서론의 불필요한 잡담이나 상투적 클리셰(\'알아보겠습니다\', \'유익한 정보가 되길 바랍니다\')는 일절 배제하라. '
                 '문체는 공문서의 딱딱한 용어를 독자 눈높이로 쉽게 풀어주면서도 신뢰감 있고 정중한 경어체(~합니다, ~할 수 있습니다)를 일관되게 유지하라. '
                 '신청 절차와 실행 방법은 모호한 안내 대신 실제 공식 사이트의 메뉴 이동 경로(예: 홈택스 로그인 > [조회/발급] > [국세환급금 찾기])를 단계별로 명확히 명시하라. '
+                '원문이 첨부 PDF나 참고표로 독자의 핵심 질문을 넘기면 그 첨부의 실제 데이터를 sources에서 확보한 다음 장소·운영일·시간·취급업무 등을 직접 원고에 써라. '
+                '첨부에서 확인할 것, 공지에서 직접 찾을 것 등 독자에게 자료 조사·검증을 맡기는 문장은 작성하지 마라. '
+                '개인별 약정·실시간 재고처럼 원자료에 없는 값만 필요한 확인사항으로 분명히 구분하라. '
                 '정보글 기본 순서는 핵심 답(lead) → 필요한 경우 한눈에 보기(overview 표) → 대상·예외 또는 상황별 분기(eligibility/comparison) → 실제 행동 절차(procedure) → 실패·문의(exceptions) → 의미 있는 FAQ다. '
                 '절마다 kind를 overview/eligibility/comparison/procedure/exceptions/schedule/general 중 지정하고 실제 시간 순서의 실행 단계에만 procedure를 써라. 공연 일정은 schedule, 병렬 비교는 comparison을 선택하라. '
                 '대상 연령이나 음악 장르를 근거 없이 제목이나 소개에 붙이지 말고, 핵심 조건과 제외 조건을 표 아래에 묻어두지 말 것. '

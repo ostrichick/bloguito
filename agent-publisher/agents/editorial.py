@@ -53,10 +53,13 @@ def dated_post_exception(brief, today):
     """A narrowly scoped, expiring exception for an authorized existing post."""
     exception = policy().get('dated_post_exceptions', {}).get(brief.get('id'), {})
     try:
+        required_urls = [exception['official_url']]
+        if exception.get('required_attachment_url'):
+            required_urls.append(exception['required_attachment_url'])
         return bool(exception and brief.get('content_type') == 'dated'
                     and brief.get('existing_post_id') == exception['existing_post_id']
                     and brief.get('useful_until') == exception['useful_until']
-                    and brief.get('official_urls') == [exception['official_url']]
+                    and brief.get('official_urls') == required_urls
                     and today <= date.fromisoformat(exception['useful_until']))
     except (TypeError, ValueError, KeyError):
         return False
@@ -173,10 +176,21 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             seasonal_exception = dated_post_exception(brief, now.date())
             if seasonal_exception:
                 exception = rules['dated_post_exceptions'][brief['id']]
-                if (len(sources) != 1 or sources[0]['url'] != exception['official_url']
+                required_urls = [exception['official_url']]
+                if exception.get('required_attachment_url'):
+                    required_urls.append(exception['required_attachment_url'])
+                if ([source['url'] for source in sources] != required_urls
                         or exception['source_event_phrase'] not in sources[0]['text']
                         or '2026-09-14' not in sources[0]['text']):
                     reasons.append('specific_holiday_window_official_evidence_missing')
+                if exception.get('required_attachment_url'):
+                    detailed = sources[1]['text'] if len(sources) > 1 else ''
+                    schedule_rows = sum(len(section['table']['rows']) for section in plan['sections']
+                                        if section.get('kind') == 'schedule' and section.get('table'))
+                    if (not all(place in detailed for place in
+                                ('하남드림휴게소', '익산미륵사지휴게소', '영광 상사화'))
+                            or schedule_rows < 22):
+                        reasons.append('specific_holiday_branch_details_missing')
             listing_only = temporal.get('schedule_listing_only') is True
             if temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')

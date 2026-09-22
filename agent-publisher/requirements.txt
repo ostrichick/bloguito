@@ -6,6 +6,7 @@ google-genai==2.23.0
 google-auth==2.58.0
 googlenewsdecoder==0.1.7
 pillow==12.3.0
+pypdf==6.19.0
 pydantic==2.13.5
 python-dotenv==1.2.3
 requests==2.34.2

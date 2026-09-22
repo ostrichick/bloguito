@@ -12,7 +12,10 @@ class Post225PublicationTests(unittest.TestCase):
         self.brief = {
             'id': '2026-chuseok-bank-post-225', 'existing_post_id': 225,
             'content_type': 'dated', 'useful_until': '2026-09-27',
-            'official_urls': ['https://fsc.go.kr/no010101/87706'],
+            'official_urls': [
+                'https://fsc.go.kr/no010101/87706',
+                'https://fsc.go.kr/comm/getFile?srvcId=BBSTY1&upperNo=87706&fileTy=ATTACH&fileNo=2',
+            ],
             'approved': True, 'reviewed_at': '2026-09-22',
             'review_until': '2026-09-27', 'category_key': 'life-health',
             'entity': '추석 은행', 'primary_keyword': '추석 은행',
@@ -26,6 +29,7 @@ class Post225PublicationTests(unittest.TestCase):
         self.assertFalse(dated_post_exception({**self.brief, 'existing_post_id': 226}, date(2026, 9, 22)))
         self.assertFalse(dated_post_exception({**self.brief, 'useful_until': '2026-09-28'}, date(2026, 9, 22)))
         self.assertFalse(dated_post_exception({**self.brief, 'official_urls': ['https://example.org']}, date(2026, 9, 22)))
+        self.assertFalse(dated_post_exception({**self.brief, 'official_urls': self.brief['official_urls'][:1]}, date(2026, 9, 22)))
         self.assertFalse(dated_post_exception(self.brief, date(2026, 9, 28)))
 
     def test_exception_does_not_make_other_short_lived_articles_eligible(self):
