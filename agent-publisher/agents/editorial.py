@@ -333,28 +333,36 @@ def render(plan, sources, category_key=None):
     """Presentation is deterministic: retain every reviewed sentence and condition."""
     source_map = {s['id']: s for s in sources}
     def paragraph(block):
-        return f'<p style="margin:14px 0;line-height:1.85;color:#2d3748;font-size:16.5px">{html.escape(block["text"])}</p>'
+        return (f'<p style="margin:0 0 16px;line-height:1.8;color:#2d3748;'
+                f'font-size:16px;font-weight:400;letter-spacing:normal">{html.escape(block["text"])}</p>')
 
     # 1. Immediate answer, with one heading and no repeated decorative badges.
-    result = ('<div class="bloguito-article" style="line-height:1.85;font-size:17px;color:#2d3748;overflow-wrap:anywhere;word-break:keep-all">'
+    result = ('<div class="bloguito-article" style="line-height:1.8;font-size:16px;color:#2d3748;'
+              'font-family:-apple-system,BlinkMacSystemFont,\'Malgun Gothic\',\'Apple SD Gothic Neo\',\'Noto Sans KR\',sans-serif;'
+              'font-weight:400;letter-spacing:normal;overflow-wrap:anywhere;word-break:keep-all">'
               '<div class="bloguito-summary" style="padding:18px 20px;margin:16px 0 24px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:5px solid #0d7d59;border-radius:10px">'
               '<div style="font-size:18px;font-weight:700;color:#134e4a">핵심 답변</div>'
-              + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16.5px">{html.escape(plan["lead"]["text"])}</p></div>')
+              + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16px">{html.escape(plan["lead"]["text"])}</p></div>')
 
     # A source-reviewed overview table belongs immediately after the answer.
     sections = plan['sections']
     overview_first = bool(sections and section_kind(sections[0]) == 'overview')
     procedure_number = 0
+    # One isolated procedure is not a sequence. A lonely STEP 1 confuses the
+    # heading hierarchy and was mistakenly included in the table of contents.
+    numbered_procedures = sum(section_kind(section) == 'procedure' for section in sections) > 1
 
     def section_markup(number, section):
         nonlocal procedure_number
         clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
-        procedural = section_kind(section) == 'procedure'
+        procedural = numbered_procedures and section_kind(section) == 'procedure'
         if procedural:
             procedure_number += 1
         badge = (f'<span style="background:#e6f4ea;color:#0d7d59;font-size:13px;font-weight:700;padding:4px 9px;border-radius:20px;margin-right:9px">STEP {procedure_number}</span>'
                  if procedural else '')
-        body = (f'<h2 id="step-{number}" style="font-size:clamp(20px,3vw,24px);line-height:1.45;margin:32px 0 14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">'
+        body = (f'<h2 id="step-{number}" style="font-family:inherit;font-size:clamp(20px,2.5vw,23px);'
+                f'font-weight:700;font-style:normal;letter-spacing:normal;text-align:left;'
+                f'line-height:1.45;margin:32px 0 14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">'
                 f'{badge}{html.escape(clean_heading)}</h2>')
         table = section.get('table')
         if table:
@@ -408,7 +416,7 @@ def render(plan, sources, category_key=None):
         if number == 1 and overview_first:
             continue
         clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
-        if section_kind(section) == 'procedure':
+        if numbered_procedures and section_kind(section) == 'procedure':
             toc_procedure_number += 1
             heading_label = f'STEP {toc_procedure_number}. {clean_heading}'
         else:
@@ -416,7 +424,7 @@ def render(plan, sources, category_key=None):
         toc_items.append(f'<li style="margin:6px 0"><a href="#step-{number}" style="color:#0d7d59;text-decoration:none;font-weight:500">{html.escape(heading_label)}</a></li>')
     if plan.get('faq'):
         toc_items.append('<li style="margin:6px 0"><a href="#faq" style="color:#0d7d59;text-decoration:none;font-weight:500">자주 묻는 질문 (FAQ)</a></li>')
-    toc_items.append('<li style="margin:6px 0"><a href="#sources" style="color:#0d7d59;text-decoration:none;font-weight:500">공식 출처 및 사실 검증 자료</a></li>')
+    # The evidence list is a footer, not an additional article section.
 
     result += ('<nav class="bloguito-toc" aria-label="본문 목차" style="padding:16px 20px;margin:20px 0 28px;background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #0d7d59;border-radius:8px">'
                '<div style="font-weight:700;font-size:16px;color:#1e293b;margin-bottom:8px">목차</div>'
@@ -431,11 +439,13 @@ def render(plan, sources, category_key=None):
 
     # 4. 자주 묻는 질문 (FAQ)
     if plan.get('faq'):
-        result += '<h2 id="faq" style="font-size:24px;margin:42px 0 20px;padding-bottom:12px;border-bottom:2px solid #e2e8f0;color:#1a202c">자주 묻는 질문</h2>'
+        result += ('<h2 id="faq" style="font-family:inherit;font-size:clamp(20px,2.5vw,23px);'
+                   'font-weight:700;letter-spacing:normal;line-height:1.45;'
+                   'margin:36px 0 16px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">자주 묻는 질문</h2>')
         for faq in plan['faq']:
             result += ('<div class="bloguito-faq" style="padding:20px 22px;margin:18px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">'
                        '<div style="display:flex;align-items:flex-start;margin-bottom:12px"><span style="background:#2563eb;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">Q</span>'
-                       f'<h3 style="font-size:19px;line-height:1.5;margin:0;color:#1e293b;font-weight:700">{html.escape(faq["question"])}</h3></div>'
+                       f'<h3 style="font-family:inherit;font-size:18px;line-height:1.5;margin:0;color:#1e293b;font-weight:700;letter-spacing:normal">{html.escape(faq["question"])}</h3></div>'
                        '<div style="display:flex;align-items:flex-start;padding-left:2px"><span style="background:#059669;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">A</span>'
                        f'<div style="flex-grow:1;color:#334155;line-height:1.8">{html.escape(faq["answer"]["text"])}</div></div></div>')
 
@@ -543,7 +553,7 @@ def render(plan, sources, category_key=None):
     ids = list(dict.fromkeys(ids))
     links = ''.join(f'<li style="margin:8px 0"><a href="{html.escape(source_map[i]["url"], quote=True)}" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;word-break:break-all">{html.escape(source_map[i]["title"].splitlines()[0][:100])}</a></li>' for i in ids)
     return (result + interlink_html + '<div style="margin-top:44px;padding:22px 24px;background:#fcfdfd;border:1px dashed #cbd5e1;border-radius:10px">'
-            '<h2 id="sources" style="font-size:20px;margin:0 0 14px;color:#334155;display:flex;align-items:center"><span style="margin-right:8px">🏛️</span>공식 출처 및 사실 검증 자료</h2>'
+            '<h2 id="sources" style="font-family:inherit;font-size:20px;font-weight:700;letter-spacing:normal;line-height:1.45;margin:0 0 14px;color:#334155;display:flex;align-items:center"><span style="margin-right:8px">🏛️</span>공식 출처 및 사실 검증 자료</h2>'
             '<ul class="source-list" style="padding-left:22px;margin:0;color:#64748b">' + links + '</ul></div></div>')
 
 
