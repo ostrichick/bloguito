@@ -129,6 +129,18 @@ def fetch_sources(brief):
             continue
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
+        # NTS article metadata renders `<strong>조회수</strong>65289` as two
+        # separate text lines, so the line-based filter below cannot remove it.
+        # Remove only the verified view-count list item in the NTS metadata;
+        # preserve any view-count words or numeric facts in the article body.
+        parsed = urlsplit(url)
+        if (parsed.hostname in {'www.nts.go.kr', 'kids.nts.go.kr'}
+                and parsed.path == '/nts/na/ntt/selectNttInfo.do'):
+            for item in soup.select('.bbs_ViewA .bbsV_data > li'):
+                marker = item.find('strong')
+                if (marker and marker.get_text(' ', strip=True) == '조회수'
+                        and re.fullmatch(r'조회수\s*\d+', item.get_text(' ', strip=True))):
+                    item.decompose()
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
         text = _koreakr_article_text(soup, url)
