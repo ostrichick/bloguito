@@ -59,6 +59,27 @@ class MohwAttachmentCounterTests(unittest.TestCase):
         self.assertNotIn('2389회', previous['text'])
         self.assertNotIn('2751회', previous['text'])
 
+    def test_2026_refund_article_has_same_narrow_counter_normalization(self):
+        refund_url = URL.replace('list_no=1488478', 'list_no=1491727')
+        before, after = self.fetch(
+            board(),
+            board(downloads=('2391', '21008'), previews=('2724', '2753')),
+            url=refund_url)
+        self.assertEqual(before['sha256'], after['sha256'])
+        self.assertIn('127.32KB', before['text'])
+        self.assertIn('2026년 기초연금 안내.pdf', before['text'])
+        self.assertIn('247만 원', before['text'])
+        self.assertNotIn('2391회', after['text'])
+
+    def test_2026_refund_article_file_or_article_change_still_changes_sha(self):
+        refund_url = URL.replace('list_no=1488478', 'list_no=1491727')
+        initial, renamed, resized, amount_changed = self.fetch(
+            board(), board(names=('보도자료 교체.hwpx', '2026년 기초연금 안내.pdf')),
+            board(sizes=('127.34KB', '363.34KB')), board(amount='249'),
+            url=refund_url)
+        for changed in (renamed, resized, amount_changed):
+            self.assertNotEqual(initial['sha256'], changed['sha256'])
+
     def test_filename_size_and_body_number_each_change_source_digest(self):
         original, name_changed, size_changed, body_changed = self.fetch(
             board(),

@@ -146,6 +146,29 @@ def actionable_links(sources):
     return links
 
 
+def official_navigation_links(plan, sources):
+    """Validate labeled official-site/menu navigation, never direct-service CTAs."""
+    entries = plan.get('official_navigation', [])
+    if not isinstance(entries, list) or len(entries) > 2:
+        raise ValueError('invalid_official_navigation')
+    official = {s['url'] for s in sources if s.get('source_type') == 'official'}
+    actions = {a['url'] for a in actionable_links(sources)}
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {'label', 'url', 'note'}:
+            raise ValueError('invalid_official_navigation')
+        label, url, note = (entry[key] for key in ('label', 'url', 'note'))
+        if (not isinstance(url, str) or url not in official or url in actions or url in seen
+                or not isinstance(label, str) or not 8 <= len(label.strip()) <= 80
+                or not isinstance(note, str) or not 16 <= len(note.strip()) <= 220
+                or re.search(r'[<>\r\n]', label + note)
+                or re.search(r'직접\s*(?:조회|신청)|바로\s*(?:조회|신청)|원클릭\s*(?:조회|신청)', label)
+                or not re.search(r'메뉴|로그인|진입|첫\s*화면', note)):
+            raise ValueError('invalid_official_navigation')
+        seen.add(url)
+    return entries
+
+
 def validate_bundle(bundle, inventory, now=None, require_review=True):
     now = now or datetime.now(KST)
     rules = policy()
@@ -172,6 +195,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             actionable_links(sources)
         except (TypeError, ValueError):
             reasons.append('invalid_action_links')
+        try:
+            official_navigation_links(plan, sources)
+        except (KeyError, TypeError, ValueError):
+            reasons.append('invalid_official_navigation')
         related = plan.get('related_posts', [])
         if not isinstance(related, list) or len(related) > 2:
             reasons.append('invalid_related_post_links')
@@ -483,6 +510,22 @@ def render(plan, sources, category_key=None):
         result += ('<div class="bloguito-cta" style="margin:20px 0 26px;padding:16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px">'
                    '<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:12px">공식 서비스 바로가기</div>'
                    f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">{"".join(buttons)}</div></div>')
+
+    # Navigation is visibly distinct from verified direct-service actions.
+    navigation = official_navigation_links(plan, sources)
+    if navigation:
+        items = ''.join(
+            '<li style="margin:10px 0 14px"><a href="'
+            + html.escape(item['url'], quote=True)
+            + '" target="_blank" rel="noopener noreferrer" '
+            + 'style="color:#0d7d59;text-decoration:underline;font-weight:600">'
+            + html.escape(item['label']) + '</a><div style="font-size:14px;color:#475569">'
+            + html.escape(item['note']) + '</div></li>' for item in navigation)
+        result += ('<aside class="bloguito-official-navigation" style="margin:18px 0 26px;'
+                   'padding:12px 20px;background:#f8fafc;border:1px solid #cbd5e1;'
+                   'border-radius:10px"><h2 style="font-size:17px;color:#334155;'
+                   'margin:4px 0 8px">공식 사이트에서 메뉴 찾기</h2>'
+                   + '<ul style="padding-left:20px;margin:0">' + items + '</ul></aside>')
 
     # 3. 경량 네이티브 목차 (Table of Contents - 구글 사이트링크 및 모바일 UX 최적화)
     toc_items = []

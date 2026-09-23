@@ -241,12 +241,12 @@ def fetch_sources(brief):
                 if (marker and marker.get_text(' ', strip=True) == '조회수'
                         and re.fullmatch(r'조회수\s*:\s*[\d,]+', counter)):
                     item.decompose()
-            # This specific MOHW article embeds changing download/preview counts
-            # in the same span as each attachment's meaningful file size. Keep
-            # the entire filename, size and article body in the source digest.
+            # These two individually verified MOHW articles embed changing
+            # download/preview counters next to meaningful attachment sizes.
+            # Preserve filename, size, article body and all other metadata.
             query = parse_qs(parsed.query, keep_blank_values=True)
             if (query.get('act') == ['view'] and query.get('bid') == ['0027']
-                    and query.get('list_no') == ['1488478']
+                    and query.get('list_no') in (['1488478'], ['1491727'])
                     and query.get('mid') == ['a10503010100']):
                 attachments = soup.select('div.file')
                 if len(attachments) > 1:
