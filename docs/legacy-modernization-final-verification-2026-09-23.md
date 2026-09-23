@@ -176,3 +176,7 @@ Git은 프로젝트 지침에 따라 **검증된 현대화 관련 파일만 선�
 - 이번 후속 코드 변경에 대한 **좁은 관련 unittest 73/73 PASS, exit 0**: 기본 편집 시스템·공식 숫자 표기·승인 준비·NTS 적용 코호트·NOL 수집·출처 provenance·현행/레거시 중복 범위 테스트만 실행했다. 이전 전체 311개 테스트 및 전체 브라우저 E2E 결과를 현재 수정 코드의 전수 PASS라고 재표현하지 않는다.
 - 추가 승인 없이 **운영 cron/외부 알림 수신처, #77 복구, #225 이외의 기간 예외, 신규 초안 공개, 전면 서버 배포 및 실제 DR을 실행하지 않았다.** 승인 불가능한 13편에는 WP 쓰기가 없었다. 미검증 개인 인증·실시간 재고·실제 신청 결과를 PASS로 보고하지 않는다.
 - 선택적 Git 커밋·푸시와 원격 HEAD 최종 대조는 아래 실제 수행 결과가 확보된 뒤에만 확정 기록한다. 무관한 기존 미커밋 파일은 stage하지 않는다.
+
+**실제 첫 Git 반영:** 이번 후속 범위의 출처·수치·중복·승인 비교 코드와 테스트·본 후속 기록 **12개 파일만** 커밋 `c7d17ab8aeb30cdceba0eeb61dc232286112b361`(`Resolve scoped official-source and approval-review blockers`)에 포함했다. 선택 stage 후 `git diff --cached --check` 오류 0, 관련 unittest 73/73 PASS를 확인했고 `git push origin main`이 성공했다. 이어 `git rev-parse HEAD`와 `git ls-remote origin refs/heads/main`이 모두 위 전체 SHA로 일치함을 **실제 확인**했다. 직후 `git status -sb`에는 다른 업무의 기존 `docs/INDEX.md` 수정과 위에 열거한 미추적 문서 세 건만 남았다. 이 Git 반영 자체는 WordPress에서 HOLD 13편을 자동 갱신하거나 서버 전체를 배포하지 않는다.
+
+이 문단을 추가하는 문서 전용 후속 커밋의 **최종 원격 HEAD**는 실제 문서 반영 후 터미널 검증 및 사용자 최종 보고에서 별도 확인한다. 아직 실행하지 않은 명령을 이 문서에 선행 완료로 적지 않는다.
