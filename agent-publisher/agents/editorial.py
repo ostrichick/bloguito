@@ -301,6 +301,8 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             numbers = lambda t: set(re.findall(r'\d+(?:[.,]\d+)*', t.replace(',', '')))
             unsupported = numbers(b['text']) - numbers(' '.join(evidence_text))
             unsupported -= supported_counts(b['text'], ' '.join(evidence_text), unsupported)
+            unsupported -= supported_official_number_notations(
+                b['text'], ' '.join(evidence_text), unsupported)
             if unsupported:
                 reasons.append('number_without_evidence')
                 details.append(f'block[{block_index}]의 수치 {sorted(unsupported)}는 연결된 인용에 없음. 해당 수치를 빼거나 실제 인용에 있는 범위 표현으로 수정할 것.')
@@ -352,6 +354,33 @@ def render_legacy(plan, sources):
         for faq in plan['faq']:
             result += '<h3>'+html.escape(faq['question'])+'</h3>'+paragraph(faq['answer'])
     return result
+
+
+def supported_official_number_notations(text, quote_text, candidates):
+    """Accept exact Korean orthography for explicit years, dates and won amounts.
+
+    This does not infer any other coverage period or replace semantic review.
+    """
+    supported = set()
+    for short in re.findall(r"[’‘'ʼ](\d{2})년", quote_text):
+        full = str(2000 + int(short))
+        if full in candidates and re.search(r'(?<!\d)' + full + r'년', text):
+            supported.add(full)
+    for year, month, day in re.findall(
+            r"(?<!\d)(20\d{2}|[’‘'ʼ]\d{2})\.(\d{1,2})\.(\d{0,2})", quote_text):
+        full = str(2000 + int(year[1:])) if not year.isdigit() else year
+        month_number = str(int(month))
+        day_number = str(int(day)) if day else None
+        prefix = r'(?<!\d)' + full + r'년\s*0?' + month_number + r'월'
+        if re.search(prefix, text):
+            supported.update({full, month_number} & candidates)
+            if day_number and re.search(prefix + r'\s*0?' + day_number + r'일', text):
+                supported.update({day_number} & candidates)
+    for quantity in re.findall(r'(?<!\d)(\d+)\s*천\s*원', quote_text):
+        amount = str(int(quantity) * 1000)
+        if amount in candidates and re.search(r'(?<!\d)' + amount + r'\s*원', text.replace(',', '')):
+            supported.add(amount)
+    return supported
 
 
 def section_kind(section):

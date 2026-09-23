@@ -84,6 +84,13 @@ def text_blocks(markup):
         value = ' '.join(item.get_text(' ', strip=True).split())
         if value:
             blocks.append(f'{item.name.upper()} | {value}')
+    # Content-only text comparison misses standalone CTAs and href-only changes.
+    # Keep link destinations visible in the reviewable diff without executing them.
+    for anchor in soup.select('a[href]'):
+        href = anchor.get('href', '').strip()
+        if href and not href.startswith('#'):
+            label = ' '.join(anchor.get_text(' ', strip=True).split())
+            blocks.append(f'LINK | {label} -> {href}')
     return blocks
 
 

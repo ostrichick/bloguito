@@ -17,7 +17,8 @@ def _url_outside_verified_source_footer(content, url):
     """
     if url not in unescape(content):
         return False
-    if 'source-list' not in content and '공식 근거 및 확인 경로' not in content:
+    if not any(marker in content for marker in (
+            'source-list', '공식 근거 및 확인 경로', '공식 자료 및 확인 경로')):
         return True
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(content, 'html.parser')
@@ -25,23 +26,27 @@ def _url_outside_verified_source_footer(content, url):
         heading = source_list.find_previous_sibling('h2')
         if heading and heading.get('id') == 'sources':
             source_list.decompose()
-    # Three pre-renderer flu posts have an explicit citation list without the
-    # modern class/id. Only a KDCA attachment in that exact list is exempt:
-    # a PDF linked in the article body or an action card still counts.
-    parsed = urlparse(url)
-    if (parsed.hostname in {'kdca.go.kr', 'www.kdca.go.kr'}
-            and parsed.path.startswith('/bbs/kdca/')
-            and parsed.path.endswith('/download.do')):
-        for heading in soup.select('h2'):
-            if heading.get_text(' ', strip=True) != '공식 근거 및 확인 경로':
-                continue
-            source_list = heading.find_next_sibling()
-            if not source_list or source_list.name != 'ul':
-                continue
-            for item in source_list.find_all('li', recursive=False):
-                anchors = item.find_all('a', recursive=False)
-                if len(anchors) == 1 and anchors[0].get('href') == url:
-                    item.decompose()
+    # Some pre-renderer posts use a terminal h2 + plain ul for their citations.
+    # Only a well-formed, terminal citation list with an exact known heading is
+    # exempt; body/action links and ambiguous lists still count as duplicates.
+    legacy_headings = {'공식 근거 및 확인 경로', '공식 자료 및 확인 경로'}
+    for heading in soup.select('h2'):
+        if heading.get_text(' ', strip=True) not in legacy_headings:
+            continue
+        source_list = heading.find_next_sibling()
+        if (not source_list or source_list.name != 'ul'
+                or source_list.find_next_sibling() is not None):
+            continue
+        items = source_list.find_all('li', recursive=False)
+        if not items or any(
+                len(item.find_all('a', recursive=False)) != 1
+                or len(item.find_all('a')) != 1
+                or item.get_text(' ', strip=True) != item.find('a').get_text(' ', strip=True)
+                for item in items):
+            continue
+        for item in items:
+            if item.find('a').get('href') == url:
+                item.decompose()
     return url in unescape(str(soup))
 
 

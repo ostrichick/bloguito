@@ -13,6 +13,12 @@ def _flat(value):
     return re.sub(r"[\s,]", "", value or "")
 
 
+def _mentions_year(value, year):
+    """Accept a four-digit year or the Korean official-document ’YY년 form."""
+    short = str(year)[-2:]
+    return bool(re.search(rf'(?:{year}|[’‘\'\u0060]{short}년)', value or ''))
+
+
 def _article_text(plan):
     parts = [plan.get("title", ""), plan.get("lead", {}).get("text", "")]
     for section in plan.get("sections", []):
@@ -113,11 +119,11 @@ def critical_fact_reasons(brief, sources, plan):
             reasons.append("pension_unwarranted_entitlement_claim")
     if "2026" in name and "세금포인트" in name:
         source = _flat(_official(sources, {"nts.go.kr"}))
-        if not ("2025" in source and "1000" in source and "5년" in source):
+        if not (_mentions_year(source, 2025) and "1000" in source and "5년" in source):
             reasons.append("tax_points_2026_authoritative_version_missing")
         if re.search(r"(?:연간|최대|한해|부여한도)[^.。\n]{0,35}50(?:점|포인트)|50(?:점|포인트)까지", t):
             reasons.append("tax_points_2026_stale_50_point_cap")
-        if "5년" in body and not ("2025" in body and "부여" in body):
+        if "5년" in body and not (_mentions_year(body, 2025) and "부여" in body):
             reasons.append("tax_points_2026_expiry_cohort_missing")
         if "환급금" in body and re.search(r"세금포인트.{0,30}(?:현금환급|현금으로환급)", t):
             reasons.append("tax_points_misclassified_as_cash_refund")

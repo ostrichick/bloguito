@@ -35,6 +35,29 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         self.assertNotIn('65288', first['text'])
         self.assertIn('2027년 3월 1일부터', first['text'])
 
+    def test_nts_bare_host_uses_same_view_counter_filter(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, views):
+                self.content = (
+                    '<html><head><title>국세청 보도자료</title></head><body>'
+                    '<div class="bbs_ViewA"><ul class="bbsV_data">'
+                    '<li><strong>작성일자</strong>2026.09.17.</li>'
+                    f'<li><strong>조회수</strong>{views}</li></ul>'
+                    '<div class="bbsV_cont"><p>개인납세자는 ’25년에 부여하는 포인트부터 '
+                    '5년 소멸기한이 적용되고 연간 1,000포인트 한도입니다.</p></div></div>'
+                    '</body></html>').encode('utf-8')
+
+        url = 'https://nts.go.kr/nts/na/ntt/selectNttInfo.do?bbsId=1028&mi=2201&nttSn=1355091'
+        with patch('agents.editorial_writer.requests.get',
+                   side_effect=[Response(6709), Response(6710)]):
+            first = fetch_sources({'official_urls': [url], 'entity': '세금포인트'})[0]
+            second = fetch_sources({'official_urls': [url], 'entity': '세금포인트'})[0]
+        self.assertEqual(first['sha256'], second['sha256'])
+        self.assertNotIn('6709', first['text'])
+        self.assertIn('’25년에 부여', first['text'])
+
     def test_page_views_are_excluded_but_actual_content_is_hashed(self):
         class Response:
             status_code = 200

@@ -157,11 +157,49 @@ def _koreakr_article_text(soup, url):
     return '\n'.join(parts)
 
 
+def _official_request_headers(url):
+    """Use browser-equivalent headers only for the verified NOL product route.
+
+    NOL's public product page returns a generic 403 interstitial to Python's
+    default user agent while the same URL is public in a normal browser. Keep
+    this exception host/path scoped; redirects and non-200 responses still
+    fail closed in fetch_sources().
+    """
+    parsed = urlsplit(url)
+    if (parsed.scheme == 'https' and parsed.hostname == 'nol.yanolja.com'
+            and re.fullmatch(r'/ticket/products/\d+', parsed.path)):
+        return {
+            'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                           'AppleWebKit/537.36 (KHTML, like Gecko) '
+                           'Chrome/153.0 Safari/537.36'),
+            'Accept': ('text/html,application/xhtml+xml,application/xml;q=0.9,'
+                       'image/avif,image/webp,*/*;q=0.8'),
+            'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+        }
+    return {}
+
+
+def _normalize_nol_product_text(text, url):
+    """Drop only volatile social counters from a verified NOL product page."""
+    parsed = urlsplit(url)
+    if (parsed.scheme != 'https' or parsed.hostname != 'nol.yanolja.com'
+            or not re.fullmatch(r'/ticket/products/\d+', parsed.path)):
+        return text
+    # Review/like/ranking counters change independently of the product facts
+    # used for editorial evidence. Preserve dates, prices, venue, sale terms,
+    # booking limits and every other visible product sentence.
+    text = re.sub(r'(?m)^콘서트\s+주간\s+[\d,]+위\s*$', '', text)
+    text = re.sub(r'(?m)^찜\s+[\d,]+명\s*$', '', text)
+    text = re.sub(r'(?m)^리뷰\s*\n[\d,]+\s*\n개\s*$', '', text)
+    return '\n'.join(line for line in text.splitlines() if line.strip())
+
+
 def fetch_sources(brief):
     sources = []
     for i, url in enumerate(brief['official_urls'][:5]):
         # Redirects require updating the reviewed URL rather than silently trusting another host.
-        response = requests.get(url, timeout=25, allow_redirects=False)
+        response = requests.get(url, timeout=25, allow_redirects=False,
+                                headers=_official_request_headers(url))
         if response.status_code != 200:
             raise ValueError(f'official_source_http_{response.status_code}')
         if response.content.startswith(b'%PDF-'):
@@ -184,7 +222,7 @@ def fetch_sources(brief):
         # Remove only the verified view-count list item in the NTS metadata;
         # preserve any view-count words or numeric facts in the article body.
         parsed = urlsplit(url)
-        if (parsed.hostname in {'www.nts.go.kr', 'kids.nts.go.kr'}
+        if (parsed.hostname in {'nts.go.kr', 'www.nts.go.kr', 'kids.nts.go.kr'}
                 and parsed.path == '/nts/na/ntt/selectNttInfo.do'):
             for item in soup.select('.bbs_ViewA .bbsV_data > li'):
                 marker = item.find('strong')
@@ -264,6 +302,7 @@ def fetch_sources(brief):
         # any actual article-content change must still alter the source hash.
         text = '\n'.join(line for line in text.splitlines()
                          if not re.fullmatch(r'조회수\s*:\s*\d+', line.strip()))
+        text = _normalize_nol_product_text(text, url)
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')
         sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})

@@ -62,6 +62,25 @@ class ApprovalPreparationTests(unittest.TestCase):
         self.assertIn('official_sources_changed_since_review', result['reasons'])
         self.assertTrue((self.out / 'post-original.PRIVATE.json').exists())
 
+    def test_action_only_change_is_visible_in_review_diff(self):
+        old = '<h2>Same text</h2><p>Same content</p>'
+        new = (old + '<div class="bloguito-cta"><a href="https://example.org/apply">'
+               'Official application</a></div>')
+        self._patch(post={**self.original, 'post_content': old},
+                    inventory=[{**self.original, 'post_content': old}, self.draft])
+        self.render.return_value = new
+        result = approval.prepare(137, self.bundle_path, self.out)
+        delta = (self.out / 'content-diff.txt').read_text(encoding='utf-8')
+        self.assertEqual('ready', result['preflight_status'])
+        self.assertGreater(result['changed_text_diff_lines'], 0)
+        self.assertIn('LINK | Official application -> https://example.org/apply', delta)
+        self.assertNotIn('Sensitive private draft', delta)
+
+    def test_link_destination_change_detected_without_text_change(self):
+        before = '<p><a href="https://example.org/old">Official action</a></p>'
+        after = '<p><a href="https://example.org/new">Official action</a></p>'
+        self.assertNotEqual(approval.text_blocks(before), approval.text_blocks(after))
+
     def test_semantic_review_failure_blocks(self):
         self._patch(report={'status': 'needs_review', 'reasons': ['semantic_review_failed'], 'details': []})
         result = approval.prepare(137, self.bundle_path, self.out)
