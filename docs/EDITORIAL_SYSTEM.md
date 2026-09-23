@@ -18,7 +18,7 @@
 
 ## 2. 공식 원문과 답변 설계
 
-brief에는 id, category_key, approved, entity, primary_keyword, question, angle, required_title_terms, official_urls, queries, serp_urls, reviewed_at, review_until, content_type, useful_until, reader_questions를 기록한다. evergreen은 useful_until=null과 evergreen_reason을 요구한다. reader_questions는 [{"id":"q1","question":"독자가 묻는 구체적인 질문"}] 형태다. 일정형 concert/welfare는 evergreen으로 기간 검사를 우회할 수 없다.
+brief에는 id, category_key, approved, entity, primary_keyword, question, angle, required_title_terms, official_urls, queries, serp_urls, reviewed_at, review_until, content_type, useful_until, reader_questions를 기록한다. evergreen은 useful_until=null과 evergreen_reason을 요구한다. reader_questions는 [{"id":"q1","question":"독자가 묻는 구체적인 질문"}] 형태다. 일정형 concert/welfare는 evergreen으로 기간 검사를 우회할 수 없다. **사용자 승인 단일 예외(#85, 2026-09-23):** 이미 공개된 #85 글의 검증된 복지로 제도 안내 메뉴와 정부24 혜택알리미 본인인증 진입 메뉴만 다루는 *상시 절차 가이드* 현대화는 고정된 브리프 ID·게시물 ID·기존 제목·검색 질문·공식 URL 목록·공식 비CTA 메뉴 라벨/주의 문구·원본 서비스 비교 2행/사업별 점검 5행을 전부 일치시킬 때만 허용한다. 개별 급여의 대상/선정/접수 가능성을 이 예외로 증명하거나 복지로의 빈 정보 화면을 직접 가입 버튼으로 바꿀 수 없다. 신청 완료와 혜택 발견을 분리하고 원본 사업별 메모·주민센터 방문 대안을 보존해야 한다. 2026-09-27~30 시스템 중단은 글의 접수 마감이 아니며 30일 기준도 충족하지 않아 이 상시 가이드에 넣지 않는다. 그 외 welfare 글과 #85의 시한부 정책 글은 기존 30일 규칙이 그대로 적용된다. 해당 예외에도 모든 최신 공식 근거/실재고 중복검사/독립 6항 모델 검토/CLI check/현재 운영본 SHA 비교를 요구한다.
 
 공식 URL을 직접 조회해 sources에 id/url/title/text/source_type/fetched_at/sha256를 보관한다. HTML이 비어 있거나 이미지·PDF에만 핵심 사실이 있으면 브라우저/PDF로 실제 근거를 확보하고 텍스트 원문을 보관한다. 못 읽은 내용을 추측하지 않는다. 일반 기사만으로 공식 원문 확인을 대신하지 않는다.
 

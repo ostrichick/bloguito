@@ -67,6 +67,103 @@ def dated_post_exception(brief, today):
         return False
 
 
+def legacy_85_welfare_navigation_exception(brief):
+    """Permit only the user-approved, exact existing #85 timeless MENU guide.
+
+    No new welfare post, different ID, date, title/question, URL substitution or
+    generic evergreen declaration can inherit this exception. Full source,
+    semantic and preservation validation remains mandatory in validate_bundle.
+    """
+    if not isinstance(brief, dict):
+        return False
+    exception = policy().get('legacy_welfare_procedural_exceptions', {}).get(brief.get('id'))
+    if not isinstance(exception, dict):
+        return False
+    return (type(brief.get('existing_post_id')) is int
+            and brief['existing_post_id'] == exception.get('existing_post_id') == 85
+            and all(brief.get(key) == exception.get(key) for key in (
+                'category_key', 'content_type', 'entity', 'question',
+                'required_title_terms', 'official_urls', 'evergreen_reason'))
+            and brief.get('useful_until') is None)
+
+
+def legacy_85_welfare_navigation_reasons(brief, sources, plan):
+    """Fail closed before model review for the sole existing welfare menu guide.
+
+    Lock reader-facing menu targets and preserved service/checklist structure;
+    historical or future outages and operational availability do NOT turn this
+    guide into a validated live welfare application route.
+    """
+    if not legacy_85_welfare_navigation_exception(brief):
+        return ['legacy_85_welfare_exception_scope_invalid']
+    cfg = policy()['legacy_welfare_procedural_exceptions'][brief['id']]
+    reasons = []
+    if (plan.get('title') != cfg['title']
+            or plan.get('official_navigation') != cfg['official_navigation']
+            or any(s.get('actions') for s in sources)):
+        reasons.append('legacy_85_navigation_or_action_contract_invalid')
+
+    if ([s.get('url') for s in sources] != cfg['official_urls']
+            or any(s.get('source_type') != 'official' for s in sources)):
+        reasons.append('legacy_85_official_source_scope_invalid')
+    else:
+        by_url = {s['url']: s.get('text', '') for s in sources}
+        required = {
+            cfg['official_urls'][0]: (
+                '나의 혜택 | 혜택알리미 | 정부24', '로그인이 필요한 메뉴입니다.'),
+            cfg['official_urls'][1]: (
+                '맞춤형급여안내(복지멤버십)', '이용 방법',
+                '복지급여 신청', '서비스 신청 현황'),
+            cfg['official_urls'][2]: (
+                '받을 가능성이 있는', '실제 조사 결과',
+                '읍면동 주민센터'),
+            cfg['official_urls'][3]: (
+                '보조금24', '2022.12.16'),
+        }
+        if any(any(phrase not in by_url[url] for phrase in phrases)
+               for url, phrases in required.items()):
+            reasons.append('legacy_85_official_role_evidence_missing')
+
+    sections = plan.get('sections')
+    tables = [section.get('table') for section in sections
+              if section.get('table')] if isinstance(sections, list) else []
+    if (len(tables) != 2
+            or any(len(table.get('headers', [])) != 3 for table in tables)
+            or [[row['cells'][0] for row in table.get('rows', [])]
+                for table in tables] != [
+                    cfg['service_rows'], cfg['checklist_rows']]):
+        reasons.append('legacy_85_original_tables_not_preserved')
+
+    # These are required reader tasks, not claims of any individual's benefit.
+    blocks = ([plan.get('lead', {}).get('text', '')]
+              + [block.get('text', '') for section in (sections or [])
+                 for block in section.get('paragraphs', [])]
+              + [faq.get('answer', {}).get('text', '') for faq in plan.get('faq', [])])
+    visible = ' '.join([plan.get('title', ''), *blocks,
+                        *[cell for table in tables for row in table.get('rows', [])
+                          for cell in row.get('cells', [])]])
+    if not all(phrase in visible for phrase in (
+            '과거', '보조금24', '혜택알리미', '로그인',
+            '실제 가입 양식', '개별', '조사', '주민센터',
+            '사업명', '담당 기관', '공고 링크', '대상 조건',
+            '마감 날짜와 시각', '준비서류', '제출처',
+            '문의한 날짜', '제출 완료 여부', '접수번호')):
+        reasons.append('legacy_85_original_explanations_or_fallback_missing')
+    # No time-window announcements in an evergreen guide. The 2026-09-27/30
+    # outage is separately verified but has under 30 days of remaining value.
+    # A text/source-only exception cannot make that event a permanent deadline.
+    if (re.search(r'(?<!\d)20\d{2}\s*(?:년|[./-])', visible)
+            or re.search(r'(?<!\d)\d{1,2}\s*월\s*\d{1,2}\s*일', visible)
+            or re.search(r'(?:로그인|서비스|전송)\s*(?:중단|점검)', visible)
+            or re.search(r'현재\s*(?:신청|접수|가입)\s*(?:가능|중)|'
+                         r'언제든\s*(?:신청|접수|가입)\s*가능|'
+                         r'(?:누구나|모두)\s*(?:신청|수급|지원)\s*가능|'
+                         r'(?:급여|지원)\s*(?:확정|보장)', visible)):
+        reasons.append('legacy_85_time_or_availability_claim_not_allowed')
+
+    return sorted(set(reasons))
+
+
 def topic_reasons(brief, today=None):
     if not isinstance(brief, dict):
         return ['malformed_topic']
@@ -81,7 +178,9 @@ def topic_reasons(brief, today=None):
         if brief.get('content_type') == 'evergreen':
             if brief.get('useful_until') is not None or not brief.get('evergreen_reason'):
                 reasons.append('evergreen_reason_missing_or_deadline_present')
-            if brief.get('category_key') in {'concert', 'welfare'}:
+            if (brief.get('category_key') in {'concert', 'welfare'}
+                    and not (brief.get('category_key') == 'welfare'
+                             and legacy_85_welfare_navigation_exception(brief))):
                 reasons.append('dated_category_cannot_bypass_time_check')
         elif brief.get('content_type') == 'dated':
             if ((date.fromisoformat(brief['useful_until']) - today).days < policy()['min_remaining_days']
@@ -199,6 +298,8 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             official_navigation_links(plan, sources)
         except (KeyError, TypeError, ValueError):
             reasons.append('invalid_official_navigation')
+        if legacy_85_welfare_navigation_exception(brief):
+            reasons.extend(legacy_85_welfare_navigation_reasons(brief, sources, plan))
         related = plan.get('related_posts', [])
         if not isinstance(related, list) or len(related) > 2:
             reasons.append('invalid_related_post_links')
