@@ -174,6 +174,18 @@ class NetworkAndPipelineTests(unittest.TestCase):
             self.assertEqual(curator.last_ticket_verification["reason"], "candidate_limit_exceeded")
             self.assertEqual(get.call_count, 1)
 
+    @patch("agents.curator.requests.get")
+    def test_second_article_does_not_reuse_previous_article_image(self, get):
+        first = '<meta property="og:image" content="https://example.com/old.jpg">' + '<p>First article text is sufficiently long. </p>' * 10
+        second = '<p>Second article text is sufficiently long. </p>' * 10
+        get.side_effect = [response(first), response(second)]
+        curator = CuratorAgent()
+        curator.decode_url = lambda url: url
+        self.assertTrue(curator.fetch_article_content('https://example.com/a')[0])
+        self.assertEqual(curator.last_article_image_url, 'https://example.com/old.jpg')
+        self.assertTrue(curator.fetch_article_content('https://example.com/b')[0])
+        self.assertIsNone(curator.last_article_image_url)
+
     def test_free_shipping_does_not_bypass_verification(self):
         curator = CuratorAgent()
         curator.fetch_article_content = Mock(return_value=("테스트밴드 수원 콘서트는 무료 공연이 아니다. 티켓 무료배송. " * 20, "https://example.com/news"))

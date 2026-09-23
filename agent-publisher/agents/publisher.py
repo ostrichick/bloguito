@@ -1,4 +1,4 @@
-﻿import json
+import json
 import subprocess
 import tempfile
 from datetime import datetime
@@ -171,7 +171,7 @@ class PublisherAgent:
             import re
             strip_auto_links = lambda value: re.sub(r'<div class="bloguito-interlink"[^>]*>.*?</div>', '', value, flags=re.DOTALL)
             only_auto_links_changed = strip_auto_links(old) == strip_auto_links(content)
-            if old not in (render_legacy(bundle['plan'], bundle['sources']), content) and not only_auto_links_changed and 'source-links' not in old:
+            if old not in (render_legacy(bundle['plan'], bundle['sources']), content) and not only_auto_links_changed:
                 raise ValueError('reformat_user_edits_detected')
             inventory = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != post_id])
             # Format migration does not alter reviewed facts; refresh the policy stamp

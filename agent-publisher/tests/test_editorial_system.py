@@ -105,6 +105,25 @@ class EditorialTests(unittest.TestCase):
                     PublisherAgent().reformat_draft(112)
                 run.assert_not_called()
 
+    def test_reformat_rejects_tampered_legacy_source_marker(self):
+        """A user-edited legacy body is not trusted merely for containing source-links."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            index = Path(folder) / 'drafts.json'
+            index.write_text(json.dumps([{'id': 112, 'fact_manifest': {'editorial_bundle': self.b}}]), encoding='utf-8')
+            tampered = '<p>Manually edited article text</p><p class="source-links">source</p>'
+            inv = {'posts': [{'ID': 112, 'post_status': 'draft',
+                              'post_title': self.b['plan']['title'], 'post_content': tampered}]}
+            with patch('agents.editorial.ROOT', Path(folder)), \
+                 patch('agents.publisher.DRAFTS_INDEX_FILE', index), \
+                 patch('sync_wordpress_inventory.sync_inventory'), \
+                 patch('agents.editorial_writer.load_inventory', return_value=inv), \
+                 patch('agents.publisher.subprocess.run') as run:
+                with self.assertRaisesRegex(ValueError, 'user_edits_detected'):
+                    PublisherAgent().reformat_draft(112)
+                run.assert_not_called()
+
     def test_valid_source_bound_narrative(self):
         self.assertEqual(self.check()['status'],'ready')
         self.assertIn('아파트 단지',render(self.b['plan'],self.b['sources']))

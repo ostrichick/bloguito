@@ -8,12 +8,15 @@ import argparse
 import hashlib
 import html
 import json
+import math
 import os
 import re
+import shutil
 import sys
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -28,6 +31,8 @@ FIELDS = 'id,date,modified,slug,link,status,title,excerpt,content,categories,fea
 SCHEMA_VERSION = 2
 PAGE_SIZE = 100
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')
+RUN_NAME = re.compile(r'\d{8}T\d{6}Z-[0-9a-f]{8}\Z')
+RECURRING_SCHEMA = 1
 DEFLECTION = re.compile(
     r'(?:첨부(?:자료|파일)|참고\s*\d+).{0,75}(?:찾아|확인하|참고하|대조하)'
     r'|(?:공식\s*(?:자료|안내|사이트|홈페이지|공고)|보도자료).{0,50}'
@@ -374,16 +379,388 @@ def write_atomic(path, contents):
         temporary.unlink(missing_ok=True)
 
 
+def _read_json(path):
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def _linked_path(path):
+    """Reject symlinks and Windows junctions before reading/writing audit runs."""
+    return path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction())
+
+
+def _runs_directory(state):
+    runs = state / 'runs'
+    if _linked_path(runs) or (runs.exists() and
+                             (not runs.is_dir() or runs.resolve() != state.resolve() / 'runs')):
+        raise ValueError('Audit runs directory is linked or unsafe')
+    return runs
+
+
+def _safe_state_dir(directory, site, *, dry_run=False):
+    """A marked, dedicated local directory is mandatory; never adopt other files."""
+    path = directory.resolve()
+    project = Path(__file__).resolve().parents[1]
+    if path == project or path == path.parent or any(
+            path == project / name or (project / name) in path.parents
+            for name in ('wordpress', 'agent-publisher', 'docs', 'scripts', '.git')):
+        raise ValueError('Refusing a state directory overlapping project or runtime files')
+    marker = path / '.bloguito-read-only-audit.json'
+    if path.exists():
+        if not path.is_dir() or path.is_symlink():
+            raise ValueError('Audit state must be an ordinary directory')
+        if marker.is_file():
+            info = _read_json(marker)
+            if info != {'schema_version': RECURRING_SCHEMA, 'site': site,
+                         'purpose': 'public-rest-read-only-audit'}:
+                raise ValueError('Audit state marker does not match this site and schema')
+        elif any(path.iterdir()):
+            raise ValueError('Refusing an occupied directory without the audit ownership marker')
+    if not dry_run:
+        path.mkdir(parents=True, exist_ok=True)
+        if not marker.is_file():
+            write_atomic(marker, json.dumps({'schema_version': RECURRING_SCHEMA,
+                'site': site, 'purpose': 'public-rest-read-only-audit'}))
+    return path
+
+
+def _read_checkpoint(state, site):
+    """A single validated pointer is the only successful-run baseline."""
+    checkpoint = state / 'latest.json'
+    runs = _runs_directory(state)
+    if runs.exists() and any(item.name.startswith('.pending-') for item in runs.iterdir()):
+        raise ValueError('Incomplete previous audit run; inspect pending directory manually')
+    if not checkpoint.exists():
+        if runs.exists() and any(runs.iterdir()):
+            raise ValueError('Uncheckpointed audit run exists; manual inspection required')
+        return None, None
+    data = _read_json(checkpoint)
+    run_id = data.get('run_id') if isinstance(data, dict) else None
+    if (not isinstance(run_id, str) or not RUN_NAME.fullmatch(run_id)
+            or data.get('schema_version') != RECURRING_SCHEMA or data.get('site') != site
+            or not isinstance(data.get('snapshot_sha256'), str)
+            or not SHA256.fullmatch(data['snapshot_sha256'])):
+        raise ValueError('Invalid recurring audit checkpoint')
+    run = runs / run_id
+    if (_linked_path(run) or not run.is_dir() or
+            run.resolve().parent != runs.resolve()):
+        raise ValueError('Checkpoint run directory is linked or unsafe')
+    source = run / 'public-rest-snapshot.json'
+    if source.is_symlink() or not source.is_file():
+        raise ValueError('Checkpoint snapshot is missing or unsafe')
+    raw = source.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != data['snapshot_sha256']:
+        raise ValueError('Checkpoint snapshot hash mismatch')
+    previous = load_previous(source, site)
+    stamp = datetime.fromisoformat(data['audited_at'])
+    if stamp.tzinfo is None:
+        raise ValueError('Checkpoint timestamp has no timezone')
+    return previous, data
+
+
+def _summary(report, checkpoint, prior_attempt, now, expected_hours):
+    changes = report['changes']
+    previously_flagged = checkpoint.get('flag_map', {}) if checkpoint else {}
+    new_flags = {}
+    if checkpoint is not None:
+        for row in report['posts']:
+            before = set(previously_flagged.get(str(row['id']), []))
+            introduced = sorted(set(row['flags']) - before)
+            if introduced:
+                new_flags[str(row['id'])] = introduced
+    elapsed = None
+    missed = 0
+    if checkpoint:
+        last = datetime.fromisoformat(checkpoint['audited_at'])
+        elapsed = round((now - last).total_seconds() / 3600, 2)
+        if elapsed < -0.1:
+            raise ValueError('System clock precedes the last successful audit')
+        missed = max(0, math.ceil(max(0, elapsed) / expected_hours) - 1)
+    recovered_failure = bool(prior_attempt and prior_attempt.get('status') == 'failed')
+    codes = []
+    if changes['new_post_ids'] or changes['changed_posts'] or changes['missing_from_public_snapshot_ids']:
+        codes.append('public_inventory_changed')
+    if changes['review_due_ids']:
+        codes.append('review_due')
+    if new_flags:
+        codes.append('new_layout_source_or_review_candidates')
+    if missed:
+        codes.append('missed_expected_runs')
+    if recovered_failure:
+        codes.append('recovered_prior_failure')
+    return {
+        'status': 'complete', 'audited_at': report['audited_at'],
+        'public_post_count': report['expected_total'],
+        'baseline_available': changes['baseline_available'],
+        'new_post_ids': changes['new_post_ids'],
+        'changed_posts': changes['changed_posts'],
+        'missing_from_public_snapshot_ids': changes['missing_from_public_snapshot_ids'],
+        'review_due_ids': changes['review_due_ids'],
+        'review_unknown_count': len(changes['review_unknown_ids']),
+        'flag_counts': dict(Counter(flag for row in report['posts'] for flag in row['flags'])),
+        'new_flags_by_post_id': new_flags,
+        'hours_since_previous_success': elapsed,
+        'missed_expected_runs': missed, 'recovered_prior_failure': recovered_failure,
+        'alert_codes': codes, 'attention_required': bool(codes),
+        'scope': 'public WordPress REST only; facts, visual behavior and links unverified',
+    }
+
+
+def _read_prior_attempt(state):
+    path = state / 'last-attempt.json'
+    if not path.exists():
+        return None
+    attempt = _read_json(path)
+    if not isinstance(attempt, dict) or attempt.get('status') not in ('failed', 'complete'):
+        raise ValueError('Invalid previous audit attempt record')
+    return attempt
+
+
+_RUN_FILES = frozenset({'public-rest-snapshot.json', 'triage.json', 'report.md',
+                        'alert-summary.json', 'run-manifest.json'})
+_RUN_DIGESTS = ('public-rest-snapshot.json', 'triage.json', 'report.md')
+
+
+def _validate_owned_run(folder, runs, site):
+    """Treat unexpected files, unmarked history and invalid run contents as foreign."""
+    if (not RUN_NAME.fullmatch(folder.name) or _linked_path(folder) or
+            not folder.is_dir() or folder.parent.resolve() != runs.resolve() or
+            folder.resolve().parent != runs.resolve()):
+        raise ValueError('Unsafe or unowned audit run directory')
+    entries = list(folder.iterdir())
+    if {entry.name for entry in entries} != _RUN_FILES or any(
+            _linked_path(entry) or not entry.is_file() or
+            entry.resolve().parent != folder.resolve() for entry in entries):
+        raise ValueError('Audit run has foreign, linked or incomplete files')
+    manifest = _read_json(folder / 'run-manifest.json')
+    if (not isinstance(manifest, dict) or set(manifest) != {
+            'schema_version', 'site', 'run_id', 'audited_at', 'sha256'} or
+            manifest['schema_version'] != RECURRING_SCHEMA or
+            manifest['site'] != site or manifest['run_id'] != folder.name or
+            not isinstance(manifest['audited_at'], str) or
+            not isinstance(manifest['sha256'], dict) or
+            set(manifest['sha256']) != set(_RUN_DIGESTS)):
+        raise ValueError('Audit run ownership manifest is invalid')
+    stamp = datetime.fromisoformat(manifest['audited_at'])
+    if (stamp.tzinfo is None or
+            stamp.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ') != folder.name[:16]):
+        raise ValueError('Audit run timestamp does not match directory')
+    for name in _RUN_DIGESTS:
+        claimed = manifest['sha256'][name]
+        if (not isinstance(claimed, str) or not SHA256.fullmatch(claimed) or
+                hashlib.sha256((folder / name).read_bytes()).hexdigest() != claimed):
+            raise ValueError('Audit run immutable content hash mismatch')
+    snapshot = _read_json(folder / 'public-rest-snapshot.json')
+    # Reuse the exact schema, complete count and public-post checks applied to
+    # previous checkpoints. This is not an endorsement of article factuality.
+    load_previous(folder / 'public-rest-snapshot.json', site)
+    report = _read_json(folder / 'triage.json')
+    alert = _read_json(folder / 'alert-summary.json')
+    post_ids = [post['id'] for post in snapshot['posts']]
+    if (snapshot.get('audited_at') != manifest['audited_at'] or
+            not isinstance(report, dict) or report.get('schema_version') != SCHEMA_VERSION or
+            report.get('site') != site or report.get('complete') is not True or
+            report.get('audited_at') != manifest['audited_at'] or
+            report.get('expected_total') != snapshot['expected_total'] or
+            report.get('total_pages') != snapshot['total_pages'] or
+            not isinstance(report.get('posts'), list) or
+            [row.get('id') for row in report['posts'] if isinstance(row, dict)] != post_ids or
+            not isinstance(alert, dict) or alert.get('status') != 'complete' or
+            alert.get('audited_at') != manifest['audited_at']):
+        raise ValueError('Audit run outputs disagree with ownership manifest')
+    return manifest
+
+
+def _prune_owned_runs(state, keep, current_id):
+    """Only remove this tool's old complete runs after checkpoint publication."""
+    runs = _runs_directory(state)
+    checkpoint = _read_json(state / 'latest.json')
+    if (checkpoint.get('run_id') != current_id or
+            checkpoint.get('site') is None or not RUN_NAME.fullmatch(current_id)):
+        raise ValueError('Audit retention checkpoint does not match current run')
+    folders = sorted(runs.iterdir())
+    # Validate every entry before even deciding which runs to delete. Old runs
+    # without manifests are preserved for deliberate manual migration.
+    manifests = {item.name: _validate_owned_run(item, runs, checkpoint['site'])
+                 for item in folders}
+    if current_id not in manifests or checkpoint.get('snapshot_sha256') != (
+            manifests[current_id]['sha256']['public-rest-snapshot.json']):
+        raise ValueError('Audit retention current run does not match checkpoint')
+    # The run name contains a UTC second followed by a RANDOM suffix, so
+    # sorting names may delete a newer run when several runs share a second.
+    # The source timestamp has microsecond precision for newly created runs.
+    older = sorted((item for item in folders if item.name != current_id),
+                   key=lambda item: datetime.fromisoformat(manifests[item.name]['audited_at']))
+    slots = keep - 1
+    if len(older) > slots and datetime.fromisoformat(
+            manifests[older[-slots - 1].name]['audited_at']) == datetime.fromisoformat(
+            manifests[older[-slots].name]['audited_at']):
+        # Historical same-second runs cannot be reliably ordered by their
+        # random suffix; preserve all until a human decides which to retain.
+        raise ValueError('Ambiguous audit retention timestamps; no runs deleted')
+    keep_ids = {current_id} | {item.name for item in older[-slots:]}
+    candidates = [item for item in folders if item.name not in keep_ids]
+    # Validate the whole deletion set again before any removal, including
+    # unexpected children added after the initial manifest check.
+    for item in candidates:
+        _validate_owned_run(item, runs, checkpoint['site'])
+    for item in candidates:
+        shutil.rmtree(item)
+    return len(candidates)
+
+
+def recurring_audit(state_dir, site, *, opener=urlopen, review_register=None,
+                    expected_hours=24, retain=14, dry_run=False, now=None):
+    """One manual scheduler-ready iteration. Never installs a timer or sends alerts.
+
+    Complete run directories are immutable; the atomic latest.json pointer changes
+    only after every snapshot and report is durable. Failed fetches retain baseline.
+    """
+    if not 1 <= expected_hours <= 24 * 31 or type(retain) is not int or not 2 <= retain <= 365:
+        raise ValueError('Expected hours must be 1..744 and retention 2..365 complete runs')
+    site = site_url(site)
+    state = _safe_state_dir(Path(state_dir), site, dry_run=dry_run)
+    checkpoint, previous = None, None
+    previous, checkpoint = _read_checkpoint(state, site)
+    prior_attempt = _read_prior_attempt(state)
+    current = now or datetime.now(KST)
+    if current.tzinfo is None:
+        raise ValueError('Audit clock must contain a timezone')
+    run_id = current.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid4().hex[:8]
+    lock = state / '.audit.lock'
+    locked = False
+    pending = None
+    stage = 'lock'
+    try:
+        if dry_run:
+            if lock.exists():
+                raise ValueError('Audit lock exists; dry-run cannot race a live iteration')
+        else:
+            try:
+                lock.mkdir()
+            except FileExistsError as exc:
+                raise ValueError('Audit already locked; inspect owner before manual recovery') from exc
+            locked = True
+            write_atomic(lock / 'owner.json', json.dumps({
+                'pid': os.getpid(), 'started_at': current.isoformat(), 'run_id': run_id}))
+        stage = 'collect'
+        inventory = fetch_public_posts(site, opener=opener, with_metadata=True)
+        audited_at = current.isoformat(timespec='microseconds')
+        rows = [inspect_post(post, today=current.astimezone(KST).date(),
+                             site_host=urlparse(site).hostname) for post in inventory['posts']]
+        register = load_review_register(review_register, site, audited_at) if review_register else None
+        annotate_review(rows, register, current.astimezone(KST).date())
+        changes = compare_previous(rows, previous)
+        changes['orphan_review_register_ids'] = sorted(set(register or {}) - {row['id'] for row in rows})
+        inventory['audited_at'] = audited_at
+        report = {'schema_version': SCHEMA_VERSION, 'site': site, 'audited_at': audited_at,
+                  'complete': True, 'expected_total': inventory['expected_total'],
+                  'total_pages': inventory['total_pages'], 'posts': rows, 'changes': changes,
+                  'scope': 'public REST only; facts, browser layout and links unverified'}
+        summary = _summary(report, checkpoint, prior_attempt, current, expected_hours)
+        summary['dry_run'] = dry_run
+        if dry_run:
+            return summary
+        stage = 'commit'
+        runs = _runs_directory(state)
+        runs.mkdir(exist_ok=True)
+        pending = runs / ('.pending-' + uuid4().hex)
+        pending.mkdir()
+        raw_json = json.dumps(inventory, ensure_ascii=False, indent=2)
+        write_atomic(pending / 'triage.json', json.dumps(report, ensure_ascii=False, indent=2))
+        write_atomic(pending / 'report.md', markdown_report(rows, site, audited_at, changes))
+        write_atomic(pending / 'alert-summary.json', json.dumps(summary, ensure_ascii=False, indent=2))
+        write_atomic(pending / 'public-rest-snapshot.json', raw_json)
+        write_atomic(pending / 'run-manifest.json', json.dumps({
+            'schema_version': RECURRING_SCHEMA, 'site': site,
+            'run_id': run_id, 'audited_at': audited_at,
+            # alert-summary.json is rewritten after retention and cannot carry
+            # an immutable digest without making genuine runs self-invalidating.
+            'sha256': {name: hashlib.sha256((pending / name).read_bytes()).hexdigest()
+                       for name in _RUN_DIGESTS}}, ensure_ascii=False, indent=2))
+        destination = runs / run_id
+        pending.rename(destination)
+        pending = None
+        marker = {'schema_version': RECURRING_SCHEMA, 'site': site, 'run_id': run_id,
+                  'audited_at': audited_at,
+                  # Text-mode newline conversion on Windows changes on-disk bytes.
+                  'snapshot_sha256': hashlib.sha256(
+                      (destination / 'public-rest-snapshot.json').read_bytes()).hexdigest(),
+                  'post_ids': [row['id'] for row in rows],
+                  'flag_map': {str(row['id']): row['flags'] for row in rows}}
+        write_atomic(state / 'latest.json', json.dumps(marker, ensure_ascii=False, indent=2))
+        write_atomic(state / 'last-attempt.json', json.dumps({
+            'status': 'complete', 'audited_at': audited_at, 'run_id': run_id}))
+        stage = 'retention'
+        try:
+            summary['pruned_runs'] = _prune_owned_runs(state, retain, run_id)
+        except (OSError, ValueError) as exc:
+            summary['retention_warning'] = type(exc).__name__
+            summary['attention_required'] = True
+            summary['alert_codes'].append('retention_requires_attention')
+        # Keep the public-facing on-disk summary consistent with post-commit
+        # retention outcome. The complete snapshot/checkpoint is unaffected.
+        write_atomic(destination / 'alert-summary.json', json.dumps(
+            summary, ensure_ascii=False, indent=2))
+        return summary
+    except Exception as exc:
+        if not dry_run and locked:
+            try:
+                write_atomic(state / 'last-attempt.json', json.dumps({
+                    'status': 'failed', 'audited_at': current.isoformat(timespec='seconds'),
+                    'stage': stage, 'error_type': type(exc).__name__}))
+            except OSError:
+                pass
+        raise
+    finally:
+        if pending is not None and pending.exists():
+            shutil.rmtree(pending)
+        if locked:
+            # Never clear a preexisting/stale lock belonging to another process.
+            (lock / 'owner.json').unlink(missing_ok=True)
+            lock.rmdir()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', default='https://lifeinfo24.org')
-    parser.add_argument('--snapshot-dir', type=Path, required=True)
-    parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--snapshot-dir', type=Path)
+    parser.add_argument('--report', type=Path)
     parser.add_argument('--previous-snapshot', type=Path,
                         help='Complete public-rest-snapshot.json from an earlier v2 run')
     parser.add_argument('--review-register', type=Path,
                         help='Separately human-verified review deadlines; optional JSON schema in docs')
+    parser.add_argument('--recurring-state-dir', type=Path,
+                        help='Dedicated local state directory; one iteration, NEVER registers a schedule')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Read public REST and compare checkpoint, but do not change local state')
+    parser.add_argument('--expected-hours', type=float, default=24,
+                        help='Expected frequency for missed-run detection (default: 24)')
+    parser.add_argument('--retain', type=int, default=14,
+                        help='Keep this many complete local snapshots (2..365; default: 14)')
+    parser.add_argument('--strict-alert', action='store_true',
+                        help='Exit 2 for attention_required, without sending notifications')
     args = parser.parse_args()
+    if args.recurring_state_dir:
+        if args.snapshot_dir or args.report or args.previous_snapshot:
+            parser.error('Recurring state mode cannot be combined with individual snapshot/report paths')
+        try:
+            summary = recurring_audit(args.recurring_state_dir, args.url,
+                review_register=args.review_register, expected_hours=args.expected_hours,
+                retain=args.retain, dry_run=args.dry_run)
+        except Exception as exc:
+            # URL and raw exception strings might contain credentials. Report a type only.
+            print(json.dumps({'status': 'failed', 'attention_required': True,
+                              'alert_codes': ['audit_failed'],
+                              'error_type': type(exc).__name__}))
+            raise SystemExit(3) from None
+        print(json.dumps(summary, ensure_ascii=False))
+        if args.strict_alert and summary['attention_required']:
+            raise SystemExit(2)
+        return
+    if args.dry_run or args.strict_alert or args.expected_hours != 24 or args.retain != 14:
+        parser.error('Recurring flags require --recurring-state-dir')
+    if args.snapshot_dir is None or args.report is None:
+        parser.error('One-shot mode requires both --snapshot-dir and --report')
     site = site_url(args.url)
     raw_path = args.snapshot_dir / 'public-rest-snapshot.json'
     triage_path = args.snapshot_dir / 'triage.json'

@@ -6,7 +6,7 @@ and a handful of known misleading claims before Gemini review or WP draft.
 It is intentionally narrow; it does not certify the rest of an article.
 """
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 def _flat(value):
@@ -34,12 +34,72 @@ def _official(sources, hosts):
     )
 
 
+def _mokpo_city_flu_age_conflict(brief, sources, plan):
+    """Hold existing #103 until BOTH city notices agree on the city-only age.
+
+    The health-centre notice and the later city press release currently give
+    different upper ages (65 versus 64). The article's previous bundle omitted
+    the press release, so ordinary same-source quote and number checks reported
+    a misleading review-ready preflight. National vaccination eligibility and
+    the HWP's national provider list cannot resolve this *city* rule.
+
+    This intentionally does not assert which age is correct or waive a fresh
+    source fetch, independent semantic review or the usual publication gates.
+    """
+    if (brief.get('existing_post_id') != 103
+            or brief.get('category_key') != 'life-health'):
+        return []
+    # A national-season-only article may cite the city's notice for the season
+    # dates without making any claim about the separate city-funded scheme.
+    # Gate the specific *claim and reader question*, not just the legacy ID.
+    claims = ' '.join([_article_text(plan), brief.get('question', ''),
+                       brief.get('angle', ''),
+                       *(q.get('question', '') for q in brief.get('reader_questions', []))])
+    if not re.search(r'(?:목포시|시)\s*자체\s*(?:사업|무료|취약)|시\s*자체사업', claims):
+        return []
+
+    def origin_kind(url):
+        parsed = urlparse(url)
+        query = parse_qs(parsed.query)
+        if (parsed.scheme != 'https' or parsed.hostname not in
+                {'www.mokpo.go.kr', 'seafountain.mokpo.go.kr'}
+                or query.get('mode') != ['view']):
+            return None
+        if (parsed.hostname == 'www.mokpo.go.kr'
+                and parsed.path == '/health/citizen_participation/notice'
+                and query.get('idx') == ['548678']):
+            return 'health'
+        if (parsed.path == '/www/mokpo_news/press_release/report_material'
+                and query.get('idx') == ['548751']):
+            return 'press'
+        return None
+
+    official = {'health': [], 'press': []}
+    for source in sources:
+        kind = origin_kind(source.get('url', ''))
+        if (kind and source.get('source_type') == 'official'
+                and source['url'] in brief.get('official_urls', [])):
+            text = re.sub(r'\s+', '', source.get('text', ''))
+            if '자체사업' not in text:
+                continue
+            # Both pages explicitly print an age *range* for the city scheme;
+            # a generic mention of nationally eligible 65+ is not evidence.
+            matches = set(re.findall(r'15(?:세)?[~∼～\-–](6[45])세', text))
+            official[kind].append(matches)
+    if (len(official['health']) != 1 or len(official['press']) != 1
+            or len(official['health'][0]) != 1
+            or official['health'][0] != official['press'][0]):
+        return ['mokpo_city_program_age_conflict_unresolved']
+    return []
+
+
 def critical_fact_reasons(brief, sources, plan):
     """Return blocking reasons only for specifically verified 2026 policies."""
     name = " ".join([brief.get("entity", ""), brief.get("primary_keyword", ""), plan.get("title", "")])
     body = _article_text(plan)
     t = _flat(body)
     reasons = []
+    reasons.extend(_mokpo_city_flu_age_conflict(brief, sources, plan))
     if "2026" in name and "기초연금" in name:
         source = _flat(_official(sources, {"mohw.go.kr", "law.go.kr"}))
         if not all(token in source for token in ("2026", "247만", "395만", "349700")):

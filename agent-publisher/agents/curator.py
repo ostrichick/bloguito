@@ -35,6 +35,9 @@ class CuratorAgent:
 
     def fetch_article_content(self, url: str) -> tuple[str, str]:
         """언론사 실제 원문 웹페이지에서 순수 기사 본문 텍스트 추출 (한글 인코딩 안전망 적용)"""
+        # This agent processes multiple items. An image from an earlier article
+        # must never become the thumbnail of a later article without og:image.
+        self.last_article_image_url = None
         real_url = self.decode_url(url)
         try:
             resp = requests.get(real_url, headers=self.headers, timeout=12)

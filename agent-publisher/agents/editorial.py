@@ -5,10 +5,11 @@ import json
 import re
 from datetime import datetime, date
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
-                                        extract_yes24_schedule, validate_legacy_followup)
+                                        extract_yes24_schedule, validate_legacy_followup,
+                                        validate_legacy_reference_period)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 
@@ -171,6 +172,24 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             actionable_links(sources)
         except (TypeError, ValueError):
             reasons.append('invalid_action_links')
+        related = plan.get('related_posts', [])
+        if not isinstance(related, list) or len(related) > 2:
+            reasons.append('invalid_related_post_links')
+        else:
+            seen_related = set()
+            for item in related:
+                if not isinstance(item, dict) or set(item) != {'post_id', 'label', 'url'}:
+                    reasons.append('invalid_related_post_links')
+                    continue
+                target, label, url = (item[key] for key in ('post_id', 'label', 'url'))
+                if (type(target) is not int or target <= 0 or target in seen_related
+                        or target == brief.get('existing_post_id') or not isinstance(label, str)
+                        or not 4 <= len(label.strip()) <= 60 or re.search(r'[<>\r\n]', label)
+                        or not isinstance(url, str) or url != f'https://lifeinfo24.org/?p={target}'
+                        or not any(row.get('ID') == target and row.get('post_status') == 'publish'
+                                   for row in inventory.get('posts', []))):
+                    reasons.append('invalid_related_post_links')
+                seen_related.add(target)
         if brief.get('content_type') == 'dated':
             temporal = bundle.get('temporal_source', {})
             available = [field for s in sources for field in extract_evidence(s['text'], s['url'])]
@@ -229,6 +248,13 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                     # period and a cited future application route. No open
                     # application or sale status is inferred from these dates.
                     reasons.extend(validate_legacy_followup(brief, sources, temporal, plan, now))
+                elif temporal.get('legacy_reference_period') is not None:
+                    # Existing 2026 pension information and the 2026-27 Mokpo
+                    # flu season are information applicability periods, not
+                    # evidence of an active application or universal supply.
+                    reasons.extend(validate_legacy_reference_period(
+                        brief, sources, temporal, plan, now,
+                        minimum_days=rules['min_remaining_days']))
                 elif not seasonal_exception:
                     if not available:
                         reasons.append('temporal_source_not_bound')
@@ -469,9 +495,23 @@ def render(plan, sources, category_key=None):
                        '<div style="display:flex;align-items:flex-start;padding-left:2px"><span style="background:#059669;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">A</span>'
                        f'<div style="flex-grow:1;color:#334155;line-height:1.8">{html.escape(faq["answer"]["text"])}</div></div></div>')
 
-    # 5. 내부 링크 추천 카드 (체류시간 증대 & 카테고리 연관성 기반 매칭)
+    # 5. Explicit, reviewed related-post links take precedence over volatile
+    # local recommendations. Never promote an internal article to an official CTA.
     interlink_html = ''
-    try:
+    related = plan.get('related_posts', [])
+    if related:
+        items = ''.join(
+            '<li style="margin-bottom:10px"><a href="'
+            + html.escape(item['url'], quote=True)
+            + '" style="color:#0d7d59;text-decoration:underline;font-weight:600;font-size:15.5px">'
+            + html.escape(item['label']) + '</a></li>' for item in related)
+        interlink_html = (
+            '<div class="bloguito-interlink" style="padding:20px 24px;margin:40px 0 20px;'
+            'background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:10px">'
+            '<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;font-weight:700">관련 글</h3>'
+            '<ul style="margin:0;padding-left:22px;line-height:1.8">' + items + '</ul></div>')
+    else:
+      try:
         posts_file = ROOT / 'data' / 'published_posts.json'
         if posts_file.exists():
             posts = json.loads(posts_file.read_text(encoding='utf-8'))
@@ -563,8 +603,8 @@ def render(plan, sources, category_key=None):
                     f'<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;display:flex;align-items:center"><span style="margin-right:8px">{"🎵" if is_concert else "🔗"}</span>{header_title}</h3>'
                     f'<ul style="margin:0;padding-left:22px;line-height:1.8">{items}</ul></div>'
                 )
-    except Exception:
-        interlink_html = ''
+      except Exception:
+          interlink_html = ''
 
     # 6. 공식 출처 및 사실 검증 자료
     ids = []

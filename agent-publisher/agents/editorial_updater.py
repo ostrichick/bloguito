@@ -8,6 +8,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 from agents.editorial import ROOT, render, save_report, validate_bundle, excerpt_from_lead
+from agents.related_links import missing_internal_post_ids
 from agents.editorial_writer import fetch_sources, load_inventory
 from sync_wordpress_inventory import sync_inventory
 
@@ -65,6 +66,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if (current['post_status'] != 'publish' or current['post_title'] != original['post_title']
                 or _sha(current['post_content']) != expected_content_sha256):
             raise ValueError('public_post_changed_during_review')
+        if missing_internal_post_ids(current['post_content'], reviewed_content):
+            raise ValueError('original_internal_post_navigation_missing')
         # Preserve manually written excerpts; repair blanks or our own old previews.
         old_excerpt = current.get('post_excerpt', '')
         new_excerpt = (excerpt_from_lead(bundle['plan']['lead'])

@@ -70,6 +70,13 @@ class ArticleLayoutTests(unittest.TestCase):
         self.assertEqual(len(soup.select('.bloguito-summary')), 1)
         self.assertEqual(len(soup.select('#sources')), 1)
 
+    def test_summary_has_valid_paragraph_structure_and_balanced_edge_margins(self):
+        soup = BeautifulSoup(render(self.plan(), self.sources), 'html.parser')
+        summary = soup.select_one('.bloguito-summary')
+        self.assertEqual([child.name for child in summary.find_all(recursive=False)], ['div', 'p'])
+        self.assertEqual(summary.select('p:empty'), [])
+        self.assertIn('margin:8px 0 0', summary.find('p', recursive=False)['style'])
+
 
 if __name__ == '__main__':
     unittest.main()

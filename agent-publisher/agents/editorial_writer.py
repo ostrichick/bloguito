@@ -6,7 +6,7 @@ import time
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -58,11 +58,21 @@ class FAQ(BaseModel):
     answer: Paragraph
 
 
+class RelatedPost(BaseModel):
+    post_id: int
+    label: str
+    url: str
+
+
 class Plan(BaseModel):
     title: str
     lead: Paragraph
     sections: list[Section]
     faq: list[FAQ] = Field(default_factory=list)
+    related_posts: list[RelatedPost] = Field(default_factory=list, description=(
+        'Optional, at most two already-published articles on the same site, '
+        'with verified https://lifeinfo24.org/?p=ID URLs; never official CTA or evidence.'
+    ))
 
 
 class Checks(BaseModel):
@@ -84,12 +94,52 @@ def load_inventory():
 
 
 def _koreakr_article_text(soup, url):
-    """Extract only the official policy-news article, not its rotating news rails.
+    """Extract only the verified Korea.kr article, not its rotating news rails.
 
     A changed article structure must fail the source recheck rather than silently
     hashing unrelated recommendations or dropping the evidence-bearing body.
     """
     parsed = urlsplit(url)
+    # The 2025-03-31 One-Click briefing has a different article-head layout
+    # from /news/policyNewsView.do. Scope this extractor to its *exact* URL:
+    # title is outside article_wrap, date/byline and attachments are inside
+    # article_head, and the full transcript lives in article_body/view_cont.
+    # The adjacent aside.as_side holds independently rotating recommendations.
+    if (parsed.hostname == 'www.korea.kr'
+            and parsed.path == '/briefing/policyBriefingView.do'
+            and parse_qs(parsed.query, keep_blank_values=True) == {'newsId': ['156681719']}):
+        prefix = 'main#main section#container'
+        titles = soup.select(f'{prefix} .view_title h1')
+        info = soup.select(f'{prefix} .article_wrap .article_head .variety .info > span')
+        bodies = soup.select(f'{prefix} .article_wrap .article_body .view_cont')
+        attachments = soup.select(f'{prefix} .article_wrap .article_head .filedown > dl')
+        if (len(titles) != 1 or len(info) != 2 or len(bodies) != 1
+                or len(attachments) != 1
+                or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}', info[0].get_text(' ', strip=True))):
+            raise ValueError('koreakr_briefing_main_missing_or_ambiguous')
+        attachment = attachments[0]
+        labels = attachment.select(':scope > dt')
+        rows = attachment.select(':scope > dd > p')
+        if (len(labels) != 1 or labels[0].get_text(' ', strip=True) != '첨부파일'
+                or not rows):
+            raise ValueError('koreakr_briefing_attachments_missing_or_ambiguous')
+        files = []
+        for row in rows:
+            links = row.select(':scope > span:first-child > a')
+            if len(links) != 1:
+                raise ValueError('koreakr_briefing_attachments_missing_or_ambiguous')
+            filename = links[0].get_text(' ', strip=True)
+            href = links[0].get('href', '')
+            if (not re.search(r'\.(?:hwp|hwpx|pdf)$', filename, re.IGNORECASE)
+                    or not re.fullmatch(r'/common/download\.do\?fileId=\d+', href)):
+                raise ValueError('koreakr_briefing_attachments_missing_or_ambiguous')
+            files.append(f'{filename}\n{href}')
+        parts = [titles[0].get_text('\n', strip=True), info[0].get_text(' ', strip=True),
+                 info[1].get_text(' ', strip=True), '첨부파일', *files,
+                 bodies[0].get_text('\n', strip=True)]
+        if any(not part for part in parts):
+            raise ValueError('koreakr_briefing_main_missing_or_ambiguous')
+        return '\n'.join(parts)
     if parsed.hostname != 'www.korea.kr' or parsed.path != '/news/policyNewsView.do':
         return None
     prefix = 'main#main section#container'
@@ -141,6 +191,69 @@ def fetch_sources(brief):
                 if (marker and marker.get_text(' ', strip=True) == '조회수'
                         and re.fullmatch(r'조회수\s*\d+', item.get_text(' ', strip=True))):
                     item.decompose()
+        # The Ministry of Health's board article metadata uses a separate
+        # <li class="hit"> counter. It can change between the independent
+        # review and source recheck even though article policy text did not.
+        # Limit removal to the verified article metadata structure and do not
+        # strip any figures or view-count references inside the actual body.
+        if parsed.hostname == 'www.mohw.go.kr' and parsed.path == '/board.es':
+            for item in soup.select('li.hit'):
+                marker = item.find('strong', recursive=False)
+                counter = item.get_text(' ', strip=True).replace('\xa0', ' ')
+                if (marker and marker.get_text(' ', strip=True) == '조회수'
+                        and re.fullmatch(r'조회수\s*:\s*[\d,]+', counter)):
+                    item.decompose()
+            # This specific MOHW article embeds changing download/preview counts
+            # in the same span as each attachment's meaningful file size. Keep
+            # the entire filename, size and article body in the source digest.
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            if (query.get('act') == ['view'] and query.get('bid') == ['0027']
+                    and query.get('list_no') == ['1488478']
+                    and query.get('mid') == ['a10503010100']):
+                attachments = soup.select('div.file')
+                if len(attachments) > 1:
+                    raise ValueError('mohw_attachment_structure_missing_or_ambiguous')
+                if attachments:
+                    titles = attachments[0].select('strong.title')
+                    if (len(titles) != 1 or titles[0].get_text(' ', strip=True) != '첨부파일'
+                            or len(attachments[0].select('ul.list')) != 1):
+                        raise ValueError('mohw_attachment_structure_missing_or_ambiguous')
+                    rows = attachments[0].select('ul.list > li')
+                    if not rows:
+                        raise ValueError('mohw_attachment_structure_missing_or_ambiguous')
+                    for row in rows:
+                        counters = row.find_all('span', class_='txt', recursive=False)
+                        if len(counters) != 1:
+                            raise ValueError('mohw_attachment_structure_missing_or_ambiguous')
+                        value = counters[0].get_text(' ', strip=True).replace('\xa0', ' ')
+                        match = re.fullmatch(
+                            r'\(\s*(\d+(?:\.\d+)?\s*[KMGT]?B)\s*/\s*다운로드\s*[\d,]+회'
+                            r'\s*/\s*미리보기\s*[\d,]+회\s*\)', value,
+                            flags=re.IGNORECASE)
+                        if not match:
+                            raise ValueError('mohw_attachment_counter_format_changed')
+                        counters[0].string = '(' + match.group(1) + ')'
+        # The Mokpo health bulletin places an incrementing view counter in
+        # article title metadata and a separate download counter next to the
+        # attachment's file size. Strip only those counters on this exact
+        # bulletin route. Keep the attachment size (a replacement file may
+        # change it), dates, actual bulletin text and any numbers in the body.
+        if (parsed.hostname == 'www.mokpo.go.kr'
+                and parsed.path == '/health/citizen_participation/notice'):
+            for marker in soup.select('.module_view_box .view_titlebox dl > dt'):
+                if marker.get_text(' ', strip=True) != '조회수':
+                    continue
+                value = marker.find_next_sibling()
+                if (value and value.name == 'dd'
+                        and re.fullmatch(r'[\d,]+', value.get_text(' ', strip=True))):
+                    marker.decompose()
+                    value.decompose()
+            for counter in soup.select('a[href*="/common/file_download/"] > span.file_info'):
+                value = counter.get_text(' ', strip=True)
+                match = re.fullmatch(r'\(\s*[\d,]+\s+hit/\s*([\d.]+\s*[KMG]?B)\s*\)',
+                                     value, flags=re.IGNORECASE)
+                if match:
+                    counter.string = '(' + match.group(1) + ')'
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
         text = _koreakr_article_text(soup, url)
@@ -215,6 +328,8 @@ class EditorialWriterAgent:
             'sources.actions가 있으면 링크가 실제 조회·신청·예매·구매·설치 목적지인지 점검하고, '
             '소개·홍보·보도자료 페이지나 기능과 맞지 않는 이름을 버튼으로 제공하면 거부하라. '
             '링크 접근을 직접 확인하지 못했다면 검증했다고 추정하지 말 것. '
+            'plan.related_posts가 있으면 각 ID·현재 공개 상태·관련성·도착 주제와 기존 관련 글 링크의 보존을 검토하라. '
+            '내부 관련 글은 공식 출처나 신청·조회 버튼이 아니다. '
             '각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
             body, Review, 'reviewer')
         return {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),

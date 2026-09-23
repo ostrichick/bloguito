@@ -127,6 +127,116 @@ def validate_legacy_followup(brief: dict, sources: list[dict], temporal: dict,
     return sorted(set(reasons))
 
 
+def validate_legacy_reference_period(brief: dict, sources: list[dict], temporal: dict,
+                                     plan: dict, now: datetime, minimum_days=30) -> list[str]:
+    """Verify a *published historical ID's* annual rules or vaccination season.
+
+    Annual pension criteria do not have an application closing time. A flu
+    season is likewise not a single general application period for every age
+    group. The older availability validator expects an active labelled sale/
+    application and cannot model either. This tightly limited path validates
+    explicitly cited applicability dates *without certifying applications,
+    vaccine stock, any person's eligibility or a service's real-time status*.
+    New posts, unrelated categories and unsupported time windows fail closed.
+    """
+    info = temporal.get('legacy_reference_period')
+    if not isinstance(info, dict):
+        return ['legacy_reference_period_invalid']
+    allowed = {55: ('welfare', 'annual_pension'),
+               79: ('welfare', 'annual_pension'),
+               101: ('welfare', 'annual_pension'),
+               103: ('life-health', 'flu_season'),
+               63: ('life-health', 'national_flu_season'),
+               81: ('life-health', 'national_flu_season')}
+    post_id = brief.get('existing_post_id')
+    if (type(post_id) is not int or allowed.get(post_id) !=
+            (brief.get('category_key'), info.get('kind'))
+            or brief.get('content_type') != 'dated'):
+        return ['legacy_reference_period_not_for_this_existing_post']
+    reasons = []
+    try:
+        start = date.fromisoformat(info['start_date'])
+        end = date.fromisoformat(info['end_date'])
+        useful = date.fromisoformat(brief['useful_until'])
+        item = info['evidence']
+        source = next(s for s in sources if s['id'] == item['source_id'])
+        quote = item['quote']
+        if (not isinstance(quote, str) or not 24 <= len(quote) <= 800
+                or quote not in source['text'] or source.get('source_type') != 'official'
+                or source['url'] not in brief['official_urls']):
+            raise ValueError('reference_quote_unbound')
+    except (TypeError, ValueError, KeyError, StopIteration):
+        return ['legacy_reference_period_dates_or_source_unverified']
+    if not start <= now.date() <= end or (end - now.date()).days < minimum_days:
+        reasons.append('legacy_reference_period_not_current_or_too_short')
+    if useful > end or useful < now.date():
+        reasons.append('legacy_reference_period_useful_until_invalid')
+    if info['kind'] == 'annual_pension':
+        # The ministry explicitly labels the 2026 monthly *benefit amount*
+        # 2026 January through December. This is a cutoff for a 2026 guide,
+        # not a claim that the underlying entitlement expires on Dec 31.
+        if (start != date(2026, 1, 1) or end != date(2026, 12, 31)
+                or useful != end or not re.search(
+                    r'2026\s*년\s*1\s*월\s*~\s*2026\s*년\s*12\s*월', quote)
+                or '기초연금' not in (' '.join([brief.get('entity', ''),
+                                               brief.get('primary_keyword', '')]))):
+            reasons.append('legacy_pension_annual_range_not_officially_bound')
+    elif info['kind'] == 'national_flu_season':
+        # The August KDCA announcement established the overall season, but its
+        # per-group start dates were superseded on September 16. Both official
+        # originals are required; the earlier schedule alone is insufficient.
+        expected_period = 'https://www.kdca.go.kr/bbs/kdca/42/312308/artclView.do'
+        expected_revision = 'https://www.kdca.go.kr/bbs/kdca/42/309764/download.do'
+        schedule = info.get('schedule_evidence')
+        try:
+            latest = next(s for s in sources if s['url'] == expected_revision
+                          and s['source_type'] == 'official'
+                          and expected_revision in brief['official_urls'])
+            child, elder = (schedule['child'], schedule['elder'])
+            if (not isinstance(child, dict) or not isinstance(elder, dict)
+                    or any(item.get('source_id') != latest['id']
+                           or not isinstance(item.get('quote'), str)
+                           or not 40 <= len(item['quote']) <= 800
+                           or item['quote'] not in latest['text']
+                           for item in (child, elder))):
+                raise ValueError('missing_revision_quotes')
+            child_text = re.sub(r'\s+', '', child['quote'])
+            elder_text = re.sub(r'\s+', '', elder['quote'])
+            lead = re.sub(r'\s+', '', plan.get('lead', {}).get('text', ''))
+            if (start != date(2026, 9, 21) or end != date(2027, 4, 30)
+                    or useful != end or source['url'] != expected_period
+                    or '2026.08.25' not in source['text']
+                    or '2026. 9. 16.' not in latest['text']
+                    or not re.search(r'9월21일.*2027년4월30일',
+                                     re.sub(r'\s+', '', quote))
+                    or not re.search(r'1회접종어린이9월28일에서21일로조정', child_text)
+                    or not re.search(r'모든어린이와임신부접종21일시작', child_text)
+                    or not re.search(r'75세이상10월6일.*70~74세10월12일.*65~69세10월15일',
+                                     elder_text)
+                    or not all(day in lead for day in ('10월6일', '10월12일', '10월15일'))
+                    or (post_id == 63 and '9월21일' not in lead)):
+                raise ValueError('national_season_or_revision_mismatch')
+        except (KeyError, TypeError, ValueError, StopIteration):
+            reasons.append('legacy_national_flu_season_not_officially_bound')
+    else:
+        # Only the city's season-wide national program notice can establish
+        # BOTH dates; historical KDCA August start dates were superseded in
+        # September. Individual eligibility start dates need semantic review.
+        if (start != date(2026, 9, 21) or end != date(2027, 4, 30)
+                or useful != end or 'mokpo.go.kr' not in source['url']
+                or '접종일정' not in quote
+                or not re.search(r'2026\s*[.년]\s*0?9\s*[.월]\s*21', quote)
+                or not re.search(r'2027\s*[.년]\s*0?4\s*[.월]\s*30', quote)):
+            reasons.append('legacy_flu_season_range_not_officially_bound')
+    # A period reference is never evidence that all groups can act today,
+    # applications are open, or that a particular provider has inventory.
+    headline = ' '.join([plan.get('title', ''), plan.get('lead', {}).get('text', '')])
+    if re.search(r'현재\s*(?:누구나|모든\s*대상|전\s*연령|전원)\s*(?:신청|접종|수령)\s*(?:가능|중)|'
+                 r'(?:신청|접수)\s*진행\s*중', headline):
+        reasons.append('legacy_reference_period_misleading_current_status')
+    return sorted(set(reasons))
+
+
 def _bounds(field: dict) -> tuple[datetime | None, datetime | None]:
     value = field["value"]
     matches = list(STAMP.finditer(value))
