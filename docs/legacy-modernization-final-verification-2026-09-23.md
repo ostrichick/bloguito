@@ -126,6 +126,10 @@ scripts/audit_legacy_posts.py와 agent-publisher/tests/test_legacy_post_audit.py
 
 Git은 프로젝트 지침에 따라 **검증된 현대화 관련 파일만 선택적으로 stage/commit/push**한다. git add -A는 사용하지 않으며, 별도 작업인 콘서트 커버·플러그인 소유권 복구·프로젝트 최적화 문서는 이 계획의 커밋에서 제외한다.
 
+**실제 Git 수행 결과:** 현대화 구현·회귀테스트·실행/QA 문서 82개를 선택적으로 묶은 commit `15dd351298a69f8970588b8bdc9589137e0c24e8`(`Complete legacy post modernization safeguards and QA`)을 생성했고 `origin/main` push가 성공했다. push 직후 `git ls-remote origin refs/heads/main`도 같은 commit을 가리켜 원격 반영을 재확인했다. 이 커밋에서 `docs/INDEX.md`의 별도 미커밋 변경과 `docs/concert-cover-update-2026-09-21.md`, `docs/plugin-update-ownership-repair-2026-09-22.md`, `docs/project-optimization-audit-2026-09-20.md`는 제외해 기존 타 작업을 보존했다.
+
+**배포 결과:** 이번 최종 단계에서 로컬 editorial/audit 소스의 blanket 서버 배포, 서비스 재시작, legacy-audit cron 설치, #77 상태 변경은 **수행하지 않았다**. 이는 추가 승인 범위이거나 현재 HOLD 상태이기 때문이다. 운영 WordPress에서는 기존 승인 범위 안에서 #81 관련 글 회귀만 정규 ID 한정 updater로 복구했고, 그 사후 DB/REST 확인 결과는 위 §3에 기록했다. #63/#140과 이미 갱신된 다른 글은 재적용하지 않았다.
+
 ## 9. 최종 결론
 
 - **완료:** 현재 재고 기준선, 6단계 장부, 운영 레이아웃 기반, 검증된 기존 글 갱신, #81 회귀 복구, 공식 충돌/기간/중복 fail-closed 게이트, 반복 감사의 두 데이터 보존 결함 수정, 실제 E2E 및 전체 회귀검사.
