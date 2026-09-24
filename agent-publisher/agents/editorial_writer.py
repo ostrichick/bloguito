@@ -243,6 +243,28 @@ def _normalize_efine_text(text, url):
     )
 
 
+def _normalize_seocho_property_tax_text(text, url):
+    """Drop only the volatile view counter from the verified #144 source."""
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if (parsed.scheme != 'https'
+            or parsed.hostname != 'www.seocho.go.kr'
+            or parsed.path != '/site/tax/ex/bbs/View.do'
+            or query.get('bcIdx') != ['410947']
+            or query.get('cbIdx') != ['419']):
+        return text
+    lines = text.splitlines()
+    matches = [
+        index for index in range(len(lines) - 1)
+        if lines[index].strip() == '조회수'
+        and re.fullmatch(r'[\d,]+', lines[index + 1].strip())
+    ]
+    if len(matches) != 1:
+        raise ValueError('seocho_property_tax_view_counter_structure_changed')
+    index = matches[0]
+    return '\n'.join(lines[:index] + lines[index + 2:])
+
+
 def _official_get(url):
     """Fetch an official URL without trusting arbitrary redirects.
 
@@ -390,6 +412,7 @@ def fetch_sources(brief):
                          if not re.fullmatch(r'조회수\s*:\s*\d+', line.strip()))
         text = _normalize_nol_product_text(text, url)
         text = _normalize_efine_text(text, url)
+        text = _normalize_seocho_property_tax_text(text, url)
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')
         sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})

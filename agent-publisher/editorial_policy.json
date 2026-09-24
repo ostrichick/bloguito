@@ -73,6 +73,20 @@
       "source_event_phrase": "우리동네 쓰레기 배출일 확인하세요.",
       "source_date_phrase": "추석 연휴 다음 날 9. 28.(월)부터 쓰레기 정상 배출 가능",
       "reason": "The user explicitly requested a useful, well-formatted publication of existing legacy draft #229 on 2026-09-24. This exception is limited to that exact draft, exact Seoul official holiday page and the 2026-09-28 return-to-normal boundary; it does not generalize Seoul schedules to other regions or weaken the 30-day rule for another dated article."
+    },
+    "2026-september-property-tax-post-144-refresh": {
+      "existing_post_id": 144,
+      "useful_until": "2026-09-30",
+      "official_urls": [
+        "https://www.seoul.go.kr/news/news_report.do?bbsNo=158&nttNo=466367",
+        "https://www.seocho.go.kr/site/tax/ex/bbs/View.do?bcIdx=410947&cbIdx=419&pageIndex=1&searchCondition=subCont&searchKeyword=",
+        "https://www.seocho.go.kr/common/board/Download.do?bcIdx=410947&cbIdx=419&streFileNm=20260827082129_jvd73uu3wlkuxqisskay0zjbtjkz5dpu.pdf",
+        "https://www.wetax.go.kr/main.do"
+      ],
+      "source_event_url": "https://www.seoul.go.kr/news/news_report.do?bbsNo=158&nttNo=466367",
+      "source_event_phrase": "9월 30일까지 납부",
+      "source_date_phrase": "2026-09-15",
+      "reason": "The user explicitly requested a richer publication-quality refresh of already-published September property-tax post #144 on 2026-09-24. This exception is limited to that exact post, the exact current Seoul/Seocho/official installment-form/Wetax source set and the 2026-09-30 payment window; it does not weaken the 30-day rule for other dated posts or generalize Seoul-only payment channels to other jurisdictions."
     }
   },
   "source_max_age_hours": 24,
