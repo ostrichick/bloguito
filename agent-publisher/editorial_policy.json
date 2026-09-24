@@ -38,6 +38,17 @@
       "source_event_phrase": "오는 24일부터 27일까지 전력 수요가 크게 줄어드는 시간대 전기차 충전요금을",
       "source_date_phrase": "2026.09.21",
       "reason": "The user explicitly requested a practical full refresh of already-published post #219 on 2026-09-24. This exception is limited to that exact post, exact official source set and the 2026-09-27 holiday window; it does not make all rest-area charging free, certify live charger availability or weaken the 30-day rule for another dated article."
+    },
+    "2026-chuseok-toll-post-145-refresh": {
+      "existing_post_id": 145,
+      "useful_until": "2026-09-27",
+      "official_urls": [
+        "https://www.korea.kr/common/download.do?fileId=198558067&tblKey=GMN"
+      ],
+      "source_event_url": "https://www.korea.kr/common/download.do?fileId=198558067&tblKey=GMN",
+      "source_event_phrase": "9.24~9.27",
+      "source_date_phrase": "2026.9.22.(화)",
+      "reason": "The user explicitly requested a current-format refresh of already-published Chuseok toll post #145 on 2026-09-24. This exception is limited to that exact post, exact official government PDF and the 2026-09-27 holiday window; it does not extend the toll exemption to local non-expressway toll roads, make fuel or charging universally free, or weaken the 30-day rule for another dated article."
     }
   },
   "source_max_age_hours": 24,
