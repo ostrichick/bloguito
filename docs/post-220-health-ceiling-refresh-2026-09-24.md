@@ -12,11 +12,11 @@
 
 2026-09-24에 다음 공식 페이지를 다시 수집해 구조화 원고의 근거로 사용했다.
 
-1. 국민건강보험공단 본인부담상한제 제도 안내  
+1. 국민건강보험공단 본인부담상한제 제도 안내
    `https://www.nhis.or.kr/nhis/minwon/wbhapa01000m01.do?mode=view&articleNo=10946900`
-2. 국민건강보험공단 본인부담상한액 초과금 조회·신청  
+2. 국민건강보험공단 본인부담상한액 초과금 조회·신청
    `https://www.nhis.or.kr/nhis/minwon/minwonServiceBoard.do?articleNo=10945830&mode=view`
-3. 보건복지부 2026-08-30 본인부담상한액 초과금 지급 안내  
+3. 보건복지부 2026-08-30 본인부담상한액 초과금 지급 안내
    `https://www.mohw.go.kr/board.es?act=view&bid=0027&list_no=1491727&mid=a10503010100`
 
 직접 실행 버튼은 공단의 실제 신청 링크 `https://www.nhis.or.kr/nhis/minwon/retrieveHwangub.do`를 사용했다. 비로그인 GET은 국민건강보험 개인 로그인 페이지로 정상 이동하고 HTTP 200을 반환하는 것을 적용 직전에 확인했다. 로그인 이후 특정 사용자의 미지급 금액이나 자격은 이 검증 범위에 포함하지 않는다.
