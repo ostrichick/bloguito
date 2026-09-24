@@ -37,3 +37,10 @@
 - 검증: 운영과 같은 WordPress PHP 8.3.33 컨테이너의 격리 `/tmp`에서 MU 플러그인과 `post-id-column-test.php` 문법 검사를 통과했고 회귀 테스트는 `PASS: post ID column tests`로 종료했다. 운영 반영 후 `wp eval-file` 기반 읽기 전용 통합 검사는 작성자 제거, 압축 태그, 상대/정확 수정시각, 제목 38% CSS, 임시·검토대기·예약 상태 스타일, 관리자 바 훅을 실제 WordPress 데이터로 확인해 `PASS: live WordPress post list and admin bar hooks`를 반환했다.
 - 배포: 최초 교체 전 운영본을 `/home/ubuntu/bloguito-post-id-column.php.pre-postlist-20260925`에 보존했고, 상태 배지 확장 직전의 중간본도 `/home/ubuntu/bloguito-post-id-column.php.pre-statusbadges-20260925`에 보존했다. MU 플러그인 파일 하나만 원자적으로 교체했으며 최종 운영 SHA256은 로컬과 동일한 `ad8608881e2a00bbf729d33f897c372738d1e8271f22935b8e005b1b77143813`이다. 최종본 `php -l`과 실 WordPress 통합 검사를 다시 통과했다. DB·글 본문·공개 상태·테마·다른 플러그인·서비스 재시작은 변경하지 않았다.
 - UI 확인 범위: 현재 도구 세션에는 로그인된 WordPress 브라우저 DOM을 직접 읽는 인터페이스가 노출되지 않아, 최종 픽셀 단위 화면 확인은 수행하지 못했다. 서버의 실제 WordPress 훅과 렌더 출력까지는 검증했다.
+
+## 2026-09-25 Rank Math 열 충돌 수정
+
+- 관측: 실제 관리자 화면 스크린샷에서 `table-layout: fixed` 상태의 기존 폭 합계가 거의 전체 폭을 사용한 뒤 Rank Math 1.0.279의 `rank_math_seo_details` 열이 추가되어, **SEO 상세**가 몇 픽셀 폭으로 눌리고 글자가 한 글자씩 세로로 줄바꿈되면서 게시물 한 행 높이가 화면 대부분을 차지했다.
+- 원인 확인: 운영 Rank Math의 `includes/admin/class-post-columns.php`에서 실제 열 키가 `rank_math_seo_details`임을 확인했다. 이전 `1.4.0` CSS에는 이 열의 폭 규칙이 없었다.
+- 수정: 데스크톱 폭을 제목 30%, 글 ID 4%, 카테고리 9%, 압축 태그 9%, 댓글 3%, 날짜 9%, 마지막 수정 10%, 조회수 4%, Rank Math SEO 상세 18%로 재배분했다. SEO 상세에는 정상적인 단어 줄바꿈과 긴 토큰의 안전한 줄바꿈도 지정했다. 작성자 제거, 상태 배지, 태그 압축, 상대 수정시각 기능은 유지한다.
+- 검증·배포: 운영과 같은 PHP 8.3.33에서 문법 검사와 `post-id-column-test.php`가 통과했고, 배포 후 실제 WordPress `wp eval-file` 통합 검사도 `PASS: live WordPress post list and admin bar hooks`를 반환했다. 교체 전 `1.4.0` 운영본은 `/home/ubuntu/bloguito-post-id-column.php.pre-rankmath-widthfix-20260925`에 보존했다. 최종 `1.4.1` 운영 SHA256은 로컬과 동일한 `a0f4621591f4039f99d1d80076236c3b6adf10151bcfc10f94e60fac6aaa6d96`이다.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Post ID Column
  * Description: Improve the Posts list with post ID, modified time, compact tags, readable widths and clear draft states, plus the post ID in the front-end admin bar.
- * Version: 1.4.0
+ * Version: 1.4.1
  */
 
 if (!defined('ABSPATH')) {
@@ -117,18 +117,24 @@ function bloguito_adjust_post_list_column_widths() {
         .post-type-post .wp-list-table.posts {
             table-layout: fixed;
         }
-        .post-type-post .wp-list-table.posts .column-title { width: 38%; }
+        .post-type-post .wp-list-table.posts .column-title { width: 30%; }
         .post-type-post .wp-list-table.posts .column-bloguito_post_id { width: 4%; }
-        .post-type-post .wp-list-table.posts .column-categories { width: 10%; }
-        .post-type-post .wp-list-table.posts .column-bloguito_tags { width: 13%; }
+        .post-type-post .wp-list-table.posts .column-categories { width: 9%; }
+        .post-type-post .wp-list-table.posts .column-bloguito_tags { width: 9%; }
         .post-type-post .wp-list-table.posts .column-comments { width: 3%; }
-        .post-type-post .wp-list-table.posts .column-date { width: 10%; }
-        .post-type-post .wp-list-table.posts .column-bloguito_last_modified { width: 12%; }
-        .post-type-post .wp-list-table.posts .column-wp-statistics-post-hits { width: 5%; }
+        .post-type-post .wp-list-table.posts .column-date { width: 9%; }
+        .post-type-post .wp-list-table.posts .column-bloguito_last_modified { width: 10%; }
+        .post-type-post .wp-list-table.posts .column-wp-statistics-post-hits { width: 4%; }
+        .post-type-post .wp-list-table.posts .column-rank_math_seo_details { width: 18%; }
     }
 
     .post-type-post .wp-list-table.posts .column-bloguito_tags {
         line-height: 1.45;
+    }
+    .post-type-post .wp-list-table.posts .column-rank_math_seo_details {
+        line-height: 1.45;
+        word-break: normal;
+        overflow-wrap: anywhere;
     }
     .post-type-post .bloguito-tag-more {
         display: inline-block;

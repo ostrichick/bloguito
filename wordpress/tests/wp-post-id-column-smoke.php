@@ -73,7 +73,7 @@ set_current_screen('edit-post');
 ob_start();
 bloguito_adjust_post_list_column_widths();
 $css = ob_get_clean();
-if (strpos($css, '.column-title { width: 38%; }') === false || strpos($css, 'tr.status-draft') === false || strpos($css, 'tr.status-pending') === false || strpos($css, 'tr.status-future') === false || strpos($css, '.column-author') !== false) {
+if (strpos($css, '.column-title { width: 30%; }') === false || strpos($css, '.column-rank_math_seo_details { width: 18%; }') === false || strpos($css, 'tr.status-draft') === false || strpos($css, 'tr.status-pending') === false || strpos($css, 'tr.status-future') === false || strpos($css, '.column-author') !== false) {
     fwrite(STDERR, "Live post-list CSS did not include the expected title/draft/author rules\n");
     exit(1);
 }
