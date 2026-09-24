@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Bloguito Post ID Column
- * Description: Show the WordPress post ID and last modified time in the Posts list, plus the post ID in the front-end admin bar.
- * Version: 1.2.0
+ * Description: Improve the Posts list with post ID, modified time, readable column widths, and the current post ID in the front-end admin bar.
+ * Version: 1.3.0
  */
 
 if (!defined('ABSPATH')) {
@@ -50,6 +50,34 @@ add_filter('manage_edit-post_sortable_columns', 'bloguito_make_last_modified_sor
 function bloguito_make_last_modified_sortable($columns) {
     $columns['bloguito_last_modified'] = 'modified';
     return $columns;
+}
+
+// Keep the title readable after adding ID, modified-time and statistics columns.
+// Let WordPress use its normal responsive list layout below desktop widths.
+add_action('admin_head-edit.php', 'bloguito_adjust_post_list_column_widths');
+function bloguito_adjust_post_list_column_widths() {
+    $screen = get_current_screen();
+    if (!$screen || $screen->base !== 'edit' || $screen->post_type !== 'post') {
+        return;
+    }
+    ?>
+    <style id="bloguito-post-list-column-widths">
+    @media screen and (min-width: 1100px) {
+        .post-type-post .wp-list-table.posts {
+            table-layout: fixed;
+        }
+        .post-type-post .wp-list-table.posts .column-title { width: 26%; }
+        .post-type-post .wp-list-table.posts .column-bloguito_post_id { width: 4%; }
+        .post-type-post .wp-list-table.posts .column-author { width: 8%; }
+        .post-type-post .wp-list-table.posts .column-categories { width: 10%; }
+        .post-type-post .wp-list-table.posts .column-tags { width: 19%; }
+        .post-type-post .wp-list-table.posts .column-comments { width: 3%; }
+        .post-type-post .wp-list-table.posts .column-date { width: 11%; }
+        .post-type-post .wp-list-table.posts .column-bloguito_last_modified { width: 11%; }
+        .post-type-post .wp-list-table.posts .column-wp-statistics-post-hits { width: 5%; }
+    }
+    </style>
+    <?php
 }
 
 // Show the current post ID beside the built-in Edit Post item in the front-end admin bar.

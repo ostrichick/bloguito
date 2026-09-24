@@ -19,3 +19,10 @@
 - 구현: 같은 MU 플러그인에서 기본 `날짜` 열 바로 뒤에 `마지막 수정` 열을 추가한다. 값은 WordPress의 `post_modified`를 사이트 현지 시각으로 `YYYY/MM/DD HH:MM` 형식으로 출력하므로 공개·임시 상태 모두 동일 기준을 사용한다. `manage_edit-post_sortable_columns`에서 이 열을 코어 `modified` 정렬 키에 연결해 헤더 클릭으로 오름차순·내림차순 정렬할 수 있게 한다.
 - 검증: 운영과 같은 WordPress PHP 8.3 컨테이너의 격리 `/tmp`에서 플러그인과 테스트 PHP 문법 검사를 통과했고 `post-id-column-test.php`가 `PASS: post ID column tests`로 종료했다. 운영 반영 후 실제 WordPress에서 열 순서, `modified` 정렬 키, #220의 표시값 `2026/09/24 13:20`, 공개·임시글을 섞은 최근/오래된 수정순 쿼리를 모두 확인해 `PASS: live modified column, rendering and sorting`을 얻었다. 공개 QA 시작 URL은 HTTP 200을 유지했다.
 - 배포: 교체 직전 운영본 SHA256 `ec7f0ecf0d97acb46bedf5e9ce156a85ab30d189ae9105d018b7665999977ec0`을 조건으로 확인하고 `/home/ubuntu/bloguito-post-id-column.php.pre-lastmodified-20260924`에 동일 바이트 롤백본을 보존한 뒤 MU 파일 하나만 원자적으로 교체했다. 새 운영본 SHA256은 `0434796948252accf3136787b1ad01e15bd3f02a0609db3e76fb9b6e91885158`이다. DB·글 본문·공개 상태·테마·다른 플러그인·서비스 재시작은 변경하지 않았다.
+
+## 2026-09-24 글 목록 열 너비 조정
+
+- 요청: **글 → 모든 글**에서 제목 열이 너무 좁아 긴 제목을 읽기 어려운 문제를 개선한다. 특히 `글 ID`, `마지막 수정`, WP Statistics `조회수` 열이 추가된 뒤 자동 너비 배분으로 제목이 과도하게 압축된 상태를 대상으로 한다.
+- 구현: 같은 MU 플러그인의 `admin_head-edit.php`에서 현재 화면이 built-in `post` 목록일 때만 데스크톱용 열 너비 CSS를 출력한다. 1100px 이상에서 제목 26%, 글 ID 4%, 작성자 8%, 카테고리 10%, 태그 19%, 댓글 3%, 날짜 11%, 마지막 수정 11%, WP Statistics 조회수 5%를 지정하고 표를 `table-layout: fixed`로 사용한다. 1100px 미만에서는 WordPress 기본 반응형 목록 동작을 그대로 사용한다. 페이지·다른 글 유형·공개 화면은 영향을 받지 않는다.
+- 검증: WP Statistics 운영 플러그인의 실제 열 키가 `wp-statistics-post-hits`임을 확인했다. 운영과 같은 PHP 컨테이너에서 후보 플러그인과 회귀 테스트 문법 검사를 통과했고 `PASS: post ID column tests`를 확인했다. 운영 반영 후 실제 WordPress `edit-post` screen을 초기화한 smoke에서 9개 너비 규칙을 모두 확인해 `PASS: live Posts screen column width CSS`를 얻었다.
+- 배포: 교체 직전 운영본 SHA256 `0434796948252accf3136787b1ad01e15bd3f02a0609db3e76fb9b6e91885158`을 조건으로 확인하고 `/home/ubuntu/bloguito-post-id-column.php.pre-column-widths-20260924`에 백업한 뒤 MU 파일 하나만 교체했다. 새 운영본 SHA256은 `4c9b0c2610cb86db84e1975943b5f8b48a4000d3fa0ecc455fe557c19efc3067`이다. DB·게시물·테마·다른 플러그인·서비스 재시작은 변경하지 않았다.

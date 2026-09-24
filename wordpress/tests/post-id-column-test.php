@@ -9,6 +9,7 @@ $test_is_singular_post = true;
 $test_post_id = 243;
 $test_can_edit_post = true;
 $test_modified_time = '2026/09/24 13:20';
+$test_screen = (object) ['base' => 'edit', 'post_type' => 'post'];
 function add_filter($hook, $callback) {
     global $registered_filters;
     $registered_filters[$hook] = $callback;
@@ -46,6 +47,10 @@ function get_post_modified_time($format, $gmt, $post_id, $translate) {
     }
     return $test_modified_time;
 }
+function get_current_screen() {
+    global $test_screen;
+    return $test_screen;
+}
 function esc_html($value) {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
@@ -60,8 +65,9 @@ require dirname(__DIR__) . '/mu-plugins/bloguito-post-id-column.php';
 check(isset($registered_filters['manage_post_posts_columns']), 'Post column filter registered');
 check(isset($registered_filters['manage_edit-post_sortable_columns']), 'Sortable column filter registered');
 check(isset($registered_actions['manage_post_posts_custom_column']), 'Post column renderer registered');
+check(isset($registered_actions['admin_head-edit.php']), 'Post list width hook registered');
 check(isset($registered_actions['admin_bar_menu']), 'Admin bar hook registered');
-check(count($registered_filters) === 2 && count($registered_actions) === 2, 'Only expected screen hooks registered');
+check(count($registered_filters) === 2 && count($registered_actions) === 3, 'Only expected screen hooks registered');
 check($registered_actions['manage_post_posts_custom_column'][2] === 2, 'Renderer receives post ID');
 check($registered_actions['admin_bar_menu'][1] === 81, 'Admin bar item follows core Edit Post item');
 
@@ -74,6 +80,18 @@ check(array_keys($registered_filters['manage_post_posts_columns'](['title' => 'ì
 
 $sortable = $registered_filters['manage_edit-post_sortable_columns'](['title' => 'title']);
 check($sortable['bloguito_last_modified'] === 'modified', 'Modified column sorts by WordPress modified field');
+
+ob_start();
+bloguito_adjust_post_list_column_widths();
+$output = ob_get_clean();
+check(strpos($output, '.column-title { width: 26%; }') !== false, 'Post title gets wider desktop column');
+check(strpos($output, '.column-bloguito_post_id { width: 4%; }') !== false, 'Post ID stays compact');
+check(strpos($output, '.column-wp-statistics-post-hits { width: 5%; }') !== false, 'Statistics hits stays compact');
+$test_screen = (object) ['base' => 'edit', 'post_type' => 'page'];
+ob_start();
+bloguito_adjust_post_list_column_widths();
+check(ob_get_clean() === '', 'Pages list does not get post-only widths');
+$test_screen = (object) ['base' => 'edit', 'post_type' => 'post'];
 
 ob_start();
 bloguito_render_post_id_column('bloguito_post_id', 243);
