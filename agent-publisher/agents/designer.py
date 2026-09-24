@@ -1,6 +1,7 @@
 import hashlib
 import io
 import random
+import re
 import sys
 import tempfile
 import urllib.request
@@ -75,10 +76,19 @@ def split_title(text: str, max_first_line: int = 22) -> list[str]:
             return [parts[0], "(" + parts[1]]
 
     # 4. 어절 단위 최적 중간 분할
+    # 숫자+단위 뒤의 범위 표현은 하나의 의미 단위이므로 줄 사이에서 끊지 않는다.
+    # 예: 65세 이상, 3개월 이하, 10만원 미만, 2시간 이내.
     words = text.split()
     best_split = len(words) // 2
     min_diff = 999
+    range_followers = {"이상", "이하", "미만", "초과", "이내", "내외", "전후", "이전", "이후", "부터", "까지"}
+    numeric_unit = re.compile(
+        r"\d[\d,.~%-]*(?:세|명|인|개월|주|년|월|일|시간|분|초|원|천원|만원|억원|회|차|단계|등급|kg|g|cm|mm|m|km|%)$",
+        re.I,
+    )
     for i in range(1, len(words)):
+        if words[i] in range_followers and numeric_unit.search(words[i - 1]):
+            continue
         l1 = " ".join(words[:i])
         l2 = " ".join(words[i:])
         if len(l1) > 28:

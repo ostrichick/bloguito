@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from PIL import Image
-from agents.designer import DesignerAgent, _load_font
+from agents.designer import DesignerAgent, _load_font, split_title
 
 
 class DesignerRoutingTests(unittest.TestCase):
@@ -54,6 +54,19 @@ class DesignerRoutingTests(unittest.TestCase):
         self.assertIsNotNone(font_reg)
         bbox = font_bold.getbbox("테스트")
         self.assertTrue(len(bbox) == 4)
+
+    def test_title_split_keeps_numeric_range_phrase_together(self):
+        self.assertEqual(
+            split_title("2026~2027 65세 이상 독감 무료접종 일정"),
+            ["2026~2027 65세 이상", "독감 무료접종 일정"],
+        )
+        for title in (
+            "2026 지원금 10만원 미만 신청 대상 안내",
+            "영유아 3개월 이하 예방접종 준비사항 안내",
+            "주차 2시간 이내 무료 이용 방법 안내",
+        ):
+            rendered = "\n".join(split_title(title))
+            self.assertNotRegex(rendered, r"(?:10만원|3개월|2시간)\n(?:미만|이하|이내)")
 
     def test_render_toss_typography_outputs_valid_image(self):
         out_path = Path(tempfile.gettempdir()) / "test_toss_output.jpg"
