@@ -71,6 +71,17 @@ class EditorialTests(unittest.TestCase):
         self.assertIn('href="#faq"', content)
         self.assertIn('id="faq"', content)
 
+    def test_reader_middle_dot_is_rejected_but_source_snapshot_can_preserve_it(self):
+        self.b['plan']['title'] = '서초구 선풍기 배출·수거 방법'
+        self.assertIn('reader_middle_dot_disallowed', self.check(review=False)['reasons'])
+
+        self.b = sample()
+        self.b['sources'][0]['text'] += ' 공식 원문은 배출·수거라고 표기한다.'
+        self.b['sources'][0]['sha256'] = hashlib.sha256(self.b['sources'][0]['text'].encode()).hexdigest()
+        self.b['sources'][0]['title'] = '배출·수거 안내'
+        self.b['sources'][0]['citation_label'] = '배출, 수거 안내'
+        self.assertNotIn('reader_middle_dot_disallowed', self.check(review=False)['reasons'])
+
     def test_render_includes_interlinks_and_excludes_self(self):
         import tempfile
         from pathlib import Path

@@ -258,6 +258,33 @@ def supported_currency_sums(text, quote_text, calculations):
     return supported, errors
 
 
+def reader_visible_strings(plan, sources):
+    """Collect text that can be rendered to readers; source snapshots stay untouched."""
+    values = [plan.get('title', '')]
+    lead = plan.get('lead') or {}
+    values.append(lead.get('text', ''))
+    for section in plan.get('sections', []):
+        values.append(section.get('heading', ''))
+        values.extend((p or {}).get('text', '') for p in section.get('paragraphs', []))
+        table = section.get('table') or {}
+        values.append(table.get('caption', ''))
+        values.extend(table.get('headers', []))
+        for row in table.get('rows', []):
+            values.extend(row.get('cells', []))
+    for faq in plan.get('faq', []):
+        values.append(faq.get('question', ''))
+        values.append((faq.get('answer') or {}).get('text', ''))
+    for item in plan.get('related_posts', []):
+        values.append(item.get('label', ''))
+    for item in plan.get('official_navigation', []):
+        values.extend((item.get('label', ''), item.get('note', '')))
+    for source in sources:
+        for action in source.get('actions', []):
+            values.append(action.get('label', ''))
+        values.append(source.get('citation_label') or source.get('title', ''))
+    return [value for value in values if isinstance(value, str)]
+
+
 def actionable_links(sources):
     """Return explicitly verified action destinations; evidence URLs are never CTAs."""
     links = []
@@ -322,6 +349,9 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
     try:
         brief, sources, plan = bundle['brief'], bundle['sources'], bundle['plan']
         reasons.extend(topic_reasons(brief, now.date()))
+        if any('·' in value for value in reader_visible_strings(plan, sources)):
+            reasons.append('reader_middle_dot_disallowed')
+            details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')
         if inventory.get('checked_on') != now.date().isoformat() or not isinstance(inventory.get('posts'), list):
             reasons.append('fresh_inventory_required')
         elif duplicate_posts(brief, inventory['posts']):
