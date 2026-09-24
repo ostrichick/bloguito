@@ -19,7 +19,10 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     sync_inventory()
     radar = RadarAgent()
     curator = CuratorAgent()
-    copywriter = CopywriterAgent()
+    # Scheduled/server automation is the only in-repo path that asks the
+    # configured Gemini adapter to write a new plan. Interactive ChatGPT work
+    # supplies an already-written plan through editorial_cli.py manual-review.
+    copywriter = CopywriterAgent(writing_enabled=True)
     designer = DesignerAgent()
     publisher = PublisherAgent()
 

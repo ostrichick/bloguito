@@ -310,7 +310,8 @@ def fetch_sources(brief):
 
 
 class EditorialWriterAgent:
-    def __init__(self, client=None):
+    def __init__(self, client=None, writing_enabled=True):
+        self.writing_enabled = writing_enabled
         if client is not None:
             self.client = client
         else:
@@ -375,6 +376,8 @@ class EditorialWriterAgent:
                 'checked_at': datetime.now(KST).isoformat()}
 
     def prepare(self, brief, sources, inventory, temporal_source=None):
+        if not self.writing_enabled:
+            raise ValueError('editorial_writer_disabled_for_manual_flow')
         bundle = {'brief': brief, 'sources': sources, 'temporal_source': temporal_source or {}}
         feedback = []
         for attempt in range(policy()['max_revisions']+1):

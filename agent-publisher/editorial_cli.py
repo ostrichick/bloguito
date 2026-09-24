@@ -8,7 +8,7 @@ from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, l
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'replace-legacy-draft', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'replace-legacy-draft', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only this public post content')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--author-model', help='manual-review only: exact interactive author model, e.g. GPT-5.6 Sol')
     args = parser.parse_args()
 
     if args.action == 'list-drafts':
@@ -76,6 +77,14 @@ def main():
         return
     args.file = Path(args.file)
     data = json.loads(args.file.read_text(encoding='utf-8'))
+    if args.action == 'manual-review':
+        if not args.author_model:
+            parser.error('manual-review requires --author-model so the interactive GPT author is recorded explicitly')
+        data['authoring'] = {
+            'mode': 'interactive_chatgpt',
+            'model': args.author_model,
+        }
+        data['used_model'] = args.author_model
     if args.action == 'replace-legacy-draft':
         if args.inventory:
             parser.error('replace-legacy-draft always queries the live WordPress inventory')
@@ -111,19 +120,22 @@ def main():
         from sync_wordpress_inventory import sync_inventory
         sync_inventory()
     inventory = json.loads(args.inventory.read_text(encoding='utf-8')) if args.inventory else load_inventory()
-    if args.action in {'review', 'publish'}:
+    if args.action in {'review', 'manual-review', 'publish'}:
         preflight = validate_bundle(data, inventory, require_review=False)
         if preflight['status'] != 'ready':
             print(json.dumps(preflight, ensure_ascii=False, indent=2))
             raise SystemExit(2)
-        data['review'] = EditorialWriterAgent().review(data)
+        # These commands receive a completed plan. Keep the model adapter in
+        # review-only mode so a manual GPT-authored article cannot be silently
+        # rewritten by the configured Gemini writer.
+        data['review'] = EditorialWriterAgent(writing_enabled=False).review(data)
     report = validate_bundle(data, inventory)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.output:
         args.output.write_text(json.dumps({'bundle': data, 'report': report}, ensure_ascii=False, indent=2), encoding='utf-8')
     if report['status'] != 'ready':
         raise SystemExit(2)
-    if args.action == 'review':
+    if args.action in {'review', 'manual-review'}:
         args.file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
     if args.action == 'publish':

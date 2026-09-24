@@ -235,6 +235,19 @@ class EditorialTests(unittest.TestCase):
             review.assert_called_once()
             self.assertIn('review',bundle)
 
+    def test_review_only_agent_cannot_generate_plan(self):
+        writer=EditorialWriterAgent(client=Mock(), writing_enabled=False)
+        with self.assertRaisesRegex(ValueError, 'editorial_writer_disabled_for_manual_flow'):
+            writer.prepare(self.b['brief'],self.b['sources'],self.inventory)
+        writer.client.models.generate_content.assert_not_called()
+
+    def test_manual_author_model_is_preserved_in_article_metadata(self):
+        self.b['authoring']={'mode':'interactive_chatgpt','model':'GPT-5.6 Sol'}
+        self.b['used_model']='GPT-5.6 Sol'
+        article=article_from_bundle(self.b)
+        self.assertEqual(article['used_model'],'GPT-5.6 Sol')
+        self.assertEqual(article['editorial_bundle']['authoring']['mode'],'interactive_chatgpt')
+
     def test_old_publication_entry_cannot_bypass_gate(self):
         with patch('agents.publisher.subprocess.run') as run:
             with self.assertRaisesRegex(ValueError,'editorial_bundle_required'):
