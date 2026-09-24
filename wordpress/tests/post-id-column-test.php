@@ -8,6 +8,7 @@ $test_is_admin = false;
 $test_is_singular_post = true;
 $test_post_id = 243;
 $test_can_edit_post = true;
+$test_modified_time = '2026/09/24 13:20';
 function add_filter($hook, $callback) {
     global $registered_filters;
     $registered_filters[$hook] = $callback;
@@ -38,6 +39,16 @@ function current_user_can($capability, ...$args) {
     global $test_can_edit_post, $test_post_id;
     return $capability === 'edit_post' && ($args[0] ?? null) === $test_post_id && $test_can_edit_post;
 }
+function get_post_modified_time($format, $gmt, $post_id, $translate) {
+    global $test_modified_time, $test_post_id;
+    if ($format !== 'Y/m/d H:i' || $gmt !== false || $post_id !== $test_post_id || $translate !== true) {
+        return false;
+    }
+    return $test_modified_time;
+}
+function esc_html($value) {
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
 class TestAdminBar {
     public $nodes = [];
     public function add_node($node) {
@@ -47,21 +58,31 @@ class TestAdminBar {
 
 require dirname(__DIR__) . '/mu-plugins/bloguito-post-id-column.php';
 check(isset($registered_filters['manage_post_posts_columns']), 'Post column filter registered');
+check(isset($registered_filters['manage_edit-post_sortable_columns']), 'Sortable column filter registered');
 check(isset($registered_actions['manage_post_posts_custom_column']), 'Post column renderer registered');
 check(isset($registered_actions['admin_bar_menu']), 'Admin bar hook registered');
-check(count($registered_filters) === 1 && count($registered_actions) === 2, 'Only expected screen hooks registered');
+check(count($registered_filters) === 2 && count($registered_actions) === 2, 'Only expected screen hooks registered');
 check($registered_actions['manage_post_posts_custom_column'][2] === 2, 'Renderer receives post ID');
 check($registered_actions['admin_bar_menu'][1] === 81, 'Admin bar item follows core Edit Post item');
 
 $columns = $registered_filters['manage_post_posts_columns'](['cb' => '선택', 'title' => '제목', 'date' => '날짜']);
-check(array_keys($columns) === ['cb', 'title', 'bloguito_post_id', 'date'], 'ID follows title');
+check(array_keys($columns) === ['cb', 'title', 'bloguito_post_id', 'date', 'bloguito_last_modified'], 'ID follows title and modified follows date');
 check($columns['bloguito_post_id'] === '글 ID', 'Korean column heading');
-check(array_keys($registered_filters['manage_post_posts_columns'](['date' => '날짜'])) === ['date', 'bloguito_post_id'], 'Missing title fallback');
+check($columns['bloguito_last_modified'] === '마지막 수정', 'Korean modified column heading');
+check(array_keys($registered_filters['manage_post_posts_columns'](['date' => '날짜'])) === ['date', 'bloguito_last_modified', 'bloguito_post_id'], 'Missing title fallback');
+check(array_keys($registered_filters['manage_post_posts_columns'](['title' => '제목'])) === ['title', 'bloguito_post_id', 'bloguito_last_modified'], 'Missing date fallback');
+
+$sortable = $registered_filters['manage_edit-post_sortable_columns'](['title' => 'title']);
+check($sortable['bloguito_last_modified'] === 'modified', 'Modified column sorts by WordPress modified field');
 
 ob_start();
 bloguito_render_post_id_column('bloguito_post_id', 243);
 $output = ob_get_clean();
 check($output === '243', 'Exact post ID rendered');
+ob_start();
+bloguito_render_post_id_column('bloguito_last_modified', 243);
+$output = ob_get_clean();
+check($output === '2026/09/24 13:20', 'Exact local modified time rendered');
 ob_start();
 bloguito_render_post_id_column('date', 243);
 check(ob_get_clean() === '', 'Unrelated column not modified');
