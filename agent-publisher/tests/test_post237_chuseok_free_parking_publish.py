@@ -8,7 +8,7 @@ from agents.editorial import dated_post_exception, topic_reasons
 class Post237ChuseokFreeParkingPublishTests(unittest.TestCase):
     def setUp(self):
         self.urls = [
-            'https://admin2.korea.kr/briefing/pressReleaseView.do?gubun=pressRelease&newsId=156782886&pageIndex=1&repCode=A00031',
+            'https://www.korea.kr/common/download.do?fileId=198558339&tblKey=GMN',
             'https://enews.sen.go.kr/news/view.do?bbsSn=192165&step1=3&step2=1',
         ]
         self.brief = {

@@ -92,12 +92,12 @@
       "existing_post_id": 237,
       "useful_until": "2026-09-27",
       "official_urls": [
-        "https://admin2.korea.kr/briefing/pressReleaseView.do?gubun=pressRelease&newsId=156782886&pageIndex=1&repCode=A00031",
+        "https://www.korea.kr/common/download.do?fileId=198558339&tblKey=GMN",
         "https://enews.sen.go.kr/news/view.do?bbsSn=192165&step1=3&step2=1"
       ],
-      "source_event_url": "https://admin2.korea.kr/briefing/pressReleaseView.do?gubun=pressRelease&newsId=156782886&pageIndex=1&repCode=A00031",
-      "source_event_phrase": "9월 24일(목)~9월 27일(일)까지 전국 9천여 곳 공공주차장 무료 개방 안내",
-      "source_date_phrase": "2026.09.22",
+      "source_event_url": "https://www.korea.kr/common/download.do?fileId=198558339&tblKey=GMN",
+      "source_event_phrase": "9월 24일(목)~9월 27일(일)까지  전국  9천여 곳  공공주차장   무료  개방  안내",
+      "source_date_phrase": "2026. 9. 22.(화) 12:00",
       "reason": "The user explicitly requested a useful, well-formatted publication of existing legacy draft #237 on 2026-09-24 after the Ministry of the Interior and Safety published the current 2026 nationwide free-parking dataset. This exception is limited to that exact draft, exact official source set and the 2026-09-27 holiday window; it does not make every public or school parking area free, certify a space as currently available, or weaken the 30-day rule for another dated article."
     }
   },

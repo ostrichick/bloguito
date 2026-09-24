@@ -295,6 +295,14 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                          or not 4 <= len(citation_label.strip()) <= 100
                          or re.search(r'[<>\r\n]', citation_label))):
                 reasons.append('invalid_source_citation_label')
+            citation_url = s.get('citation_url')
+            if citation_url is not None:
+                parsed_citation = urlparse(citation_url)
+                if (not isinstance(citation_url, str)
+                        or parsed_citation.scheme != 'https'
+                        or not parsed_citation.hostname
+                        or re.search(r'[<>\r\n]', citation_url)):
+                    reasons.append('invalid_source_citation_url')
             if s['sha256'] != hashlib.sha256(s['text'].encode()).hexdigest():
                 reasons.append('source_hash_mismatch')
             if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
@@ -828,7 +836,7 @@ def render(plan, sources, category_key=None):
     citation_ids = [i for i in ids if source_map[i]['url'] not in action_urls]
     links = ''.join(
         '<li style="margin:8px 0"><a href="'
-        + html.escape(source_map[i]['url'], quote=True)
+        + html.escape(source_map[i].get('citation_url') or source_map[i]['url'], quote=True)
         + '" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;word-break:break-all">'
         + html.escape((source_map[i].get('citation_label')
                        or source_map[i]['title'].splitlines()[0])[:100])

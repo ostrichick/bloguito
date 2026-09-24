@@ -80,6 +80,25 @@ class ActionDestinationsTests(unittest.TestCase):
         report = validate_bundle(bundle, inventory, NOW, require_review=False)
         self.assertIn('invalid_source_citation_label', report['reasons'])
 
+    def test_footer_can_use_reader_facing_citation_url_separate_from_fetch_url(self):
+        bundle = sample()
+        source = bundle['sources'][0]
+        source['citation_url'] = 'https://www.korea.kr/briefing/pressReleaseView.do?newsId=156782886'
+        content = render(bundle['plan'], bundle['sources'])
+        soup = BeautifulSoup(content, 'html.parser')
+        footer = soup.select_one('ul.source-list')
+        self.assertIsNotNone(footer)
+        hrefs = [a['href'] for a in footer.select('a[href]')]
+        self.assertIn(source['citation_url'], hrefs)
+        self.assertNotIn(source['url'], hrefs)
+
+    def test_invalid_citation_url_is_rejected(self):
+        bundle = sample()
+        bundle['sources'][0]['citation_url'] = 'javascript:alert(1)'
+        inventory = {'checked_on': NOW.date().isoformat(), 'posts': []}
+        report = validate_bundle(bundle, inventory, NOW, require_review=False)
+        self.assertIn('invalid_source_citation_url', report['reasons'])
+
     def test_draft_update_preserves_status_prose_and_reviewed_manifest(self):
         original = sample()
         new = copy.deepcopy(original)
