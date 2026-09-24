@@ -84,3 +84,12 @@
 - 390px 및 1280px 실제 화면 캡처를 눈으로 확인했고 제목/본문 간격, 소제목 계층 및 본문 가독성에 이상 없음
 
 내부 QA 자료는 `tmp/post217-refresh-20260924/`에 두며 Git에 포함하지 않는다.
+
+## 14:04 KST 나열 구두점 정리
+
+- 사용자 후속 요청에 따라 독자용 제목, 요약, 표, 본문, FAQ에서 여러 요소를 나열할 때 가운데점(`·`) 대신 쉼표(`,`)를 사용하도록 #217 원고를 다시 정리했다. `출·도착`처럼 단순 치환이 어색한 표현은 `출발 또는 도착`으로 풀어 썼다. 공식 원문 인용의 가운데점 표기는 근거 보존을 위해 변경하지 않았다.
+- 공통 편집 규칙 `docs/EDITORIAL_SYSTEM.md`에도 같은 원칙을 추가해 이후 ChatGPT 수동 작성과 Gemini 자동 작성이 모두 동일한 시스템 지침을 읽도록 했다. 기관, 서비스, 법령 등 공식 고유명칭 자체에 포함된 가운데점과 공식 원문 직접 인용은 예외로 보존한다.
+- 원문 재수집 중 코레일 보도자료의 조회수 값이 변해 최초 승인 패키지가 `official_sources_changed_since_review`로 차단됐다. 최신 공식 원문을 다시 수집했고, 본문에서 사용하는 모든 evidence quote가 새 원문에 그대로 존재함을 확인했다. 독립 6항 검토는 첫 재시도에서 FAQ의 `잔여석 판매 시작를 시작했다고` 오타를 지적해 수정했으며, 다음 검토와 `editorial_cli.py check`가 모두 `ready`로 통과했다.
+- 최종 `prepare_post_approval.py`는 현재 #217 저장 본문 SHA `8262ade9ece2c9c7f890108fd05b5fbb3bd66a8c99e67fd0091c2ad71542a4da`, 상태 `publish`, 제목, 전체 실재고, 최신 공식 출처 해시를 재확인해 `preflight_status=ready`, `source_hashes_match_live=true`였다.
+- Windows 로컬 `update-existing` 직접 호출은 로컬 `sudo docker` 경로에서 WordPress write 전에 실패했다. 검증된 `scripts/update_existing_via_ssh.py` 경로로 같은 bundle과 현재 SHA를 사용해 #217만 갱신했으며 저장 후 본문 SHA는 `51489ebf36172fcf1e93d3f5e19f33c5bb72f56ba5615c683db7cc77c78ad304`로 검토 렌더와 일치한다.
+- 최종 제목은 `2026 추석 KTX 취소표 확인, 예매: 코레일+ 통합 예매와 실시간 잔여석`이다. 저장된 `post_content`의 가운데점 개수는 0이고 공개 URL은 HTTP 200을 유지했다. 기존 slug는 링크 안정성을 위해 변경하지 않았다.
