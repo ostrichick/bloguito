@@ -6,6 +6,7 @@ import time
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 import requests
@@ -24,16 +25,25 @@ class Evidence(BaseModel):
     quote: str
 
 
+class DerivedCalculation(BaseModel):
+    operation: Literal['sum']
+    unit: Literal['원']
+    operands: list[int] = Field(min_length=2, max_length=8)
+    result: int = Field(gt=0)
+
+
 class Paragraph(BaseModel):
     text: str
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
+    calculations: list[DerivedCalculation] = Field(default_factory=list)
 
 
 class InformationTableRow(BaseModel):
     cells: list[str]
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
+    calculations: list[DerivedCalculation] = Field(default_factory=list)
 
 
 class InformationTable(BaseModel):
@@ -512,7 +522,10 @@ class EditorialWriterAgent:
                 'FAQ question_id도 반드시 reader_questions의 기존 ID를 사용하고 answer.answers에 같은 ID를 넣어라. '
                 '본문의 숫자는 해당 문단의 인용으로 증명해야 한다. 제품 개수는 5개 미만 같은 명시적 범위에 '
                 '속하는 1개 등으로 설명할 수 있으나 반드시 그 범위가 있는 인용을 연결하라. 금액·날짜는 원문 수치 표기를 유지하라. '
-                '새로운 계산/근거 없는 이유/조언/분량 채우기를 하지 말 것. '
+                '단, 공식 인용에 있는 원 단위 금액을 단순 합산한 참고금액이 독자의 가격 판단에 직접 필요하면 '
+                '그 block의 calculations에 operation=sum, unit=원, operands=[공식 인용의 정수 금액들], result=정확한 합계를 기록하라. '
+                '곱셈·평균·백분율·날짜·나이 계산이나 인용에 없는 입력값은 calculations로 만들지 말 것. '
+                '그 밖의 새로운 계산/근거 없는 이유/조언/분량 채우기를 하지 말 것. '
                 '유효한 조건과 절차를 보존하고 기존 issues를 고쳐라.',
                 {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, Plan, 'writer')
             bundle['plan'] = plan

@@ -210,9 +210,52 @@ def fresh(value, now, hours):
 def all_blocks(plan):
     return [plan['lead'],
             *[b for s in plan['sections'] for b in s['paragraphs']],
-            *[{'text': ' '.join(row['cells']), 'evidence': row['evidence'], 'answers': row.get('answers', [])}
+            *[{'text': ' '.join(row['cells']), 'evidence': row['evidence'],
+               'answers': row.get('answers', []), 'calculations': row.get('calculations', [])}
               for s in plan['sections'] for row in (s.get('table') or {}).get('rows', [])],
             *[f['answer'] for f in plan.get('faq', [])]]
+
+
+def supported_currency_sums(text, quote_text, calculations):
+    """Allow only explicit KRW sums whose operands are all present in evidence.
+
+    This is intentionally narrow. It supports reader-useful reference prices
+    derived by adding official won amounts, while still rejecting inferred
+    dates, rates, averages, multiplication, subtraction and arbitrary math.
+    """
+    if calculations in (None, []):
+        return set(), []
+    if not isinstance(calculations, list) or not 1 <= len(calculations) <= 8:
+        return set(), ['invalid_derived_calculation']
+
+    numbers = lambda value: set(re.findall(r'\d+(?:[.,]\d+)*', value.replace(',', '')))
+    quoted_numbers = numbers(quote_text)
+    visible_numbers = numbers(text)
+    supported = set()
+    errors = []
+    plain_text = text.replace(',', '')
+    for item in calculations:
+        if (not isinstance(item, dict)
+                or set(item) != {'operation', 'unit', 'operands', 'result'}
+                or item.get('operation') != 'sum'
+                or item.get('unit') != '원'):
+            errors.append('invalid_derived_calculation')
+            continue
+        operands, result = item.get('operands'), item.get('result')
+        if (not isinstance(operands, list) or not 2 <= len(operands) <= 8
+                or any(type(value) is not int or value <= 0 for value in operands)
+                or type(result) is not int or result <= 0
+                or sum(operands) != result
+                or any(str(value) not in quoted_numbers for value in operands)):
+            errors.append('invalid_derived_calculation')
+            continue
+        result_text = str(result)
+        if (result_text not in visible_numbers
+                or not re.search(r'(?<!\d)' + re.escape(result_text) + r'\s*원', plain_text)):
+            errors.append('invalid_derived_calculation')
+            continue
+        supported.add(result_text)
+    return supported, errors
 
 
 def actionable_links(sources):
@@ -462,6 +505,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
             unsupported -= supported_counts(b['text'], ' '.join(evidence_text), unsupported)
             unsupported -= supported_official_number_notations(
                 b['text'], ' '.join(evidence_text), unsupported)
+            derived_numbers, calculation_errors = supported_currency_sums(
+                b['text'], ' '.join(evidence_text), b.get('calculations', []))
+            unsupported -= derived_numbers
+            reasons.extend(calculation_errors)
             if unsupported:
                 reasons.append('number_without_evidence')
                 details.append(f'block[{block_index}]의 수치 {sorted(unsupported)}는 연결된 인용에 없음. 해당 수치를 빼거나 실제 인용에 있는 범위 표현으로 수정할 것.')
