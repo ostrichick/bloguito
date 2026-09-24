@@ -62,6 +62,17 @@
       "source_event_phrase": "9.24~9.27",
       "source_date_phrase": "2026.9.22.(화)",
       "reason": "The user explicitly requested a current-format refresh of already-published Chuseok toll post #145 on 2026-09-24. This exception is limited to that exact post, exact official government PDF and the 2026-09-27 holiday window; it does not extend the toll exemption to local non-expressway toll roads, make fuel or charging universally free, or weaken the 30-day rule for another dated article."
+    },
+    "2026-chuseok-seoul-waste-post-229-publish": {
+      "existing_post_id": 229,
+      "useful_until": "2026-09-28",
+      "official_urls": [
+        "https://www.seoul.go.kr/story/thanksgiving/pc.html"
+      ],
+      "source_event_url": "https://www.seoul.go.kr/story/thanksgiving/pc.html",
+      "source_event_phrase": "우리동네 쓰레기 배출일 확인하세요.",
+      "source_date_phrase": "추석 연휴 다음 날 9. 28.(월)부터 쓰레기 정상 배출 가능",
+      "reason": "The user explicitly requested a useful, well-formatted publication of existing legacy draft #229 on 2026-09-24. This exception is limited to that exact draft, exact Seoul official holiday page and the 2026-09-28 return-to-normal boundary; it does not generalize Seoul schedules to other regions or weaken the 30-day rule for another dated article."
     }
   },
   "source_max_age_hours": 24,
