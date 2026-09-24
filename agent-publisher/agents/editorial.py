@@ -426,6 +426,13 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
         for block_index, b in enumerate(blocks):
             if not b['text'].strip() or not b['evidence']:
                 reasons.append('paragraph_without_evidence')
+            emphasis = b.get('emphasis')
+            if emphasis is not None and (
+                    not isinstance(emphasis, list) or not 1 <= len(emphasis) <= 5
+                    or any(not isinstance(item, str) or not 2 <= len(item.strip()) <= 80
+                           or item not in b['text'] for item in emphasis)
+                    or len(emphasis) != len(set(emphasis))):
+                reasons.append('invalid_inline_emphasis')
             evidence_text = []
             for e in b['evidence']:
                 s = source_map[e['source_id']]
@@ -541,9 +548,23 @@ def excerpt_from_lead(lead, limit=240):
 def render(plan, sources, category_key=None):
     """Presentation is deterministic: retain every reviewed sentence and condition."""
     source_map = {s['id']: s for s in sources}
+    def inline_text(block):
+        text = block['text']
+        emphasis = block.get('emphasis') or []
+        if not emphasis:
+            return html.escape(text)
+        # Match the longest phrase first when reviewed emphasis phrases overlap.
+        pattern = re.compile('(' + '|'.join(re.escape(item) for item in sorted(emphasis, key=len, reverse=True)) + ')')
+        emphasized = set(emphasis)
+        return ''.join(
+            (f'<strong style="font-weight:700;color:#1f2937">{html.escape(part)}</strong>'
+             if part in emphasized else html.escape(part))
+            for part in pattern.split(text) if part
+        )
+
     def paragraph(block):
         return (f'<p style="margin:0 0 16px;line-height:1.8;color:#2d3748;'
-                f'font-size:16px;font-weight:400;letter-spacing:normal">{html.escape(block["text"])}</p>')
+                f'font-size:16px;font-weight:400;letter-spacing:normal">{inline_text(block)}</p>')
 
     # 1. Immediate answer, with one heading and no repeated decorative badges.
     result = ('<div class="bloguito-article" style="line-height:1.8;font-size:16px;color:#2d3748;'
@@ -551,7 +572,7 @@ def render(plan, sources, category_key=None):
               'font-weight:400;letter-spacing:normal;overflow-wrap:anywhere;word-break:keep-all">'
               '<div class="bloguito-summary" style="padding:18px 20px;margin:16px 0 24px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:5px solid #0d7d59;border-radius:10px">'
               '<div style="font-size:18px;font-weight:700;color:#134e4a">핵심 답변</div>'
-              + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16px">{html.escape(plan["lead"]["text"])}</p></div>')
+              + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16px">{inline_text(plan["lead"])}</p></div>')
 
     # A source-reviewed overview table belongs immediately after the answer.
     sections = plan['sections']
@@ -672,7 +693,7 @@ def render(plan, sources, category_key=None):
                        '<div style="display:flex;align-items:flex-start;margin-bottom:12px"><span style="background:#2563eb;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">Q</span>'
                        f'<h3 style="font-family:inherit;font-size:18px;line-height:1.5;margin:0;color:#1e293b;font-weight:700;letter-spacing:normal">{html.escape(faq["question"])}</h3></div>'
                        '<div style="display:flex;align-items:flex-start;padding-left:2px"><span style="background:#059669;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">A</span>'
-                       f'<div style="flex-grow:1;color:#334155;line-height:1.8">{html.escape(faq["answer"]["text"])}</div></div></div>')
+                       f'<div style="flex-grow:1;color:#334155;line-height:1.8">{inline_text(faq["answer"])}</div></div></div>')
 
     # 5. Explicit, reviewed related-post links take precedence over volatile
     # local recommendations. Never promote an internal article to an official CTA.

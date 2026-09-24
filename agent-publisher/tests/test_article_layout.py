@@ -72,6 +72,28 @@ class ArticleLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(excerpt_from_lead(long_lead)), 241)
         self.assertTrue(excerpt_from_lead(long_lead).endswith('…'))
 
+    def test_reviewed_inline_emphasis_renders_as_strong_without_changing_text(self):
+        block = self.bundle['plan']['sections'][0]['paragraphs'][0]
+        block['text'] = '수거함 지도에서 가까운 행정복지센터나 공동주택 수거함을 찾아보세요.'
+        block['emphasis'] = ['가까운 행정복지센터나 공동주택 수거함']
+        block['evidence'][0]['quote'] = block['text']
+        self.bundle['sources'][0]['text'] = block['text']
+        sign(self.bundle)
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn(
+            '<strong style="font-weight:700;color:#1f2937">가까운 행정복지센터나 공동주택 수거함</strong>',
+            page,
+        )
+        from bs4 import BeautifulSoup
+        paragraph = next(p for p in BeautifulSoup(page, 'html.parser').select('.bloguito-article > p')
+                         if '행정복지센터나 공동주택 수거함' in p.get_text())
+        self.assertEqual(block['text'], paragraph.get_text())
+
+    def test_inline_emphasis_must_exist_in_reviewed_text(self):
+        self.bundle['plan']['sections'][0]['paragraphs'][0]['emphasis'] = ['본문에 없는 문구']
+        sign(self.bundle)
+        self.assertIn('invalid_inline_emphasis', validate_bundle(self.bundle, self.inventory, NOW)['reasons'])
+
 
 if __name__ == '__main__':
     unittest.main()
