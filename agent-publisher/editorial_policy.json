@@ -25,6 +25,19 @@
       "source_event_phrase": "잔여석은 오늘(11일) 15시부터 모바일 앱 ‘코레일+’",
       "source_date_phrase": "2026-09-11",
       "reason": "The user explicitly requested a richer, better-formatted refresh of already-published Chuseok rail post #217 on 2026-09-24. This exception is limited to that exact post, exact official source set and the 2026-09-27 holiday usefulness window; it does not certify seat inventory on any train or weaken the 30-day rule for another dated article."
+    },
+    "2026-chuseok-ev-post-219-refresh": {
+      "existing_post_id": 219,
+      "useful_until": "2026-09-27",
+      "official_urls": [
+        "https://www.korea.kr/news/policyNewsView.do?newsId=148972359",
+        "https://www.kecowebzine.kr/data/vol53/sub0108.php",
+        "https://www.opinet.co.kr/user/cusmartapp/cusmartappView.do"
+      ],
+      "source_event_url": "https://www.korea.kr/news/policyNewsView.do?newsId=148972359",
+      "source_event_phrase": "오는 24일부터 27일까지 전력 수요가 크게 줄어드는 시간대 전기차 충전요금을",
+      "source_date_phrase": "2026.09.21",
+      "reason": "The user explicitly requested a practical full refresh of already-published post #219 on 2026-09-24. This exception is limited to that exact post, exact official source set and the 2026-09-27 holiday window; it does not make all rest-area charging free, certify live charger availability or weaken the 30-day rule for another dated article."
     }
   },
   "source_max_age_hours": 24,
