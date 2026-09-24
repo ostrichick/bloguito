@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Bloguito Post ID Column
- * Description: Show the WordPress post ID in the administrator's Posts list.
- * Version: 1.0.0
+ * Description: Show the WordPress post ID in the Posts list and front-end admin bar.
+ * Version: 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -30,4 +30,25 @@ function bloguito_render_post_id_column($column, $post_id) {
     if ($column === 'bloguito_post_id') {
         echo (int) $post_id;
     }
+}
+
+// Show the current post ID beside the built-in Edit Post item in the front-end admin bar.
+add_action('admin_bar_menu', 'bloguito_add_post_id_admin_bar', 81);
+function bloguito_add_post_id_admin_bar($wp_admin_bar) {
+    if (is_admin() || !is_singular('post')) {
+        return;
+    }
+
+    $post_id = (int) get_queried_object_id();
+    if ($post_id <= 0 || !current_user_can('edit_post', $post_id)) {
+        return;
+    }
+
+    $wp_admin_bar->add_node([
+        'id' => 'bloguito-post-id',
+        'title' => '글 ID: ' . $post_id,
+        'meta' => [
+            'title' => '현재 글 ID: ' . $post_id,
+        ],
+    ]);
 }
