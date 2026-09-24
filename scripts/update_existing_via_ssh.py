@@ -32,7 +32,7 @@ _LIST_ARGS = [
 ]
 
 
-def make_transport(host, post_id, rendered_content):
+def make_transport(host, post_id, rendered_content, expected_title=None):
     """Translate only WP list/get/update performed by the canonical updater."""
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', host):
         raise ValueError('invalid_ssh_alias')
@@ -47,13 +47,17 @@ def make_transport(host, post_id, rendered_content):
             if wp[:4] != expected_update:
                 raise ValueError('unexpected_wordpress_write_arguments')
             trailing = wp[4:]
-            if trailing == ['--allow-root']:
-                pass
-            elif (len(trailing) == 2 and trailing[0].startswith('--post_excerpt=')
-                  and trailing[1] == '--allow-root'):
-                pass
-            else:
+            if not trailing or trailing[-1] != '--allow-root':
                 raise ValueError('unexpected_wordpress_write_flags')
+            flags = trailing[:-1]
+            title_flags = [item for item in flags if item.startswith('--post_title=')]
+            excerpt_flags = [item for item in flags if item.startswith('--post_excerpt=')]
+            if len(title_flags) > 1 or len(excerpt_flags) > 1 or len(flags) != len(title_flags) + len(excerpt_flags):
+                raise ValueError('unexpected_wordpress_write_flags')
+            if expected_title is None and title_flags:
+                raise ValueError('unexpected_wordpress_title_change')
+            if expected_title is not None and title_flags and title_flags != ['--post_title=' + expected_title]:
+                raise ValueError('unexpected_wordpress_title_change')
         if any(not isinstance(item, str) or '\x00' in item for item in wp):
             raise ValueError('unsafe_wordpress_argument')
         remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(x) for x in wp)
@@ -74,6 +78,7 @@ def main():
     parser.add_argument('--expected-content-sha256', required=True)
     parser.add_argument('--ssh-host', default='bloguito')
     parser.add_argument('--confirm-update', action='store_true')
+    parser.add_argument('--confirm-title-change', action='store_true')
     args = parser.parse_args()
     if not args.confirm_update:
         parser.error('explicit --confirm-update required')
@@ -83,10 +88,12 @@ def main():
     if bundle.get('brief', {}).get('existing_post_id') != args.post_id:
         parser.error('reviewed bundle targets a different post')
     content = render(bundle['plan'], bundle['sources'])
-    transport = make_transport(args.ssh_host, args.post_id, content)
+    expected_title = bundle.get('plan', {}).get('title') if args.confirm_title_change else None
+    transport = make_transport(args.ssh_host, args.post_id, content, expected_title=expected_title)
     with patch('subprocess.run', side_effect=transport):
         updated = update_existing_public_post(
-            args.post_id, bundle, args.expected_content_sha256, confirmed=True)
+            args.post_id, bundle, args.expected_content_sha256, confirmed=True,
+            confirm_title_change=args.confirm_title_change)
     print(json.dumps({'updated_public_post_id': updated,
                       'expected_rendered_content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest()},
                      ensure_ascii=False))

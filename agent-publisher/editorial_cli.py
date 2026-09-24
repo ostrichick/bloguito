@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--post-id', type=int, help='specific existing public post to update')
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
+    parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review only: exact interactive author model, e.g. GPT-5.6 Sol')
@@ -110,7 +111,8 @@ def main():
             parser.error('update-existing always queries the live WordPress inventory')
         from agents.editorial_updater import update_existing_public_post
         print('Updated public post ID:', update_existing_public_post(
-            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
+            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
+            confirm_title_change=args.confirm_title_change))
         return
     if args.action == 'sources':
         from agents.editorial import topic_reasons

@@ -42,6 +42,17 @@ class RemoteReviewBridgeTests(unittest.TestCase):
                     self.run(self.base + command)
             self.assertEqual(host.call_count, 1)
 
+    def test_title_change_requires_exact_expected_title(self):
+        run = MODULE.make_transport('bloguito', 137, '<p>body</p>', expected_title='Reviewed title')
+        with patch.object(MODULE, '_RUN') as host:
+            run(self.base + ['post', 'update', '137', '--post_content=<p>body</p>', '--allow-root'])
+            run(self.base + ['post', 'update', '137', '--post_content=<p>body</p>',
+                             '--post_title=Reviewed title', '--allow-root'])
+            self.assertIn("'--post_title=Reviewed title'", host.call_args.args[0][6])
+            with self.assertRaises(ValueError):
+                run(self.base + ['post', 'update', '137', '--post_content=<p>body</p>',
+                                  '--post_title=Other title', '--allow-root'])
+
     def test_rejects_non_wordpress_command_and_unsafe_hosts(self):
         with self.assertRaises(ValueError):
             MODULE.make_transport('bloguito; rm -rf /', 137, 'x')

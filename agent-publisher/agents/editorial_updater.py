@@ -26,11 +26,13 @@ def _existing_lead_excerpt(content):
     return excerpt_from_lead({'text': text}) if len(text) >= 20 else None
 
 
-def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False):
-    """Change only content after a fresh review and an unchanged-content check.
+def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False,
+                                confirm_title_change=False):
+    """Change reviewed content after a fresh review and unchanged-content check.
 
-    The existing title, slug, status, categories, media and publication date
-    are kept. The caller must have explicitly authorized this specific ID.
+    The slug, status, categories, media and publication date are kept. Title
+    changes require their own explicit confirmation; otherwise the existing
+    title is preserved. The caller must explicitly authorize this specific ID.
     """
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError('specific_public_post_update_confirmation_required')
@@ -50,6 +52,10 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         original = next((row for row in inventory['posts'] if int(row['ID']) == post_id), None)
         if not original or original['post_status'] != 'publish' or _sha(original['post_content']) != expected_content_sha256:
             raise ValueError('target_missing_changed_or_not_public')
+        reviewed_title = bundle.get('plan', {}).get('title') or original['post_title']
+        title_changed = reviewed_title != original['post_title']
+        if title_changed and not confirm_title_change:
+            raise ValueError('public_title_change_confirmation_required')
         remaining = dict(inventory, posts=[row for row in inventory['posts'] if int(row['ID']) != post_id])
         report = validate_bundle(bundle, remaining)
         if report['status'] != 'ready':
@@ -74,7 +80,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
                        if bundle['plan'].get('lead') else None)
         update_excerpt = bool(new_excerpt and (not old_excerpt.strip()
                               or old_excerpt == _existing_lead_excerpt(current['post_content'])))
-        if current['post_content'] == reviewed_content and not update_excerpt:
+        if current['post_content'] == reviewed_content and not update_excerpt and not title_changed:
             return post_id
         archive = ROOT / 'data' / 'editorial_runs'
         archive.mkdir(parents=True, exist_ok=True)
@@ -88,12 +94,14 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         save_report(bundle, report)
         # The reviewed, escaped renderer is the only content submitted.
         update_args = ['post', 'update', str(post_id), '--post_content=' + reviewed_content]
+        if title_changed:
+            update_args.append('--post_title=' + reviewed_title)
         if update_excerpt:
             update_args.append('--post_excerpt=' + new_excerpt)
         subprocess.run(base + update_args + ['--allow-root'], capture_output=True, text=True, check=True)
         saved = json.loads(subprocess.run(base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
                                           capture_output=True, text=True, check=True).stdout)
-        if (saved['post_status'] != 'publish' or saved['post_title'] != original['post_title']
+        if (saved['post_status'] != 'publish' or saved['post_title'] != reviewed_title
                 or saved['post_name'] != current['post_name'] or saved['post_content'] != reviewed_content
                 or (update_excerpt and saved.get('post_excerpt') != new_excerpt)):
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')

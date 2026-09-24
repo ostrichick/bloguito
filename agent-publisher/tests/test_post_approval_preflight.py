@@ -62,6 +62,18 @@ class ApprovalPreparationTests(unittest.TestCase):
         self.assertIn('official_sources_changed_since_review', result['reasons'])
         self.assertTrue((self.out / 'post-original.PRIVATE.json').exists())
 
+    def test_title_change_is_blocked_by_default_but_can_be_explicitly_reviewed(self):
+        changed = {**self.bundle, 'plan': {**self.bundle['plan'], 'title': 'Reviewed new title'}}
+        self.bundle_path.write_text(json.dumps(changed), encoding='utf-8')
+        self._patch()
+        result = approval.prepare(137, self.bundle_path, self.out)
+        self.assertIn('reviewed_plan_would_not_preserve_current_title', result['reasons'])
+
+        second = self.root / 'tmp' / 'pilot-title'
+        result = approval.prepare(137, self.bundle_path, second, confirm_title_change=True)
+        self.assertEqual('ready', result['preflight_status'])
+        self.assertIn('post_title', result['changes_allowed_if_later_approved'])
+
     def test_action_only_change_is_visible_in_review_diff(self):
         old = '<h2>Same text</h2><p>Same content</p>'
         new = (old + '<div class="bloguito-cta"><a href="https://example.org/apply">'

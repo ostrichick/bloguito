@@ -101,7 +101,7 @@ def private_json(path, value):
     os.chmod(path, 0o600)
 
 
-def prepare(post_id, bundle_path, out_dir, host='bloguito'):
+def prepare(post_id, bundle_path, out_dir, host='bloguito', confirm_title_change=False):
     root_tmp = (ROOT / 'tmp').resolve()
     out_dir = out_dir.resolve()
     if out_dir == root_tmp or root_tmp not in out_dir.parents:
@@ -121,7 +121,8 @@ def prepare(post_id, bundle_path, out_dir, host='bloguito'):
     lost_related_ids = missing_internal_post_ids(current, proposed)
     if lost_related_ids:
         reasons.append('original_internal_post_navigation_missing')
-    if post['post_title'] != bundle['plan']['title']:
+    title_changed = post['post_title'] != bundle['plan']['title']
+    if title_changed and not confirm_title_change:
         reasons.append('reviewed_plan_would_not_preserve_current_title')
     try:
         reread = fetch_sources(bundle['brief'])
@@ -178,7 +179,9 @@ def prepare(post_id, bundle_path, out_dir, host='bloguito'):
         'lost_internal_post_ids': lost_related_ids,
         'before_text_blocks': len(before), 'after_text_blocks': len(after),
         'changed_text_diff_lines': len(delta),
-        'changes_allowed_if_later_approved': ['post_content', 'post_excerpt_only_if_empty_or_generated'],
+        'changes_allowed_if_later_approved': (['post_content']
+            + (['post_title'] if title_changed and confirm_title_change else [])
+            + ['post_excerpt_only_if_empty_or_generated']),
         'must_recheck_at_apply': ['fresh_full_wp_inventory', 'stored_content_sha256',
             'post_title', 'post_status', 'official_source_sha256', 'editorial_review_freshness'],
         'restore_source': backup.name,
@@ -195,8 +198,11 @@ def main():
     arg.add_argument('--bundle', type=Path, required=True)
     arg.add_argument('--out-dir', type=Path, required=True)
     arg.add_argument('--ssh-host', default='bloguito')
+    arg.add_argument('--confirm-title-change', action='store_true',
+                     help='include the reviewed title change in this read-only approval package')
     args = arg.parse_args()
-    manifest = prepare(args.post_id, args.bundle, args.out_dir, args.ssh_host)
+    manifest = prepare(args.post_id, args.bundle, args.out_dir, args.ssh_host,
+                       confirm_title_change=args.confirm_title_change)
     print(json.dumps({key: manifest[key] for key in (
         'post_id', 'preflight_status', 'reasons', 'original_stored_content_sha256',
         'proposed_rendered_content_sha256', 'source_hashes_match_live')},

@@ -60,6 +60,69 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'specific_public_post_update_confirmation_required'):
             updater.update_existing_public_post(243, self.bundle, self.sha)
 
+    def test_title_change_requires_separate_confirmation_and_preserves_slug(self):
+        bundle = {**self.bundle, 'plan': {'title': 'Reviewed new title'}}
+        updated = {**self.post, 'post_title': 'Reviewed new title', 'post_content': 'Reviewed HTML'}
+        calls = []
+
+        def execute(args, **kwargs):
+            calls.append(args)
+            if args[5:7] == ['post', 'get']:
+                count = sum(c[5:7] == ['post', 'get'] for c in calls)
+                return Mock(stdout=json.dumps(self.post if count == 1 else updated))
+            return Mock(stdout='Success')
+
+        common = [patch.object(updater, 'ROOT', Path(self.temp.name)),
+                  patch.object(updater, 'sync_inventory'),
+                  patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}),
+                  patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}),
+                  patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']),
+                  patch.object(updater, 'render', return_value='Reviewed HTML'),
+                  patch.object(updater, 'save_report')]
+        with common[0], common[1], common[2], common[3], common[4], common[5], common[6], \
+             patch.object(updater.subprocess, 'run', side_effect=execute):
+            with self.assertRaisesRegex(ValueError, 'public_title_change_confirmation_required'):
+                updater.update_existing_public_post(243, bundle, self.sha, confirmed=True)
+        calls.clear()
+        with patch.object(updater, 'ROOT', Path(self.temp.name)), \
+             patch.object(updater, 'sync_inventory'), \
+             patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
+             patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
+             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'render', return_value='Reviewed HTML'), \
+             patch.object(updater, 'save_report'), \
+             patch.object(updater.subprocess, 'run', side_effect=execute):
+            self.assertEqual(243, updater.update_existing_public_post(
+                243, bundle, self.sha, confirmed=True, confirm_title_change=True))
+        update = next(c for c in calls if c[5:7] == ['post', 'update'])
+        self.assertIn('--post_title=Reviewed new title', update)
+        self.assertEqual('stable-slug', updated['post_name'])
+
+    def test_title_only_change_is_not_skipped(self):
+        bundle = {**self.bundle, 'plan': {'title': 'Reviewed new title'}}
+        updated = {**self.post, 'post_title': 'Reviewed new title'}
+        calls = []
+
+        def execute(args, **kwargs):
+            calls.append(args)
+            if args[5:7] == ['post', 'get']:
+                count = sum(c[5:7] == ['post', 'get'] for c in calls)
+                return Mock(stdout=json.dumps(self.post if count == 1 else updated))
+            return Mock(stdout='Success')
+
+        with patch.object(updater, 'ROOT', Path(self.temp.name)), \
+             patch.object(updater, 'sync_inventory'), \
+             patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
+             patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
+             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'render', return_value='Original body'), \
+             patch.object(updater, 'save_report'), \
+             patch.object(updater.subprocess, 'run', side_effect=execute):
+            self.assertEqual(243, updater.update_existing_public_post(
+                243, bundle, self.sha, confirmed=True, confirm_title_change=True))
+        update = next(c for c in calls if c[5:7] == ['post', 'update'])
+        self.assertIn('--post_title=Reviewed new title', update)
+
     def test_cannot_update_a_different_post_with_a_reviewed_bundle(self):
         with patch.object(updater, 'sync_inventory') as inventory, \
              patch.object(updater.subprocess, 'run') as command:
