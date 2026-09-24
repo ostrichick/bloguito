@@ -40,6 +40,22 @@ def _sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _before_generated_source_footer(content):
+    """Return authored/rendered content before the renderer-owned source footer.
+
+    This permits a renderer-only migration of the final source box while still
+    rejecting any change to the reviewed article body before that box.
+    """
+    marker = '<h2 id="sources"'
+    if marker not in content:
+        return content.replace("\r\n", "\n")
+    heading = content.index(marker)
+    container = content.rfind("<div", 0, heading)
+    if container < 0:
+        return content.replace("\r\n", "\n")
+    return content[:container].replace("\r\n", "\n")
+
+
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False):
     """Replace one unchanged reviewed draft with another fully reviewed version.
 
@@ -85,7 +101,15 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             raise ValueError("draft_revision_topic_or_title_mismatch")
 
         old_rendered = render(old_bundle["plan"], old_bundle["sources"])
-        if current["post_content"].replace("\r\n", "\n") != old_rendered.replace("\r\n", "\n"):
+        same_exact = (
+            current["post_content"].replace("\r\n", "\n")
+            == old_rendered.replace("\r\n", "\n")
+        )
+        same_before_source_footer = (
+            _before_generated_source_footer(current["post_content"])
+            == _before_generated_source_footer(old_rendered)
+        )
+        if not (same_exact or same_before_source_footer):
             raise ValueError("draft_contains_unreviewed_edits")
         if missing_internal_post_ids(old_rendered, render(bundle["plan"], bundle["sources"])):
             raise ValueError("original_internal_post_navigation_missing")

@@ -286,6 +286,12 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
         for s in sources:
             if s['url'] not in brief['official_urls'] or s.get('source_type') != 'official':
                 reasons.append('source_not_official_brief_url')
+            citation_label = s.get('citation_label')
+            if (citation_label is not None
+                    and (not isinstance(citation_label, str)
+                         or not 4 <= len(citation_label.strip()) <= 100
+                         or re.search(r'[<>\r\n]', citation_label))):
+                reasons.append('invalid_source_citation_label')
             if s['sha256'] != hashlib.sha256(s['text'].encode()).hexdigest():
                 reasons.append('source_hash_mismatch')
             if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
@@ -779,15 +785,31 @@ def render(plan, sources, category_key=None):
       except Exception:
           interlink_html = ''
 
-    # 6. 공식 출처 및 사실 검증 자료
+    # 6. 공식 출처 및 사실 검증 자료.
+    # Exact action destinations already have a prominent reader-facing CTA, so
+    # do not repeat those same URLs in the evidence footer. The footer is for
+    # distinct evidence/reference pages only.
     ids = []
     for block in all_blocks(plan):
         ids.extend(e['source_id'] for e in block['evidence'])
     ids = list(dict.fromkeys(ids))
-    links = ''.join(f'<li style="margin:8px 0"><a href="{html.escape(source_map[i]["url"], quote=True)}" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;word-break:break-all">{html.escape(source_map[i]["title"].splitlines()[0][:100])}</a></li>' for i in ids)
-    return (result + interlink_html + '<div style="margin-top:44px;padding:22px 24px;background:#fcfdfd;border:1px dashed #cbd5e1;border-radius:10px">'
-            '<h2 id="sources" style="font-family:inherit;font-size:20px;font-weight:700;letter-spacing:normal;line-height:1.45;margin:0 0 14px;color:#334155;display:flex;align-items:center"><span style="margin-right:8px">🏛️</span>공식 출처 및 사실 검증 자료</h2>'
-            '<ul class="source-list" style="padding-left:22px;margin:0;color:#64748b">' + links + '</ul></div></div>')
+    action_urls = {action['url'] for action in actions}
+    citation_ids = [i for i in ids if source_map[i]['url'] not in action_urls]
+    links = ''.join(
+        '<li style="margin:8px 0"><a href="'
+        + html.escape(source_map[i]['url'], quote=True)
+        + '" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;word-break:break-all">'
+        + html.escape((source_map[i].get('citation_label')
+                       or source_map[i]['title'].splitlines()[0])[:100])
+        + '</a></li>'
+        for i in citation_ids)
+    source_footer = (
+        '<div style="margin-top:44px;padding:22px 24px;background:#fcfdfd;border:1px dashed #cbd5e1;border-radius:10px">'
+        '<h2 id="sources" style="font-family:inherit;font-size:20px;font-weight:700;letter-spacing:normal;line-height:1.45;margin:0 0 14px;color:#334155;display:flex;align-items:center"><span style="margin-right:8px">🏛️</span>공식 출처 및 사실 검증 자료</h2>'
+        '<ul class="source-list" style="padding-left:22px;margin:0;color:#64748b">'
+        + links + '</ul></div>'
+        if links else '')
+    return result + interlink_html + source_footer + '</div>'
 
 
 def save_report(bundle, report):

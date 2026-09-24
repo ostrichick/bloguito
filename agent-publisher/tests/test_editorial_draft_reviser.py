@@ -7,7 +7,10 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agents.editorial import excerpt_from_lead, render
-from agents.editorial_draft_reviser import revise_reviewed_draft
+from agents.editorial_draft_reviser import (
+    _before_generated_source_footer,
+    revise_reviewed_draft,
+)
 from test_editorial_system import NOW, sample
 
 
@@ -78,6 +81,36 @@ class EditorialDraftReviserTests(unittest.TestCase):
     def test_revision_requires_confirmation(self):
         with self.assertRaisesRegex(ValueError, "specific_draft_revision_confirmation_required"):
             revise_reviewed_draft(393, {}, "0" * 64, confirmed=False)
+
+    def test_source_footer_only_renderer_migration_is_accepted_by_comparison_helper(self):
+        old = (
+            '<div class="bloguito-article"><p>검토된 본문</p>'
+            '<div style="margin-top:44px"><h2 id="sources">출처</h2>'
+            '<ul class="source-list"><li>old</li></ul></div></div>'
+        )
+        new = (
+            '<div class="bloguito-article"><p>검토된 본문</p>'
+            '<div style="margin-top:44px"><h2 id="sources">출처</h2>'
+            '<ul class="source-list"><li>new</li></ul></div></div>'
+        )
+        self.assertEqual(
+            _before_generated_source_footer(old),
+            _before_generated_source_footer(new),
+        )
+
+    def test_source_footer_migration_does_not_hide_prose_change(self):
+        old = (
+            '<div class="bloguito-article"><p>검토된 본문</p>'
+            '<div><h2 id="sources">출처</h2><ul class="source-list"></ul></div></div>'
+        )
+        edited = (
+            '<div class="bloguito-article"><p>사람이 바꾼 본문</p>'
+            '<div><h2 id="sources">출처</h2><ul class="source-list"></ul></div></div>'
+        )
+        self.assertNotEqual(
+            _before_generated_source_footer(old),
+            _before_generated_source_footer(edited),
+        )
 
 
 if __name__ == "__main__":
