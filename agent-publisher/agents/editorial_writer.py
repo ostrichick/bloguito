@@ -100,6 +100,29 @@ def _koreakr_article_text(soup, url):
     hashing unrelated recommendations or dropping the evidence-bearing body.
     """
     parsed = urlsplit(url)
+    # The 2026 Chuseok emergency-medical press release is currently served from
+    # admin2.korea.kr. Its article body is stable, while the page footer contains
+    # rotating "실시간 인기뉴스" timestamps and rankings. Scope this extractor
+    # to the exact reviewed release so a recheck hashes only evidence-bearing
+    # article content and still fails closed if the article structure changes.
+    if (parsed.hostname == 'admin2.korea.kr'
+            and parsed.path == '/briefing/pressReleaseView.do'
+            and parse_qs(parsed.query, keep_blank_values=True) == {
+                'newsId': ['156782659'], 'pWise': ['mSub'], 'pWiseSub': ['C1']}):
+        heads = soup.select('.article_wrap .article_head')
+        bodies = soup.select('.article_wrap .article_body .view_cont')
+        if len(heads) != 1 or len(bodies) != 1:
+            raise ValueError('koreakr_press_release_main_missing_or_ambiguous')
+        titles = heads[0].select(':scope > h1')
+        info = heads[0].select(':scope > .info > span')
+        if (len(titles) != 1 or len(info) != 2
+                or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}', info[0].get_text(' ', strip=True))):
+            raise ValueError('koreakr_press_release_main_missing_or_ambiguous')
+        parts = [titles[0].get_text('\n', strip=True), info[0].get_text(' ', strip=True),
+                 info[1].get_text(' ', strip=True), bodies[0].get_text('\n', strip=True)]
+        if any(not part for part in parts):
+            raise ValueError('koreakr_press_release_main_missing_or_ambiguous')
+        return '\n'.join(parts)
     # The 2025-03-31 One-Click briefing has a different article-head layout
     # from /news/policyNewsView.do. Scope this extractor to its *exact* URL:
     # title is outside article_wrap, date/byline and attachments are inside

@@ -39,6 +39,19 @@
       "source_date_phrase": "2026.09.21",
       "reason": "The user explicitly requested a practical full refresh of already-published post #219 on 2026-09-24. This exception is limited to that exact post, exact official source set and the 2026-09-27 holiday window; it does not make all rest-area charging free, certify live charger availability or weaken the 30-day rule for another dated article."
     },
+    "2026-chuseok-medical-post-163-refresh": {
+      "existing_post_id": 163,
+      "useful_until": "2026-09-27",
+      "official_urls": [
+        "https://admin2.korea.kr/briefing/pressReleaseView.do?newsId=156782659&pWise=mSub&pWiseSub=C1",
+        "https://www.e-gen.or.kr/egen/holiday_medical.do?searchType=general&emergencyViewYn=N",
+        "https://www.e-gen.or.kr/moonlight/main.do"
+      ],
+      "source_event_url": "https://admin2.korea.kr/briefing/pressReleaseView.do?newsId=156782659&pWise=mSub&pWiseSub=C1",
+      "source_event_phrase": "추석 연휴인 9월 24일부터 9월 27일까지",
+      "source_date_phrase": "2026.09.21",
+      "reason": "The user explicitly requested a richer, direct-search refresh of already-published Chuseok medical post #163 on 2026-09-24. This exception is limited to that exact post, exact official source set and the 2026-09-27 holiday window; it does not certify live opening status of any individual hospital or pharmacy and does not weaken the 30-day rule for another dated article."
+    },
     "2026-chuseok-toll-post-145-refresh": {
       "existing_post_id": 145,
       "useful_until": "2026-09-27",
