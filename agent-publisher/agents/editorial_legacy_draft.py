@@ -21,10 +21,17 @@ from sync_wordpress_inventory import sync_inventory
 
 
 def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=False):
+    brief = bundle.get('brief', {})
+    evergreen_existing = (
+        brief.get('content_type') == 'evergreen'
+        and brief.get('useful_until') is None
+        and brief.get('existing_post_id') == post_id
+    )
+    dated_exception = dated_post_exception(brief, datetime.now(KST).date())
     if (not confirmed or not isinstance(post_id, int) or post_id <= 0
             or not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or '')
-            or not dated_post_exception(bundle.get('brief', {}), datetime.now(KST).date())
-            or bundle['brief']['existing_post_id'] != post_id):
+            or not (evergreen_existing or dated_exception)
+            or brief.get('existing_post_id') != post_id):
         raise ValueError('specific_legacy_draft_upgrade_confirmation_required')
 
     lock = ROOT / 'data' / '.editorial-publish.lock'

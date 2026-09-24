@@ -42,7 +42,7 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
-3. `editorial_cli.py sources/review/check`의 안내에 따라 검증 원고를 구성한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다.
+3. `editorial_cli.py sources/review/check`의 안내에 따라 검증 원고를 구성한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 ### 작성 모델 경로

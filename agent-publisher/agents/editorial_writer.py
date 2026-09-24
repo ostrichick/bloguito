@@ -202,12 +202,55 @@ def _normalize_nol_product_text(text, url):
     return '\n'.join(line for line in text.splitlines() if line.strip())
 
 
+def _normalize_efine_text(text, url):
+    """Drop only eFine's volatile accessibility skip-link label.
+
+    The same official help page can render the exact line 본문 바로가기
+    inconsistently across otherwise identical responses. It is navigation
+    chrome, not evidence-bearing content.
+    """
+    parsed = urlsplit(url)
+    if (parsed.scheme != 'https'
+            or parsed.hostname not in {'efine.go.kr', 'www.efine.go.kr'}
+            or not parsed.path.endswith('.do')):
+        return text
+    return '\n'.join(
+        line for line in text.splitlines()
+        if line.strip() != '본문 바로가기'
+    )
+
+
+def _official_get(url):
+    """Fetch an official URL without trusting arbitrary redirects.
+
+    Police eFine issues a same-URL HTTP 307 on the first request solely to set
+    TMOSHCooKie, then serves the requested page on the second request in the
+    same session. Handle only that exact, host-scoped cookie challenge.
+    """
+    parsed = urlsplit(url)
+    efine = (
+        parsed.scheme == 'https'
+        and parsed.hostname in {'efine.go.kr', 'www.efine.go.kr'}
+        and parsed.path.endswith('.do')
+    )
+    headers = _official_request_headers(url)
+    if not efine:
+        return requests.get(url, timeout=25, allow_redirects=False, headers=headers)
+
+    session = requests.Session()
+    response = session.get(url, timeout=25, allow_redirects=False, headers=headers)
+    if (response.status_code == 307
+            and response.headers.get('Location') == url
+            and session.cookies.get('TMOSHCooKie')):
+        response = session.get(url, timeout=25, allow_redirects=False, headers=headers)
+    return response
+
+
 def fetch_sources(brief):
     sources = []
     for i, url in enumerate(brief['official_urls'][:5]):
         # Redirects require updating the reviewed URL rather than silently trusting another host.
-        response = requests.get(url, timeout=25, allow_redirects=False,
-                                headers=_official_request_headers(url))
+        response = _official_get(url)
         if response.status_code != 200:
             raise ValueError(f'official_source_http_{response.status_code}')
         if response.content.startswith(b'%PDF-'):
@@ -311,6 +354,7 @@ def fetch_sources(brief):
         text = '\n'.join(line for line in text.splitlines()
                          if not re.fullmatch(r'조회수\s*:\s*\d+', line.strip()))
         text = _normalize_nol_product_text(text, url)
+        text = _normalize_efine_text(text, url)
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')
         sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})
