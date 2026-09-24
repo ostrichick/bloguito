@@ -13,6 +13,11 @@ PENSION_URL = 'https://basicpension.mohw.go.kr/menu.es?mid=a10103010000'
 PENSION_QUOTE = '※ 2026년 1월 ~ 2026년 12월: 월 349,700원'
 MOKPO_URL = 'https://www.mokpo.go.kr/health/citizen_participation/notice?idx=548678&mode=view'
 FLU_QUOTE = '- 접종일정: 2026. 9. 21.(월) ~ 2027. 4. 30.(금)'
+HEALTH_URL = 'https://www.nhis.or.kr/nhis/minwon/wbhapa01000m01.do?mode=view&articleNo=10946900'
+HEALTH_PERIOD_QUOTE = ('과도한 의료비로 인한 가계부담 완화를 위하여 가입자(피부양자 포함)가 '
+                       '연간(1.1.~12.31.) 요양기관에 지출한 본인 일부부담금총액이 개인별 본인부담 상한액을 초과하는 경우')
+HEALTH_VALUES_QUOTE = ('2026년 90만원 112만원 173만원 326만원 446만원 536만원 843만원 '
+                       '요양병원 120일 초과 입원 143만원 181만원 245만원 404만원 580만원 698만원 1,096만원')
 
 
 def case(post_id=55):
@@ -53,6 +58,37 @@ def case(post_id=55):
             'temporal_source': temporal}
 
 
+def health_case():
+    source_text = f'{HEALTH_PERIOD_QUOTE}\n진료연도별 본인부담상한액(2023~2026년)\n{HEALTH_VALUES_QUOTE}'
+    period = {'source_id': 's0', 'quote': HEALTH_PERIOD_QUOTE}
+    values = {'source_id': 's0', 'quote': HEALTH_VALUES_QUOTE}
+    brief = {'id': 'legacy-health-220', 'existing_post_id': 220,
+             'category_key': 'welfare', 'approved': True,
+             'entity': '국민건강보험 본인부담상한제',
+             'primary_keyword': '2026 본인부담상한제 환급금',
+             'question': '2026년 진료분 상한액은 얼마인가요?',
+             'angle': '진료연도 기준 상한액과 환급 절차',
+             'official_urls': [HEALTH_URL],
+             'required_title_terms': ['2026', '본인부담상한제'],
+             'reader_questions': [{'id': 'q1', 'question': '2026년 진료분 상한액은 얼마인가요?'}],
+             'reviewed_at': '2026-09-22', 'review_until': '2026-09-23',
+             'content_type': 'dated', 'useful_until': '2026-12-31'}
+    lead = {'text': '2026년 진료분의 진료연도 본인부담상한액은 소득분위별로 다릅니다.',
+            'evidence': [values], 'answers': ['q1']}
+    plan = {'title': '2026 본인부담상한제 환급금 안내', 'lead': lead,
+            'sections': [{'heading': '2026년 진료연도 상한액', 'paragraphs': [lead]}],
+            'faq': []}
+    source = {'id': 's0', 'url': HEALTH_URL, 'source_type': 'official',
+              'title': '본인부담상한제', 'text': source_text,
+              'sha256': hashlib.sha256(source_text.encode()).hexdigest(),
+              'fetched_at': NOW.isoformat()}
+    temporal = {'evidence': [], 'legacy_reference_period': {
+        'kind': 'annual_health_ceiling', 'start_date': '2026-01-01',
+        'end_date': '2026-12-31', 'evidence': period, 'values_evidence': values}}
+    return {'brief': brief, 'sources': [source], 'plan': plan,
+            'temporal_source': temporal}
+
+
 class LegacyReferencePeriodTests(unittest.TestCase):
     def reasons(self, b):
         return validate_legacy_reference_period(b['brief'], b['sources'],
@@ -66,6 +102,16 @@ class LegacyReferencePeriodTests(unittest.TestCase):
                 result = validate_bundle(b, {'checked_on': '2026-09-22', 'posts': []},
                                          NOW, require_review=False)
                 self.assertEqual('ready', result['status'], result)
+
+    def test_annual_health_ceiling_is_bound_to_current_nhis_year(self):
+        b = health_case()
+        self.assertEqual([], self.reasons(b))
+        result = validate_bundle(b, {'checked_on': '2026-09-22', 'posts': []},
+                                 NOW, require_review=False)
+        self.assertEqual('ready', result['status'], result)
+        b['temporal_source']['legacy_reference_period']['values_evidence']['quote'] = \
+            HEALTH_VALUES_QUOTE.replace('843만원', '826만원')
+        self.assertIn('legacy_health_ceiling_annual_range_not_officially_bound', self.reasons(b))
 
     def test_official_mokpo_season_dates_reviewable_without_universal_claim(self):
         b = case(103)

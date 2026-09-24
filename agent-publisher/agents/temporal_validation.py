@@ -145,6 +145,7 @@ def validate_legacy_reference_period(brief: dict, sources: list[dict], temporal:
     allowed = {55: ('welfare', 'annual_pension'),
                79: ('welfare', 'annual_pension'),
                101: ('welfare', 'annual_pension'),
+               220: ('welfare', 'annual_health_ceiling'),
                103: ('life-health', 'flu_season'),
                63: ('life-health', 'national_flu_season'),
                81: ('life-health', 'national_flu_season')}
@@ -181,6 +182,36 @@ def validate_legacy_reference_period(brief: dict, sources: list[dict], temporal:
                 or '기초연금' not in (' '.join([brief.get('entity', ''),
                                                brief.get('primary_keyword', '')]))):
             reasons.append('legacy_pension_annual_range_not_officially_bound')
+    elif info['kind'] == 'annual_health_ceiling':
+        expected_url = 'https://www.nhis.or.kr/nhis/minwon/wbhapa01000m01.do?mode=view&articleNo=10946900'
+        values = info.get('values_evidence')
+        try:
+            values_source = next(s for s in sources if s['id'] == values['source_id'])
+            values_quote = values['quote']
+            compact = re.sub(r'[\s,]', '', values_quote)
+            required = ('2026년', '90만원', '112만원', '173만원', '326만원',
+                        '446만원', '536만원', '843만원', '143만원', '181만원',
+                        '245만원', '404만원', '580만원', '698만원', '1096만원')
+            public = re.sub(r'\s+', '', ' '.join([
+                plan.get('title', ''), plan.get('lead', {}).get('text', ''),
+                *(s.get('heading', '') for s in plan.get('sections', [])),
+                *(p.get('text', '') for s in plan.get('sections', [])
+                  for p in s.get('paragraphs', [])),
+            ]))
+            if (start != date(2026, 1, 1) or end != date(2026, 12, 31)
+                    or useful != end or source['url'] != expected_url
+                    or values_source is not source
+                    or source.get('source_type') != 'official'
+                    or expected_url not in brief.get('official_urls', [])
+                    or not isinstance(values_quote, str) or not 40 <= len(values_quote) <= 900
+                    or values_quote not in source['text']
+                    or not all(token in compact for token in required)
+                    or '연간(1.1.~12.31.)' not in quote.replace('∼', '~')
+                    or '2026' not in public or '진료연도' not in public
+                    or '본인부담상한' not in public):
+                raise ValueError('health_ceiling_reference_mismatch')
+        except (KeyError, TypeError, ValueError, StopIteration):
+            reasons.append('legacy_health_ceiling_annual_range_not_officially_bound')
     elif info['kind'] == 'national_flu_season':
         # The August KDCA announcement established the overall season, but its
         # per-group start dates were superseded on September 16. Both official
