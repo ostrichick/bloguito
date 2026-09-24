@@ -180,6 +180,41 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
                 'entity': '다른 사이트'})[0]
         self.assertIn('921', result['text'])
 
+    def test_seoul_mediahub_view_counter_is_stable_but_article_facts_are_hashed(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, views, benefit):
+                self.content = (
+                    '<html><head><title>서울시 - 내 손안에 서울</title></head><body>'
+                    '<div class="info_view">'
+                    '<p class="writer">내 손안에 서울</p>'
+                    '<p class="date">발행일 <span class="num">2026.08.12. 17:18</span></p>'
+                    '<p class="date bar">수정일 <span class="num">2026.09.17. 17:52</span></p>'
+                    f'<p class="view bar">조회 <span class="num">{views}</span></p>'
+                    '</div>'
+                    f'<article><p>{benefit}</p>'
+                    '<p>본문의 조회 30회라는 표현은 실제 내용이므로 보존합니다.</p></article>'
+                    '</body></html>'
+                ).encode('utf-8')
+
+        url = 'https://mediahub.seoul.go.kr/archives/2019060'
+        brief = {'official_urls': [url], 'entity': '기후동행패스'}
+        same = ('모두의카드는 일반 20%, 청년 30% 환급 기준을 적용하고 '
+                '서울시 청년 기준은 만 19~39세입니다. ' * 3)
+        changed = same.replace('청년 30%', '청년 31%', 1)
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            Response('100,472', same),
+            Response('100,478', same),
+            Response('100,479', changed),
+        ]):
+            first, second, changed_source = (fetch_sources(brief)[0] for _ in range(3))
+        self.assertEqual(first['sha256'], second['sha256'])
+        self.assertNotEqual(first['sha256'], changed_source['sha256'])
+        self.assertNotIn('100,472', first['text'])
+        self.assertIn('조회 30회라는 표현', first['text'])
+        self.assertIn('청년 30% 환급', first['text'])
+
     def test_view_count_in_article_sentence_is_preserved(self):
         class Response:
             status_code = 200

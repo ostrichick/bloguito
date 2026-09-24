@@ -343,6 +343,18 @@ def fetch_sources(brief):
                                      value, flags=re.IGNORECASE)
                 if match:
                     counter.string = '(' + match.group(1) + ')'
+        # Seoul MediaHub article pages increment the standalone view counter on
+        # every read. Strip only the verified metadata paragraph so an
+        # independent source recheck remains stable while article dates,
+        # benefit amounts and every number in the body still affect the hash.
+        if (parsed.hostname == 'mediahub.seoul.go.kr'
+                and re.fullmatch(r'/archives/\d+', parsed.path)):
+            for item in soup.select('div.info_view > p.view.bar'):
+                marker = ''.join(item.find_all(string=True, recursive=False)).strip()
+                value = item.find('span', class_='num', recursive=False)
+                if (marker == '조회' and value
+                        and re.fullmatch(r'[\d,]+', value.get_text(' ', strip=True))):
+                    item.decompose()
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
         text = _koreakr_article_text(soup, url)
