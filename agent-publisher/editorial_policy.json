@@ -9,7 +9,22 @@
       "official_url": "https://fsc.go.kr/no010101/87706",
       "required_attachment_url": "https://fsc.go.kr/comm/getFile?srvcId=BBSTY1&upperNo=87706&fileTy=ATTACH&fileNo=2",
       "source_event_phrase": "추석 연휴 기간(9.24~9.27.)",
+      "source_date_phrase": "2026-09-14",
       "reason": "The user explicitly requested publication of existing post #225 on 2026-09-22. The exception expires on the final holiday date and cannot be used for another post."
+    },
+    "2026-chuseok-rail-post-217-refresh": {
+      "existing_post_id": 217,
+      "useful_until": "2026-09-27",
+      "official_urls": [
+        "https://m.letskorail.com/mbt/m_notice.html",
+        "https://info.korail.com/info/selectBbsNttView.do?bbsNo=199&integrDeptCode=&key=911&nttNo=27291&pageIndex=1&searchCnd=all&searchCtgry=&searchKrwd=",
+        "https://info.korail.com/info/selectBbsNttView.do?bbsNo=199&integrDeptCode=&key=911&nttNo=27135&pageIndex=1&searchCnd=CN&searchCtgry=&searchKrwd=%EC%82%B0%EC%B2%9C",
+        "https://www.korail.com/ticket/main"
+      ],
+      "source_event_url": "https://info.korail.com/info/selectBbsNttView.do?bbsNo=199&integrDeptCode=&key=911&nttNo=27291&pageIndex=1&searchCnd=all&searchCtgry=&searchKrwd=",
+      "source_event_phrase": "잔여석은 오늘(11일) 15시부터 모바일 앱 ‘코레일+’",
+      "source_date_phrase": "2026-09-11",
+      "reason": "The user explicitly requested a richer, better-formatted refresh of already-published Chuseok rail post #217 on 2026-09-24. This exception is limited to that exact post, exact official source set and the 2026-09-27 holiday usefulness window; it does not certify seat inventory on any train or weaken the 30-day rule for another dated article."
     }
   },
   "source_max_age_hours": 24,
