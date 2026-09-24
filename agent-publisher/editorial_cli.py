@@ -8,13 +8,13 @@ from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, l
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'replace-legacy-draft', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'revise-draft', 'replace-legacy-draft', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
     parser.add_argument('--post-id', type=int, help='specific existing public post to update')
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
-    parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only this public post content')
+    parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review only: exact interactive author model, e.g. GPT-5.6 Sol')
@@ -97,6 +97,13 @@ def main():
             parser.error('update-draft always queries WordPress')
         from agents.editorial_draft_updater import update_draft
         print('Updated draft ID:', update_draft(args.post_id, data, args.expected_content_sha256))
+        return
+    if args.action == 'revise-draft':
+        if args.inventory:
+            parser.error('revise-draft always queries WordPress')
+        from agents.editorial_draft_reviser import revise_reviewed_draft
+        print('Revised draft ID:', revise_reviewed_draft(
+            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
         return
     if args.action == 'update-existing':
         if args.inventory:
