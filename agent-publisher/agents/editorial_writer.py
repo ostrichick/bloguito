@@ -158,16 +158,24 @@ def _koreakr_article_text(soup, url):
 
 
 def _official_request_headers(url):
-    """Use browser-equivalent headers only for the verified NOL product route.
+    """Use browser-equivalent headers only for verified public routes that gate Python UAs.
 
     NOL's public product page returns a generic 403 interstitial to Python's
-    default user agent while the same URL is public in a normal browser. Keep
-    this exception host/path scoped; redirects and non-200 responses still
-    fail closed in fetch_sources().
+    default user agent while the same URL is public in a normal browser.
+    Incheon Airport's public Korean subview pages similarly return an empty
+    HTTP 302 to Python's default user agent but HTTP 200 to a browser UA.
+    Keep these exceptions host/path scoped; redirects and non-200 responses
+    still fail closed in fetch_sources().
     """
     parsed = urlsplit(url)
-    if (parsed.scheme == 'https' and parsed.hostname == 'nol.yanolja.com'
-            and re.fullmatch(r'/ticket/products/\d+', parsed.path)):
+    nol_product = (parsed.scheme == 'https' and parsed.hostname == 'nol.yanolja.com'
+                   and re.fullmatch(r'/ticket/products/\d+', parsed.path))
+    airport_public = (
+        parsed.scheme == 'https'
+        and parsed.hostname in {'www.airport.kr', 'airinfo.airport.kr'}
+        and re.fullmatch(r'/ap_ko/\d+/subview\.do', parsed.path)
+    )
+    if nol_product or airport_public:
         return {
             'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                            'AppleWebKit/537.36 (KHTML, like Gecko) '
