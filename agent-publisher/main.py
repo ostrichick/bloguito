@@ -32,6 +32,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
         "published": 0,
         "held": 0,
         "errors": 0,
+        "notification_errors": 0,
         "held_reasons": []
     }
 
@@ -101,7 +102,11 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 print(f"❌ 작업 중 에러 발생: {e}")
                 stats["errors"] += 1
                 stats["held_reasons"].append(f"[{cat_info['name']}] 오류: {str(e)[:30]}")
-                notify_error(f"{cat_info['name']} 발행 단계", str(e))
+                try:
+                    notify_error(f"{cat_info['name']} 발행 단계", str(e))
+                except Exception as notification_error:
+                    stats['notification_errors'] += 1
+                    print(f"⚠️ 오류 알림 발송 실패: {type(notification_error).__name__}")
 
     print("\n" + "=" * 60)
     print(f"🎉 총 {stats['published']}건의 포스팅 작업 완료 (탐색: {stats['candidates']}건, 보류: {stats['held']}건, 에러: {stats['errors']}건)")
@@ -111,10 +116,12 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     try:
         notify_pipeline_summary(stats)
     except Exception as e:
+        stats['notification_errors'] += 1
         print(f"⚠️ 요약 리포트 발송 실패: {e}")
+    return stats
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="생활정보 24 멀티 에이전트 발행기")
     parser.add_argument(
         "--category",
@@ -129,11 +136,24 @@ if __name__ == "__main__":
         help="카테고리당 발행할 글 개수 (기본: 1)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.limit < 1:
+        parser.error('--limit must be a positive integer')
 
     if args.category == "all":
         targets = list(CATEGORIES.keys())
     else:
         targets = [args.category]
 
-    run_pipeline(targets, limit_per_cat=args.limit)
+    stats = run_pipeline(targets, limit_per_cat=args.limit)
+    # Holds and an empty candidate list are valid editorial outcomes. Actual
+    # processing errors must propagate to cron/systemd even after partial success.
+    import json
+    result = {key: stats[key] for key in ('candidates', 'published', 'held', 'errors', 'notification_errors')}
+    result['status'] = 'failed' if stats['errors'] else 'completed'
+    print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False))
+    return 1 if stats['errors'] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
