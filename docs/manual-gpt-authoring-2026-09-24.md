@@ -9,8 +9,8 @@
 - `main.py`의 예약/자동 파이프라인은 `EditorialWriterAgent(writing_enabled=True)`를 명시해 기존 Gemini 작성 동작을 유지한다.
 - `EditorialWriterAgent`에 `writing_enabled` 경계를 추가했다. `False`이면 `prepare()`가 즉시 `editorial_writer_disabled_for_manual_flow`로 중단되어 새 원고를 생성하지 않는다.
 - `editorial_cli.py manual-review`를 추가했다. ChatGPT가 이미 작성한 `brief/sources/plan` bundle을 입력으로 받고 `--author-model`을 필수로 기록한 뒤 독립 의미 검토와 기존 결정론 검사를 수행한다.
-- `review`, `manual-review`, `publish`에서 사용하는 모델 어댑터는 모두 review-only로 생성한다. 따라서 완성된 수동 원고를 Gemini writer가 다시 쓰는 경로가 없다.
-- `publish`는 기존대로 실제 WordPress 인벤토리를 다시 조회하고 의미 검토를 다시 수행한 후 draft만 만든다. 공개 승격 절차는 변경하지 않았다.
+- `review`와 `manual-review`는 review-only 모델 어댑터를 사용하므로 완성된 수동 원고를 Gemini writer가 다시 쓰지 않는다. `publish`는 모델 어댑터를 새로 만들지 않고 bundle에 결합된 기존 의미 검토를 검증해 재사용한다.
+- `publish`는 실제 WordPress 인벤토리를 Publisher 잠금 안에서 다시 조회하고 현재 bundle에 이미 결합된 의미 검토의 digest·policy·신선도를 다시 검사한 후 draft만 만든다. 동일한 원고와 정책에 대해 의미 검토 API를 다시 호출하지 않으며, review가 없거나 만료·불일치하면 먼저 `manual-review`/`review`를 다시 수행해야 한다. 공개 승격 절차는 변경하지 않았다.
 
 ## 사용 흐름
 

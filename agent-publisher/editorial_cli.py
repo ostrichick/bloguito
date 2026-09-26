@@ -126,10 +126,13 @@ def main():
     if args.action == 'publish' and args.inventory:
         parser.error('publish cannot use an inventory override')
     if args.action == 'publish':
-        from sync_wordpress_inventory import sync_inventory
-        sync_inventory()
+        if not data.get('review'):
+            raise ValueError('publish_requires_existing_semantic_review: run manual-review or review first')
+        from agents.publisher import PublisherAgent
+        print('Draft ID:', PublisherAgent().publish(article_from_bundle(data)))
+        return
     inventory = json.loads(args.inventory.read_text(encoding='utf-8')) if args.inventory else load_inventory()
-    if args.action in {'review', 'manual-review', 'publish'}:
+    if args.action in {'review', 'manual-review'}:
         preflight = validate_bundle(data, inventory, require_review=False)
         if preflight['status'] != 'ready':
             print(json.dumps(preflight, ensure_ascii=False, indent=2))
@@ -138,7 +141,9 @@ def main():
         # review-only mode so a manual GPT-authored article cannot be silently
         # rewritten by the configured Gemini writer.
         data['review'] = EditorialWriterAgent(writing_enabled=False).review(data)
-    report = validate_bundle(data, inventory)
+        report = validate_bundle(data, inventory)
+    else:
+        report = validate_bundle(data, inventory)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.output:
         args.output.write_text(json.dumps({'bundle': data, 'report': report}, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -147,9 +152,6 @@ def main():
     if args.action in {'review', 'manual-review'}:
         args.file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
-    if args.action == 'publish':
-        from agents.publisher import PublisherAgent
-        print('Draft ID:', PublisherAgent().publish(article_from_bundle(data)))
 
 
 if __name__ == '__main__':

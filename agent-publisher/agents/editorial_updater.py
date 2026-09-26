@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from agents.editorial import ROOT, render, save_report, validate_bundle, excerpt_from_lead
 from agents.related_links import missing_internal_post_ids
 from agents.editorial_writer import fetch_sources, load_inventory
-from sync_wordpress_inventory import sync_inventory
+from sync_wordpress_inventory import invalidate_inventory, sync_inventory
 
 
 def _sha(content):
@@ -105,7 +105,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
                 or saved['post_name'] != current['post_name'] or saved['post_content'] != reviewed_content
                 or (update_excerpt and saved.get('post_excerpt') != new_excerpt)):
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
-        sync_inventory()
+        invalidate_inventory()
         return post_id
     finally:
         lock.rmdir()

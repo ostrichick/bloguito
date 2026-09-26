@@ -146,12 +146,14 @@ class ActionDestinationsTests(unittest.TestCase):
             with patch('agents.editorial_draft_updater.ROOT', root), \
                  patch('agents.editorial_draft_updater.DRAFTS_INDEX_FILE', index), \
                  patch('agents.editorial_draft_updater.sync_inventory'), \
+                 patch('agents.editorial_draft_updater.invalidate_inventory') as invalidate, \
                  patch('agents.editorial_draft_updater.load_inventory', return_value=inv), \
                  patch('agents.editorial_draft_updater.validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
                  patch('agents.editorial_draft_updater.fetch_sources', return_value=original['sources']), \
                  patch('agents.editorial_draft_updater.save_report'), \
                  patch('agents.editorial_draft_updater.subprocess.run', side_effect=run):
                 self.assertEqual(update_draft(345, new, hashlib.sha256(previous_body.encode()).hexdigest()), 345)
+            invalidate.assert_called_once_with()
             self.assertEqual(live['post_status'], 'draft')
             self.assertEqual(live['post_name'], 'original-slug')
             self.assertEqual(live['post_content'], expected_body)

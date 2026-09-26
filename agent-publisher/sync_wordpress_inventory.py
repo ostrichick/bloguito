@@ -20,5 +20,34 @@ def sync_inventory():
     temp.replace(INVENTORY)
 
 
+def invalidate_inventory():
+    """Make the cached full-site snapshot unusable after a WordPress mutation.
+
+    Mutation commands already verify the exact target with a fresh ``post get``
+    before and after the write. Re-downloading every post immediately afterward
+    adds a second full inventory round trip even though the command is about to
+    exit. Removing the cache forces the next independent workflow to perform its
+    normal ``sync_inventory()`` first, so no later validation can mistake the
+    pre-write snapshot for a current full-site inventory.
+    """
+    try:
+        INVENTORY.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def ensure_inventory():
+    """Refresh only when a previous mutation invalidated the local snapshot."""
+    try:
+        cached = json.loads(INVENTORY.read_text(encoding='utf-8'))
+        if (cached.get('checked_on') == datetime.now(KST).date().isoformat()
+                and isinstance(cached.get('posts'), list)):
+            return cached
+    except (OSError, ValueError, KeyError):
+        pass
+    sync_inventory()
+    return json.loads(INVENTORY.read_text(encoding='utf-8'))
+
+
 if __name__ == '__main__':
     sync_inventory()

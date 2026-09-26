@@ -90,7 +90,7 @@ class PublisherAgent:
     def _publish_editorial(self, article, image_path=None):
         from agents.editorial import validate_bundle, render, excerpt_from_lead
         from agents.editorial_writer import load_inventory
-        from sync_wordpress_inventory import sync_inventory
+        from sync_wordpress_inventory import invalidate_inventory, sync_inventory
         from config import CATEGORIES, resolve_category
         # Never accept a caller-supplied inventory or a cached quality status here.
         sync_inventory()
@@ -132,8 +132,9 @@ class PublisherAgent:
             if meta_desc:
                 subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                     str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=False, capture_output=True)
-            # Persist the new draft before another candidate can be selected in this run.
-            sync_inventory()
+            # The saved draft was reread above. Mark the full-site snapshot stale
+            # instead of downloading every post again at the end of this command.
+            invalidate_inventory()
             if image_path and image_path.exists():
                 remote_image = f'/tmp/editorial_cover_{post_id}{image_path.suffix}'
                 try:
@@ -151,7 +152,7 @@ class PublisherAgent:
         """Only migrate a stored reviewed draft whose body still equals our renderer."""
         from agents.editorial import ROOT, render, render_legacy, validate_bundle
         from agents.editorial_writer import load_inventory
-        from sync_wordpress_inventory import sync_inventory
+        from sync_wordpress_inventory import invalidate_inventory, sync_inventory
         lock = ROOT / 'data' / '.editorial-publish.lock'
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.mkdir()
@@ -199,7 +200,7 @@ class PublisherAgent:
                 raise ValueError('reformat_saved_content_mismatch')
             category = __import__('config', fromlist=['CATEGORIES']).CATEGORIES[bundle['brief']['category_key']]
             self._record_post(post_id, bundle['plan']['title'], category['id'], category['name'], status='draft', fact_manifest={'editorial_bundle': bundle})
-            sync_inventory()
+            invalidate_inventory()
             return post_id
         finally:
             lock.rmdir()
@@ -232,7 +233,7 @@ class PublisherAgent:
             raise ValueError('explicit_publication_confirmation_required: pass --confirm-publish after reviewing this draft')
         from agents.editorial import ROOT, render, validate_bundle
         from agents.editorial_writer import load_inventory, fetch_sources
-        from sync_wordpress_inventory import sync_inventory
+        from sync_wordpress_inventory import invalidate_inventory, sync_inventory
         from config import resolve_category
         lock = ROOT / 'data' / '.editorial-publish.lock'
         lock.parent.mkdir(parents=True, exist_ok=True)
@@ -281,7 +282,7 @@ class PublisherAgent:
             category = resolve_category(bundle['brief']['category_key'])
             self._record_post(int(post_id),title,category['id'],category['name'],status='publish',
                               expires_at=bundle['brief'].get('useful_until'),fact_manifest={'editorial_bundle':bundle})
-            sync_inventory()
+            invalidate_inventory()
             return int(post_id)
         finally:
             lock.rmdir()
