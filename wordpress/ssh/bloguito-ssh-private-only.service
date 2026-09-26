@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict new SSH connections to the Tailscale interface
+After=network-pre.target
+Before=ssh.socket ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/sbin/iptables -w -C INPUT ! -i tailscale0 -p tcp --dport 22 -m conntrack --ctstate NEW -j DROP 2>/dev/null || /usr/sbin/iptables -w -I INPUT 1 ! -i tailscale0 -p tcp --dport 22 -m conntrack --ctstate NEW -j DROP'
+ExecStop=/bin/sh -c '/usr/sbin/iptables -w -D INPUT ! -i tailscale0 -p tcp --dport 22 -m conntrack --ctstate NEW -j DROP 2>/dev/null || true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
