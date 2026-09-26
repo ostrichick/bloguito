@@ -120,18 +120,27 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             except (OSError, subprocess.SubprocessError):
                 pass
 
-    def remote_run(remote, **kwargs):
+    def remote_run(remote, *, retry_255=False, **kwargs):
         options = dict(kwargs)
         if options.get('text') or options.get('universal_newlines'):
             options.setdefault('encoding', 'utf-8')
         options.setdefault('timeout', 120)
+        argv = ssh_argv(remote)
         try:
-            result = _RUN(ssh_argv(remote), **options)
-        except (OSError, subprocess.SubprocessError):
+            result = _RUN(argv, **options)
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode != 255:
+                raise
             diagnose_once()
+            if retry_255:
+                return _RUN(argv, **options)
+            raise
+        except (OSError, subprocess.SubprocessError):
             raise
         if getattr(result, 'returncode', 0) == 255:
             diagnose_once()
+            if retry_255:
+                return _RUN(argv, **options)
         return result
 
     def parse_update(wp):
@@ -186,7 +195,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 raise ValueError('unexpected_wordpress_get_target')
             tail = wp[3:]
             if tail not in (["--format=json", "--allow-root"],
-                            ['--fields=post_status,post_content', '--format=json', '--allow-root']):
+                            ['--fields=post_status,post_content', '--format=json', '--allow-root'],
+                            ['--fields=post_status,post_title,post_name,post_content,post_excerpt',
+                             '--format=json', '--allow-root']):
                 raise ValueError('unexpected_wordpress_get_flags')
             return
         if parse_update(wp) is not None:
@@ -211,7 +222,14 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             wp = command[5:]
             kind = validate_wp(wp)
             remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
-            result = remote_run(remote, **kwargs)
+            read_only = (wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS
+                         or wp[:2] == ['post', 'get'] or (wp and wp[0] == 'eval'))
+            idempotent_fast_update = action == 'fast-revise-draft' and wp[:2] == ['post', 'update']
+            result = remote_run(
+                remote,
+                retry_255=read_only or idempotent_fast_update,
+                **kwargs,
+            )
             if wp == _LIGHT_INVENTORY_ARGS and getattr(result, 'returncode', 0) == 0:
                 raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
                 rows = json.loads(raw)

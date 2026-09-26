@@ -56,6 +56,64 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 transport(module._WP_PREFIX + module._LIST_ARGS,
                           capture_output=True, text=True, check=True)
         self.assertEqual(2, len([args for args, _ in calls if 'tailscale' in args]))
+        self.assertEqual(4, len([args for args, _ in calls if 'ssh' in args]))
+
+    def test_transient_255_is_retried_once_after_diagnosis(self):
+        module = load_module()
+        calls = []
+        ssh_attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal ssh_attempts
+            calls.append(list(args))
+            if 'ssh' in args:
+                ssh_attempts += 1
+                if ssh_attempts == 1:
+                    return subprocess.CompletedProcess(args, 255, stdout='', stderr='timeout')
+                return subprocess.CompletedProcess(args, 0, stdout='[]', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport(
+            'revise-draft', {463}, '100.99.177.119',
+            ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
+        result = transport(module._WP_PREFIX + module._LIST_ARGS,
+                           capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, ssh_attempts)
+        self.assertEqual(2, len([args for args in calls if 'tailscale' in args]))
+
+    def test_publish_create_255_is_not_retried(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            if 'ssh' in args:
+                return subprocess.CompletedProcess(args, 255, stdout='', stderr='lost response')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport(
+            'publish', set(), '100.99.177.119', ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
+        result = transport(module._WP_PREFIX + [
+            'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
+            '--post_status=draft', '--post_title=title', '--post_category=4',
+            '--post_excerpt=summary', '--comment_status=closed', '--allow-root', '--porcelain'],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(255, result.returncode)
+        self.assertEqual(1, len([args for args in calls if 'ssh' in args]))
+        self.assertEqual(2, len([args for args in calls if 'tailscale' in args]))
+
+    def test_fast_revise_allows_minimal_target_post_fields(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout='{}', stderr='')
+        transport = module.make_transport('fast-revise-draft', {463}, 'bloguito')
+        transport(module._WP_PREFIX + [
+            'post', 'get', '463',
+            '--fields=post_status,post_title,post_name,post_content,post_excerpt',
+            '--format=json', '--allow-root'])
 
     def test_remote_wordpress_error_does_not_trigger_tailscale_diagnostics(self):
         module = load_module()

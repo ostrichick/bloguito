@@ -696,7 +696,7 @@ class EditorialWriterAgent:
         return {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
                 'checked_at': datetime.now(KST).isoformat()}
 
-    def review_delta(self, old_bundle, new_bundle, delta):
+    def review_delta(self, old_bundle, new_bundle, delta, edit_intent):
         old_sources = {source['id']: source for source in old_bundle['sources']}
         evidence = []
         for block in [*delta.get('removed', []), *delta.get('added', [])]:
@@ -709,6 +709,7 @@ class EditorialWriterAgent:
                         'source_text': source.get('text', ''),
                     })
         payload = {
+            'edit_intent': edit_intent,
             'removed_blocks': delta.get('removed', []),
             'added_blocks': delta.get('added', []),
             'evidence': evidence,
@@ -733,6 +734,7 @@ class EditorialWriterAgent:
             'base_policy_digest': old_bundle.get('review', {}).get('policy_digest'),
             'delta_digest': digest(delta),
             'base_content_digest': digest(base_body),
+            'edit_intent': edit_intent,
             'checked_at': datetime.now(KST).isoformat(),
         }
 
