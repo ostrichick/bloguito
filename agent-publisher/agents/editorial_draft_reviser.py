@@ -10,7 +10,7 @@ from datetime import datetime
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import fetch_sources, load_inventory
 from config import DRAFTS_INDEX_FILE
-from sync_wordpress_inventory import sync_inventory
+from sync_wordpress_inventory import invalidate_inventory, sync_inventory
 
 try:
     from agents.related_links import missing_internal_post_ids
@@ -183,7 +183,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         temporary = DRAFTS_INDEX_FILE.with_suffix(".revision-tmp")
         temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(DRAFTS_INDEX_FILE)
-        sync_inventory()
+        invalidate_inventory()
         print(f"Draft revision backup: {post_backup}")
         print(f"Draft index backup: {index_backup}")
         return post_id

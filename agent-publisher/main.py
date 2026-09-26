@@ -7,7 +7,7 @@ from agents.curator import CuratorAgent
 from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent
 from agents.designer import DesignerAgent
 from agents.publisher import PublisherAgent
-from sync_wordpress_inventory import sync_inventory
+from sync_wordpress_inventory import ensure_inventory, sync_inventory
 from notifier import notify_published, notify_error, notify_pipeline_summary
 
 
@@ -57,6 +57,9 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 break
 
             try:
+                # A previous successful draft write invalidates the cached full
+                # inventory. Refresh only when another candidate actually needs it.
+                ensure_inventory()
                 # 2. 기획 및 팩트체크 (Curator)
                 curated = curator.curate(raw_item)
                 if not curated:

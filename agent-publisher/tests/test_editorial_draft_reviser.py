@@ -57,6 +57,7 @@ class EditorialDraftReviserTests(unittest.TestCase):
             with patch("agents.editorial_draft_reviser.ROOT", root), \
                  patch("agents.editorial_draft_reviser.DRAFTS_INDEX_FILE", index), \
                  patch("agents.editorial_draft_reviser.sync_inventory"), \
+                 patch("agents.editorial_draft_reviser.invalidate_inventory") as invalidate, \
                  patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
                  patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
                  patch("agents.editorial_draft_reviser.fetch_sources", return_value=new["sources"]), \
@@ -70,6 +71,7 @@ class EditorialDraftReviserTests(unittest.TestCase):
                 )
 
             self.assertEqual(result, 393)
+            invalidate.assert_called_once_with()
             self.assertEqual(live["post_status"], "draft")
             self.assertEqual(live["post_name"], "same-slug")
             self.assertEqual(live["post_content"], new_body)

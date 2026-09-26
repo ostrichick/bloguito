@@ -275,11 +275,12 @@ class EditorialTests(unittest.TestCase):
             if '--fields=post_status,post_content' in cmd:
                 return Mock(stdout=json.dumps({'post_status':'draft','post_content':article['content']}))
             return Mock(stdout='')
-        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record, patch('agents.publisher.POST_STATUS','publish'):
+        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record, patch('agents.publisher.POST_STATUS','publish'):
             clock.now.return_value=NOW
             clock.fromisoformat=datetime.fromisoformat
             self.assertEqual(PublisherAgent().publish(article),999)
-            self.assertEqual(sync.call_count,2)
+            self.assertEqual(sync.call_count,1)
+            invalidate.assert_called_once_with()
             self.assertTrue(any('--post_status=draft' in c for c in commands))
             self.assertFalse(any('--post_status=publish' in c for c in commands))
             self.assertEqual(record.call_args.kwargs['status'],'draft')

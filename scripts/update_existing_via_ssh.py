@@ -32,10 +32,39 @@ _LIST_ARGS = [
 ]
 
 
-def make_transport(host, post_id, rendered_content, expected_title=None):
+def make_transport(host, post_id, rendered_content, expected_title=None, wsl_distro=None,
+                   ssh_user=None):
     """Translate only WP list/get/update performed by the canonical updater."""
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', host):
         raise ValueError('invalid_ssh_alias')
+    if ssh_user is not None and not re.fullmatch(r'[A-Za-z0-9_.-]+', ssh_user):
+        raise ValueError('invalid_ssh_user')
+    if wsl_distro is not None and not re.fullmatch(r'[A-Za-z0-9_.-]+', wsl_distro):
+        raise ValueError('invalid_wsl_distro')
+
+    tailscale_diagnosed = False
+
+    def diagnose_tailscale_once():
+        """Best-effort diagnostics that must never replace the original SSH failure."""
+        nonlocal tailscale_diagnosed
+        if not wsl_distro or tailscale_diagnosed:
+            return
+        tailscale_diagnosed = True
+        diagnostics = [
+            ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'status'],
+            ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'ping', '-c', '1', host],
+        ]
+        for diagnostic in diagnostics:
+            try:
+                _RUN(
+                    diagnostic,
+                    capture_output=True,
+                    text=True,
+                    timeout=12,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
 
     def run(command, *args, **kwargs):
         if args or not isinstance(command, (list, tuple)) or list(command[:5]) != _PREFIX:
@@ -61,12 +90,25 @@ def make_transport(host, post_id, rendered_content, expected_title=None):
         if any(not isinstance(item, str) or '\x00' in item for item in wp):
             raise ValueError('unsafe_wordpress_argument')
         remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(x) for x in wp)
-        ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, remote]
+        destination = f'{ssh_user}@{host}' if ssh_user else host
+        ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
+        if wsl_distro:
+            # The production Tailscale interface may live only inside WSL.
+            # Keep argv structured end-to-end so the reviewed HTML never
+            # passes through an extra shell quoting layer.
+            ssh = ['wsl.exe', '-d', wsl_distro, '--', *ssh]
         options = dict(kwargs)
         if options.get('text') or options.get('universal_newlines'):
             options.setdefault('encoding', 'utf-8')
         options.setdefault('timeout', 120)
-        return _RUN(ssh, **options)
+        try:
+            result = _RUN(ssh, **options)
+        except (OSError, subprocess.SubprocessError):
+            diagnose_tailscale_once()
+            raise
+        if getattr(result, 'returncode', 0) == 255:
+            diagnose_tailscale_once()
+        return result
 
     return run
 
@@ -77,6 +119,10 @@ def main():
     parser.add_argument('--post-id', type=int, required=True)
     parser.add_argument('--expected-content-sha256', required=True)
     parser.add_argument('--ssh-host', default='bloguito')
+    parser.add_argument('--ssh-user',
+                        help='Optional SSH user, for example ubuntu when using a Tailscale IP.')
+    parser.add_argument('--wsl-distro',
+                        help='Route the restricted SSH transport through this WSL distro.')
     parser.add_argument('--confirm-update', action='store_true')
     parser.add_argument('--confirm-title-change', action='store_true')
     args = parser.parse_args()
@@ -89,7 +135,14 @@ def main():
         parser.error('reviewed bundle targets a different post')
     content = render(bundle['plan'], bundle['sources'])
     expected_title = bundle.get('plan', {}).get('title') if args.confirm_title_change else None
-    transport = make_transport(args.ssh_host, args.post_id, content, expected_title=expected_title)
+    transport = make_transport(
+        args.ssh_host,
+        args.post_id,
+        content,
+        expected_title=expected_title,
+        wsl_distro=args.wsl_distro,
+        ssh_user=args.ssh_user,
+    )
     with patch('subprocess.run', side_effect=transport):
         updated = update_existing_public_post(
             args.post_id, bundle, args.expected_content_sha256, confirmed=True,

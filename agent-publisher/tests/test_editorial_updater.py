@@ -33,6 +33,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater, 'sync_inventory'), \
+             patch.object(updater, 'invalidate_inventory') as invalidate, \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
              patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
@@ -40,6 +41,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True))
+        invalidate.assert_called_once_with()
         updates = [c for c in calls if c[5:7] == ['post', 'update']]
         self.assertEqual(1, len(updates))
         self.assertIn('--post_content=Reviewed HTML', updates[0])
@@ -74,6 +76,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         common = [patch.object(updater, 'ROOT', Path(self.temp.name)),
                   patch.object(updater, 'sync_inventory'),
+                  patch.object(updater, 'invalidate_inventory'),
                   patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}),
                   patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}),
                   patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']),
@@ -86,6 +89,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         calls.clear()
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater, 'sync_inventory'), \
+             patch.object(updater, 'invalidate_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
              patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
@@ -112,6 +116,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater, 'sync_inventory'), \
+             patch.object(updater, 'invalidate_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
              patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \

@@ -17,7 +17,7 @@ from agents.editorial_writer import fetch_sources, load_inventory
 from agents.publisher import PublisherAgent
 from agents.temporal_validation import KST
 from config import DRAFTS_INDEX_FILE, resolve_category
-from sync_wordpress_inventory import sync_inventory
+from sync_wordpress_inventory import invalidate_inventory, sync_inventory
 
 
 def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=False):
@@ -111,7 +111,7 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
                                       category['name'], status='draft',
                                       expires_at=bundle['brief']['useful_until'],
                                       fact_manifest={'editorial_bundle': bundle})
-        sync_inventory()
+        invalidate_inventory()
         print(f'Legacy draft backup: {backup}')
         print(f'Legacy draft index backup: {index_backup}')
         return post_id
