@@ -48,10 +48,16 @@ def _evidence_pairs(bundle):
     }
 
 
-_FACT_TOKEN = re.compile(
+_NUMBER_FACT_TOKEN = re.compile(
     r"\d+(?:[.,]\d+)*(?:\s*(?:원|만원|명|개|회|분|시간|시|일|월|년|%))?"
-    r"|[가-힣A-Za-z0-9]+(?:특별시|광역시|특별자치시|특별자치도|도|시|군|구|동|읍|면|리|역|센터|회관|홀|아레나|돔|체육관)"
 )
+_GEO_VENUE_CANDIDATE = re.compile(
+    r"[가-힣A-Za-z0-9]+(?:특별시|광역시|특별자치시|특별자치도|도|시|군|구|동|읍|면|리|역|센터|회관|홀|아레나|돔|체육관)"
+)
+_COMMON_REGION_TOKENS = {
+    '서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종',
+    '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주',
+}
 
 
 def _visible_text(plan):
@@ -69,8 +75,28 @@ def _visible_text(plan):
     return "\n".join(value for value in values if isinstance(value, str))
 
 
-def _fact_tokens(plan):
-    return Counter(match.group(0).replace(" ", "") for match in _FACT_TOKEN.finditer(_visible_text(plan)))
+def _fact_tokens(plan, sources):
+    visible = _visible_text(plan)
+    result = Counter(
+        match.group(0).replace(" ", "")
+        for match in _NUMBER_FACT_TOKEN.finditer(visible)
+    )
+    source_text = "\n".join(
+        source.get("text", "") for source in sources if isinstance(source, dict)
+    )
+    for match in _GEO_VENUE_CANDIDATE.finditer(visible):
+        token = match.group(0)
+        # Short Korean words such as "정리", "당시", "관리" can end in an
+        # administrative suffix by accident. Treat such strings as factual
+        # locations/venues only when the reviewed source snapshot contains the
+        # exact token. Major region names are handled explicitly below.
+        if token in source_text:
+            result[token] += 1
+    for token in _COMMON_REGION_TOKENS:
+        count = visible.count(token)
+        if count:
+            result[token] += count
+    return result
 
 
 def _high_risk_claims(plan):
@@ -85,6 +111,7 @@ def _high_risk_claims(plan):
 
 def _block_signature(block):
     return {
+        "scope": block.get("scope", "content"),
         "text": block.get("text", ""),
         "evidence": block.get("evidence", []),
         "answers": block.get("answers", []),
@@ -92,9 +119,70 @@ def _block_signature(block):
     }
 
 
+def _dedupe_evidence(items):
+    seen = set()
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = (item.get("source_id"), item.get("quote"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _structural_review_blocks(plan):
+    """Represent reader-visible structure in the scoped delta review."""
+    result = []
+    for index, section in enumerate(plan.get("sections", [])):
+        section_evidence = []
+        for paragraph in section.get("paragraphs", []):
+            section_evidence.extend(paragraph.get("evidence", []))
+        table = section.get("table") or {}
+        for row in table.get("rows", []):
+            section_evidence.extend(row.get("evidence", []))
+        section_evidence = _dedupe_evidence(section_evidence)
+        result.append({
+            "scope": f"section_heading:{index}",
+            "text": section.get("heading", ""),
+            "evidence": section_evidence,
+            "answers": [],
+            "calculations": [],
+        })
+        if table:
+            result.append({
+                "scope": f"table_structure:{index}",
+                "text": " | ".join([table.get("caption", ""), *table.get("headers", [])]),
+                "evidence": section_evidence,
+                "answers": [],
+                "calculations": [],
+            })
+    for index, faq in enumerate(plan.get("faq", [])):
+        answer = faq.get("answer") or {}
+        result.append({
+            "scope": f"faq_question:{index}",
+            "text": faq.get("question", ""),
+            "evidence": _dedupe_evidence(answer.get("evidence", [])),
+            "answers": answer.get("answers", []),
+            "calculations": [],
+        })
+    return result
+
+
+def _review_units(plan):
+    content = []
+    for item in all_blocks(plan):
+        signature = _block_signature(item)
+        signature["scope"] = "content"
+        content.append(signature)
+    return [*content, *_structural_review_blocks(plan)]
+
+
 def changed_blocks(old_bundle, new_bundle):
-    old = [_block_signature(item) for item in all_blocks(old_bundle["plan"])]
-    new = [_block_signature(item) for item in all_blocks(new_bundle["plan"])]
+    old = _review_units(old_bundle["plan"])
+    new = _review_units(new_bundle["plan"])
     old_counts = Counter(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in old)
     new_counts = Counter(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in new)
     removed = [json.loads(item) for item, count in (old_counts - new_counts).items() for _ in range(count)]
@@ -121,8 +209,8 @@ def classify_fast_edit(old_bundle, new_bundle):
     if not _evidence_pairs(new_bundle).issubset(_evidence_pairs(old_bundle)):
         reasons.append("new_evidence_added")
 
-    old_tokens = _fact_tokens(old_plan)
-    new_tokens = _fact_tokens(new_plan)
+    old_tokens = _fact_tokens(old_plan, old_bundle.get("sources", []))
+    new_tokens = _fact_tokens(new_plan, new_bundle.get("sources", []))
     added_tokens = sorted((new_tokens - old_tokens).elements())
     if added_tokens:
         reasons.append("new_fact_tokens:" + ",".join(added_tokens[:12]))
@@ -175,7 +263,7 @@ def validate_fast_edit(old_bundle, new_bundle, now=None):
     return classification
 
 
-def _review_delta(old_bundle, new_bundle, delta):
+def _review_delta(old_bundle, new_bundle, delta, edit_intent):
     if not delta["added"] and not delta["removed"]:
         return {
             "mode": "delta",
@@ -190,20 +278,27 @@ def _review_delta(old_bundle, new_bundle, delta):
                 "reader_task_preserved": True,
             },
             "issues": [],
+            "edit_intent": edit_intent,
             "checked_at": datetime.now(KST).isoformat(),
         }
     return EditorialWriterAgent(writing_enabled=False).review_delta(
         old_bundle,
         new_bundle,
         delta,
+        edit_intent,
     )
 
 
-def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False):
+def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
+                               edit_intent=None):
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError("specific_fast_draft_revision_confirmation_required")
     if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
         raise ValueError("original_content_sha256_required")
+    if (not isinstance(edit_intent, str) or not 4 <= len(edit_intent.strip()) <= 1000
+            or re.search(r'[<>\x00]', edit_intent)):
+        raise ValueError("fast_edit_intent_required")
+    edit_intent = edit_intent.strip()
     lock = ROOT / "data" / ".editorial-publish.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -225,13 +320,14 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         report = validate_fast_edit(old_bundle, bundle)
         if report["status"] != "candidate":
             raise ValueError(FULL_REVIEW_REQUIRED + ":" + json.dumps(report["reasons"], ensure_ascii=False))
-        delta_review = _review_delta(old_bundle, bundle, report["changed_blocks"])
+        delta_review = _review_delta(old_bundle, bundle, report["changed_blocks"], edit_intent)
         if (delta_review.get("issues") != []
                 or any(value is not True for value in delta_review.get("checks", {}).values())):
             raise ValueError(FULL_REVIEW_REQUIRED + ":delta_semantic_review_failed")
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
-        live = get_post(base, post_id)
+        post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+        live = get_post(base, post_id, fields=post_fields)
         expected_old = render(old_bundle["plan"], old_bundle["sources"])
         if (not verify_cas(live, status="draft", title=old_bundle["plan"]["title"],
                            content_sha=expected_content_sha256)
@@ -254,7 +350,7 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         os.chmod(index_backup, 0o600)
 
         update_post(base, post_id, {"post_content": desired, "post_excerpt": new_excerpt})
-        saved = get_post(base, post_id)
+        saved = get_post(base, post_id, fields=post_fields)
         if not verify_saved_fields(
                 saved,
                 expected={

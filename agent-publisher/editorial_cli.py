@@ -18,6 +18,7 @@ def _main():
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
     parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post or reviewed draft')
+    parser.add_argument('--edit-intent', help='fast-revise-draft only: the user-requested scope of this limited edit')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review only: exact interactive author model, e.g. GPT-5.6 Sol')
@@ -119,9 +120,12 @@ def _main():
     if args.action == 'fast-revise-draft':
         if args.inventory:
             parser.error('fast-revise-draft reads only the target WordPress draft')
+        if not args.edit_intent:
+            parser.error('fast-revise-draft requires --edit-intent')
         from agents.fast_edit import fast_revise_reviewed_draft
         print('Fast revised draft ID:', fast_revise_reviewed_draft(
-            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
+            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
+            edit_intent=args.edit_intent))
         return
     if args.action == 'update-existing':
         if args.inventory:

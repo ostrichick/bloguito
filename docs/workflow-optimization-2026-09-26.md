@@ -260,3 +260,16 @@ backup → update → post get 검증
 7. WordPress inventory를 schema v2의 `ID/post_title/post_status/content_sha256/content_urls`로 경량화했다. 신규 글 중복은 URL signature로 판정하고, 기존 글 수정에서 동일 URL 후보만 읽기 전용 단건 `post get`으로 hydrate해 기존 source-footer 예외 판정을 유지한다. SSH transport는 inventory로 관측한 후보 ID를 읽을 수만 있고 update 대상 ID에는 추가하지 않는다.
 
 단계별 표적 검증을 각각 완료한 뒤 공통 변경이 모두 끝난 상태에서 전체 Python suite를 실행했다. 첫 전체 실행은 `publisher.reformat_draft()`의 새 `hydrate_post` 로컬 import 누락 1개 원인으로 2개 테스트가 실패했고, import를 수정한 뒤 최종 재실행은 **486 tests, OK (skipped=1)**였다. 변경 Python 파일 `py_compile`과 `git diff --check`도 통과했다. 테스트 출력의 `simulated transfer interruption`은 기존 백업 실패 주입 테스트의 의도된 로그다. 현재 main 작업 트리에는 이 작업 이전부터 다른 게시물·관리자 UI·보안·복구 작업의 미커밋 변경이 함께 있어, 관련 없는 변경을 커밋에 섞지 않기 위해 이 후속 구현에서는 자동 commit/push를 수행하지 않았다.
+
+### 2026-09-26 fast-edit 최종 보강
+
+실제 #465 reviewed manifest를 mutation 없이 dry-run한 결과를 바탕으로 fast path의 경계를 한 번 더 좁혔다.
+
+- delta semantic review는 문단과 표 행뿐 아니라 **섹션 제목, 표 caption/headers, FAQ 질문**의 변경도 별도 scope로 전달한다. 표를 합치거나 머리글을 바꿨는데 reviewer가 구조 문자열을 보지 못하는 사각지대를 제거했다.
+- `fast-revise-draft`는 `--edit-intent`를 필수로 받아 이번 사용자 요청 범위를 delta reviewer에게 전달한다. reviewer는 변경 블록과 기존 evidence, edit intent만 보고 범위 밖의 제목/관련 글 개선점을 blocking issue로 만들지 않는다.
+- 대상 WordPress 조회는 `post_status,post_title,post_name,post_content,post_excerpt` 다섯 필드만 `post get`으로 읽고 `get → update → get` 3회 왕복을 유지한다. 전체 inventory는 fast path에서 받지 않는다.
+- SSH exit 255는 읽기 명령과 `fast-revise-draft`의 멱등 update만 진단 후 **1회** 재시도한다. `post create`는 응답 유실 뒤 중복 draft가 생길 수 있으므로 자동 재시도하지 않는다.
+- 새 사실 token의 지역/공연장 감지는 공식 source snapshot에 실제 등장하는 후보와 주요 광역 지역명을 중심으로 제한했다. 이전 정규식은 `정리`의 `리`, `당시`의 `시` 같은 일반 한국어를 행정구역 suffix로 오인할 수 있었다.
+- 실제 #465 bundle dry-run에서 `한눈에 보기 → 정리` 소제목 변경은 `candidate`, 제목 변경은 `FULL_REVIEW_REQUIRED(title_changed)`로 분리되는 것을 확인했다. WordPress에는 이 검증 과정에서 쓰기를 수행하지 않았다.
+
+최종 보강 후 `test_fast_edit.py` 13건, `test_editorial_cli_via_ssh_transport.py` 13건이 통과했고, 변경 Python 파일 `py_compile`, `git diff --check`, 전체 `agent-publisher/tests` **501 tests, OK (skipped=1)**를 확인했다. 전체 suite는 마지막 classifier 수정 뒤 최종 상태에서 1회 재실행했다.

@@ -10,8 +10,11 @@ from unittest.mock import Mock, patch
 from agents.editorial import render
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
+    _review_delta,
+    changed_blocks,
     classify_fast_edit,
     fast_revise_reviewed_draft,
+    validate_fast_edit,
 )
 from test_editorial_system import NOW, sample
 
@@ -28,6 +31,13 @@ class FastEditTests(unittest.TestCase):
         result = classify_fast_edit(old, new)
         self.assertEqual('candidate', result['status'])
 
+    def test_classifier_does_not_treat_plain_korean_suffix_word_as_region(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        new['plan']['sections'][0]['heading'] = '배출 방법 정리'
+        result = classify_fast_edit(old, new)
+        self.assertEqual('candidate', result['status'])
+
     def test_classifier_rejects_new_number(self):
         old, new = self._pair()
         new['plan']['lead']['text'] += ' 999원'
@@ -41,6 +51,88 @@ class FastEditTests(unittest.TestCase):
         result = classify_fast_edit(old, new)
         self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
         self.assertIn('sources_or_actions_changed', result['reasons'])
+
+    def test_classifier_rejects_title_and_related_post_changes(self):
+        old, new = self._pair()
+        new['plan']['title'] = old['plan']['title'] + ' 최신'
+        new['plan']['related_posts'] = [{
+            'post_id': 999,
+            'label': '관련 글 보기',
+            'url': 'https://lifeinfo24.org/?p=999',
+        }]
+        result = classify_fast_edit(old, new)
+        self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
+        self.assertIn('title_changed', result['reasons'])
+        self.assertIn('related_posts_changed', result['reasons'])
+
+    def test_classifier_rejects_new_high_risk_claim(self):
+        old, new = self._pair()
+        new['plan']['lead']['text'] += ' 현재 신청 가능합니다.'
+        result = classify_fast_edit(old, new)
+        self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
+        self.assertIn('new_high_risk_claim', result['reasons'])
+
+    def test_fast_validator_rejects_stale_base_review(self):
+        old, new = self._pair()
+        stale = datetime(2030, 1, 1, tzinfo=NOW.tzinfo)
+        result = validate_fast_edit(old, new, now=stale)
+        self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
+        self.assertIn('base_review_not_current', result['reasons'])
+
+    def test_delta_reviewer_receives_user_edit_intent(self):
+        old, new = self._pair()
+        delta = changed_blocks(old, new)
+        reviewed = {
+            'checks': {
+                'meaning_preserved': True,
+                'evidence_still_supports': True,
+                'conditions_preserved': True,
+                'no_new_claims': True,
+                'reader_task_preserved': True,
+            },
+            'issues': [],
+        }
+        with patch('agents.fast_edit.EditorialWriterAgent.review_delta', return_value=reviewed) as method:
+            result = _review_delta(old, new, delta, '표현만 간결하게 수정')
+        self.assertEqual(reviewed, result)
+        self.assertEqual('표현만 간결하게 수정', method.call_args.args[3])
+
+    def test_delta_includes_section_heading_change(self):
+        old, new = self._pair()
+        delta = changed_blocks(old, new)
+        scopes = {item.get('scope') for item in [*delta['removed'], *delta['added']]}
+        self.assertIn('section_heading:0', scopes)
+
+    def test_delta_includes_table_caption_and_header_change(self):
+        old = sample()
+        evidence = copy.deepcopy(old['plan']['sections'][0]['paragraphs'][0]['evidence'])
+        old['plan']['sections'][0]['table'] = {
+            'caption': '배출 요약',
+            'headers': ['지역', '수수료'],
+            'rows': [{'cells': ['서초구', '무료'], 'evidence': evidence, 'answers': ['q1']}],
+        }
+        old['plan']['sections'][0]['paragraphs'] = []
+        new = copy.deepcopy(old)
+        new['plan']['sections'][0]['table']['caption'] = '배출 정보'
+        new['plan']['sections'][0]['table']['headers'][1] = '비용'
+        delta = changed_blocks(old, new)
+        changed = [item for item in [*delta['removed'], *delta['added']]
+                   if item.get('scope') == 'table_structure:0']
+        self.assertEqual(2, len(changed))
+
+    def test_delta_includes_faq_question_change(self):
+        old = sample()
+        answer = copy.deepcopy(old['plan']['lead'])
+        old['plan']['faq'] = [{
+            'question_id': 'q1',
+            'question': '수수료가 있나요?',
+            'answer': answer,
+        }]
+        new = copy.deepcopy(old)
+        new['plan']['faq'][0]['question'] = '배출 비용이 있나요?'
+        delta = changed_blocks(old, new)
+        scopes = {item.get('scope') for item in [*delta['removed'], *delta['added']]}
+        self.assertIn('faq_question:0', scopes)
 
     def test_fast_revision_uses_only_target_get_update_get(self):
         old, new = self._pair()
@@ -73,6 +165,8 @@ class FastEditTests(unittest.TestCase):
             def run(args, **kwargs):
                 calls.append(args)
                 if args[5:7] == ['post', 'get']:
+                    self.assertIn(
+                        '--fields=post_status,post_title,post_name,post_content,post_excerpt', args)
                     return Mock(stdout=json.dumps(live))
                 if args[5:7] == ['post', 'update']:
                     live['post_content'] = next(x.split('=', 1)[1] for x in args if x.startswith('--post_content='))
@@ -102,7 +196,8 @@ class FastEditTests(unittest.TestCase):
                  patch('agents.fast_edit._review_delta', return_value=delta), \
                  patch('agents.fast_edit.subprocess.run', side_effect=run):
                 result = fast_revise_reviewed_draft(
-                    393, new, hashlib.sha256(old_body.encode()).hexdigest(), confirmed=True)
+                    393, new, hashlib.sha256(old_body.encode()).hexdigest(), confirmed=True,
+                    edit_intent='소제목 표현만 간단하게 다듬기')
 
             self.assertEqual(393, result)
             self.assertEqual(new_body, live['post_content'])
@@ -111,6 +206,13 @@ class FastEditTests(unittest.TestCase):
             saved = json.loads(index.read_text(encoding='utf-8'))[0]['fact_manifest']['editorial_bundle']
             self.assertIn('fast_edit_review', saved)
             self.assertEqual(old['review'], saved['review'])
+
+    def test_fast_revision_requires_edit_intent(self):
+        old, new = self._pair()
+        with self.assertRaisesRegex(ValueError, 'fast_edit_intent_required'):
+            fast_revise_reviewed_draft(
+                393, new, hashlib.sha256(render(old['plan'], old['sources']).encode()).hexdigest(),
+                confirmed=True)
 
 
 if __name__ == '__main__':
