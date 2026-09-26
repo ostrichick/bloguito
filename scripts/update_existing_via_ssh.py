@@ -21,6 +21,8 @@ sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 from agents.editorial import render  # noqa: E402
 from agents.editorial_updater import update_existing_public_post  # noqa: E402
+from agents.remote_transport_config import resolve_transport  # noqa: E402
+from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
 _RUN = subprocess.run
 _PREFIX = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
@@ -30,10 +32,11 @@ _LIST_ARGS = [
     '--posts_per_page=-1', '--fields=ID,post_title,post_status,post_content',
     '--format=json', '--allow-root',
 ]
+_LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 
 
 def make_transport(host, post_id, rendered_content, expected_title=None, wsl_distro=None,
-                   ssh_user=None):
+                   ssh_user=None, tailscale_ssh=False):
     """Translate only WP list/get/update performed by the canonical updater."""
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', host):
         raise ValueError('invalid_ssh_alias')
@@ -43,6 +46,7 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
         raise ValueError('invalid_wsl_distro')
 
     tailscale_diagnosed = False
+    readable_ids = {post_id}
 
     def diagnose_tailscale_once():
         """Best-effort diagnostics that must never replace the original SSH failure."""
@@ -72,7 +76,12 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
         wp = list(command[5:])
         get = ['post', 'get', str(post_id), '--format=json', '--allow-root']
         expected_update = ['post', 'update', str(post_id), '--post_content=' + rendered_content]
-        if wp != _LIST_ARGS and wp != get:
+        light_inventory = wp == _LIGHT_INVENTORY_ARGS
+        candidate_get = (
+            len(wp) == 5 and wp[:2] == ['post', 'get'] and wp[2].isdigit()
+            and int(wp[2]) in readable_ids and wp[3:] == ['--format=json', '--allow-root']
+        )
+        if wp != _LIST_ARGS and not light_inventory and wp != get and not candidate_get:
             if wp[:4] != expected_update:
                 raise ValueError('unexpected_wordpress_write_arguments')
             trailing = wp[4:]
@@ -91,8 +100,13 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
             raise ValueError('unsafe_wordpress_argument')
         remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(x) for x in wp)
         destination = f'{ssh_user}@{host}' if ssh_user else host
-        ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
-        if wsl_distro:
+        if tailscale_ssh:
+            if not wsl_distro:
+                raise ValueError('tailscale_ssh_requires_wsl_distro')
+            ssh = ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'ssh', destination, remote]
+        else:
+            ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
+        if wsl_distro and not tailscale_ssh:
             # The production Tailscale interface may live only inside WSL.
             # Keep argv structured end-to-end so the reviewed HTML never
             # passes through an extra shell quoting layer.
@@ -108,6 +122,14 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
             raise
         if getattr(result, 'returncode', 0) == 255:
             diagnose_tailscale_once()
+        if light_inventory and getattr(result, 'returncode', 0) == 0:
+            raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
+            rows = json.loads(raw)
+            if not isinstance(rows, list):
+                raise ValueError('invalid_lightweight_inventory_response')
+            for row in rows:
+                if isinstance(row, dict) and type(row.get('ID')) is int and row['ID'] > 0:
+                    readable_ids.add(row['ID'])
         return result
 
     return run
@@ -118,11 +140,14 @@ def main():
     parser.add_argument('bundle', type=Path)
     parser.add_argument('--post-id', type=int, required=True)
     parser.add_argument('--expected-content-sha256', required=True)
-    parser.add_argument('--ssh-host', default='bloguito')
+    parser.add_argument('--ssh-mode', choices=['direct', 'wsl', 'tailscale'])
+    parser.add_argument('--ssh-host')
     parser.add_argument('--ssh-user',
                         help='Optional SSH user, for example ubuntu when using a Tailscale IP.')
     parser.add_argument('--wsl-distro',
                         help='Route the restricted SSH transport through this WSL distro.')
+    parser.add_argument('--tailscale-ssh', action='store_true',
+                        help='legacy override: use `tailscale ssh` inside the selected WSL distro')
     parser.add_argument('--confirm-update', action='store_true')
     parser.add_argument('--confirm-title-change', action='store_true')
     args = parser.parse_args()
@@ -135,13 +160,21 @@ def main():
         parser.error('reviewed bundle targets a different post')
     content = render(bundle['plan'], bundle['sources'])
     expected_title = bundle.get('plan', {}).get('title') if args.confirm_title_change else None
+    config = resolve_transport(
+        ssh_mode=args.ssh_mode,
+        ssh_host=args.ssh_host,
+        ssh_user=args.ssh_user,
+        wsl_distro=args.wsl_distro,
+        tailscale_ssh=args.tailscale_ssh,
+    )
     transport = make_transport(
-        args.ssh_host,
+        config.host,
         args.post_id,
         content,
         expected_title=expected_title,
-        wsl_distro=args.wsl_distro,
-        ssh_user=args.ssh_user,
+        wsl_distro=config.wsl_distro if config.mode in {'wsl', 'tailscale'} else None,
+        ssh_user=config.user,
+        tailscale_ssh=config.mode == 'tailscale',
     )
     with patch('subprocess.run', side_effect=transport):
         updated = update_existing_public_post(

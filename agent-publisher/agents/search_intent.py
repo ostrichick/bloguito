@@ -50,21 +50,34 @@ def _url_outside_verified_source_footer(content, url):
     return url in unescape(str(soup))
 
 
-def duplicate_posts(brief, posts):
+def duplicate_posts(brief, posts, related_post_ids=None):
     import re
     def norm(value):
         return re.sub(r'[^가-힣a-z0-9]', '', value.casefold()).replace('앙코르', '앵콜')
     terms = brief.get('required_title_terms', [])
     official = set(brief.get('official_urls', []))
+    related = set(related_post_ids or ())
     # Editing an existing article can cite the same broad official policy page
     # as a distinct article. New-post discovery still rejects any source URL
     # overlap, including source-only citations, as its conservative safeguard.
     updating_existing = isinstance(brief.get('existing_post_id'), int)
+    def url_duplicate(post, url):
+        content = post.get('post_content')
+        urls = set(post.get('content_urls') or [])
+        if updating_existing:
+            if post.get('ID') in related:
+                return False
+            if isinstance(content, str):
+                return _url_outside_verified_source_footer(content, url)
+            # Lightweight inventory callers hydrate URL-overlap candidates
+            # before validation. If one reaches here unhydrated, fail closed.
+            return url in urls
+        if url in urls:
+            return True
+        return isinstance(content, str) and url in unescape(content)
     return [p for p in posts if p.get('post_status') in {'publish', 'draft', 'pending', 'future', 'private'}
             and ((terms and all(norm(t) in norm(p.get('post_title', '')) for t in terms))
-                 or any((_url_outside_verified_source_footer(p.get('post_content', ''), url)
-                         if updating_existing else url in unescape(p.get('post_content', '')))
-                        for url in official))]
+                 or any(url_duplicate(p, url) for url in official))]
 
 
 def load_briefs(category, today=None):

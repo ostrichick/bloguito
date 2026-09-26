@@ -31,6 +31,7 @@ class InventoryCacheLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             inventory = Path(folder) / 'wordpress_inventory.json'
             inventory.write_text(json.dumps({
+                'schema_version': inventory_sync.INVENTORY_SCHEMA,
                 'checked_on': inventory_sync.datetime.now(inventory_sync.KST).date().isoformat(),
                 'posts': [],
             }), encoding='utf-8')
@@ -46,6 +47,7 @@ class InventoryCacheLifecycleTests(unittest.TestCase):
 
             def sync():
                 inventory.write_text(json.dumps({
+                    'schema_version': inventory_sync.INVENTORY_SCHEMA,
                     'checked_on': inventory_sync.datetime.now(inventory_sync.KST).date().isoformat(),
                     'posts': [{'ID': 7}],
                 }), encoding='utf-8')

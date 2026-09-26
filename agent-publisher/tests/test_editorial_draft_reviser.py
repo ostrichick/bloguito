@@ -15,10 +15,11 @@ from test_editorial_system import NOW, sample
 
 
 class EditorialDraftReviserTests(unittest.TestCase):
-    def test_full_reviewed_draft_revision_preserves_identity_and_updates_manifest(self):
+    def test_full_reviewed_draft_revision_can_apply_explicit_reviewed_title_change(self):
         old = sample()
         new = copy.deepcopy(old)
         new["plan"]["lead"]["text"] = "새로 독립 검토된 원고 문장입니다."
+        new["plan"]["title"] = "새로 독립 검토된 제목"
         old_body = render(old["plan"], old["sources"])
         new_body = render(new["plan"], new["sources"])
         live = {
@@ -50,6 +51,9 @@ class EditorialDraftReviserTests(unittest.TestCase):
                     live["post_excerpt"] = next(
                         arg.split("=", 1)[1] for arg in args if arg.startswith("--post_excerpt=")
                     )
+                    title_args = [arg for arg in args if arg.startswith("--post_title=")]
+                    if title_args:
+                        live["post_title"] = title_args[0].split("=", 1)[1]
                     return Mock(stdout="Success")
                 raise AssertionError(args)
 
@@ -68,12 +72,14 @@ class EditorialDraftReviserTests(unittest.TestCase):
                     new,
                     hashlib.sha256(old_body.encode()).hexdigest(),
                     confirmed=True,
+                    confirm_title_change=True,
                 )
 
             self.assertEqual(result, 393)
             invalidate.assert_called_once_with()
             self.assertEqual(live["post_status"], "draft")
             self.assertEqual(live["post_name"], "same-slug")
+            self.assertEqual(live["post_title"], new["plan"]["title"])
             self.assertEqual(live["post_content"], new_body)
             saved_index = json.loads(index.read_text(encoding="utf-8"))
             self.assertEqual(saved_index[0]["fact_manifest"]["editorial_bundle"], new)

@@ -14,22 +14,6 @@ from test_editorial_system import NOW, sample
 
 
 class ActionDestinationsTests(unittest.TestCase):
-    def test_six_regional_booking_actions_are_supported_but_seven_are_rejected(self):
-        bundle = sample()
-        bundle['sources'][0]['actions'] = [
-            {'kind': 'booking', 'label': f'{i}지역 공연 예매',
-             'url': f'https://tickets.example.com/product/{i}'}
-            for i in range(1, 7)
-        ]
-        inventory = {'checked_on': NOW.date().isoformat(), 'posts': []}
-        self.assertNotIn('invalid_action_links', validate_bundle(
-            bundle, inventory, NOW, require_review=False)['reasons'])
-        bundle['sources'][0]['actions'].append(
-            {'kind': 'booking', 'label': '7지역 공연 예매',
-             'url': 'https://tickets.example.com/product/7'})
-        self.assertIn('invalid_action_links', validate_bundle(
-            bundle, inventory, NOW, require_review=False)['reasons'])
-
     def test_unverified_official_source_only_appears_in_citations(self):
         bundle = sample()
         html = render(bundle['plan'], bundle['sources'])
@@ -45,6 +29,38 @@ class ActionDestinationsTests(unittest.TestCase):
         self.assertNotIn('invalid_action_links', validate_bundle(bundle, inventory, NOW, require_review=False)['reasons'])
         bundle['sources'][0]['actions'][0]['url'] = 'https://www.tmoney.co.kr/aeb/biz/platformService/tmoneyGo.dev'
         self.assertIn('invalid_action_links', validate_bundle(bundle, inventory, NOW, require_review=False)['reasons'])
+
+    def test_six_distinct_regional_booking_actions_are_allowed(self):
+        bundle = sample()
+        bundle['sources'][0]['actions'] = [
+            {'kind': 'booking', 'label': f'{city} 공연 예매',
+             'url': f'https://ticket.yes24.com/Perf/{product_id}'}
+            for city, product_id in (
+                ('서울', '60153'), ('부산', '60154'), ('대구', '60208'),
+                ('대전', '60209'), ('광주', '60212'), ('인천', '60215'),
+            )
+        ]
+        inventory = {'checked_on': NOW.date().isoformat(), 'posts': []}
+        self.assertNotIn(
+            'invalid_action_links',
+            validate_bundle(bundle, inventory, NOW, require_review=False)['reasons'],
+        )
+        content = render(bundle['plan'], bundle['sources'])
+        for action in bundle['sources'][0]['actions']:
+            self.assertIn(action['url'], content)
+
+    def test_more_than_eight_actions_are_rejected(self):
+        bundle = sample()
+        bundle['sources'][0]['actions'] = [
+            {'kind': 'booking', 'label': f'지역 {index} 공연 예매',
+             'url': f'https://ticket.yes24.com/Perf/{61000 + index}'}
+            for index in range(1, 10)
+        ]
+        inventory = {'checked_on': NOW.date().isoformat(), 'posts': []}
+        self.assertIn(
+            'invalid_action_links',
+            validate_bundle(bundle, inventory, NOW, require_review=False)['reasons'],
+        )
 
     def test_footer_omits_exact_cta_url_and_uses_descriptive_evidence_label(self):
         bundle = sample()

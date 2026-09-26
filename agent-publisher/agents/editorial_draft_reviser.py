@@ -10,7 +10,8 @@ from datetime import datetime
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import fetch_sources, load_inventory
 from config import DRAFTS_INDEX_FILE
-from sync_wordpress_inventory import invalidate_inventory, sync_inventory
+from sync_wordpress_inventory import hydrate_duplicate_candidates, hydrate_post, inventory_content_sha, invalidate_inventory, sync_inventory
+from agents.wordpress_mutation import backup_json, get_post, update_post, verify_cas, verify_saved_fields
 
 try:
     from agents.related_links import missing_internal_post_ids
@@ -56,7 +57,8 @@ def _before_generated_source_footer(content):
     return content[:container].replace("\r\n", "\n")
 
 
-def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False):
+def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
+                           confirm_title_change=False):
     """Replace one unchanged reviewed draft with another fully reviewed version.
 
     This is intentionally separate from update_draft(), which only permits
@@ -79,8 +81,10 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         inventory = load_inventory()
         current = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
         if (not current or current["post_status"] != "draft"
-                or _sha(current["post_content"]) != expected_content_sha256):
+                or inventory_content_sha(current) != expected_content_sha256):
             raise ValueError("draft_missing_or_modified")
+        inventory = hydrate_post(inventory, post_id)
+        current = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
 
         if not DRAFTS_INDEX_FILE.is_file():
             raise ValueError("reviewed_draft_index_missing")
@@ -93,11 +97,13 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
 
         old_brief = old_bundle.get("brief", {})
         new_brief = bundle.get("brief", {})
+        new_title = bundle.get("plan", {}).get("title")
+        title_changed = new_title != current["post_title"]
         if (old_brief.get("id") != new_brief.get("id")
                 or old_brief.get("category_key") != new_brief.get("category_key")
                 or old_brief.get("entity") != new_brief.get("entity")
                 or current["post_title"] != old_bundle.get("plan", {}).get("title")
-                or current["post_title"] != bundle.get("plan", {}).get("title")):
+                or (title_changed and not confirm_title_change)):
             raise ValueError("draft_revision_topic_or_title_mismatch")
 
         old_rendered = render(old_bundle["plan"], old_bundle["sources"])
@@ -118,6 +124,11 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             inventory,
             posts=[p for p in inventory["posts"] if int(p["ID"]) != post_id],
         )
+        remaining = hydrate_duplicate_candidates(
+            bundle['brief'], remaining,
+            related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
+                              if isinstance(item, dict) and type(item.get('post_id')) is int},
+        )
         report = validate_bundle(bundle, remaining)
         if report["status"] != "ready":
             raise ValueError(f'draft_editorial_review_failed: {report["reasons"]}')
@@ -129,13 +140,9 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             raise ValueError("official_sources_changed_since_review")
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
-        live = json.loads(subprocess.run(
-            base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
-            capture_output=True, text=True, check=True,
-        ).stdout)
-        if (live["post_status"] != "draft"
-                or live["post_title"] != current["post_title"]
-                or _sha(live["post_content"]) != expected_content_sha256
+        live = get_post(base, post_id)
+        if (not verify_cas(live, status="draft", title=current["post_title"],
+                           content_sha=expected_content_sha256)
                 or DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before):
             raise ValueError("draft_changed_during_revision")
 
@@ -145,36 +152,31 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
 
         desired = render(bundle["plan"], bundle["sources"])
         new_excerpt = excerpt_from_lead(bundle["plan"]["lead"])
-        archive = ROOT / "data" / "editorial_runs"
-        archive.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
-        post_backup = archive / f"draft-revision-{post_id}-{stamp}.json"
+        post_backup = backup_json(ROOT, "draft-revision", post_id, live)
+        archive = ROOT / "data" / "editorial_runs"
         index_backup = archive / f"draft-revision-index-{post_id}-{stamp}.json"
-        with post_backup.open("x", encoding="utf-8") as handle:
-            json.dump(live, handle, ensure_ascii=False, indent=2)
         index_backup.write_text(index_before, encoding="utf-8")
-        os.chmod(post_backup, 0o600)
         os.chmod(index_backup, 0o600)
         save_report(bundle, report)
 
-        subprocess.run(
-            base + [
-                "post", "update", str(post_id),
-                "--post_content=" + desired,
-                "--post_excerpt=" + new_excerpt,
-                "--allow-root",
-            ],
-            capture_output=True, text=True, check=True,
-        )
-        saved = json.loads(subprocess.run(
-            base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
-            capture_output=True, text=True, check=True,
-        ).stdout)
-        if (saved["post_status"] != "draft"
-                or saved["post_title"] != live["post_title"]
-                or saved["post_name"] != live["post_name"]
-                or saved["post_content"] != desired
-                or saved.get("post_excerpt", "") != new_excerpt):
+        update_fields = {
+            "post_content": desired,
+            "post_excerpt": new_excerpt,
+        }
+        if title_changed:
+            update_fields["post_title"] = new_title
+        update_post(base, post_id, update_fields)
+        saved = get_post(base, post_id)
+        if not verify_saved_fields(
+                saved,
+                expected={
+                    "post_status": "draft",
+                    "post_title": new_title,
+                    "post_content": desired,
+                    "post_excerpt": new_excerpt,
+                },
+                preserved={"post_name": live["post_name"]}):
             raise ValueError(f"draft_revision_save_verification_failed: recover from {post_backup}")
 
         if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:

@@ -17,7 +17,7 @@ from agents.editorial_writer import fetch_sources, load_inventory
 from agents.publisher import PublisherAgent
 from agents.temporal_validation import KST
 from config import DRAFTS_INDEX_FILE, resolve_category
-from sync_wordpress_inventory import invalidate_inventory, sync_inventory
+from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 
 
 def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=False):
@@ -47,7 +47,7 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         matching = [row for row in inventory['posts'] if int(row['ID']) == post_id]
         if (len(matching) != 1 or matching[0]['post_status'] != 'draft'
                 or matching[0]['post_title'] != bundle['plan']['title']
-                or hashlib.sha256(matching[0]['post_content'].encode()).hexdigest() != expected_content_sha256):
+                or inventory_content_sha(matching[0]) != expected_content_sha256):
             raise ValueError('legacy_draft_missing_modified_or_title_mismatch')
 
         if not DRAFTS_INDEX_FILE.is_file():
@@ -59,6 +59,11 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
             raise ValueError('draft_already_has_reviewed_manifest')
 
         remainder = dict(inventory, posts=[row for row in inventory['posts'] if int(row['ID']) != post_id])
+        remainder = hydrate_duplicate_candidates(
+            bundle['brief'], remainder,
+            related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
+                              if isinstance(item, dict) and type(item.get('post_id')) is int},
+        )
         report = validate_bundle(bundle, remainder)
         if report['status'] != 'ready':
             raise ValueError(f'editorial_review_not_current: {report["reasons"]}')

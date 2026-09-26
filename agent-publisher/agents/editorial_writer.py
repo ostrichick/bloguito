@@ -3,10 +3,10 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 import requests
@@ -18,6 +18,7 @@ from agents.editorial import policy, policy_fingerprint, digest, validate_bundle
 from agents.fact_validation import snapshot
 from agents.search_intent import INVENTORY
 from agents.temporal_validation import KST, extract_evidence
+from agents.workflow_metrics import increment, timed
 
 
 class Evidence(BaseModel):
@@ -25,25 +26,16 @@ class Evidence(BaseModel):
     quote: str
 
 
-class DerivedCalculation(BaseModel):
-    operation: Literal['sum']
-    unit: Literal['원']
-    operands: list[int] = Field(min_length=2, max_length=8)
-    result: int = Field(gt=0)
-
-
 class Paragraph(BaseModel):
     text: str
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
-    calculations: list[DerivedCalculation] = Field(default_factory=list)
 
 
 class InformationTableRow(BaseModel):
     cells: list[str]
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
-    calculations: list[DerivedCalculation] = Field(default_factory=list)
 
 
 class InformationTable(BaseModel):
@@ -96,6 +88,19 @@ class Checks(BaseModel):
 
 class Review(BaseModel):
     checks: Checks
+    issues: list[str]
+
+
+class DeltaChecks(BaseModel):
+    meaning_preserved: bool
+    evidence_still_supports: bool
+    conditions_preserved: bool
+    no_new_claims: bool
+    reader_task_preserved: bool
+
+
+class DeltaReview(BaseModel):
+    checks: DeltaChecks
     issues: list[str]
 
 
@@ -203,12 +208,19 @@ def _official_request_headers(url):
     parsed = urlsplit(url)
     nol_product = (parsed.scheme == 'https' and parsed.hostname == 'nol.yanolja.com'
                    and re.fullmatch(r'/ticket/products/\d+', parsed.path))
+    yes24_product = (
+        parsed.scheme == 'https'
+        and parsed.hostname == 'm.ticket.yes24.com'
+        and parsed.path == '/Perf/Detail/PerfInfo.aspx'
+        and re.fullmatch(r'\d+', (parse_qs(parsed.query).get('IdPerf') or [''])[0])
+        and re.fullmatch(r'\d+', (parse_qs(parsed.query).get('IdSubGenre') or [''])[0])
+    )
     airport_public = (
         parsed.scheme == 'https'
         and parsed.hostname in {'www.airport.kr', 'airinfo.airport.kr'}
         and re.fullmatch(r'/ap_ko/\d+/subview\.do', parsed.path)
     )
-    if nol_product or airport_public:
+    if nol_product or yes24_product or airport_public:
         return {
             'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                            'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -218,8 +230,6 @@ def _official_request_headers(url):
             'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
         }
     return {}
-
-
 def _normalize_nol_product_text(text, url):
     """Drop only volatile social counters from a verified NOL product page."""
     parsed = urlsplit(url)
@@ -275,6 +285,107 @@ def _normalize_seocho_property_tax_text(text, url):
     return '\n'.join(lines[:index] + lines[index + 2:])
 
 
+def _normalize_post239_chuseok_sources(text, url):
+    """Remove only verified volatile chrome from the exact #239 source set."""
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    lines = text.splitlines()
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'www.korea.kr'
+            and parsed.path == '/briefing/pressReleaseView.do'
+            and query == {'newsId': ['156782379']}):
+        matches = [index for index, line in enumerate(lines)
+                   if line.strip() == '실시간 인기뉴스']
+        if len(matches) != 1:
+            raise ValueError('post239_koreakr_dynamic_section_changed')
+        return '\n'.join(lines[:matches[0]]).rstrip()
+
+    royal = {
+        '20260921134912308090': ('창덕궁', '2026-09-21'),
+        '20260916111620269300': ('종묘', '2026-09-16'),
+    }
+    royal_id = (query.get('id') or [None])[0]
+    if (parsed.scheme == 'https' and parsed.hostname == 'royal.khs.go.kr'
+            and parsed.path == '/ROYAL/contents/R403000000.do'
+            and royal_id in royal):
+        label, published = royal[royal_id]
+        matches = [
+            index for index in range(len(lines) - 2)
+            if lines[index].strip() == label
+            and re.fullmatch(r'\d+', lines[index + 1].strip())
+            and lines[index + 2].strip() == published
+        ]
+        if len(matches) != 1:
+            raise ValueError('post239_royal_view_counter_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index + 1] + lines[index + 2:])
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'm.mmca.go.kr'
+            and parsed.path == '/pr/newsDetail.do'
+            and query == {'bdCId': ['202609080010583']}):
+        matches = [
+            index for index in range(len(lines) - 2)
+            if lines[index].strip() == '조회수'
+            and re.fullmatch(r'\d+', lines[index + 1].strip())
+            and lines[index + 2].strip() == 'SNS 공유'
+        ]
+        if len(matches) != 1:
+            raise ValueError('post239_mmca_view_counter_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 2:])
+
+    return text
+
+
+def _naver_post233_price_reference_text(soup, url):
+    """Extract the reviewed Naver post body without volatile blog chrome.
+
+    This exception is deliberately locked to the one price-comparison post used
+    by draft #233.  Likes, recommendations and neighboring-post widgets change
+    independently of the article, while ``.se-main-container`` contains the
+    authored comparison itself.
+    """
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if not (parsed.scheme == 'https' and parsed.hostname == 'blog.naver.com'
+            and parsed.path == '/PostView.naver'
+            and query == {'blogId': ['coocoo625'], 'logNo': ['223501023245']}):
+        return None
+    bodies = soup.select('div.se-main-container')
+    if len(bodies) != 1:
+        raise ValueError('post233_naver_price_body_missing_or_ambiguous')
+    text = bodies[0].get_text('\n', strip=True)
+    if len(text) < 500:
+        raise ValueError('post233_naver_price_body_too_short')
+    return text
+
+
+def _yna_post233_distribution_reference_text(soup, url):
+    """Extract only the reviewed Yonhap article body used by draft #233.
+
+    The Yonhap page surrounds the article with live ranking/recommendation
+    modules that can change between source review and the final CAS update.
+    Lock this normalization to the exact article URL and require the two
+    distribution facts used by #233 before returning the stable article body.
+    """
+    parsed = urlsplit(url)
+    if not (parsed.scheme == 'https' and parsed.hostname == 'www.yna.co.kr'
+            and parsed.path == '/view/AKR20260619134300017'
+            and not parsed.query):
+        return None
+    bodies = soup.select('div.story-news.article')
+    if len(bodies) != 1:
+        raise ValueError('post233_yna_body_missing_or_ambiguous')
+    text = bodies[0].get_text('\n', strip=True)
+    required = (
+        '현재 편의점 판매가 허용된 의약품은 모두 13종이다.',
+        '실제로 구입할 수 있는 의약품은 11종이다.',
+    )
+    if len(text) < 1500 or any(phrase not in text for phrase in required):
+        raise ValueError('post233_yna_body_required_facts_missing')
+    return text
+
+
 def _official_get(url):
     """Fetch an official URL without trusting arbitrary redirects.
 
@@ -302,10 +413,92 @@ def _official_get(url):
 
 
 def fetch_sources(brief):
+    with timed('source_fetch'):
+        official_urls = brief['official_urls']
+        reference_urls = brief.get('reference_urls', [])
+        if len(official_urls) > 7:
+            raise ValueError('too_many_editorial_sources')
+        requested = ([('official', url) for url in official_urls]
+                     + [('reference', url) for url in reference_urls])
+        if len(requested) > 8:
+            raise ValueError('too_many_editorial_sources')
+        if not requested:
+            return []
+        increment('source_fetch_requests', len(requested))
+        workers = min(4, len(requested))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_fetch_single_source, brief, source_type, url)
+                for source_type, url in requested
+            ]
+            results = [future.result() for future in futures]
+        for index, source in enumerate(results):
+            source['id'] = f's{index}'
+        return results
+
+
+def _fetch_single_source(brief, source_type, url):
+    single = dict(brief)
+    single['official_urls'] = [url] if source_type == 'official' else []
+    single['reference_urls'] = [url] if source_type == 'reference' else []
+    rows = _fetch_sources_sequential(single)
+    if len(rows) != 1:
+        raise ValueError('single_source_fetch_failed')
+    return rows[0]
+
+
+def fetch_sources_subset(brief, existing_sources, source_ids):
+    """Re-fetch only selected source IDs while preserving reviewed metadata.
+
+    Returns a list of refreshed source records in the same order as source_ids.
+    Manual metadata such as actions/citation labels is retained from the
+    existing reviewed snapshot; text/title/hash/fetched_at come from the fresh
+    network read.
+    """
+    by_id = {source.get('id'): source for source in existing_sources}
+    if not isinstance(source_ids, (list, tuple)) or not source_ids:
+        raise ValueError('source_ids_required')
+    if len(set(source_ids)) != len(source_ids) or any(source_id not in by_id for source_id in source_ids):
+        raise ValueError('unknown_or_duplicate_source_id')
+    with timed('source_subset_fetch'):
+        increment('source_fetch_requests', len(source_ids))
+        workers = min(4, len(source_ids))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(
+                    _fetch_single_source,
+                    brief,
+                    by_id[source_id].get('source_type'),
+                    by_id[source_id]['url'],
+                )
+                for source_id in source_ids
+            ]
+            fresh_rows = [future.result() for future in futures]
+    refreshed = []
+    snapshot_keys = {'id', 'url', 'title', 'text', 'source_type', 'fetched_at', 'sha256'}
+    for source_id, fresh in zip(source_ids, fresh_rows):
+        prior = by_id[source_id]
+        merged = {key: value for key, value in prior.items() if key not in snapshot_keys}
+        merged.update(fresh)
+        merged['id'] = source_id
+        refreshed.append(merged)
+    return refreshed
+
+
+def _fetch_sources_sequential(brief):
     sources = []
-    if len(brief['official_urls']) > 7:
+    official_urls = brief['official_urls']
+    reference_urls = brief.get('reference_urls', [])
+    if len(official_urls) > 7:
         raise ValueError('too_many_editorial_sources')
-    for i, url in enumerate(brief['official_urls']):
+    requested = ([('official', url) for url in official_urls]
+                 + [('reference', url) for url in reference_urls])
+    # A multi-city event can need one official tour listing plus one official
+    # product page per region. Keep the collection bounded while permitting a
+    # seven-source six-city verification set.
+    if len(requested) > 8:
+        raise ValueError('too_many_editorial_sources')
+    for i, (source_type, url) in enumerate(requested):
         # Redirects require updating the reviewed URL rather than silently trusting another host.
         response = _official_get(url)
         if response.status_code != 200:
@@ -321,7 +514,7 @@ def fetch_sources(brief):
             if not 80 <= len(text) <= 60000:
                 raise ValueError('official_pdf_text_missing_or_too_large')
             title = brief['entity'] + ' 공식 첨부 PDF'
-            sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})
+            sources.append({'id': f's{i}', **snapshot(url, title, text, source_type)})
             continue
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
@@ -416,6 +609,10 @@ def fetch_sources(brief):
             tag.decompose()
         text = _koreakr_article_text(soup, url)
         if text is None:
+            text = _naver_post233_price_reference_text(soup, url)
+        if text is None:
+            text = _yna_post233_distribution_reference_text(soup, url)
+        if text is None:
             text = soup.get_text('\n', strip=True)
         # Government article page counters change on every read. They are not
         # policy evidence, so omit only the standalone view-count metadata;
@@ -425,9 +622,10 @@ def fetch_sources(brief):
         text = _normalize_nol_product_text(text, url)
         text = _normalize_efine_text(text, url)
         text = _normalize_seocho_property_tax_text(text, url)
+        text = _normalize_post239_chuseok_sources(text, url)
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')
-        sources.append({'id': f's{i}', **snapshot(url, title, text, 'official')})
+        sources.append({'id': f's{i}', **snapshot(url, title, text, source_type)})
     return sources
 
 
@@ -478,8 +676,9 @@ class EditorialWriterAgent:
 
     def review(self, bundle):
         body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
-        result = self._call(
-            '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, 표의 각 행·셀, FAQ를 원문과 대조하라. '
+        with timed('semantic_review'):
+            result = self._call(
+                '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, 표의 각 행·셀, FAQ를 원문과 대조하라. '
             '인용이 존재해도 해당 주장을 뒷받침하지 않으면 실패다. 수치의 단위, 부정/긍정, 예외, 대상·지역, '
             '신청과 사용기간을 대조하고 중요한 조건 누락·출처 간 충돌을 거부하라. '
             'reader_questions마다 답이 본문에 충분히 있는지 검토하라. '
@@ -493,9 +692,49 @@ class EditorialWriterAgent:
             'plan.related_posts가 있으면 각 ID·현재 공개 상태·관련성·도착 주제와 기존 관련 글 링크의 보존을 검토하라. '
             '내부 관련 글은 공식 출처나 신청·조회 버튼이 아니다. '
             '각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
-            body, Review, 'reviewer')
+                body, Review, 'reviewer')
         return {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
                 'checked_at': datetime.now(KST).isoformat()}
+
+    def review_delta(self, old_bundle, new_bundle, delta):
+        old_sources = {source['id']: source for source in old_bundle['sources']}
+        evidence = []
+        for block in [*delta.get('removed', []), *delta.get('added', [])]:
+            for item in block.get('evidence', []):
+                source = old_sources.get(item.get('source_id'))
+                if source:
+                    evidence.append({
+                        'source_id': item.get('source_id'),
+                        'quote': item.get('quote'),
+                        'source_text': source.get('text', ''),
+                    })
+        payload = {
+            'removed_blocks': delta.get('removed', []),
+            'added_blocks': delta.get('added', []),
+            'evidence': evidence,
+            'reader_questions': old_bundle.get('brief', {}).get('reader_questions', []),
+        }
+        with timed('delta_semantic_review'):
+            result = self._call(
+                '이미 전체 독립 검토를 통과한 원고의 제한된 후속 편집만 검토한다. 입력에 제공된 변경 전/후 블록과 '
+                '연결 evidence만 비교하라. 제목, 다른 절, 관련 글 등 변경 범위 밖의 개선점을 찾지 말라. '
+                '표 재배치, 중복 삭제, 같은 근거 안의 자연스러운 표현 수정은 허용하되 새 사실, 새 조건, 의미 반전, '
+                '근거 범위 확대가 있으면 실패시켜라. 모든 checks는 완전히 충족할 때만 true로 하고 issues에는 변경 '
+                '블록 안의 구체적인 문제만 기록하라.',
+                payload,
+                DeltaReview,
+                'reviewer',
+            )
+        base_body = {k: old_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in old_bundle}
+        return {
+            **result,
+            'mode': 'delta',
+            'base_review_digest': old_bundle.get('review', {}).get('digest'),
+            'base_policy_digest': old_bundle.get('review', {}).get('policy_digest'),
+            'delta_digest': digest(delta),
+            'base_content_digest': digest(base_body),
+            'checked_at': datetime.now(KST).isoformat(),
+        }
 
     def prepare(self, brief, sources, inventory, temporal_source=None):
         if not self.writing_enabled:
@@ -524,10 +763,7 @@ class EditorialWriterAgent:
                 'FAQ question_id도 반드시 reader_questions의 기존 ID를 사용하고 answer.answers에 같은 ID를 넣어라. '
                 '본문의 숫자는 해당 문단의 인용으로 증명해야 한다. 제품 개수는 5개 미만 같은 명시적 범위에 '
                 '속하는 1개 등으로 설명할 수 있으나 반드시 그 범위가 있는 인용을 연결하라. 금액·날짜는 원문 수치 표기를 유지하라. '
-                '단, 공식 인용에 있는 원 단위 금액을 단순 합산한 참고금액이 독자의 가격 판단에 직접 필요하면 '
-                '그 block의 calculations에 operation=sum, unit=원, operands=[공식 인용의 정수 금액들], result=정확한 합계를 기록하라. '
-                '곱셈·평균·백분율·날짜·나이 계산이나 인용에 없는 입력값은 calculations로 만들지 말 것. '
-                '그 밖의 새로운 계산/근거 없는 이유/조언/분량 채우기를 하지 말 것. '
+                '새로운 계산/근거 없는 이유/조언/분량 채우기를 하지 말 것. '
                 '유효한 조건과 절차를 보존하고 기존 issues를 고쳐라.',
                 {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, Plan, 'writer')
             bundle['plan'] = plan

@@ -99,6 +99,21 @@
       "source_event_phrase": "9월 24일(목)~9월 27일(일)까지  전국  9천여 곳  공공주차장   무료  개방  안내",
       "source_date_phrase": "2026. 9. 22.(화) 12:00",
       "reason": "The user explicitly requested a useful, well-formatted publication of existing legacy draft #237 on 2026-09-24 after the Ministry of the Interior and Safety published the current 2026 nationwide free-parking dataset. This exception is limited to that exact draft, exact official source set and the 2026-09-27 holiday window; it does not make every public or school parking area free, certify a space as currently available, or weaken the 30-day rule for another dated article."
+    },
+    "2026-chuseok-palace-post-239-refresh": {
+      "existing_post_id": 239,
+      "useful_until": "2026-09-27",
+      "official_urls": [
+        "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156782379",
+        "https://royal.khs.go.kr/ROYAL/contents/R702000000.do",
+        "https://royal.khs.go.kr/ROYAL/contents/R403000000.do?id=20260921134912308090&schBcid=notice01&schM=view",
+        "https://royal.khs.go.kr/ROYAL/contents/R403000000.do?id=20260916111620269300&schBcid=notice01&schM=view",
+        "https://m.mmca.go.kr/pr/newsDetail.do?bdCId=202609080010583"
+      ],
+      "source_event_url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156782379",
+      "source_event_phrase": "9월 24일(목)부터 27일(일)까지",
+      "source_date_phrase": "2026.09.18",
+      "reason": "The user explicitly requested a richer, better-formatted refresh of existing legacy draft #239 on 2026-09-24 while keeping it as a draft. This exception is limited to that exact draft, exact official source set and the 2026-09-27 holiday window; it does not make Changdeokgung Secret Garden free, make every site share the same viewing hours or reservation rules, or weaken the 30-day rule for another dated article."
     }
   },
   "source_max_age_hours": 24,
@@ -128,14 +143,14 @@
       "existing_post_id": 85,
       "category_key": "welfare",
       "content_type": "evergreen",
-      "entity": "복지멤버십·정부24 혜택알리미 상시 탐색 경로",
+      "entity": "복지멤버십, 정부24 혜택알리미 상시 탐색 경로",
       "question": "복지멤버십과 현행 정부24 혜택 탐색의 공식 메뉴를 어떻게 이용하고 개별 사업 접수로 구분하나요?",
-      "title": "놓친 복지혜택 찾는 순서: 복지멤버십·보조금24 조회부터 실제 신청까지",
+      "title": "놓친 복지혜택 찾는 순서: 복지멤버십, 보조금24 조회부터 실제 신청까지",
       "required_title_terms": [
         "복지멤버십",
         "보조금24"
       ],
-      "evergreen_reason": "특정 개별 급여의 모집기간이나 당일 가입 가능성을 주장하지 않고 확인된 기관별 안내 메뉴와 개별 사업 조건 확인·접수 구분 절차만 다룬다.",
+      "evergreen_reason": "특정 개별 급여의 모집기간이나 당일 가입 가능성을 주장하지 않고 확인된 기관별 안내 메뉴와 개별 사업 조건 확인, 접수 구분 절차만 다룬다.",
       "official_urls": [
         "https://plus.gov.kr/portal/benefitV2/myBenefit/",
         "https://m.bokjiro.go.kr/ssis-tem/cms/mob/customer/sitemap/index.html",
@@ -144,14 +159,14 @@
       ],
       "official_navigation": [
         {
-          "label": "복지로 복지멤버십 제도·이용 방법 메뉴",
+          "label": "복지로 복지멤버십 제도, 이용 방법 메뉴",
           "url": "https://m.bokjiro.go.kr/ssis-tem/cms/mob/customer/sitemap/index.html",
-          "note": "공식 사이트맵에서 맞춤형급여안내(복지멤버십) 메뉴에 진입해 제도 안내·이용 방법을 보세요. 실제 온라인 가입 양식·신청 가능 여부는 확인되지 않았습니다."
+          "note": "공식 사이트맵에서 맞춤형급여안내(복지멤버십) 메뉴에 진입해 제도 안내와 이용 방법을 보세요. 실제 온라인 가입 양식이나 신청 가능 여부는 확인되지 않았습니다."
         },
         {
           "label": "정부24 혜택알리미 나의 혜택 메뉴",
           "url": "https://plus.gov.kr/portal/benefitV2/myBenefit/",
-          "note": "현행 혜택알리미의 나의 혜택 메뉴에 진입합니다. 로그인·본인 인증이 필요하며 과거 보조금24와 기능이 동일하다고 단정하지 않습니다."
+          "note": "현행 혜택알리미의 나의 혜택 메뉴에 진입합니다. 로그인과 본인 인증이 필요하며 과거 보조금24와 기능이 동일하다고 단정하지 않습니다."
         }
       ],
       "service_rows": [
@@ -162,7 +177,7 @@
         "대상",
         "경제 조건",
         "신청 기간",
-        "중복·제외 조건",
+        "중복, 제외 조건",
         "접수 방법"
       ],
       "reason": "User explicitly approved complete modernization of existing published #85 on 2026-09-23, exclusively as a timeless verified menu-navigation procedural guide; general welfare 30-day gate, live benefit eligibility, actual application availability, and dated outage reporting are not exempt."

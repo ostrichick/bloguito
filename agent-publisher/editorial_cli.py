@@ -1,21 +1,23 @@
 """Shared manual/automation entry point. Review writes reports; publish creates drafts only."""
 import argparse
 import json
+import sys
 from pathlib import Path
 from agents.editorial import validate_bundle, render
 from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, load_inventory, fetch_sources
+from agents.workflow_metrics import workflow_run
 
 
-def main():
+def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'revise-draft', 'replace-legacy-draft', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'revise-draft', 'fast-revise-draft', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
     parser.add_argument('--post-id', type=int, help='specific existing public post to update')
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
-    parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post')
+    parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post or reviewed draft')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review only: exact interactive author model, e.g. GPT-5.6 Sol')
@@ -93,6 +95,13 @@ def main():
         print('Upgraded legacy draft ID:', upgrade_legacy_draft(
             args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
         return
+    if args.action == 'repair-draft-category':
+        if args.inventory:
+            parser.error('repair-draft-category always queries WordPress')
+        from agents.editorial_draft_category import repair_reviewed_draft_category
+        print('Repaired draft category ID:', repair_reviewed_draft_category(
+            args.post_id, args.expected_content_sha256, confirmed=args.confirm_update))
+        return
     if args.action == 'update-draft':
         if args.inventory:
             parser.error('update-draft always queries WordPress')
@@ -104,6 +113,14 @@ def main():
             parser.error('revise-draft always queries WordPress')
         from agents.editorial_draft_reviser import revise_reviewed_draft
         print('Revised draft ID:', revise_reviewed_draft(
+            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
+            confirm_title_change=args.confirm_title_change))
+        return
+    if args.action == 'fast-revise-draft':
+        if args.inventory:
+            parser.error('fast-revise-draft reads only the target WordPress draft')
+        from agents.fast_edit import fast_revise_reviewed_draft
+        print('Fast revised draft ID:', fast_revise_reviewed_draft(
             args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
         return
     if args.action == 'update-existing':
@@ -152,6 +169,12 @@ def main():
     if args.action in {'review', 'manual-review'}:
         args.file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
+
+
+def main():
+    action = sys.argv[1] if len(sys.argv) > 1 else 'unknown'
+    with workflow_run(action):
+        return _main()
 
 
 if __name__ == '__main__':

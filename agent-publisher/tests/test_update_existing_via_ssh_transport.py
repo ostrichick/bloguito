@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -144,6 +145,31 @@ class UpdateExistingViaSshTransportTests(unittest.TestCase):
             module.make_transport('100.99.177.119', 139, 'x', ssh_user='ubuntu;id')
         with self.assertRaisesRegex(ValueError, 'invalid_wsl_distro'):
             module.make_transport('100.99.177.119', 139, 'x', wsl_distro='Ubuntu 24.04')
+
+    def test_lightweight_inventory_allows_candidate_read_but_not_write(self):
+        module = load_module()
+        inventory = [{
+            'ID': 700,
+            'post_title': 'candidate',
+            'post_status': 'publish',
+            'content_sha256': '0' * 64,
+            'content_urls': ['https://example.org/a'],
+        }]
+
+        def fake_run(args, **kwargs):
+            remote = args[-1]
+            if ' wp eval ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(inventory), stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+
+        module._RUN = fake_run
+        run = module.make_transport('bloguito', 139, 'rendered')
+        run(module._PREFIX + module._LIGHT_INVENTORY_ARGS,
+            capture_output=True, text=True, check=True)
+        run(module._PREFIX + ['post', 'get', '700', '--format=json', '--allow-root'],
+            capture_output=True, text=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_write_arguments'):
+            run(module._PREFIX + ['post', 'update', '700', '--post_content=x', '--allow-root'])
 
 
 if __name__ == '__main__':

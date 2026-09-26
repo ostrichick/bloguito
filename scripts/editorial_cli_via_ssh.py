@@ -17,6 +17,7 @@ has a fixed WP-CLI allowlist, and Tailscale diagnostics run only after SSH fails
 """
 
 import argparse
+import json
 import re
 import shlex
 import subprocess
@@ -29,6 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 import editorial_cli  # noqa: E402
+from agents.remote_transport_config import resolve_transport  # noqa: E402
+from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
 
 _RUN = subprocess.run
@@ -38,13 +41,15 @@ _LIST_ARGS = [
     '--post_status=publish,draft,pending,future,private', '--posts_per_page=-1',
     '--fields=ID,post_title,post_status,post_content', '--format=json', '--allow-root',
 ]
+_LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
 _SUPPORTED_ACTIONS = {
-    'publish', 'revise-draft', 'update-draft', 'replace-legacy-draft',
+    'publish', 'revise-draft', 'fast-revise-draft', 'update-draft', 'replace-legacy-draft',
     'promote-draft', 'reformat', 'fix-excerpt',
 }
 _UPDATE_FIELDS = {
     'revise-draft': {'post_content', 'post_excerpt'},
+    'fast-revise-draft': {'post_content', 'post_excerpt'},
     'update-draft': {'post_content'},
     'replace-legacy-draft': {'post_content', 'post_excerpt'},
     'promote-draft': {'post_status'},
@@ -81,17 +86,23 @@ def _target_ids(action, cli_args):
     return ids
 
 
-def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None):
+def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
+                   allow_title_change=False, tailscale_ssh=False):
     if action not in _SUPPORTED_ACTIONS:
         raise ValueError('unsupported_editorial_ssh_action')
     _safe_identifier(host, 'ssh_host')
     _safe_identifier(ssh_user, 'ssh_user')
     _safe_identifier(wsl_distro, 'wsl_distro')
     allowed_ids = set(int(value) for value in target_ids)
+    readable_ids = set(allowed_ids)
     diagnosed = False
 
     def ssh_argv(remote):
         destination = f'{ssh_user}@{host}' if ssh_user else host
+        if tailscale_ssh:
+            if not wsl_distro:
+                raise ValueError('tailscale_ssh_requires_wsl_distro')
+            return ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'ssh', destination, remote]
         command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
         return ['wsl.exe', '-d', wsl_distro, '--', *command] if wsl_distro else command
 
@@ -138,14 +149,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None):
                 raise ValueError('unexpected_wordpress_update_flags')
             fields[key] = value
         expected = _UPDATE_FIELDS.get(action, set())
-        if set(fields) != expected:
+        allowed_field_sets = {frozenset(expected)}
+        if action == 'revise-draft' and allow_title_change:
+            allowed_field_sets.add(frozenset(expected | {'post_title'}))
+        if frozenset(fields) not in allowed_field_sets:
             raise ValueError('unexpected_wordpress_update_flags')
         if action == 'promote-draft' and fields.get('post_status') != 'publish':
             raise ValueError('unexpected_wordpress_update_flags')
         return post_id
 
     def validate_wp(wp):
-        if wp == _LIST_ARGS:
+        if wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS:
             return
         if any(not isinstance(item, str) or '\x00' in item for item in wp):
             raise ValueError('unsafe_wordpress_argument')
@@ -168,7 +182,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None):
             return 'create'
         if wp[:2] == ['post', 'get'] and len(wp) in {5, 6} and wp[2].isdigit():
             post_id = int(wp[2])
-            if post_id not in allowed_ids:
+            if post_id not in readable_ids:
                 raise ValueError('unexpected_wordpress_get_target')
             tail = wp[3:]
             if tail not in (["--format=json", "--allow-root"],
@@ -198,12 +212,21 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None):
             kind = validate_wp(wp)
             remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
             result = remote_run(remote, **kwargs)
+            if wp == _LIGHT_INVENTORY_ARGS and getattr(result, 'returncode', 0) == 0:
+                raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
+                rows = json.loads(raw)
+                if not isinstance(rows, list):
+                    raise ValueError('invalid_lightweight_inventory_response')
+                for row in rows:
+                    if isinstance(row, dict) and type(row.get('ID')) is int and row['ID'] > 0:
+                        readable_ids.add(row['ID'])
             if kind == 'create' and getattr(result, 'returncode', 0) == 0:
                 raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
                 created = raw.strip()
                 if not created.isdigit() or int(created) <= 0:
                     raise ValueError('invalid_created_wordpress_post_id')
                 allowed_ids.add(int(created))
+                readable_ids.add(int(created))
             return result
 
         if action == 'publish' and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
@@ -234,9 +257,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--ssh-host', default='bloguito')
+    parser.add_argument('--ssh-mode', choices=['direct', 'wsl', 'tailscale'])
+    parser.add_argument('--ssh-host')
     parser.add_argument('--ssh-user')
     parser.add_argument('--wsl-distro')
+    parser.add_argument('--tailscale-ssh', action='store_true',
+                        help='legacy override: use `tailscale ssh` inside the selected WSL distro')
     parser.add_argument('cli_args', nargs=argparse.REMAINDER,
                         help='Pass -- followed by editorial_cli.py arguments')
     args = parser.parse_args()
@@ -249,8 +275,18 @@ def main():
     targets = _target_ids(action, cli_args)
     if action != 'publish' and not targets:
         parser.error('a concrete target post ID is required for this action')
+    config = resolve_transport(
+        ssh_mode=args.ssh_mode,
+        ssh_host=args.ssh_host,
+        ssh_user=args.ssh_user,
+        wsl_distro=args.wsl_distro,
+        tailscale_ssh=args.tailscale_ssh,
+    )
     transport = make_transport(
-        action, targets, args.ssh_host, ssh_user=args.ssh_user, wsl_distro=args.wsl_distro)
+        action, targets, config.host, ssh_user=config.user,
+        wsl_distro=config.wsl_distro if config.mode in {'wsl', 'tailscale'} else None,
+        allow_title_change=(action == 'revise-draft' and '--confirm-title-change' in cli_args),
+        tailscale_ssh=config.mode == 'tailscale')
     with patch('subprocess.run', side_effect=transport), \
             patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):
         editorial_cli.main()

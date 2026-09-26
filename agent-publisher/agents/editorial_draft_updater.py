@@ -9,7 +9,7 @@ from datetime import datetime
 from agents.editorial import ROOT, render, save_report, validate_bundle
 from agents.editorial_writer import fetch_sources, load_inventory
 from config import DRAFTS_INDEX_FILE
-from sync_wordpress_inventory import invalidate_inventory, sync_inventory
+from sync_wordpress_inventory import hydrate_duplicate_candidates, hydrate_post, inventory_content_sha, invalidate_inventory, sync_inventory
 
 
 def _hash(text):
@@ -42,8 +42,10 @@ def update_draft(post_id, bundle, expected_content_sha256):
         current = next((p for p in inventory['posts'] if int(p['ID']) == post_id), None)
         if (not current or current['post_status'] != 'draft'
                 or current['post_title'] != bundle['plan']['title']
-                or _hash(current['post_content']) != expected_content_sha256):
+                or inventory_content_sha(current) != expected_content_sha256):
             raise ValueError('draft_missing_or_modified')
+        inventory = hydrate_post(inventory, post_id)
+        current = next((p for p in inventory['posts'] if int(p['ID']) == post_id), None)
 
         original_index = DRAFTS_INDEX_FILE.read_text(encoding='utf-8')
         records = json.loads(original_index)
@@ -61,6 +63,11 @@ def update_draft(post_id, bundle, expected_content_sha256):
         if evidence_sources(old_bundle['sources']) != evidence_sources(bundle['sources']):
             raise ValueError('draft_evidence_changed: independent content review required')
         remaining = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != post_id])
+        remaining = hydrate_duplicate_candidates(
+            bundle['brief'], remaining,
+            related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
+                              if isinstance(item, dict) and type(item.get('post_id')) is int},
+        )
         report = validate_bundle(bundle, remaining)
         if report['status'] != 'ready':
             raise ValueError(f'draft_editorial_review_failed: {report["reasons"]}')

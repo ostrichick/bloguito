@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 import tempfile
 import unittest
@@ -73,6 +74,26 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertEqual([], [args for args, _ in calls if 'tailscale' in args])
 
+    def test_explicit_tailscale_ssh_uses_tailscale_transport(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout='[]', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport(
+            'revise-draft', {463}, '100.99.177.119', ssh_user='ubuntu',
+            wsl_distro='Ubuntu-24.04', tailscale_ssh=True)
+        transport(module._WP_PREFIX + module._LIST_ARGS,
+                  capture_output=True, text=True, check=True)
+        self.assertEqual(
+            ['wsl.exe', '-d', 'Ubuntu-24.04', '--', 'tailscale', 'ssh',
+             'ubuntu@100.99.177.119'],
+            calls[0][:7],
+        )
+
     def test_revise_draft_allows_only_exact_target_and_fields(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
@@ -85,6 +106,17 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
             transport(module._WP_PREFIX + [
                 'post', 'update', '463', '--post_status=publish', '--allow-root'])
+
+    def test_revise_draft_title_change_requires_explicit_transport_permission(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+        command = module._WP_PREFIX + [
+            'post', 'update', '463', '--post_content=reviewed', '--post_excerpt=summary',
+            '--post_title=reviewed title', '--allow-root']
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            module.make_transport('revise-draft', {463}, 'bloguito')(command)
+        module.make_transport(
+            'revise-draft', {463}, 'bloguito', allow_title_change=True)(command)
 
     def test_promote_allows_only_publish_status(self):
         module = load_module()
@@ -129,6 +161,33 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport = module.make_transport('revise-draft', {463}, 'bloguito')
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + ['option', 'delete', 'siteurl', '--allow-root'])
+
+    def test_lightweight_inventory_grants_read_only_candidate_get(self):
+        module = load_module()
+        inventory = [{
+            'ID': 700,
+            'post_title': 'candidate',
+            'post_status': 'publish',
+            'content_sha256': '0' * 64,
+            'content_urls': ['https://example.org/a'],
+        }]
+
+        def fake_run(args, **kwargs):
+            remote = args[-1]
+            if ' wp eval ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(inventory), stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport(module._WP_PREFIX + module._LIGHT_INVENTORY_ARGS,
+                  capture_output=True, text=True, check=True)
+        transport(module._WP_PREFIX + [
+            'post', 'get', '700', '--format=json', '--allow-root'],
+            capture_output=True, text=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_target'):
+            transport(module._WP_PREFIX + [
+                'post', 'update', '700', '--post_content=x', '--post_excerpt=y', '--allow-root'])
 
 
 if __name__ == '__main__':

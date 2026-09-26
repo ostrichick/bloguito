@@ -49,7 +49,7 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
-3. `editorial_cli.py sources/review/check`의 안내에 따라 검증 원고를 구성한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
+3. `editorial_cli.py sources/review/check`의 안내에 따라 검증 원고를 구성한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 이미 검토된 사실·출처·CTA·제목을 그대로 유지하면서 표 재배치·중복 삭제·표현 다듬기만 할 때는 `fast-revise-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. `fast-revise-draft`는 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 `FULL_REVIEW_REQUIRED`로 중단한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 `scripts/prepare_post_approval.py`는 사용자가 아직 현재 변경안을 적용할지 검토하는 단계에서 변경 전후 비교 패키지를 만들기 위한 도구다. 같은 변경안의 실제 적용이 이미 명시적으로 승인된 뒤에는 이 패키지를 다시 만들지 않는다. 정규 `update-existing`/`revise-draft`/관련 updater가 자체적으로 최신 전체 inventory, 대상 글 CAS, 공식 source 재조회, 원본 백업, 저장 직전·직후 검증을 수행하므로 그 경로를 바로 사용한다. 승인 대상이나 변경안이 달라졌다면 새 승인으로 취급한다.
@@ -69,10 +69,15 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 
 - 기존 공개 글 `update-existing`은 `scripts/update_existing_via_ssh.py`를 사용한다. 이 어댑터는 정규 updater의 inventory/source/CAS/백업/저장 후 검증을 그대로 사용하며 허용된 대상 ID의 WP 명령만 원격 실행한다.
 - 신규 draft 생성과 기존 reviewed draft의 `revise-draft`, `update-draft`, `replace-legacy-draft`, `promote-draft`, `reformat`, `fix-excerpt`는 `scripts/editorial_cli_via_ssh.py`를 사용한다. 예: `python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- publish bundle.json`. WSL의 Tailscale 경로가 필요한 경우 `--ssh-user ubuntu --wsl-distro Ubuntu-24.04`를 추가한다.
+- 수동 편집 transport는 매 작업마다 다시 선택하지 않고 `BLOGUITO_SSH_MODE=direct|wsl|tailscale`, `BLOGUITO_SSH_HOST`, `BLOGUITO_SSH_USER`, `BLOGUITO_WSL_DISTRO` 환경설정을 기본값으로 사용한다. 명령행 `--ssh-mode`/기존 WSL·Tailscale 옵션은 일회성 override로 남긴다.
 - 위 SSH 어댑터들은 정상 경로에서 `tailscale status/ping`을 먼저 실행하지 않는다. SSH가 실패한 경우에만 transport 인스턴스당 한 번 상태 진단을 수행하고 원래 SSH 실패를 그대로 보존한다.
 - 과거 서버에서 만든 reviewed draft의 manifest가 로컬 `agent-publisher/data/draft_posts.json`에 아직 없다면 **전환 시 1회만** `scripts/sync_editorial_state_via_ssh.py`로 기존 `draft_posts.json`/`published_posts.json`을 가져온다. 이 도구는 로컬 상태 파일이 하나라도 이미 존재하면 덮어쓰기를 거부한다. 이후 로컬 상태가 정본이므로 서버 파일을 다시 가져와 덮지 않는다.
 
 이 구조에서 운영 서버 checkout의 버전이 로컬보다 오래됐다는 이유만으로 원고 review를 다시 수행할 필요가 없다. 반대로 실제 bundle, source, 정책 fingerprint, review 신선도가 달라졌다면 로컬 정본에서도 정상 검증이 차단되며 해당 review를 새로 해야 한다.
+
+WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, 본문 SHA256, 본문 URL signature만 수집한다. 신규 글의 URL 중복과 제목 중복은 이 경량 정보로 검사하고, 기존 글 수정에서 동일 공식 URL이 단순 출처인지 본문·CTA 중복인지 구분해야 할 때만 해당 후보 글의 본문을 단건 `post get`으로 추가 조회한다. 제한형 SSH transport는 inventory에서 관측된 후보 ID에 읽기 권한만 추가하며 mutation 대상 ID 집합은 확장하지 않는다.
+
+내부 성능 기록은 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에 JSONL로 쌓인다. `total_ms`, inventory/source/semantic-review 등 단계별 시간과 WordPress/source 요청 횟수만 저장하고 원고·출처 본문은 기록하지 않는다.
 
 상세 인자와 제한은 [편집 규약](EDITORIAL_SYSTEM.md) 및 코드 [`editorial_cli.py`](../agent-publisher/editorial_cli.py)를 우선 확인한다. 과거 작업 기록의 '발행'은 draft 생성과 공개 승격을 혼용했으므로 명시적으로 구분한다.
 
@@ -81,8 +86,23 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 - `backup_daily.sh`: v3 **코드**는 DB, uploads, plugins/themes/MU 플러그인, 설정, 별도 비밀 구성요소, manifest를 다룬다. 운영에서 v3가 정기 생성되는지, Nginx/TLS까지 복구 가능한지는 별도 확인한다.
 - `restore_backup.sh <archive> --verify-only`: **데이터를 변경하지 않는** 해시·구조 확인. 구형 v2는 검증만 지원하고 전체 복원을 거부한다.
 - `scripts/sync_backups.py`: 신뢰된 SSH 별칭/호스트키, 전후 해시, 임시 파일 검증 후 로컬 확정. 기존 백업을 건드리지 않는 다운로드라도 저장 경로의 권한과 여유 공간을 확인한다.
-- v3의 `secrets.tar.gz`는 일반 압축이며 **암호화된 금고가 아니다**. 접근권한, 오프사이트 암호화·키 보관·독립 복구 계획 없이 완전 백업이라고 표현하지 않는다. 새 v3 전체 격리 복구·로그인·글·미디어·플러그인/테마·사이트맵은 마지막 작업 기록에서 미검증으로 남았다.
+- v3의 `secrets.tar.gz`는 일반 압축이며 **암호화된 금고가 아니다**. 접근권한, 오프사이트 암호화·키 보관·독립 복구 계획 없이 완전 백업이라고 표현하지 않는다. 실제 격리 복원 범위와 호스트 단위 미검증 항목은 [2026-09-25 애플리케이션/데이터 복구 훈련](backup-restore-drill-2026-09-25.md)과 [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md)의 PASS/PARTIAL/NOT TESTED 판정을 따른다.
 - 운영 서버는 로컬 Compose와 `.env` 구성·systemd 설정이 다를 수 있다. **이미지 digest가 같다는 이유만으로 재생성할 필요는 없다.** 사전 해시·백업·비밀값 비노출 설정 확인, 스테이징 테스트, 서비스별 롤백 계획을 마련한 뒤 변경한다. WhatsApp 명령 검사에서 **유효한 `/publish`를 스모크 테스트로 보내지 않는다.**
+
+### WP-CLI 재구축
+
+`wordpress/docker-compose.yml`은 호스트의 `wordpress/wp-cli.phar`를 컨테이너 `/usr/local/bin/wp`에 읽기 전용으로 마운트한다. 새 서버에서는 수동으로 임의 PHAR를 내려받지 말고 `wordpress/provision-wp-cli.sh`를 먼저 실행한다.
+
+```bash
+cd /home/ubuntu/wordpress
+./provision-wp-cli.sh
+docker compose up -d
+sudo docker exec wordpress_app wp --info --allow-root
+sudo docker exec wordpress_app wp core version --allow-root
+sudo docker exec wordpress_app wp option get home --allow-root
+```
+
+provisioner는 WP-CLI `2.12.0`의 버전 지정 release URL과 SHA-256 `ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c`를 고정한다. 기존 파일이 같은 해시이면 다운로드 없이 성공하고, 새 다운로드가 해시와 다르면 기존 파일을 교체하지 않는다. 이 해시는 2026-09-26 운영 컨테이너의 `/usr/local/bin/wp`와 동일 버전 공식 release PHAR를 서로 대조해 확인한 값이다. 버전을 올릴 때는 새 release 자산을 별도 검증하고 버전과 해시를 함께 변경한 뒤 격리 복구 훈련을 다시 수행한다.
 
 세부 구현·명령·검증 근거는 [백업 기록](backup-recovery-2026-09-20.md)과 [배포 준비 기록](implementation-execution-2026-09-20.md) 참고. 두 문서의 '당시 미배포'는 이후 배포 여부를 증명하지 않으므로 현재 상태를 다시 관측한다.
 

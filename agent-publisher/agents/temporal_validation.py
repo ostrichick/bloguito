@@ -46,7 +46,12 @@ def extract_yes24_schedule(text: str, artist: str) -> list[dict]:
 
 
 def extract_ticketlink_bridge_schedule(text: str, artist: str) -> list[dict]:
-    """Read current single-day tour rows with a booking action from Ticketlink."""
+    """Read dated regional rows from Ticketlink's official tour bridge page.
+
+    Only rows with an actual booking action are returned. This confirms the
+    published schedule and a booking destination, not remaining seats or a
+    sale deadline.
+    """
     if not isinstance(artist, str) or len(artist.strip()) < 2:
         return []
     rows = []
@@ -58,10 +63,56 @@ def extract_ticketlink_bridge_schedule(text: str, artist: str) -> list[dict]:
             date.fromisoformat(match['start'].replace('.', '-'))
         except ValueError:
             continue
-        destination = match['title'].rsplit(' - ', 1)[-1].strip()
-        region = destination if destination != match['title'] and 1 <= len(destination) <= 20 else match['region']
-        rows.append({'region': region, 'date': match['start'],
+        rows.append({'region': match['region'], 'date': match['start'],
                      'venue': match['venue']})
+    return rows
+
+
+def extract_nol_product_schedule(text: str, artist: str, region_hint: str) -> list[dict]:
+    """Read a short dated concert schedule from a verified NOL product page.
+
+    This is deliberately not a live-inventory parser.  It only binds the
+    product's visible venue/date block to an explicitly sourced region label.
+    The region must itself appear on the page and ranges longer than a week are
+    rejected so a generic venue/program period cannot become an event schedule.
+    """
+    if (not isinstance(artist, str) or len(artist.strip()) < 2
+            or not isinstance(region_hint, str) or not 1 <= len(region_hint.strip()) <= 20
+            or artist not in text or region_hint.strip() not in text):
+        return []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if '상품 상세' not in lines or '가격' not in lines:
+        return []
+    venues = [lines[index + 1] for index, line in enumerate(lines[:-1])
+              if line == '장소' and 2 <= len(lines[index + 1]) <= 140]
+    if not venues or len(set(venues)) != 1:
+        return []
+    period_values = [lines[index + 1] for index, line in enumerate(lines[:-1]) if line == '기간']
+    if len(period_values) != 1:
+        return []
+    match = re.fullmatch(
+        r'(?P<start>\d{4}\.\d{2}\.\d{2})'
+        r'(?:\s*~\s*(?P<end>\d{4}\.\d{2}\.\d{2}))?',
+        period_values[0],
+    )
+    if not match:
+        return []
+    try:
+        start = date.fromisoformat(match['start'].replace('.', '-'))
+        end = date.fromisoformat((match['end'] or match['start']).replace('.', '-'))
+    except ValueError:
+        return []
+    if end < start or (end - start).days > 7:
+        return []
+    rows = []
+    current = start
+    while current <= end:
+        rows.append({
+            'region': region_hint.strip(),
+            'date': current.strftime('%Y.%m.%d'),
+            'venue': venues[0],
+        })
+        current += timedelta(days=1)
     return rows
 
 

@@ -90,8 +90,14 @@ class PublisherAgent:
     def _publish_editorial(self, article, image_path=None):
         from agents.editorial import validate_bundle, render, excerpt_from_lead
         from agents.editorial_writer import load_inventory
-        from sync_wordpress_inventory import invalidate_inventory, sync_inventory
+        from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
         from config import CATEGORIES, resolve_category
+        # Legacy WordPress data contains hundreds of mostly one-off tags. The
+        # current editorial workflow intentionally preserves those historical
+        # relationships but does not create new post_tag terms. Fail closed if
+        # a future writer or caller tries to reintroduce tags into this path.
+        if article.get('tags'):
+            raise ValueError('editorial_tags_disabled: preserve legacy tags; do not create new one-off tags')
         # Never accept a caller-supplied inventory or a cached quality status here.
         sync_inventory()
         bundle = article['editorial_bundle']
@@ -152,7 +158,7 @@ class PublisherAgent:
         """Only migrate a stored reviewed draft whose body still equals our renderer."""
         from agents.editorial import ROOT, render, render_legacy, validate_bundle
         from agents.editorial_writer import load_inventory
-        from sync_wordpress_inventory import invalidate_inventory, sync_inventory
+        from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
         lock = ROOT / 'data' / '.editorial-publish.lock'
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.mkdir()
@@ -162,6 +168,7 @@ class PublisherAgent:
             bundle = record['fact_manifest']['editorial_bundle']
             sync_inventory()
             inventory = load_inventory()
+            inventory = hydrate_post(inventory, post_id)
             existing = next(p for p in inventory['posts'] if int(p['ID']) == post_id)
             old = existing['post_content']
             content = render(bundle['plan'], bundle['sources'])
@@ -233,7 +240,7 @@ class PublisherAgent:
             raise ValueError('explicit_publication_confirmation_required: pass --confirm-publish after reviewing this draft')
         from agents.editorial import ROOT, render, validate_bundle
         from agents.editorial_writer import load_inventory, fetch_sources
-        from sync_wordpress_inventory import invalidate_inventory, sync_inventory
+        from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
         from config import resolve_category
         lock = ROOT / 'data' / '.editorial-publish.lock'
         lock.parent.mkdir(parents=True, exist_ok=True)
@@ -254,10 +261,17 @@ class PublisherAgent:
             sync_inventory()
             inventory = load_inventory()
             actual = next((p for p in inventory['posts'] if int(p['ID']) == int(post_id)),None)
+            expected_sha = __import__('hashlib').sha256(expected.encode('utf-8')).hexdigest()
             same=lambda a,b: a.replace(chr(13)+chr(10),chr(10)) == b.replace(chr(13)+chr(10),chr(10))
-            if not actual or actual['post_status'] != 'draft' or actual['post_title'] != title or not same(actual['post_content'], expected):
+            if (not actual or actual['post_status'] != 'draft' or actual['post_title'] != title
+                    or inventory_content_sha(actual) != expected_sha):
                 raise ValueError('draft_changed_or_not_draft: review WordPress edits before publishing')
             others = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != int(post_id)])
+            others = hydrate_duplicate_candidates(
+                bundle['brief'], others,
+                related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
+                                  if isinstance(item, dict) and type(item.get('post_id')) is int},
+            )
             report = validate_bundle(bundle,others)
             if report['status'] != 'ready':
                 raise ValueError(f'editorial_review_not_current: {report["reasons"]}')

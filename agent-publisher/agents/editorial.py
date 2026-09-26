@@ -9,6 +9,7 @@ from urllib.parse import urlparse, parse_qs
 
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
+                                        extract_nol_product_schedule,
                                         validate_legacy_followup,
                                         validate_legacy_reference_period)
 from agents.search_intent import duplicate_posts
@@ -197,6 +198,12 @@ def topic_reasons(brief, today=None):
     urls = brief.get('official_urls', [])
     if not isinstance(urls, list) or any(urlparse(u).scheme != 'https' or not urlparse(u).hostname or urlparse(u).username for u in urls):
         reasons.append('invalid_official_urls')
+    reference_urls = brief.get('reference_urls', [])
+    if (not isinstance(reference_urls, list)
+            or any(urlparse(u).scheme != 'https' or not urlparse(u).hostname or urlparse(u).username
+                   for u in reference_urls)
+            or set(urls) & set(reference_urls)):
+        reasons.append('invalid_reference_urls')
     return reasons
 
 
@@ -314,7 +321,10 @@ def actionable_links(sources):
             if any(other['url'] == url for other in links):
                 raise ValueError('duplicate_action_link')
             links.append({'label': label.strip(), 'url': url, 'kind': kind})
-    if len(links) > 6:
+    # Region-specific event booking can legitimately require more than four
+    # distinct official destinations (for example a six-city tour). Keep a
+    # finite cap so the CTA area cannot turn into an unbounded link farm.
+    if len(links) > 8:
         raise ValueError('too_many_action_links')
     return links
 
@@ -342,74 +352,102 @@ def official_navigation_links(plan, sources):
     return entries
 
 
-def validate_bundle(bundle, inventory, now=None, require_review=True):
+VALIDATION_SCOPES = frozenset({'content', 'source', 'site', 'review'})
+
+
+def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=None):
     now = now or datetime.now(KST)
     rules = policy()
+    scopes = set(VALIDATION_SCOPES if scopes is None else scopes)
+    unknown_scopes = scopes - VALIDATION_SCOPES
+    if unknown_scopes:
+        raise ValueError('unknown_validation_scope:' + ','.join(sorted(unknown_scopes)))
+    if not require_review:
+        scopes.discard('review')
     reasons = []
     details = []
     try:
         brief, sources, plan = bundle['brief'], bundle['sources'], bundle['plan']
-        reasons.extend(topic_reasons(brief, now.date()))
-        if any('·' in value for value in reader_visible_strings(plan, sources)):
-            reasons.append('reader_middle_dot_disallowed')
-            details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')
-        if inventory.get('checked_on') != now.date().isoformat() or not isinstance(inventory.get('posts'), list):
-            reasons.append('fresh_inventory_required')
-        elif duplicate_posts(brief, inventory['posts']):
-            reasons.append('duplicate_topic')
-        if not sources or len({s['id'] for s in sources}) != len(sources):
+        if 'content' in scopes:
+            reasons.extend(topic_reasons(brief, now.date()))
+            if any('·' in value for value in reader_visible_strings(plan, sources)):
+                reasons.append('reader_middle_dot_disallowed')
+                details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')
+        related_post_ids = {
+            item.get('post_id')
+            for item in plan.get('related_posts', [])
+            if isinstance(item, dict) and type(item.get('post_id')) is int and item.get('post_id') > 0
+        }
+        if 'site' in scopes:
+            if inventory.get('checked_on') != now.date().isoformat() or not isinstance(inventory.get('posts'), list):
+                reasons.append('fresh_inventory_required')
+            elif duplicate_posts(brief, inventory['posts'], related_post_ids=related_post_ids):
+                reasons.append('duplicate_topic')
+        if 'source' in scopes and (not sources or len({s['id'] for s in sources}) != len(sources)):
             reasons.append('sources_missing_or_duplicate_ids')
         source_map = {s['id']: s for s in sources}
-        for s in sources:
-            if s['url'] not in brief['official_urls'] or s.get('source_type') != 'official':
-                reasons.append('source_not_official_brief_url')
-            citation_label = s.get('citation_label')
-            if (citation_label is not None
-                    and (not isinstance(citation_label, str)
-                         or not 4 <= len(citation_label.strip()) <= 100
-                         or re.search(r'[<>\r\n]', citation_label))):
-                reasons.append('invalid_source_citation_label')
-            citation_url = s.get('citation_url')
-            if citation_url is not None:
-                parsed_citation = urlparse(citation_url)
-                if (not isinstance(citation_url, str)
-                        or parsed_citation.scheme != 'https'
-                        or not parsed_citation.hostname
-                        or re.search(r'[<>\r\n]', citation_url)):
-                    reasons.append('invalid_source_citation_url')
-            if s['sha256'] != hashlib.sha256(s['text'].encode()).hexdigest():
-                reasons.append('source_hash_mismatch')
-            if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
-                reasons.append('source_stale')
-        try:
-            actionable_links(sources)
-        except (TypeError, ValueError):
-            reasons.append('invalid_action_links')
-        try:
-            official_navigation_links(plan, sources)
-        except (KeyError, TypeError, ValueError):
-            reasons.append('invalid_official_navigation')
-        if legacy_85_welfare_navigation_exception(brief):
+        official_urls = set(brief['official_urls'])
+        reference_urls = set(brief.get('reference_urls', []))
+        if 'source' in scopes:
+            for s in sources:
+                source_type = s.get('source_type')
+                if not ((source_type == 'official' and s['url'] in official_urls)
+                        or (source_type == 'reference' and s['url'] in reference_urls)):
+                    reasons.append('source_not_declared_brief_url')
+                citation_label = s.get('citation_label')
+                if (citation_label is not None
+                        and (not isinstance(citation_label, str)
+                             or not 4 <= len(citation_label.strip()) <= 100
+                             or re.search(r'[<>\r\n]', citation_label))):
+                    reasons.append('invalid_source_citation_label')
+                citation_url = s.get('citation_url')
+                if citation_url is not None:
+                    parsed_citation = urlparse(citation_url)
+                    if (not isinstance(citation_url, str)
+                            or parsed_citation.scheme != 'https'
+                            or not parsed_citation.hostname
+                            or re.search(r'[<>\r\n]', citation_url)):
+                        reasons.append('invalid_source_citation_url')
+                if s['sha256'] != hashlib.sha256(s['text'].encode()).hexdigest():
+                    reasons.append('source_hash_mismatch')
+                if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
+                    reasons.append('source_stale')
+            try:
+                actionable_links(sources)
+            except (TypeError, ValueError):
+                reasons.append('invalid_action_links')
+            try:
+                official_navigation_links(plan, sources)
+            except (KeyError, TypeError, ValueError):
+                reasons.append('invalid_official_navigation')
+        if 'content' in scopes and legacy_85_welfare_navigation_exception(brief):
             reasons.extend(legacy_85_welfare_navigation_reasons(brief, sources, plan))
         related = plan.get('related_posts', [])
-        if not isinstance(related, list) or len(related) > 2:
+        if 'content' in scopes and (not isinstance(related, list) or len(related) > 2):
             reasons.append('invalid_related_post_links')
-        else:
+        elif isinstance(related, list):
             seen_related = set()
             for item in related:
                 if not isinstance(item, dict) or set(item) != {'post_id', 'label', 'url'}:
-                    reasons.append('invalid_related_post_links')
+                    if 'content' in scopes:
+                        reasons.append('invalid_related_post_links')
                     continue
                 target, label, url = (item[key] for key in ('post_id', 'label', 'url'))
-                if (type(target) is not int or target <= 0 or target in seen_related
-                        or target == brief.get('existing_post_id') or not isinstance(label, str)
-                        or not 4 <= len(label.strip()) <= 60 or re.search(r'[<>\r\n]', label)
-                        or not isinstance(url, str) or url != f'https://lifeinfo24.org/?p={target}'
-                        or not any(row.get('ID') == target and row.get('post_status') == 'publish'
-                                   for row in inventory.get('posts', []))):
+                structurally_invalid = (
+                    type(target) is not int or target <= 0 or target in seen_related
+                    or target == brief.get('existing_post_id') or not isinstance(label, str)
+                    or not 4 <= len(label.strip()) <= 60 or re.search(r'[<>\r\n]', label)
+                    or not isinstance(url, str) or url != f'https://lifeinfo24.org/?p={target}'
+                )
+                missing_live_target = (
+                    'site' in scopes and not structurally_invalid
+                    and not any(row.get('ID') == target and row.get('post_status') == 'publish'
+                                for row in inventory.get('posts', []))
+                )
+                if (('content' in scopes and structurally_invalid) or missing_live_target):
                     reasons.append('invalid_related_post_links')
                 seen_related.add(target)
-        if brief.get('content_type') == 'dated':
+        if 'content' in scopes and brief.get('content_type') == 'dated':
             temporal = bundle.get('temporal_source', {})
             available = [field for s in sources for field in extract_evidence(s['text'], s['url'])]
             seasonal_exception = dated_post_exception(brief, now.date())
@@ -438,29 +476,89 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                             or schedule_rows < 22):
                         reasons.append('specific_holiday_branch_details_missing')
             listing_only = temporal.get('schedule_listing_only') is True
+            legacy_nol_mode = temporal.get('legacy_nol_product_listing') is True
             if temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')
-            if listing_only:
+            if listing_only or legacy_nol_mode:
                 # For an event schedule and booking *destinations*, evidence of an
                 # actual sale deadline is not available from the public listing.
                 # This mode cannot certify ticket availability or sale periods.
                 listing_url = temporal.get('listing_source_url')
                 listing_source = next((s for s in sources if s['url'] == listing_url), None)
                 host = urlparse(listing_url).hostname if listing_url else None
+                legacy_nol_products = {
+                    70: {
+                        'url': 'https://nol.yanolja.com/ticket/products/26013136',
+                        'region': '수원',
+                        'title_terms': ['무명전설', '수원앵콜'],
+                        'venue': '수원컨벤션센터',
+                    },
+                    99: {
+                        'url': 'https://nol.yanolja.com/ticket/products/26013078',
+                        'region': '서울',
+                        'title_terms': ['로이킴', 'R:O:Y'],
+                        'venue': 'KSPO DOME',
+                    },
+                }
+                legacy_nol = legacy_nol_products.get(brief.get('existing_post_id'))
+                nol_product = (
+                    legacy_nol_mode and not listing_only
+                    and listing_source is not None
+                    and host == 'nol.yanolja.com' and listing_url and legacy_nol
+                    and listing_url == legacy_nol['url']
+                    and temporal.get('region_hint') == legacy_nol['region']
+                    and brief.get('content_type') == 'dated'
+                    and brief.get('official_urls') == [listing_url]
+                    and brief.get('required_title_terms') == legacy_nol['title_terms']
+                    and all(term in listing_source.get('text', '') for term in legacy_nol['title_terms'])
+                    and legacy_nol['venue'] in listing_source.get('text', '')
+                    and listing_source.get('source_type') == 'official'
+                    and not available
+                    and len(listing_source.get('actions') or []) == 1
+                    and listing_source['actions'][0].get('kind') == 'booking'
+                    and listing_source['actions'][0].get('url') == listing_url
+                )
+                generic_listing = (
+                    listing_only and not legacy_nol_mode
+                    and host in {'m.ticket.yes24.com', 'www.ticketlink.co.kr'}
+                )
                 if (brief.get('category_key') != 'concert' or temporal.get('requires_sale') is not False
                         or not listing_source
-                        or host not in {'m.ticket.yes24.com', 'www.ticketlink.co.kr'}):
+                        or (not generic_listing and not nol_product)):
                     reasons.append('schedule_listing_provenance_missing')
                 else:
                     if host == 'm.ticket.yes24.com':
                         rows = extract_yes24_schedule(listing_source['text'], brief['entity'].split()[0])
+                    elif host == 'www.ticketlink.co.kr':
+                        rows = extract_ticketlink_bridge_schedule(listing_source['text'], brief['entity'].split()[0])
                     else:
-                        rows = extract_ticketlink_bridge_schedule(
-                            listing_source['text'], brief['entity'].split()[0])
+                        rows = extract_nol_product_schedule(
+                            listing_source['text'], legacy_nol['title_terms'][0],
+                            legacy_nol['region'])
                     table_rows = [row['cells'] for section in plan['sections']
                                   for row in (section.get('table') or {}).get('rows', [])]
+                    if host == 'www.ticketlink.co.kr':
+                        # Ticketlink's bridge uses a broad province label (for
+                        # example 경기) while the product/venue names identify
+                        # the reader-useful city (for example 평택). Bind the
+                        # schedule to the exact date+venue pair instead of
+                        # forcing those two different geography levels to match.
+                        listing_rows_in_table = all(
+                            any(item['date'] in cells
+                                and item['venue'] in cells
+                                for cells in table_rows)
+                            for item in rows)
+                    else:
+                        listing_rows_in_table = all(
+                            any(cells[:3] == [item['region'], item['date'], item['venue']]
+                                for cells in table_rows)
+                            for item in rows)
                     if (not rows or rows != temporal.get('listing_entries')
-                            or any([item['region'], item['date'], item['venue']] not in table_rows for item in rows)):
+                            or (nol_product and any(item['venue'] != legacy_nol['venue'] for item in rows))
+                            or not listing_rows_in_table):
+                        reasons.append('schedule_listing_not_bound')
+                    elif nol_product and brief.get('useful_until') != max(
+                            date.fromisoformat(item['date'].replace('.', '-')) for item in rows).isoformat():
                         reasons.append('schedule_listing_not_bound')
                     elif max(date.fromisoformat(item['date'].replace('.', '-')) for item in rows) < now.date():
                         reasons.append('availability_not_verified')
@@ -470,7 +568,8 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                     public_text = ' '.join([plan['lead']['text'], *[p['text'] for sec in plan['sections']
                                                                    for p in sec['paragraphs']],
                                             *[faq['answer']['text'] for faq in plan.get('faq', [])]])
-                    if re.search(r'예매\s*중|판매\s*중|예매\s*기간|판매\s*기간|매진|잔여\s*좌석', public_text):
+                    if re.search(r'예매\s*중|판매\s*중|예매\s*기간|판매\s*기간|매진|품절|'
+                                 r'잔여\s*좌석|남은\s*좌석|현재\s*예매\s*가능|바로\s*예매', public_text):
                         reasons.append('sale_status_claim_without_evidence')
             else:
                 if brief.get('category_key') == 'concert' and (temporal.get('requires_sale') is not True or temporal.get('sale_source_url') not in brief['official_urls']):
@@ -496,13 +595,14 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                     if decision.get('expires_at') and (datetime.fromisoformat(decision['expires_at']).date()-now.date()).days < rules['min_remaining_days']:
                         reasons.append('source_deadline_too_close')
         # Version-specific official policy evidence is separate from a fresh fetch and a valid quote.
-        reasons.extend(critical_fact_reasons(brief, sources, plan))
-        title = plan['title']
-        if not all(normalized(t) in normalized(title) for t in brief['required_title_terms']):
-            reasons.append('title_missing_entity_or_region')
-        if not plan['sections'] or not all(s['heading'] and (s['paragraphs'] or s.get('table')) for s in plan['sections']):
-            reasons.append('article_structure_incomplete')
-        for section in plan['sections']:
+        if 'content' in scopes:
+            reasons.extend(critical_fact_reasons(brief, sources, plan))
+            title = plan['title']
+            if not all(normalized(t) in normalized(title) for t in brief['required_title_terms']):
+                reasons.append('title_missing_entity_or_region')
+            if not plan['sections'] or not all(s['heading'] and (s['paragraphs'] or s.get('table')) for s in plan['sections']):
+                reasons.append('article_structure_incomplete')
+        for section in plan['sections'] if 'content' in scopes else []:
             if section.get('kind') is not None and section['kind'] not in {
                     'overview', 'eligibility', 'comparison', 'procedure', 'exceptions', 'schedule', 'general'}:
                 reasons.append('invalid_section_kind')
@@ -519,7 +619,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                            or any(not isinstance(cell, str) or not 1 <= len(cell.strip()) <= 160
                                   for cell in row['cells']) for row in rows)):
                 reasons.append('invalid_information_table')
-        blocks = all_blocks(plan)
+        blocks = all_blocks(plan) if 'content' in scopes else []
         answered = set()
         for block_index, b in enumerate(blocks):
             if not b['text'].strip() or not b['evidence']:
@@ -550,25 +650,27 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                 reasons.append('number_without_evidence')
                 details.append(f'block[{block_index}]의 수치 {sorted(unsupported)}는 연결된 인용에 없음. 해당 수치를 빼거나 실제 인용에 있는 범위 표현으로 수정할 것.')
             answered.update(b.get('answers', []))
-        questions = {q['id'] for q in brief['reader_questions']}
-        if not questions.issubset(answered) or not set(plan['lead'].get('answers', [])) & questions:
-            reasons.append('reader_question_not_answered')
-        if any(f['question_id'] not in questions or f['question_id'] not in f['answer'].get('answers', []) for f in plan.get('faq', [])):
-            reasons.append('faq_answer_missing')
-            details.append(f'FAQ question_id는 새 ID가 아니라 reader_questions의 ID {sorted(questions)} 중 하나여야 하며 answer.answers에도 같은 ID가 필요함.')
-        table_labels = [label for section in plan['sections'] if section.get('table')
-                        for label in [section['table']['caption'], *section['table']['headers']]]
-        visible = ' '.join([title, *[s['heading'] for s in plan['sections']], *table_labels,
-                            *[b['text'] for b in blocks], *[f['question'] for f in plan.get('faq', [])]])
-        if any(re.search(p, visible) for p in rules['blocked_patterns']):
-            reasons.append('reader_deflection_or_disclaimer')
+        if 'content' in scopes:
+            questions = {q['id'] for q in brief['reader_questions']}
+            if not questions.issubset(answered) or not set(plan['lead'].get('answers', [])) & questions:
+                reasons.append('reader_question_not_answered')
+            if any(f['question_id'] not in questions or f['question_id'] not in f['answer'].get('answers', []) for f in plan.get('faq', [])):
+                reasons.append('faq_answer_missing')
+                details.append(f'FAQ question_id는 새 ID가 아니라 reader_questions의 ID {sorted(questions)} 중 하나여야 하며 answer.answers에도 같은 ID가 필요함.')
+            table_labels = [label for section in plan['sections'] if section.get('table')
+                            for label in [section['table']['caption'], *section['table']['headers']]]
+            visible = ' '.join([title, *[s['heading'] for s in plan['sections']], *table_labels,
+                                *[b['text'] for b in blocks], *[f['question'] for f in plan.get('faq', [])]])
+            if any(re.search(p, visible) for p in rules['blocked_patterns']):
+                reasons.append('reader_deflection_or_disclaimer')
         # Correction banners, previous-copy change logs and review metadata are
         # internal records. Keep legitimate source publication dates and rules.
-        if re.search(r'이\s*(?:초안|원고)(?:에서는|은|와|를)|독립적인\s*검색\s*질문이\s*확인되지\s*않으면|(?:자료\s*검토|내용\s*재검토|최종\s*검토일|검토·수정)\s*[:：]|공식\s*출처\s*및\s*검토\s*기록|링크된\s*자료의\s*적용\s*시점과\s*실제\s*안내\s*화면을\s*확인|정정\s*안내|기존\s*수치의\s*정정|(?:기존|과거|종전)\s*(?:글|본문|게시물|공지|안내)[^.。\n]{0,130}(?:삭제|수정|정정|바로잡|폐기)', visible):
-            reasons.append('internal_editorial_note_in_prose')
-        if re.search(r'<[^>]+>|https?://', visible):
-            reasons.append('raw_markup_or_url_in_prose')
-        if require_review:
+        if 'content' in scopes:
+            if re.search(r'이\s*(?:초안|원고)(?:에서는|은|와|를)|독립적인\s*검색\s*질문이\s*확인되지\s*않으면|(?:자료\s*검토|내용\s*재검토|최종\s*검토일|검토·수정)\s*[:：]|공식\s*출처\s*및\s*검토\s*기록|링크된\s*자료의\s*적용\s*시점과\s*실제\s*안내\s*화면을\s*확인|정정\s*안내|기존\s*수치의\s*정정|(?:기존|과거|종전)\s*(?:글|본문|게시물|공지|안내)[^.。\n]{0,130}(?:삭제|수정|정정|바로잡|폐기)', visible):
+                reasons.append('internal_editorial_note_in_prose')
+            if re.search(r'<[^>]+>|https?://', visible):
+                reasons.append('raw_markup_or_url_in_prose')
+        if 'review' in scopes:
             review = bundle.get('review', {})
             body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
             if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint():
@@ -580,6 +682,52 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
     except (KeyError, TypeError, ValueError, AttributeError):
         reasons.append('malformed_editorial_bundle')
     return {'status': 'ready' if not reasons else 'needs_review', 'reasons': sorted(set(reasons)), 'details': details}
+
+
+def validate_content(bundle, now=None):
+    """Validate reader-visible claims/structure against the bound source snapshots."""
+    now = now or datetime.now(KST)
+    return validate_bundle(
+        bundle,
+        {'checked_on': now.date().isoformat(), 'posts': []},
+        now=now,
+        require_review=False,
+        scopes={'content'},
+    )
+
+
+def validate_sources(bundle, now=None):
+    """Validate source declarations, hashes, freshness and action/navigation metadata."""
+    now = now or datetime.now(KST)
+    return validate_bundle(
+        bundle,
+        {'checked_on': now.date().isoformat(), 'posts': []},
+        now=now,
+        require_review=False,
+        scopes={'source'},
+    )
+
+
+def validate_site_context(bundle, inventory, now=None):
+    """Validate only duplicate-topic and related-post state requiring site inventory."""
+    return validate_bundle(
+        bundle,
+        inventory,
+        now=now,
+        require_review=False,
+        scopes={'site'},
+    )
+
+
+def validate_review_binding(bundle, now=None):
+    """Validate only semantic-review digest, policy digest and freshness."""
+    now = now or datetime.now(KST)
+    return validate_bundle(
+        bundle,
+        {'checked_on': now.date().isoformat(), 'posts': []},
+        now=now,
+        scopes={'review'},
+    )
 
 
 def render_legacy(plan, sources):
