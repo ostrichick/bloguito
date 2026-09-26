@@ -8,7 +8,8 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
-                                        extract_yes24_schedule, validate_legacy_followup,
+                                        extract_yes24_schedule, extract_ticketlink_bridge_schedule,
+                                        validate_legacy_followup,
                                         validate_legacy_reference_period)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
@@ -313,7 +314,7 @@ def actionable_links(sources):
             if any(other['url'] == url for other in links):
                 raise ValueError('duplicate_action_link')
             links.append({'label': label.strip(), 'url': url, 'kind': kind})
-    if len(links) > 4:
+    if len(links) > 6:
         raise ValueError('too_many_action_links')
     return links
 
@@ -445,11 +446,17 @@ def validate_bundle(bundle, inventory, now=None, require_review=True):
                 # This mode cannot certify ticket availability or sale periods.
                 listing_url = temporal.get('listing_source_url')
                 listing_source = next((s for s in sources if s['url'] == listing_url), None)
+                host = urlparse(listing_url).hostname if listing_url else None
                 if (brief.get('category_key') != 'concert' or temporal.get('requires_sale') is not False
-                        or not listing_source or urlparse(listing_url).hostname != 'm.ticket.yes24.com'):
+                        or not listing_source
+                        or host not in {'m.ticket.yes24.com', 'www.ticketlink.co.kr'}):
                     reasons.append('schedule_listing_provenance_missing')
                 else:
-                    rows = extract_yes24_schedule(listing_source['text'], brief['entity'].split()[0])
+                    if host == 'm.ticket.yes24.com':
+                        rows = extract_yes24_schedule(listing_source['text'], brief['entity'].split()[0])
+                    else:
+                        rows = extract_ticketlink_bridge_schedule(
+                            listing_source['text'], brief['entity'].split()[0])
                     table_rows = [row['cells'] for section in plan['sections']
                                   for row in (section.get('table') or {}).get('rows', [])]
                     if (not rows or rows != temporal.get('listing_entries')

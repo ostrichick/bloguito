@@ -14,6 +14,22 @@ from test_editorial_system import NOW, sample
 
 
 class ActionDestinationsTests(unittest.TestCase):
+    def test_six_regional_booking_actions_are_supported_but_seven_are_rejected(self):
+        bundle = sample()
+        bundle['sources'][0]['actions'] = [
+            {'kind': 'booking', 'label': f'{i}지역 공연 예매',
+             'url': f'https://tickets.example.com/product/{i}'}
+            for i in range(1, 7)
+        ]
+        inventory = {'checked_on': NOW.date().isoformat(), 'posts': []}
+        self.assertNotIn('invalid_action_links', validate_bundle(
+            bundle, inventory, NOW, require_review=False)['reasons'])
+        bundle['sources'][0]['actions'].append(
+            {'kind': 'booking', 'label': '7지역 공연 예매',
+             'url': 'https://tickets.example.com/product/7'})
+        self.assertIn('invalid_action_links', validate_bundle(
+            bundle, inventory, NOW, require_review=False)['reasons'])
+
     def test_unverified_official_source_only_appears_in_citations(self):
         bundle = sample()
         html = render(bundle['plan'], bundle['sources'])

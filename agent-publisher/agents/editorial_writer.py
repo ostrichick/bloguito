@@ -303,7 +303,9 @@ def _official_get(url):
 
 def fetch_sources(brief):
     sources = []
-    for i, url in enumerate(brief['official_urls'][:5]):
+    if len(brief['official_urls']) > 7:
+        raise ValueError('too_many_editorial_sources')
+    for i, url in enumerate(brief['official_urls']):
         # Redirects require updating the reviewed URL rather than silently trusting another host.
         response = _official_get(url)
         if response.status_code != 200:

@@ -17,6 +17,12 @@ YES24_LISTING = re.compile(
     r'(?P<venue>[^\n]{3,120})\n예매(?=\n|$)'
 )
 
+TICKETLINK_BRIDGE = re.compile(
+    r'(?m)^지역/제목\n(?P<region>[^\n]{1,20})\n(?P<title>[^\n]{4,160})\n'
+    r'기간\n(?P<start>\d{4}\.\d{2}\.\d{2})\s*~\n(?P<end>\d{4}\.\d{2}\.\d{2})\n'
+    r'장소\n(?P<venue>[^\n]{2,140})\n(?P<status>예매하기|판매 예정|판매 종료)(?=\n|$)'
+)
+
 
 def extract_yes24_schedule(text: str, artist: str) -> list[dict]:
     """Read only dated venue rows with an actual booking button on a YES24 listing.
@@ -29,6 +35,24 @@ def extract_yes24_schedule(text: str, artist: str) -> list[dict]:
     rows = []
     for match in YES24_LISTING.finditer(text):
         if artist not in match['title'] or match['start'] != match['end']:
+            continue
+        try:
+            date.fromisoformat(match['start'].replace('.', '-'))
+        except ValueError:
+            continue
+        rows.append({'region': match['region'], 'date': match['start'],
+                     'venue': match['venue']})
+    return rows
+
+
+def extract_ticketlink_bridge_schedule(text: str, artist: str) -> list[dict]:
+    """Read current single-day tour rows with a booking action from Ticketlink."""
+    if not isinstance(artist, str) or len(artist.strip()) < 2:
+        return []
+    rows = []
+    for match in TICKETLINK_BRIDGE.finditer(text):
+        if (artist not in match['title'] or match['status'] != '예매하기'
+                or match['start'] != match['end']):
             continue
         try:
             date.fromisoformat(match['start'].replace('.', '-'))
