@@ -49,7 +49,7 @@ class EditorialTests(unittest.TestCase):
     def test_summary_numbering_and_escaping(self):
         self.b['plan']['sections'].append({'heading':'2. 조건 <안내>', 'paragraphs':[self.b['plan']['lead']]})
         content = render(self.b['plan'], self.b['sources'])
-        self.assertIn('>핵심 답변</div>', content)
+        self.assertIn('>한눈에 보기</div>', content)
         self.assertNotIn('3초 요약', content)
         self.assertIn('>배출 방법</h2>', content)
         self.assertNotIn('STEP 1</span>배출 방법', content)

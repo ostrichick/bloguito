@@ -821,7 +821,7 @@ def render(plan, sources, category_key=None):
               'font-family:-apple-system,BlinkMacSystemFont,\'Malgun Gothic\',\'Apple SD Gothic Neo\',\'Noto Sans KR\',sans-serif;'
               'font-weight:400;letter-spacing:normal;overflow-wrap:anywhere;word-break:keep-all">'
               '<div class="bloguito-summary" style="padding:18px 20px;margin:16px 0 24px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:5px solid #0d7d59;border-radius:10px">'
-              '<div style="font-size:18px;font-weight:700;color:#134e4a">핵심 답변</div>'
+              '<div style="font-size:18px;font-weight:700;color:#134e4a">한눈에 보기</div>'
               + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16px">{inline_text(plan["lead"])}</p></div>')
 
     # A source-reviewed overview table belongs immediately after the answer.

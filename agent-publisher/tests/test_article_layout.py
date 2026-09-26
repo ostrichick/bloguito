@@ -24,7 +24,7 @@ class ArticleLayoutTests(unittest.TestCase):
         sign(self.bundle)
         self.assertEqual('ready', validate_bundle(self.bundle, self.inventory, NOW)['status'])
         page = render(self.bundle['plan'], self.bundle['sources'])
-        self.assertLess(page.index('핵심 답변'), page.index('공식 수거 기준'))
+        self.assertLess(page.index('한눈에 보기'), page.index('공식 수거 기준'))
         self.assertLess(page.index('공식 수거 기준'), page.index('bloguito-cta'))
         self.assertLess(page.index('bloguito-cta'), page.index('bloguito-toc'))
         self.assertEqual(1, page.count('href="#step-2"'))
