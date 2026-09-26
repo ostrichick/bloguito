@@ -84,7 +84,7 @@ class TicketlinkScheduleListingTests(unittest.TestCase):
                   '지역/제목\n전북\n[데뷔 60주년 기념공연] 2026 남진 전국투어 콘서트 - 김제\n'
                   '기간\n2026.11.21 ~\n2026.11.21\n장소\n김제문화예술회관 대공연장\n판매 예정\n')
         self.assertEqual(
-            [{'region': '경기', 'date': '2026.10.11', 'venue': '평택아트센터 대공연장'}],
+            [{'region': '평택', 'date': '2026.10.11', 'venue': '평택아트센터 대공연장'}],
             extract_ticketlink_bridge_schedule(source, '남진'))
 
 

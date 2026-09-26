@@ -58,7 +58,9 @@ def extract_ticketlink_bridge_schedule(text: str, artist: str) -> list[dict]:
             date.fromisoformat(match['start'].replace('.', '-'))
         except ValueError:
             continue
-        rows.append({'region': match['region'], 'date': match['start'],
+        destination = match['title'].rsplit(' - ', 1)[-1].strip()
+        region = destination if destination != match['title'] and 1 <= len(destination) <= 20 else match['region']
+        rows.append({'region': region, 'date': match['start'],
                      'venue': match['venue']})
     return rows
 
