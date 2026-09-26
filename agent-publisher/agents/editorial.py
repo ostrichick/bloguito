@@ -1059,13 +1059,16 @@ def render(plan, sources, category_key=None):
     # 6. 공식 출처 및 사실 검증 자료.
     # Exact action destinations already have a prominent reader-facing CTA, so
     # do not repeat those same URLs in the evidence footer. The footer is for
-    # distinct evidence/reference pages only.
+    # distinct evidence/reference pages first. If that would erase the entire
+    # provenance section, retain the cited sources even when also used by a CTA.
     ids = []
     for block in all_blocks(plan):
         ids.extend(e['source_id'] for e in block['evidence'])
     ids = list(dict.fromkeys(ids))
     action_urls = {action['url'] for action in actions}
     citation_ids = [i for i in ids if source_map[i]['url'] not in action_urls]
+    if not citation_ids:
+        citation_ids = ids
     links = ''.join(
         '<li style="margin:8px 0"><a href="'
         + html.escape(source_map[i].get('citation_url') or source_map[i]['url'], quote=True)

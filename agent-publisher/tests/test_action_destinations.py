@@ -93,7 +93,7 @@ class ActionDestinationsTests(unittest.TestCase):
         self.assertEqual('서초구 선풍기 배출 절차 안내',
                          footer_links[evidence_source['url']])
 
-    def test_footer_is_omitted_when_every_evidence_url_is_already_a_cta(self):
+    def test_footer_preserves_provenance_when_every_evidence_url_is_already_a_cta(self):
         bundle = sample()
         source = bundle['sources'][0]
         source['actions'] = [{
@@ -102,8 +102,19 @@ class ActionDestinationsTests(unittest.TestCase):
             'url': source['url'],
         }]
         content = render(bundle['plan'], bundle['sources'])
-        self.assertNotIn('class="source-list"', content)
-        self.assertNotIn('id="sources"', content)
+        soup = BeautifulSoup(content, 'html.parser')
+        footer = soup.select_one('ul.source-list')
+        self.assertIsNotNone(footer)
+        self.assertEqual([source['url']], [a['href'] for a in footer.select('a[href]')])
+        self.assertEqual(1, len(soup.select('#sources')))
+
+    def test_repeated_evidence_blocks_do_not_duplicate_fallback_citations(self):
+        bundle = sample()
+        source = bundle['sources'][0]
+        source['actions'] = [{'kind': 'lookup', 'label': '공식 조회 서비스', 'url': source['url']}]
+        bundle['plan']['sections'][0]['paragraphs'].append(copy.deepcopy(bundle['plan']['lead']))
+        footer = BeautifulSoup(render(bundle['plan'], bundle['sources']), 'html.parser').select_one('ul.source-list')
+        self.assertEqual(1, len(footer.select('a[href]')))
 
     def test_invalid_citation_label_is_rejected(self):
         bundle = sample()
