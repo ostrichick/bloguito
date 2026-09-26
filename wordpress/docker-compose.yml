@@ -14,9 +14,9 @@ services:
       - ./mysql_custom.cnf:/etc/mysql/conf.d/custom.cnf:ro
 
   wordpress:
-    # Digest of the amd64 image observed on the running server 2026-09-20.
-    # Update only after verifying a new version and an isolated restore.
-    image: wordpress@sha256:5a93c470ae8220fddf71f6ebe3bc94e615ddc2ae4d9810f795b830fb11c41a17
+    # WordPress 7.1.2 / PHP 8.3 Apache image. This digest was isolated-restore
+    # tested against the 2026-09-26 v3 production backup before being pinned.
+    image: wordpress@sha256:8ae73d594a154e30b112e8d085afbc0895acf7651d8f53ef63aefb42e30822d5
     container_name: wordpress_app
     restart: always
     depends_on:
@@ -32,6 +32,9 @@ services:
     volumes:
       - wp_data:/var/www/html
       - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+      # Keep WP-CLI available across container recreation; the host file is
+      # created by provision-wp-cli.sh from a versioned, checksum-pinned release.
+      - ./wp-cli.phar:/usr/local/bin/wp:ro
 
 volumes:
   db_data:
