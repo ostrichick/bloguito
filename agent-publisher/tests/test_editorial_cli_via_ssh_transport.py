@@ -147,10 +147,27 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport(module._WP_PREFIX + module._LIST_ARGS,
                   capture_output=True, text=True, check=True)
         self.assertEqual(
-            ['wsl.exe', '-d', 'Ubuntu-24.04', '--', 'tailscale', 'ssh',
+            ['wsl.exe', '-d', 'Ubuntu-24.04', '--exec', 'tailscale', 'ssh',
              'ubuntu@100.99.177.119'],
             calls[0][:7],
         )
+
+    def test_wsl_ssh_uses_exec_mode_without_intermediate_shell(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout='[]', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport(
+            'revise-draft', {463}, '100.99.177.119',
+            ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
+        transport(module._WP_PREFIX + module._LIST_ARGS,
+                  capture_output=True, text=True, check=True)
+        self.assertEqual('--exec', calls[0][3])
+        self.assertNotIn('--', calls[0][:4])
 
     def test_revise_draft_allows_only_exact_target_and_fields(self):
         module = load_module()
