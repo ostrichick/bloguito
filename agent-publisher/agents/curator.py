@@ -195,8 +195,14 @@ class CuratorAgent:
                     )
 
         poster_url = None
+        reviewed_poster_url = None
         if ticket_data and ticket_data.get("poster_url"):
             poster_url = ticket_data["poster_url"]
+            if self.last_ticket_verification.get("status") == "matched":
+                # Only a uniquely matched official ticket product can supply an
+                # automatic poster candidate. Designer vision review still verifies
+                # that the OG asset itself is event-specific rather than a generic card.
+                reviewed_poster_url = poster_url
         elif self.last_article_image_url:
             poster_url = self.last_article_image_url
 
@@ -207,6 +213,7 @@ class CuratorAgent:
             "direct_product_url": ticket_data.get("product_url") if ticket_data else None,
             "ticket_prices": ticket_data.get("price_str") if ticket_data else None,
             "poster_url": poster_url,
+            "reviewed_poster_url": reviewed_poster_url,
             "article_image_url": self.last_article_image_url,
             "ticket_verification": self.last_ticket_verification,
             "temporal_source": {"evidence": temporal_evidence, "requires_sale": self.last_ticket_verification.get("status") == "matched", "sale_source_url": ticket_data.get("product_url") if ticket_data else None},

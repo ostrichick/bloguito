@@ -8,12 +8,13 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image, ImageDraw
 
-from agents.designer import DesignerAgent, split_title
+from agents.designer import DesignerAgent, derive_cover_copy, split_title
 
 
 class DesignerSafetyTests(unittest.TestCase):
     def setUp(self):
         self.designer = DesignerAgent()
+        self.designer.client = None
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
 
@@ -29,11 +30,14 @@ class DesignerSafetyTests(unittest.TestCase):
             render()
         return drawn
 
-    def assert_only_article_labels(self, drawn, title, category):
-        allowed = set(split_title(title)) | {category, "생활정보 24"}
+    def assert_only_reviewed_cover_copy(self, drawn, title, keyword):
+        primary, secondary = derive_cover_copy(title, keyword)
+        allowed = set(split_title(primary, max_first_line=min(16, 22)))
+        if secondary:
+            allowed.add(secondary)
         self.assertTrue(drawn)
         self.assertTrue(set(drawn) <= allowed, f"Unexpected unsupported image text: {drawn!r}")
-        self.assertTrue(set(split_title(title)) <= set(drawn))
+        self.assertNotIn(keyword, drawn if keyword not in title else [])
 
     def test_policy_subjects_do_not_generate_claims_or_trust_curated_fields(self):
         cases = [
@@ -56,14 +60,15 @@ class DesignerSafetyTests(unittest.TestCase):
         }
         for title, category, key in cases:
             with self.subTest(title=title):
-                self.assertEqual(self.designer.select_mode(key, curated, title, "100% 면제"), 2)
+                self.assertEqual(self.designer.select_mode(key, curated, title, "100% 면제"), 5)
                 with patch("urllib.request.urlopen", side_effect=AssertionError("Unreviewed assets must not be fetched")):
                     drawn = self.capture_text(
                         lambda: self.designer.generate_image(
                             title, category, "100% 면제", curated=curated, category_key=key
                         )
                     )
-                self.assert_only_article_labels(drawn, title, category)
+                self.assert_only_reviewed_cover_copy(drawn, title, "100% 면제")
+                self.assertFalse(any("330만원" in text or "공식 인증" in text for text in drawn))
 
     @staticmethod
     def mock_poster_response():
@@ -77,6 +82,10 @@ class DesignerSafetyTests(unittest.TestCase):
     def test_hybrid_uses_reviewed_poster_without_unsourced_overlays(self):
         title = "공연 일정 안내"
         category = "공연/콘서트 예매"
+        self.designer.client = MagicMock()
+        self.designer.client.models.generate_content.return_value = MagicMock(
+            text='{"pass": true, "issues": []}'
+        )
         with patch("urllib.request.urlopen", return_value=self.mock_poster_response()) as urlopen:
             drawn = self.capture_text(
                 lambda: self.designer.generate_image(
@@ -87,29 +96,16 @@ class DesignerSafetyTests(unittest.TestCase):
                 )
             )
         self.assertEqual(urlopen.call_count, 1)
-        self.assertEqual(set(drawn), {title, "생활정보 24"})
-
-    def test_clean_poster_has_no_fabricated_source_watermark(self):
-        path = Path(self.temp_dir.name) / "clean.jpg"
-        with patch("urllib.request.urlopen", return_value=self.mock_poster_response()):
-            drawn = self.capture_text(
-                lambda: self.designer._render_clean_poster(
-                    "https://example.com/reviewed.jpg", "공연 제목", "공연/콘서트 예매", path
-                )
-            )
         self.assertEqual(drawn, [])
-        with Image.open(path) as image:
-            self.assertEqual(image.size, (1200, 675))
 
-    def test_stock_badge_does_not_claim_official_status(self):
+    def test_editorial_fallback_does_not_claim_official_status(self):
         title = "실내 습도 관리 방법"
-        category = "생활·건강"
-        path = Path(self.temp_dir.name) / "stock.jpg"
-        with patch("urllib.request.urlopen", return_value=self.mock_poster_response()):
-            drawn = self.capture_text(
-                lambda: self.designer._render_keyword_stock("건강", category, title, path)
-            )
-        self.assert_only_article_labels(drawn, title, category)
+        path = Path(self.temp_dir.name) / "fallback.jpg"
+        primary, secondary = derive_cover_copy(title, "건강")
+        drawn = self.capture_text(
+            lambda: self.designer._render_minimal_fallback(primary, secondary, "life_service", path)
+        )
+        self.assert_only_reviewed_cover_copy(drawn, title, "건강")
 
     def test_reviewed_poster_network_failure_falls_back_without_curator_claims(self):
         title = "콘서트 티켓 예매"
@@ -122,7 +118,27 @@ class DesignerSafetyTests(unittest.TestCase):
                     reviewed_poster_url="https://example.com/reviewed.jpg"
                 )
             )
-        self.assert_only_article_labels(drawn, title, category)
+        self.assert_only_reviewed_cover_copy(drawn, title, "예매")
+
+    def test_official_poster_identity_review_failure_falls_back_to_editorial_cover(self):
+        title = "테스트가수 서울 콘서트 예매"
+        with patch("urllib.request.urlopen", return_value=self.mock_poster_response()), patch.object(
+            self.designer,
+            "_vision_review_cover",
+            return_value=(False, ["generic vendor preview or artist mismatch"]),
+        ):
+            drawn = self.capture_text(
+                lambda: self.designer.generate_image(
+                    title,
+                    "공연/콘서트 예매",
+                    "테스트가수 서울 콘서트",
+                    curated={},
+                    category_key="concert",
+                    reviewed_poster_url="https://example.com/official-candidate.jpg",
+                )
+            )
+        self.assertTrue(drawn)
+        self.assertFalse(any("generic vendor" in text for text in drawn))
 
 
 if __name__ == "__main__":

@@ -125,6 +125,116 @@
     "rank_math_low_score_threshold": 50,
     "rank_math_is_publish_gate": false
   },
+  "featured_image_policy": {
+    "version": 2,
+    "purpose": "modern_editorial_cover",
+    "benchmark": "post-475-movein-cover-2026-09-27",
+    "canvas": {
+      "width": 1200,
+      "height": 675
+    },
+    "text": {
+      "max_blocks": 2,
+      "primary_max_chars": 22,
+      "secondary_max_chars": 28,
+      "avoid_full_article_title_repetition": true,
+      "single_topic_word_may_match_article_title": true,
+      "lists_in_image": false,
+      "semantic_line_breaks_required": true
+    },
+    "composition": {
+      "single_primary_subject": true,
+      "safe_margin_percent": 8,
+      "reserved_text_area_percent": 42,
+      "generous_whitespace": true,
+      "mobile_thumbnail_readability_required": true
+    },
+    "style": [
+      "modern",
+      "minimal",
+      "editorial",
+      "high_quality",
+      "natural_lighting",
+      "clean_layout",
+      "clear_focal_subject"
+    ],
+    "prohibited": [
+      "old_web_banner",
+      "flyer",
+      "government_pamphlet_look",
+      "clipart_collage",
+      "multiple_3d_icons",
+      "badge_or_ribbon_stacks",
+      "heavy_glossy_shadows",
+      "excessive_gradients",
+      "text_heavy_infographic",
+      "crowded_checklist",
+      "cropped_face_head_hands",
+      "malformed_anatomy",
+      "tiny_decorative_text"
+    ],
+    "color": {
+      "max_main_colors": 3,
+      "prefer_size_spacing_over_extra_accent_colors": true
+    },
+    "topic_profiles": {
+      "life_admin": "Use a coherent scene tied to the task, such as a person, home, laptop or smartphone, document or service action. Avoid icon grids and government-pamphlet layouts.",
+      "price_compare": "Use one real product or service context with a receipt, card, price tag or comparison cue. At most one representative number may be used when separately reviewed; do not list prices.",
+      "welfare": "Show the applicant, application action or everyday life context. Avoid cash piles, gold coins and money-first clichés.",
+      "concert": "Prefer a separately reviewed official promotional image. Preserve artist face, full head/chin, performance title and atmosphere; use fit/background extension instead of destructive center crop.",
+      "life_service": "Use one clear everyday subject directly connected to the topic in a natural Korean home, desk, shop, health or service setting."
+    },
+    "prompt_order": [
+      "purpose",
+      "topic",
+      "main_subject",
+      "composition",
+      "text",
+      "style",
+      "prohibited"
+    ],
+    "generation": {
+      "scene_without_text": true,
+      "overlay_korean_text_locally": true,
+      "default_model": "gemini-3.1-flash-image",
+      "image_size": "1K",
+      "model_env_override": "BLOGUITO_IMAGE_MODEL",
+      "fallback": "minimal_editorial_cover",
+      "max_generation_attempts": 2
+    },
+    "visual_review": {
+      "required_for_generated_scene": true,
+      "required_for_official_poster": true,
+      "default_model": "gemini-3.5-flash",
+      "model_env_override": "BLOGUITO_IMAGE_REVIEW_MODEL",
+      "on_unavailable": "reject_nondeterministic_image_and_use_safe_fallback"
+    },
+    "concert_source_priority": [
+      "official_ticket_vendor",
+      "official_promoter",
+      "artist_official"
+    ],
+    "review_checks": [
+      "topic_recognizable_at_a_glance",
+      "single_clear_focal_subject",
+      "text_not_overcrowded",
+      "korean_text_exact",
+      "semantic_line_breaks",
+      "no_face_or_subject_crop",
+      "mobile_readable",
+      "desktop_balanced",
+      "not_old_web_banner_or_flyer",
+      "does_not_repeat_long_article_title"
+    ],
+    "regenerate_on": [
+      "face_crop",
+      "text_error",
+      "malformed_person_or_hands",
+      "text_overcrowding",
+      "low_quality_clipart",
+      "old_fashioned_banner_design"
+    ]
+  },
   "writer_model": "gemini-3.5-flash",
   "reviewer_model": "gemini-3.5-flash",
   "review_checks": [

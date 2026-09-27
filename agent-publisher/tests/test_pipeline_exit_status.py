@@ -51,6 +51,29 @@ class PipelineExitTests(unittest.TestCase):
         self.assertEqual(0, stats['errors'])
         self.assertEqual(1, stats['notification_errors'])
 
+    def test_pipeline_passes_only_curator_reviewed_poster_to_designer(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            for name in ('sync_inventory', 'ensure_inventory', 'notify_published', 'notify_error', 'notify_pipeline_summary'):
+                stack.enter_context(patch.object(pipeline, name))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
+            curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
+            designer = stack.enter_context(patch.object(pipeline, 'DesignerAgent')).return_value
+            publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
+            radar.search_news.return_value = [{'keyword': '테스트 콘서트', 'link': 'https://example.org'}]
+            curator.curate.return_value = {
+                'link': 'https://example.org',
+                'poster_url': 'https://news.example/unreviewed.jpg',
+                'reviewed_poster_url': 'https://ticket.example/official.jpg',
+            }
+            writer.write_article.return_value = {'title': '테스트 콘서트'}
+            publisher.publish.return_value = 500
+            pipeline.run_pipeline(['concert'])
+            self.assertEqual(
+                designer.generate_image.call_args.kwargs['reviewed_poster_url'],
+                'https://ticket.example/official.jpg',
+            )
+
     def test_cli_returns_failure_after_partial_success(self):
         stats = {'candidates': 2, 'published': 1, 'held': 0, 'errors': 1, 'notification_errors': 0}
         with patch.object(pipeline, 'run_pipeline', return_value=stats), redirect_stdout(io.StringIO()) as out:
