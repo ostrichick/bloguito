@@ -66,6 +66,16 @@ class ScheduleListingTests(unittest.TestCase):
         table['rows'][1]['cells'].append('오후 5시')
         self.assertNotIn('schedule_listing_not_bound', self.check())
 
+    def test_yes24_binding_allows_time_between_date_and_venue(self):
+        table = self.bundle['plan']['sections'][0]['table']
+        table['headers'] = ['지역', '공연 날짜', '공연 시작시간', '공연장']
+        table['rows'][0]['cells'] = ['대구', '2026.10.10', '오후 6시', '대구 엑스코 동관 6홀']
+        table['rows'][1]['cells'] = ['고양', '2026.12.26', '오후 5시', '킨텍스 2전시장 9A홀']
+        self.assertNotIn('schedule_listing_not_bound', self.check())
+
+        table['rows'][0]['cells'][3] = '미확인 공연장'
+        self.assertIn('schedule_listing_not_bound', self.check())
+
     def test_no_live_sale_status_claim_without_sale_evidence(self):
         self.bundle['plan']['lead']['text'] += ' 지금 예매중입니다.'
         self.assertIn('sale_status_claim_without_evidence', self.check())
