@@ -105,9 +105,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if tailscale_ssh:
             if not wsl_distro:
                 raise ValueError('tailscale_ssh_requires_wsl_distro')
-            return ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'ssh', destination, remote]
+            return ['wsl.exe', '-d', wsl_distro, '--exec', 'tailscale', 'ssh', destination, remote]
         command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
-        return ['wsl.exe', '-d', wsl_distro, '--', *command] if wsl_distro else command
+        return ['wsl.exe', '-d', wsl_distro, '--exec', *command] if wsl_distro else command
 
     def diagnose_once():
         nonlocal diagnosed
