@@ -285,6 +285,7 @@ class EditorialTests(unittest.TestCase):
             self.assertFalse(any('--post_status=publish' in c for c in commands))
             self.assertEqual(record.call_args.kwargs['status'],'draft')
             self.assertTrue(any('rank_math_focus_keyword' in c for c in commands))
+            self.assertTrue(any('rank_math_title' in c for c in commands))
             self.assertTrue(any('rank_math_description' in c for c in commands))
 
     def test_evergreen_does_not_require_news_rss(self):

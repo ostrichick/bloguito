@@ -119,6 +119,12 @@
   "source_max_age_hours": 24,
   "review_max_age_hours": 24,
   "max_revisions": 2,
+  "seo_guidance": {
+    "rank_math_target_floor": 75,
+    "rank_math_good_floor": 80,
+    "rank_math_low_score_threshold": 50,
+    "rank_math_is_publish_gate": false
+  },
   "writer_model": "gemini-3.5-flash",
   "reviewer_model": "gemini-3.5-flash",
   "review_checks": [

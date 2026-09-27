@@ -129,12 +129,19 @@ class PublisherAgent:
                 raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
             self._record_post(post_id, title, category['id'], category['name'], status='draft',
                 expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})
-            # Rank Math SEO 메타데이터 자동 주입 (포커스 키워드 & 메타 설명)
+            # Rank Math SEO metadata: reviewed values win; legacy bundles use
+            # the visible title/lead as a conservative fallback.
             focus_keyword = bundle['brief'].get('primary_keyword', '').strip()
-            meta_desc = bundle['plan']['lead']['text'][:160].strip()
+            reviewed_seo = bundle['brief'].get('seo')
+            reviewed_seo = reviewed_seo if isinstance(reviewed_seo, dict) else {}
+            seo_title = (reviewed_seo.get('title') or title).strip()
+            meta_desc = (reviewed_seo.get('description') or bundle['plan']['lead']['text'][:160]).strip()
             if focus_keyword:
                 subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                     str(post_id), 'rank_math_focus_keyword', focus_keyword, '--allow-root'], check=False, capture_output=True)
+            if seo_title:
+                subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+                    str(post_id), 'rank_math_title', seo_title, '--allow-root'], check=False, capture_output=True)
             if meta_desc:
                 subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                     str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=False, capture_output=True)

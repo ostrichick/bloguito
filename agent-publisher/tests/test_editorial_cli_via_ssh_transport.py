@@ -231,6 +231,17 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             capture_output=True, text=True, check=True)
         self.assertEqual(b'<p>reviewed</p>', calls[0][1]['input'])
 
+    def test_publish_allows_only_supported_rank_math_meta(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+        transport = module.make_transport('publish', {901}, 'bloguito')
+        for key in ('rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'):
+            transport(module._WP_PREFIX + [
+                'post', 'meta', 'set', '901', key, 'reviewed value', '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'post', 'meta', 'set', '901', 'rank_math_robots', 'noindex', '--allow-root'])
+
     def test_rejects_arbitrary_remote_wordpress_command(self):
         module = load_module()
         transport = module.make_transport('revise-draft', {463}, 'bloguito')

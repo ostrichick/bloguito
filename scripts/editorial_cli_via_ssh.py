@@ -209,7 +209,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if (action == 'publish' and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
-                and wp[4] in {'rank_math_focus_keyword', 'rank_math_description'}
+                and wp[4] in {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
                 and wp[6] == '--allow-root'):
             return
         raise ValueError('unexpected_wordpress_command_during_editorial_ssh')
