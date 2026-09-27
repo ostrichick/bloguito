@@ -182,11 +182,9 @@ class PublisherAgent:
             if old not in (render_legacy(bundle['plan'], bundle['sources']), content) and not only_auto_links_changed:
                 raise ValueError('reformat_user_edits_detected')
             inventory = dict(inventory, posts=[p for p in inventory['posts'] if int(p['ID']) != post_id])
-            # Format migration does not alter reviewed facts; refresh the policy stamp
-            # after the presentation contract changes so the normal gate can run.
-            from agents.editorial import policy_fingerprint
-            bundle['review']['policy_digest'] = policy_fingerprint()
-            bundle['review']['digest'] = __import__('agents.editorial', fromlist=['digest']).digest({k: bundle[k] for k in ('brief','sources','plan','temporal_source') if k in bundle})
+            # A renderer-only migration must preserve the original review.
+            # Changed content or policy requires a fresh semantic review; never
+            # manufacture a current signature from an older review here.
             report = validate_bundle(bundle, inventory)
             if report['status'] != 'ready':
                 raise ValueError(f"편집 검사 보류: {report['reasons']}")
