@@ -1,12 +1,13 @@
 import hashlib
 import io
-import random
+import json
+import os
 import re
 import sys
 import tempfile
 import urllib.request
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from config import GEMINI_API_KEY
 
 try:
@@ -15,38 +16,90 @@ except Exception:
     pass
 
 
-def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Linux(Ubuntu)와 Windows 환경을 모두 지원하는 크로스 플랫폼 폰트 안전 로더"""
+DEFAULT_FEATURED_IMAGE_POLICY = {
+    "canvas": {"width": 1200, "height": 675},
+    "text": {
+        "max_blocks": 2,
+        "primary_max_chars": 22,
+        "secondary_max_chars": 28,
+    },
+    "generation": {
+        "default_model": "gemini-3.1-flash-image",
+        "image_size": "1K",
+        "max_generation_attempts": 2,
+    },
+    "visual_review": {
+        "default_model": "gemini-3.5-flash",
+    },
+}
+
+
+def _load_featured_image_policy() -> dict:
+    """Load the common machine-readable cover policy without making import failure fatal."""
+    policy_path = Path(__file__).resolve().parents[1] / "editorial_policy.json"
+    try:
+        raw = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy = raw.get("featured_image_policy") or {}
+    except Exception:
+        policy = {}
+
+    merged = {
+        **DEFAULT_FEATURED_IMAGE_POLICY,
+        **policy,
+        "canvas": {**DEFAULT_FEATURED_IMAGE_POLICY["canvas"], **policy.get("canvas", {})},
+        "text": {**DEFAULT_FEATURED_IMAGE_POLICY["text"], **policy.get("text", {})},
+        "generation": {**DEFAULT_FEATURED_IMAGE_POLICY["generation"], **policy.get("generation", {})},
+    }
+    return merged
+
+
+FEATURED_IMAGE_POLICY = _load_featured_image_policy()
+
+
+def _font_has_hangul(font: ImageFont.FreeTypeFont) -> bool:
+    """Reject fonts that render Hangul as the same missing-glyph box."""
+    try:
+        masks = []
+        for char in ("가", "나", "한"):
+            mask = font.getmask(char)
+            masks.append((mask.size, bytes(mask)))
+        return len(set(masks)) >= 2 and any(any(data) for _, data in masks)
+    except Exception:
+        return False
+
+
+def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont:
+    """Load only a verified Hangul-capable font; broken Korean must fail closed."""
     candidates = []
     if bold:
         candidates = [
             "/usr/share/fonts/truetype/nanum/NanumSquareB.ttf",
             "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansKR-Bold.ttf",
             "C:/Windows/Fonts/malgunbd.ttf",
             "C:/Windows/Fonts/NanumSquareB.ttf",
             "C:/Windows/Fonts/NanumGothicBold.ttf",
-            "arialbd.ttf",
         ]
     else:
         candidates = [
             "/usr/share/fonts/truetype/nanum/NanumSquareR.ttf",
             "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
             "C:/Windows/Fonts/malgun.ttf",
             "C:/Windows/Fonts/NanumSquareR.ttf",
             "C:/Windows/Fonts/NanumGothic.ttf",
-            "arial.ttf",
         ]
 
     for path in candidates:
         try:
-            return ImageFont.truetype(path, size)
+            font = ImageFont.truetype(path, size)
+            if _font_has_hangul(font):
+                return font
         except Exception:
             continue
-
-    try:
-        return ImageFont.load_default(size=size)
-    except Exception:
-        return ImageFont.load_default()
+    raise RuntimeError("Hangul-capable font unavailable; refusing to render broken Korean text")
 
 
 def split_title(text: str, max_first_line: int = 22) -> list[str]:
@@ -79,6 +132,8 @@ def split_title(text: str, max_first_line: int = 22) -> list[str]:
     # 숫자+단위 뒤의 범위 표현은 하나의 의미 단위이므로 줄 사이에서 끊지 않는다.
     # 예: 65세 이상, 3개월 이하, 10만원 미만, 2시간 이내.
     words = text.split()
+    if len(words) <= 1:
+        return [text]
     best_split = len(words) // 2
     min_diff = 999
     range_followers = {"이상", "이하", "미만", "초과", "이내", "내외", "전후", "이전", "이후", "부터", "까지"}
@@ -102,46 +157,187 @@ def split_title(text: str, max_first_line: int = 22) -> list[str]:
     return [l1, l2] if l2 else [l1]
 
 
-# 고화질(4K) 검증된 테마별 실사 스톡 사진 라이브러리 (Unsplash CDN 직결)
-STOCK_PHOTOS = {
-    "concert": [
-        "photo-1514525253161-7a46d19cd819",  # 웅장한 콘서트 조명 & 열광하는 관객
-        "photo-1470225620780-dba8ba36b745",  # 페스티벌 레이저 쇼
-        "photo-1465847899084-d164df4dedc6",  # 라이브 음악 무대
-        "photo-1501386761578-eac5c94b800a",  # 화려한 무대 공연
-        "photo-1429962714451-bb934ecdc4ec",  # 콘서트 축제 축하 폭죽
-    ],
-    "welfare": [
-        "photo-1579621970563-ebec7560ff3e",  # 금융 지원 및 저축 성장
-        "photo-1554224155-8d04cb21cd6c",  # 정부 신청 서류 및 작성 가이드
-        "photo-1553729459-efe14ef6055d",  # 지원금 혜택 및 안락한 생활
-        "photo-1450133064473-71024230f91b",  # 따뜻한 지원의 손길
-        "photo-1576267423445-b2e0074d68a4",  # 평화롭고 행복한 가정 생활
-    ],
-    "life-health": [
-        "photo-1452626038306-9aae5e071dd3",  # 활기찬 도심 러닝크루 / 마라톤
-        "photo-1476480862126-209bfaa8edc8",  # 건강한 조깅 및 워킹 운동
-        "photo-1506126613408-eca07ce68773",  # 맑은 아침 건강 요가/스트레칭
-        "photo-1518611012118-696072aa579a",  # 야외 피트니스 및 활력
-        "photo-1540420773420-3366772f4999",  # 신선한 웰빙 건강 식단
-    ],
-    "tax": [
-        "photo-1554224155-6726b3ff858f",  # 세금 계산기 및 서류
-        "photo-1554224154-26032ffc0d07",  # 세무 신고 서류 및 펜
-        "photo-1559526324-4b87b5e36e44",  # 재정 분석 및 절세 계획
-        "photo-1579621970563-ebec7560ff3e",  # 세액공제 및 환급 저축
-        "photo-1450133064473-71024230f91b",  # 금융 자산 및 세금 안내
-    ],
-}
+def _clean_cover_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").replace("·", ",")).strip(" ,|:-")
 
+
+def _has_volatile_number(text: str) -> bool:
+    """Treat stable service names such as 정부24 as words, not volatile numeric claims."""
+    normalized = re.sub(r"정부\s*24", "정부서비스", text or "")
+    return bool(re.search(r"\d", normalized))
+
+
+def _shorten_by_words(text: str, max_chars: int) -> str:
+    """Shorten only at word boundaries; never use an ellipsis in cover copy."""
+    text = _clean_cover_text(text)
+    if len(text) <= max_chars:
+        return text
+    words = text.split()
+    if not words or len(words[0]) > max_chars:
+        return ""
+    kept: list[str] = []
+    for word in words:
+        candidate = " ".join([*kept, word])
+        if kept and len(candidate) > max_chars:
+            break
+        kept.append(word)
+    if kept and len(" ".join(kept)) <= max_chars:
+        return " ".join(kept)
+    return ""
+
+
+def derive_cover_copy(title: str, keyword: str = "") -> tuple[str, str | None]:
+    """Derive one short headline and, only when obvious, one short supporting line.
+
+    Copy is limited to words already present in the reviewed article title/keyword.
+    It deliberately avoids copying the full SEO headline into the image.
+    """
+    text_policy = FEATURED_IMAGE_POLICY["text"]
+    primary_limit = int(text_policy.get("primary_max_chars", 22))
+    secondary_limit = int(text_policy.get("secondary_max_chars", 28))
+
+    clean_title = _clean_cover_text(title)
+    clean_keyword = _clean_cover_text(keyword)
+    title_parts = re.split(r"\s*[:|]\s*", clean_title, maxsplit=1)
+    title_head = title_parts[0]
+    title_tail = title_parts[1] if len(title_parts) == 2 else ""
+
+    primary = ""
+    if (
+        clean_keyword
+        and len(clean_keyword) <= primary_limit
+        and clean_keyword in clean_title
+        and (clean_keyword != clean_title or len(clean_title.split()) == 1)
+    ):
+        # Search/radar keywords are hints, not independently reviewed claims. Use one
+        # only when the same phrase is already present in the reviewed article title.
+        primary = clean_keyword
+    if not primary:
+        primary = _shorten_by_words(title_head, primary_limit)
+    if primary == clean_title and len(clean_title.split()) > 1:
+        words = clean_title.split()
+        generic_tail = {"방법", "안내", "정리", "총정리", "가이드", "정보", "확인", "조회", "신청방법"}
+        if len(words) >= 2 and words[-1] in generic_tail:
+            candidate = " ".join(words[:-1]).strip()
+            if candidate and len(candidate) <= primary_limit:
+                primary = candidate
+        if primary == clean_title and len(words) >= 3:
+            candidate = " ".join(words[:-1]).strip()
+            if candidate and len(candidate) <= primary_limit:
+                primary = candidate
+        if primary == clean_title and len(words) == 2:
+            candidate = words[0].strip()
+            if candidate and len(candidate) <= primary_limit:
+                primary = candidate
+    if not primary:
+        raise ValueError("cover_copy_requires_review: no safe primary phrase within policy limit")
+
+    secondary: str | None = None
+    if primary and title_head.startswith(primary):
+        remainder = title_head[len(primary):].strip()
+        remainder = re.sub(r"^(?:과|와|및|,)+\s*", "", remainder)
+        remainder = _clean_cover_text(remainder)
+        if 2 <= len(remainder) <= secondary_limit and remainder != primary:
+            # Derived subtitles stay timeless by default. Dates/prices/ages belong in
+            # the article unless a human explicitly prepares a reviewed cover line.
+            if not _has_volatile_number(remainder):
+                secondary = remainder
+
+    if secondary is None and title_tail:
+        tail = _clean_cover_text(title_tail)
+        if len(tail) > secondary_limit and "," in tail:
+            tail = _clean_cover_text(tail.split(",", 1)[0])
+        if 2 <= len(tail) <= secondary_limit and tail != primary and not _has_volatile_number(tail):
+            secondary = tail
+
+    # Two text blocks must not reconstruct the full multiword article headline.
+    if secondary and len(clean_title.split()) > 1:
+        combined = _clean_cover_text(f"{primary} {secondary}")
+        if combined == clean_title:
+            secondary = None
+
+    return primary, secondary
+
+
+def _cover_profile(title: str, category_key: str, category_name: str) -> str:
+    combined = f"{title} {category_name}"
+    if category_key == "concert" or any(w in combined for w in ["콘서트", "공연", "뮤지컬", "페스티벌", "예매"]):
+        return "concert"
+    if any(w in combined for w in ["가격", "비용", "보험료", "검사비", "약값", "수수료", "요금", "비교"]):
+        return "price_compare"
+    if category_key == "welfare" or any(w in combined for w in ["복지", "지원금", "연금", "바우처", "장려금", "돌봄"]):
+        return "welfare"
+    if category_key == "tax" or any(
+        w in combined
+        for w in ["전입신고", "주민등록", "운전면허", "민원", "정부24", "신고", "증명서", "세금", "재산세", "연말정산", "소득공제", "세액공제"]
+    ):
+        return "life_admin"
+    return "life_service"
+
+
+def build_editorial_cover_prompt(
+    title: str,
+    keyword: str,
+    category_key: str,
+    category_name: str,
+    primary_text: str,
+    secondary_text: str | None,
+) -> str:
+    """Standard prompt used for generated background scenes.
+
+    Korean text is overlaid locally after generation, so the image model is explicitly
+    told to leave a quiet text area and render no letters or logos.
+    """
+    profile = _cover_profile(title, category_key, category_name)
+    topic_profiles = FEATURED_IMAGE_POLICY.get("topic_profiles", {})
+    subject = topic_profiles.get(
+        profile,
+        "Use one clear everyday subject directly connected to the topic in a natural service or lifestyle setting.",
+    )
+    composition = FEATURED_IMAGE_POLICY.get("composition", {})
+    safe_margin = int(composition.get("safe_margin_percent", 8))
+    reserved_text_area = int(composition.get("reserved_text_area_percent", 42))
+    styles = ", ".join(str(item).replace("_", " ") for item in FEATURED_IMAGE_POLICY.get("style", []))
+    prohibited = ", ".join(
+        str(item).replace("_", " ") for item in FEATURED_IMAGE_POLICY.get("prohibited", [])
+    )
+    max_colors = int(FEATURED_IMAGE_POLICY.get("color", {}).get("max_main_colors", 3))
+    secondary_plan = secondary_text or "none"
+    sections = {
+        "purpose": "Purpose: WordPress featured image, modern editorial blog cover.",
+        "topic": f"Topic: {primary_text}. Article context: {title}.",
+        "main_subject": f"Main subject: {subject}",
+        "composition": (
+            "Composition: 16:9 horizontal cover, one strong focal subject on the right half, "
+            f"at least {safe_margin}% safe margin around faces, heads, hands, documents and products; reserve the left {reserved_text_area}% "
+            "as calm bright negative space for later typography; mobile thumbnail must remain readable."
+        ),
+        "text": (
+            f"Text overlay plan: primary Korean title '{primary_text}', supporting line '{secondary_plan}'. "
+            "Render NO text, letters, logos, watermarks or fake UI labels in the generated scene; typography is added later."
+        ),
+        "style": (
+            f"Style: {styles}; friendly contemporary Korean lifestyle photography/illustration, generous whitespace, "
+            f"limited palette of no more than {max_colors} main colors."
+        ),
+        "prohibited": f"Prohibited: {prohibited}.",
+    }
+    order = FEATURED_IMAGE_POLICY.get(
+        "prompt_order",
+        ["purpose", "topic", "main_subject", "composition", "text", "style", "prohibited"],
+    )
+    return "\n".join(
+        f"{index}) {sections[key]}"
+        for index, key in enumerate(order, 1)
+        if key in sections
+    )
 
 class DesignerAgent:
     """
-    [생활정보 24] 차세대 멀티 비주얼 썸네일 엔진
-    - 대안 1: 별도 검토된 포스터 사진 클린 렌더링 (Blur-Fit)
-    - 대안 2: 제목 중심 모바일 타이포 카드
-    - 대안 3: 키워드 매칭 감성 실사스톡 + 에디토리얼 배너
-    - 대안 4: 하이브리드 (별도 검토된 포스터 + 브랜드와 제목 합성)
+    [생활정보 24] 대표 이미지 엔진
+    - 기본: 짧은 커버 카피 + 하나의 중심 장면을 사용하는 현대적 에디토리얼 커버
+    - 공연 예외: 별도 검토된 공식 포스터/홍보 이미지를 원본 비율 보존형으로 재구성
+    - 생성 장면 실패: 전체 SEO 제목을 반복하지 않는 미니멀 커버로 폴백
     """
 
     def __init__(self):
@@ -162,42 +358,279 @@ class DesignerAgent:
         reviewed_poster_url: str | None = None,
     ) -> int:
         """
-        제목/카테고리 및 별도 검토된 포스터 유무에 따라 렌더링 방식 선택.
+        별도 검토된 공연 포스터만 공식 이미지 경로를 사용하고 나머지는 에디토리얼 커버로 통일.
         curated 안의 이미지 주소나 자체 검토 표식은 출처 검증으로 취급하지 않는다.
         """
         search_target = title
 
-        # 1. 공연/콘서트 카테고리
+        # 공연/콘서트는 검토된 공식 포스터가 있을 때만 원본 보존형 커버를 사용한다.
         if category_key == "concert" or any(w in search_target for w in ["콘서트", "티켓", "예매", "뮤지컬", "페스티벌"]):
             if reviewed_poster_url and reviewed_poster_url.startswith(("https://", "http://")):
-                # 포스터 이미지가 있으면 하이브리드 프레임(대안 4) 적용
                 return 4
-            # 포스터가 없으면 제목 중심의 타이포 카드(대안 2)
-            return 2
+        return 5
 
-        # 2. 정부 복지/지원금 카테고리
-        if category_key == "welfare" or any(w in search_target for w in ["지원금", "연금", "바우처", "환급금", "장려금", "돌봄"]):
-            # 복지 정책은 지원 금액과 신청 자격이 핵심이므로 토스풍 타이포 카드(대안 2)가 최상
-            return 2
+    def _canvas_size(self) -> tuple[int, int]:
+        canvas = FEATURED_IMAGE_POLICY["canvas"]
+        return int(canvas.get("width", 1200)), int(canvas.get("height", 675))
 
-        # 3. 생활/건강 카테고리
-        if category_key == "life-health":
-            # 수치나 명확한 대상/의료·비상 정보는 대안 2(토스 타이포)
-            if any(w in search_target for w in ["무료", "환급", "대상", "자격", "검진", "기준", "요금제", "접종", "병원", "약국", "응급", "진료", "의료", "비상", "소아", "연휴", "명절", "추석", "설날", "통행료", "고속도로", "하이패스"]):
-                return 2
-            # 일상 관리나 생활 가이드는 감성 실사스톡(대안 3)
-            return 3
+    def _generated_scene(self, prompt: str) -> Image.Image:
+        if not self.client:
+            raise RuntimeError("image generation client unavailable")
+        from google.genai import types
 
-        # 4. 생활 세금/절세 카테고리
-        if category_key == "tax" or any(w in search_target for w in ["세금", "절세", "연말정산", "종합소득세", "자동차세", "환급금", "소득공제", "세액공제"]):
-            # 세금/환급 정보는 환급액, 공제 항목, 신청 기한이 핵심이므로 토스풍 타이포 카드(대안 2)가 최상
-            return 2
+        model = os.getenv(
+            "BLOGUITO_IMAGE_MODEL",
+            FEATURED_IMAGE_POLICY["generation"].get("default_model", "gemini-3.1-flash-image"),
+        )
+        image_size = FEATURED_IMAGE_POLICY["generation"].get("image_size", "1K")
+        result = self.client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="16:9", image_size=image_size),
+            ),
+        )
+        for part in getattr(result, "parts", None) or []:
+            if getattr(part, "inline_data", None) is None:
+                continue
+            image = part.as_image()
+            if image is not None:
+                return image.convert("RGB")
+        raise RuntimeError("image generation returned no image part")
 
-        # 기본값: 신뢰도 높은 토스풍 타이포 카드 (대안 2)
-        return 2
+    def _vision_review_cover(
+        self,
+        image: Image.Image,
+        *,
+        title: str,
+        primary_text: str | None,
+        secondary_text: str | None,
+        source_kind: str,
+    ) -> tuple[bool, list[str]]:
+        """Review nondeterministic visual output before it can become a featured image."""
+        if not self.client:
+            return False, ["vision_review_unavailable"]
+
+        from google.genai import types
+
+        review_policy = FEATURED_IMAGE_POLICY.get("visual_review", {})
+        model = os.getenv(
+            "BLOGUITO_IMAGE_REVIEW_MODEL",
+            review_policy.get("default_model", "gemini-3.5-flash"),
+        )
+        checks = ", ".join(
+            str(item).replace("_", " ") for item in FEATURED_IMAGE_POLICY.get("review_checks", [])
+        )
+        regenerate = ", ".join(
+            str(item).replace("_", " ") for item in FEATURED_IMAGE_POLICY.get("regenerate_on", [])
+        )
+        expected_text = [text for text in [primary_text, secondary_text] if text]
+        if source_kind == "official_poster":
+            context = (
+                "This is a separately verified official concert/promotional image recomposed by fit and background extension. "
+                f"The expected article/performance identity is '{title}'. Verify that the visible artist/show identity is consistent with the core artist or performance named there; "
+                "ignore SEO helper words such as booking/how-to wording or dates that an official poster may omit. Fail a generic ticket-vendor/share preview or a visibly different artist/show. "
+                "Original poster typography is allowed. Fail if a face, full head, chin, performer identity, or important performance title "
+                "has been destructively cropped or obscured, or if the recomposition looks broken. Do not fail merely because the official poster contains text."
+            )
+        else:
+            context = (
+                f"This is a generated editorial cover for '{title}'. The only intended visible Korean overlay text is {expected_text!r}. "
+                "Fail if the generated scene contains additional readable words, fake logos, watermarks, malformed UI text, or if the main subject is unclear."
+            )
+        prompt = (
+            "Review this WordPress featured image strictly. "
+            + context
+            + f" Check: {checks}. Severe regenerate conditions: {regenerate}. "
+            "Also check that the image feels modern, minimal and editorial rather than an old banner or flyer, and that it remains understandable as a small mobile thumbnail. "
+            "Return JSON only in this form: {\"pass\": true|false, \"issues\": [\"short issue\"]}."
+        )
+        try:
+            response = self.client.models.generate_content(
+                model=model,
+                contents=[prompt, image],
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            payload = json.loads((getattr(response, "text", "") or "").strip())
+            passed = payload.get("pass") is True
+            issues = [str(issue)[:160] for issue in payload.get("issues", []) if str(issue).strip()]
+            return passed, issues
+        except Exception as exc:
+            return False, [f"vision_review_error:{type(exc).__name__}"]
+
+    @staticmethod
+    def _fit_without_subject_crop(image: Image.Image, width: int, height: int) -> Image.Image:
+        """Fit an image to the cover while preserving the full foreground composition."""
+        if image.size == (width, height):
+            return image.copy()
+        background = ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS)
+        background = background.filter(ImageFilter.GaussianBlur(radius=20))
+        foreground = ImageOps.contain(image, (width, height), method=Image.Resampling.LANCZOS)
+        x = (width - foreground.width) // 2
+        y = (height - foreground.height) // 2
+        background.paste(foreground, (x, y))
+        return background
+
+    def _overlay_cover_copy(
+        self,
+        image: Image.Image,
+        primary_text: str,
+        secondary_text: str | None,
+    ) -> Image.Image:
+        width, height = image.size
+        base = image.convert("RGBA")
+
+        # A soft left scrim preserves photographic/illustrative context while making
+        # Korean typography readable without a banner box.
+        scrim = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        sdraw = ImageDraw.Draw(scrim)
+        scrim_end = int(width * 0.58)
+        for x in range(scrim_end):
+            ratio = x / max(scrim_end - 1, 1)
+            alpha = int(238 * (1 - ratio) ** 1.7)
+            sdraw.line([(x, 0), (x, height)], fill=(248, 252, 252, alpha))
+        base = Image.alpha_composite(base, scrim)
+        draw = ImageDraw.Draw(base)
+
+        left = int(width * 0.055)
+        text_width_chars = max(10, min(16, int(FEATURED_IMAGE_POLICY["text"].get("primary_max_chars", 22))))
+        lines = split_title(primary_text, max_first_line=text_width_chars)
+        longest = max(map(len, lines)) if lines else 1
+        font_size = 72 if longest <= 8 else 62 if longest <= 12 else 52
+        if len(lines) > 1:
+            font_size = min(font_size, 56)
+        title_font = _load_font(font_size, bold=True)
+        subtitle_font = _load_font(29, bold=True)
+
+        total_title_h = len(lines) * (font_size + 8)
+        subtitle_h = 48 if secondary_text else 0
+        start_y = max(70, (height - total_title_h - subtitle_h) // 2 - 15)
+        colors = [(13, 70, 145, 255), (0, 132, 96, 255)]
+        for index, line in enumerate(lines):
+            draw.text(
+                (left, start_y + index * (font_size + 8)),
+                line,
+                font=title_font,
+                fill=colors[min(index, len(colors) - 1)],
+            )
+
+        if secondary_text:
+            subtitle_y = start_y + total_title_h + 18
+            draw.text(
+                (left + 2, subtitle_y),
+                secondary_text,
+                font=subtitle_font,
+                fill=(30, 72, 110, 255),
+            )
+        return base.convert("RGB")
+
+    def _render_minimal_fallback(
+        self,
+        primary_text: str,
+        secondary_text: str | None,
+        profile: str,
+        output_path: Path,
+    ):
+        """Network/API-safe fallback using short cover copy and one abstract focal object."""
+        width, height = self._canvas_size()
+        image = Image.new("RGB", (width, height), (244, 250, 249))
+        draw = ImageDraw.Draw(image)
+
+        # One large contemporary focal object on the right; the shape changes enough
+        # to communicate the broad topic without turning into an icon collage.
+        cx, cy = int(width * 0.76), int(height * 0.50)
+        if profile == "concert":
+            draw.rounded_rectangle([cx - 210, cy - 190, cx + 210, cy + 190], radius=44, fill=(24, 31, 58))
+            draw.ellipse([cx - 82, cy - 82, cx + 82, cy + 82], fill=(241, 178, 73))
+        elif profile == "price_compare":
+            draw.rounded_rectangle([cx - 170, cy - 220, cx + 170, cy + 220], radius=32, fill=(255, 255, 255), outline=(204, 220, 220), width=4)
+            for offset in (-90, -20, 50):
+                draw.rounded_rectangle([cx - 105, cy + offset, cx + 90, cy + offset + 18], radius=9, fill=(204, 222, 222))
+            draw.rounded_rectangle([cx + 30, cy + 105, cx + 210, cy + 215], radius=24, fill=(34, 144, 112))
+        elif profile == "life_admin":
+            # A single coherent home + digital-application scene, echoing the
+            # successful move-in cover without copying its artwork.
+            house_x, house_y = cx - 10, cy - 155
+            draw.polygon(
+                [(house_x - 165, house_y + 75), (house_x, house_y - 50), (house_x + 165, house_y + 75)],
+                fill=(204, 225, 233),
+            )
+            draw.rounded_rectangle(
+                [house_x - 135, house_y + 55, house_x + 135, house_y + 235],
+                radius=14,
+                fill=(249, 252, 251),
+                outline=(181, 208, 218),
+                width=4,
+            )
+            draw.rounded_rectangle([cx - 185, cy - 35, cx + 135, cy + 165], radius=22, fill=(224, 237, 244), outline=(144, 181, 201), width=4)
+            draw.rounded_rectangle([cx - 150, cy - 5, cx + 100, cy + 112], radius=14, fill=(255, 255, 255))
+            draw.rounded_rectangle([cx - 82, cy + 18, cx + 38, cy + 88], radius=14, fill=(218, 239, 233))
+            draw.rounded_rectangle([cx + 100, cy + 80, cx + 225, cy + 195], radius=18, fill=(255, 255, 255), outline=(193, 215, 219), width=3)
+            draw.ellipse([cx + 154, cy + 120, cx + 224, cy + 190], fill=(38, 181, 132))
+        elif profile == "welfare":
+            draw.rounded_rectangle([cx - 155, cy - 230, cx + 155, cy + 230], radius=46, fill=(230, 241, 245), outline=(174, 204, 216), width=4)
+            draw.rounded_rectangle([cx - 120, cy - 175, cx + 120, cy + 128], radius=24, fill=(255, 255, 255))
+            draw.ellipse([cx - 48, cy - 92, cx + 48, cy + 4], fill=(216, 235, 230))
+            draw.rounded_rectangle([cx - 78, cy + 32, cx + 78, cy + 67], radius=17, fill=(38, 181, 132))
+        else:
+            draw.rounded_rectangle([cx - 235, cy - 165, cx + 155, cy + 165], radius=28, fill=(233, 242, 248), outline=(176, 204, 220), width=4)
+            draw.rounded_rectangle([cx - 190, cy - 120, cx + 110, cy + 72], radius=18, fill=(255, 255, 255))
+            draw.rounded_rectangle([cx - 120, cy - 58, cx + 42, cy + 42], radius=18, fill=(224, 241, 238))
+            draw.ellipse([cx + 78, cy + 42, cx + 198, cy + 162], fill=(38, 181, 132))
+
+        final = self._overlay_cover_copy(image, primary_text, secondary_text)
+        final.save(output_path, "JPEG", quality=96)
+
+    def _render_editorial_cover(
+        self,
+        title: str,
+        keyword: str,
+        category_key: str,
+        category_name: str,
+        output_path: Path,
+    ):
+        primary_text, secondary_text = derive_cover_copy(title, keyword)
+        prompt = build_editorial_cover_prompt(
+            title,
+            keyword,
+            category_key,
+            category_name,
+            primary_text,
+            secondary_text,
+        )
+        profile = _cover_profile(title, category_key, category_name)
+        max_attempts = max(1, int(FEATURED_IMAGE_POLICY["generation"].get("max_generation_attempts", 2)))
+        review_issues: list[str] = []
+        for attempt in range(1, max_attempts + 1):
+            attempt_prompt = prompt
+            if review_issues:
+                attempt_prompt += "\nPrevious attempt review issues to correct: " + "; ".join(review_issues)
+            try:
+                generated = self._generated_scene(attempt_prompt)
+                width, height = self._canvas_size()
+                generated = self._fit_without_subject_crop(generated, width, height)
+                final = self._overlay_cover_copy(generated, primary_text, secondary_text)
+                passed, review_issues = self._vision_review_cover(
+                    final,
+                    title=title,
+                    primary_text=primary_text,
+                    secondary_text=secondary_text,
+                    source_kind="generated_scene",
+                )
+                if passed:
+                    final.save(output_path, "JPEG", quality=96)
+                    print(f"[DesignerAgent] 🖼️ 현대적 에디토리얼 커버 생성·검수 완료: {output_path}")
+                    return
+                print(f"[DesignerAgent] ⚠️ 이미지 품질 검수 실패 {attempt}/{max_attempts}: {review_issues}")
+            except Exception as e:
+                print(f"[DesignerAgent] ⚠️ 장면 생성 실패 ({e}) -> 미니멀 에디토리얼 커버로 폴백")
+                break
+
+        self._render_minimal_fallback(primary_text, secondary_text, profile, output_path)
 
     # =========================================================================
-    # 대안 4: 하이브리드 (검토된 포스터 + 브랜드 및 제목)
+    # 공연 예외: 검토된 공식 포스터 원본 보존형 재구성
     # =========================================================================
     def _render_hybrid_poster(
         self,
@@ -207,8 +640,12 @@ class DesignerAgent:
         curated: dict | None,
         output_path: Path,
     ):
-        """제공된 포스터를 16:9 비율로 맞추고 제목과 브랜드만 합성."""
-        width, height = 1200, 675
+        """공식 포스터를 자르지 않고 16:9 커버 안에 재구성한다.
+
+        공식 홍보물 자체의 공연명, 인물, 로고와 분위기를 보존하기 위해 블로그 제목이나
+        브랜드 배지를 추가로 덮지 않는다. 빈 영역은 같은 원본을 흐림 확장한 배경으로 채운다.
+        """
+        width, height = self._canvas_size()
         req = urllib.request.Request(
             poster_url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
@@ -247,258 +684,8 @@ class DesignerAgent:
         base = Image.alpha_composite(base.convert("RGBA"), fg_shadow).convert("RGB")
         base.paste(fg, (fg_x, fg_y))
 
-        # 3. 상단 브랜드 배지 바
-        top_bar = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        t_draw = ImageDraw.Draw(top_bar)
-
-        font_badge = _load_font(20, bold=True)
-        t_draw.rounded_rectangle([40, 30, 230, 72], radius=8, fill=(37, 99, 235, 245))
-        t_draw.text((56, 39), "생활정보 24", font=font_badge, fill=(255, 255, 255))
-
-        # 4. 하단 정보 요약 띠지 (그라데이션 스크림)
-        scrim_y = height - 160
-        for y in range(scrim_y, height):
-            alpha = int(240 * ((y - scrim_y) / (height - scrim_y)))
-            t_draw.line([(0, y), (width, y)], fill=(5, 10, 20, alpha))
-
-        lines = split_title(title.strip())
-        max_l = max(len(l) for l in lines)
-        if len(lines) == 1:
-            font_title = _load_font(34 if max_l <= 24 else 30, bold=True)
-            t_draw.text((45, height - 120), lines[0], font=font_title, fill=(255, 255, 255))
-        else:
-            font_title = _load_font(28 if max_l <= 24 else 25, bold=True)
-            t_draw.text((45, height - 138), lines[0], font=font_title, fill=(255, 255, 255))
-            t_draw.text((45, height - 104), lines[1], font=font_title, fill=(255, 255, 255))
-
-        final_img = Image.alpha_composite(base.convert("RGBA"), top_bar).convert("RGB")
-        final_img.save(output_path, "JPEG", quality=95)
-        print(f"[DesignerAgent] 👑 [대안 4: 하이브리드 포스터] 생성 완료: {output_path}")
-
-    # =========================================================================
-    # 대안 2: 토스풍 모바일 인포그래픽 타이포 카드
-    # =========================================================================
-    def _render_toss_typography(
-        self,
-        title: str,
-        category_name: str,
-        keyword: str,
-        curated: dict | None,
-        output_path: Path,
-    ):
-        """제목과 카테고리만 표기하는 타이포 카드."""
-        width, height = 1200, 675
-        combined_text = f"{title} {category_name}"
-
-        # 0. 카테고리 및 주제별 테마 색상 & 태그 라벨 결정
-        if "공연" in category_name or "콘서트" in category_name or any(w in combined_text for w in ["콘서트", "티켓", "예매", "뮤지컬"]):
-            bg_start = (18, 16, 42)
-            bg_end = (34, 24, 60)
-            badge_bg = (245, 158, 11)
-            accent_col = (251, 191, 36)
-        elif any(w in combined_text for w in ["통행료", "고속도로", "하이패스", "교통"]):
-            bg_start = (12, 28, 46)
-            bg_end = (20, 48, 76)
-            badge_bg = (14, 165, 233)
-            accent_col = (56, 189, 248)
-        elif any(w in combined_text for w in ["병원", "약국", "응급", "진료", "의료", "달빛어린이"]):
-            bg_start = (8, 36, 40)
-            bg_end = (16, 56, 62)
-            badge_bg = (13, 148, 136)
-            accent_col = (45, 212, 191)
-        elif "세금" in category_name or "절세" in category_name or any(w in combined_text for w in ["재산세", "세금", "절세", "세액공제"]):
-            bg_start = (6, 32, 28)
-            bg_end = (12, 54, 46)
-            badge_bg = (16, 185, 129)
-            accent_col = (52, 211, 153)
-        elif any(w in combined_text for w in ["환급금", "미환급금"]):
-            bg_start = (10, 30, 44)
-            bg_end = (18, 50, 72)
-            badge_bg = (14, 165, 233)
-            accent_col = (56, 189, 248)
-        elif any(w in combined_text for w in ["근로장려금", "자녀장려금", "장려금"]):
-            bg_start = (10, 26, 50)
-            bg_end = (18, 46, 84)
-            badge_bg = (59, 130, 246)
-            accent_col = (96, 165, 250)
-        elif "복지" in category_name or any(w in combined_text for w in ["기초연금", "바우처", "지원금"]):
-            bg_start = (10, 24, 52)
-            bg_end = (18, 44, 88)
-            badge_bg = (59, 130, 246)
-            accent_col = (52, 211, 153)
-        else:
-            bg_start = (12, 28, 44)
-            bg_end = (20, 46, 70)
-            badge_bg = (14, 165, 233)
-            accent_col = (56, 189, 248)
-
-        tag_label = category_name or "생활정보 24"
-
-        base = Image.new("RGB", (width, height))
-        draw = ImageDraw.Draw(base)
-
-        # 1. 배경 세로 그라데이션
-        for y in range(height):
-            ratio = y / height
-            r = int(bg_start[0] * (1 - ratio) + bg_end[0] * ratio)
-            g = int(bg_start[1] * (1 - ratio) + bg_end[1] * ratio)
-            b = int(bg_start[2] * (1 - ratio) + bg_end[2] * ratio)
-            draw.line([(0, y), (width, y)], fill=(r, g, b))
-
-        # 2. 모던한 카드 쉘
-        margin_x, margin_y = 60, 42
-        card_w, card_h = width - (margin_x * 2), height - (margin_y * 2)
-
-        card_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        c_draw = ImageDraw.Draw(card_overlay)
-
-        c_draw.ellipse([width - 300, -100, width + 100, 300], fill=(*badge_bg, 20))
-        c_draw.ellipse([-50, height - 250, 350, height + 150], fill=(*accent_col, 15))
-
-        c_draw.rounded_rectangle(
-            [margin_x, margin_y, margin_x + card_w, margin_y + card_h],
-            radius=20,
-            fill=(255, 255, 255, 14),
-            outline=(255, 255, 255, 45),
-            width=2,
-        )
-        base = Image.alpha_composite(base.convert("RGBA"), card_overlay).convert("RGB")
-        draw = ImageDraw.Draw(base)
-
-        # 3. 폰트 세팅
-        font_badge = _load_font(21, bold=True)
-        font_brand = _load_font(20, bold=False)
-
-        # 4. 상단 배지 바
-        pad_x = margin_x + 50
-        pad_y = margin_y + 36
-
-        badge_text = f"  {tag_label}  "
-        bbox = font_badge.getbbox(badge_text)
-        bw = bbox[2] - bbox[0] + 16
-        bh = bbox[3] - bbox[1] + 10
-
-        draw.rounded_rectangle([pad_x, pad_y, pad_x + bw, pad_y + bh], radius=8, fill=badge_bg)
-        draw.text((pad_x + 8, pad_y + 3), badge_text, font=font_badge, fill=(255, 255, 255))
-        draw.text((margin_x + card_w - 180, pad_y + 6), "생활정보 24", font=font_brand, fill=(160, 180, 205))
-
-        # Use only the reviewed article title and category. Curator hints and
-        # keyword matches do not establish ticket, benefit, deadline or source facts.
-        title_lines = split_title(title.strip() or "생활정보 24")
-        longest = max(map(len, title_lines))
-        font_size = 46 if longest <= 18 else 35 if longest <= 25 else 29
-        font_title = _load_font(font_size, bold=True)
-        title_y = pad_y + 135
-        for i, line in enumerate(title_lines):
-            draw.text((pad_x, title_y + i * (font_size + 17)), line, font=font_title, fill=(255, 255, 255))
-
-        # Nonverbal accents leave the lower area clear of unsupported claims.
-        draw.rounded_rectangle([pad_x, height - 164, pad_x + 170, height - 156], radius=4, fill=accent_col)
-        draw.line([(pad_x, height - 128), (pad_x + card_w - 100, height - 128)], fill=(160, 180, 205), width=2)
-
-        base.save(output_path, "JPEG", quality=98)
-        print(f"[DesignerAgent] 📱 [대안 2: 토스풍 타이포 카드] 생성 완료: {output_path}")
-
-
-    # =========================================================================
-    # 대안 3: 키워드 매칭 감성 실사스톡
-    # =========================================================================
-    def _render_keyword_stock(
-        self,
-        keyword: str,
-        category_name: str,
-        title: str,
-        output_path: Path,
-    ):
-        """주제별 맞춤 실사 사진 다운로드 + 하단 에디토리얼 타이포그래피 배너"""
-        width, height = 1200, 675
-        theme_key = "life-health"
-        if "공연" in category_name or "콘서트" in category_name:
-            theme_key = "concert"
-        elif "복지" in category_name:
-            theme_key = "welfare"
-        elif "세금" in category_name or "절세" in category_name:
-            theme_key = "tax"
-
-        pool = STOCK_PHOTOS.get(theme_key, STOCK_PHOTOS["life-health"])
-        chosen_id = random.choice(pool)
-        url = f"https://images.unsplash.com/{chosen_id}?w=1200&h=675&fit=crop&q=85"
-
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            img_bytes = resp.read()
-
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-        if img.size != (width, height):
-            img = img.resize((width, height), Image.Resampling.LANCZOS)
-
-        overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-
-        grad_y = 415
-        for y in range(grad_y, height):
-            alpha = int(230 * ((y - grad_y) / (height - grad_y)))
-            draw.line([(0, y), (width, y)], fill=(8, 12, 24, alpha))
-
-        font_badge = _load_font(22, bold=True)
-        font_title = _load_font(38, bold=True)
-        font_brand = _load_font(18, bold=False)
-
-        badge_x, badge_y = 60, 475
-        badge_text = f"  {category_name}  "
-        bbox = font_badge.getbbox(badge_text)
-        bw = bbox[2] - bbox[0] + 16
-        bh = bbox[3] - bbox[1] + 10
-
-        draw.rounded_rectangle([badge_x, badge_y, badge_x + bw, badge_y + bh], radius=8, fill=(16, 185, 129, 235))
-        draw.text((badge_x + 8, badge_y + 3), badge_text, font=font_badge, fill=(255, 255, 255))
-        draw.text((badge_x + bw + 16, badge_y + 6), "생활정보 24", font=font_brand, fill=(203, 213, 225))
-
-        title_lines = split_title(title.strip())
-        max_line_len = max(len(l) for l in title_lines)
-        if len(title_lines) == 1:
-            font_title = _load_font(36 if max_line_len <= 20 else 32, bold=True)
-            draw.text((badge_x, badge_y + bh + 16), title_lines[0], font=font_title, fill=(255, 255, 255))
-        else:
-            font_title = _load_font(30 if max_line_len <= 24 else 26, bold=True)
-            line_h = 38 if max_line_len <= 24 else 34
-            for i, line in enumerate(title_lines):
-                draw.text((badge_x, badge_y + bh + 14 + (i * line_h)), line, font=font_title, fill=(255, 255, 255))
-
-        final_img = Image.alpha_composite(img, overlay).convert("RGB")
-        final_img.save(output_path, "JPEG", quality=95)
-        print(f"[DesignerAgent] 🌄 [대안 3: 키워드 매칭 실사스톡] 생성 완료: {output_path}")
-
-    # =========================================================================
-    # 대안 1: 검토된 포스터 클린 렌더링 (Blur-Fit)
-    # =========================================================================
-    def _render_clean_poster(
-        self,
-        poster_url: str,
-        title: str,
-        category_name: str,
-        output_path: Path,
-    ):
-        """제공된 포스터 원본을 16:9 비율로 블러 확장하여 배치."""
-        width, height = 1200, 675
-        req = urllib.request.Request(poster_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            img_bytes = resp.read()
-
-        orig = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
-        bg = orig.resize((width, height), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(25))
-        dim = Image.new("RGBA", (width, height), (0, 0, 0, 100))
-        base = Image.alpha_composite(bg.convert("RGBA"), dim).convert("RGB")
-
-        target_h = int(height * 0.94)
-        scale = target_h / orig.height
-        target_w = int(orig.width * scale)
-        fg = orig.resize((target_w, target_h), Image.Resampling.LANCZOS)
-        base.paste(fg, ((width - target_w) // 2, (height - target_h) // 2))
-
         base.save(output_path, "JPEG", quality=95)
-        print(f"[DesignerAgent] 📸 [대안 1: 클린 포스터] 생성 완료: {output_path}")
+        print(f"[DesignerAgent] 🎤 공식 공연 이미지 원본 보존형 커버 생성 완료: {output_path}")
 
     # =========================================================================
     # 메인 엔트리포인트: 자율 라우팅 및 렌더링
@@ -513,8 +700,8 @@ class DesignerAgent:
         reviewed_poster_url: str | None = None,
     ) -> Path:
         """
-        기본은 제목·카테고리만 출력한다. 독립 검토한 이미지 주소를 별도 인자로
-        전달한 경우에만 포스터를 사용하며 네트워크 실패 시 타이포로 폴백한다.
+        기본은 현대적 에디토리얼 커버를 만든다. 독립 검토한 공연 공식 이미지 주소를
+        별도 인자로 전달한 경우에만 포스터를 사용하며 실패 시 같은 에디토리얼 커버로 폴백한다.
         """
         h = hashlib.md5(title.encode("utf-8")).hexdigest()[:8]
         tmp_dir = Path(tempfile.gettempdir())
@@ -523,41 +710,25 @@ class DesignerAgent:
         mode = self.select_mode(category_key, curated, title, keyword, reviewed_poster_url)
         poster_url = reviewed_poster_url
 
-        print(f"[DesignerAgent] 🎨 썸네일 자동 라우팅: [대안 {mode}번] 선정 (주제: '{title[:20]}...', 카테고리: {category_name})")
+        print(f"[DesignerAgent] 🎨 대표 이미지 자동 라우팅: [모드 {mode}] 선정 (주제: '{title[:20]}...', 카테고리: {category_name})")
 
         # 1. 모드 4: 하이브리드 포스터
         if mode == 4 and poster_url:
             try:
                 self._render_hybrid_poster(poster_url, title, category_name, curated, output_path)
-                return output_path
+                with Image.open(output_path) as poster_cover:
+                    passed, issues = self._vision_review_cover(
+                        poster_cover.convert("RGB"),
+                        title=title,
+                        primary_text=None,
+                        secondary_text=None,
+                        source_kind="official_poster",
+                    )
+                if passed:
+                    return output_path
+                print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 품질 검수 실패: {issues} -> 에디토리얼 커버로 폴백")
             except Exception as e:
-                print(f"[DesignerAgent] ⚠️ 하이브리드 포스터 생성 실패 ({e}) -> 대안 2(토스풍 타이포)로 안전 폴백")
+                print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 재구성 실패 ({e}) -> 에디토리얼 커버로 폴백")
 
-        # 2. 모드 1: 클린 포스터
-        elif mode == 1 and poster_url:
-            try:
-                self._render_clean_poster(poster_url, title, category_name, output_path)
-                return output_path
-            except Exception as e:
-                print(f"[DesignerAgent] ⚠️ 클린 포스터 생성 실패 ({e}) -> 대안 2(토스풍 타이포)로 안전 폴백")
-
-        # 3. 모드 3: 키워드 매칭 감성 실사스톡
-        elif mode == 3:
-            try:
-                self._render_keyword_stock(keyword, category_name, title, output_path)
-                return output_path
-            except Exception as e:
-                print(f"[DesignerAgent] ⚠️ 실사스톡 다운로드 실패 ({e}) -> 대안 2(토스풍 타이포)로 안전 폴백")
-
-        # 4. 모드 2 (기본 및 안전망): 토스풍 모바일 타이포 카드
-        try:
-            self._render_toss_typography(title, category_name, keyword, curated, output_path)
-            return output_path
-        except Exception as e:
-            print(f"[DesignerAgent] ❌ 타이포 카드 렌더링 중 오류 ({e}), 최소 카드 저장 시도")
-            img = Image.new("RGB", (1200, 675), color=(15, 23, 42))
-            draw = ImageDraw.Draw(img)
-            for index, line in enumerate(split_title(title.strip() or "생활정보 24")):
-                draw.text((60, 275 + index * 50), line, fill=(255, 255, 255))
-            img.save(output_path, "JPEG")
-            return output_path
+        self._render_editorial_cover(title, keyword, category_key, category_name, output_path)
+        return output_path

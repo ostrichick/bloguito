@@ -85,6 +85,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     keyword=raw_item["keyword"],
                     curated=curated,
                     category_key=cat_key,
+                    reviewed_poster_url=curated.get("reviewed_poster_url"),
                 )
 
                 # 5. 워드프레스 포스팅 및 썸네일 등록 (Publisher)

@@ -202,6 +202,41 @@ class NetworkAndPipelineTests(unittest.TestCase):
         self.assertIsNone(result["direct_product_url"])
         curator.discover_nol_ticket_info.assert_not_called()
 
+    def test_uniquely_matched_official_ticket_poster_is_marked_reviewed_for_cover(self):
+        curator = CuratorAgent()
+        curator.fetch_article_content = Mock(
+            return_value=("테스트밴드 수원 콘서트 2026년 12월 25일 공연 안내. " * 20, "https://example.com/news")
+        )
+
+        def discover(*_args, **_kwargs):
+            curator.last_ticket_verification = {"status": "matched"}
+            return {
+                "poster_url": "https://ticketimage.example/official.jpg",
+                "product_url": "https://nol.yanolja.com/ticket/products/1001",
+                "price_str": "R석 100,000원",
+                "date_str": "2026-12-25",
+                "place_str": "수원 공연장",
+                "temporal_evidence": [],
+            }
+
+        curator.discover_nol_ticket_info = Mock(side_effect=discover)
+        result = curator.curate(
+            {"title": "'테스트밴드' 수원 콘서트 2026년 12월 25일", "keyword": "테스트밴드 콘서트", "category_key": "concert", "link": "https://example.com/news"}
+        )
+        self.assertEqual(result["reviewed_poster_url"], "https://ticketimage.example/official.jpg")
+
+    def test_news_og_image_is_not_marked_reviewed_for_concert_cover(self):
+        curator = CuratorAgent()
+        curator.last_article_image_url = "https://news.example/article.jpg"
+        curator.fetch_article_content = Mock(
+            return_value=("일반 생활 기사 본문입니다. 충분한 길이를 위해 같은 문장을 반복합니다. " * 20, "https://example.com/news")
+        )
+        result = curator.curate(
+            {"title": "생활 정보 안내", "keyword": "생활 정보", "category_key": "life-health", "link": "https://example.com/news"}
+        )
+        self.assertEqual(result["poster_url"], "https://news.example/article.jpg")
+        self.assertIsNone(result["reviewed_poster_url"])
+
 
 if __name__ == "__main__":
     unittest.main()
