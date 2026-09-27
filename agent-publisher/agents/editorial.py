@@ -535,8 +535,12 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                         rows = extract_nol_product_schedule(
                             listing_source['text'], legacy_nol['title_terms'][0],
                             legacy_nol['region'])
-                    table_rows = [row['cells'] for section in plan['sections']
-                                  for row in (section.get('table') or {}).get('rows', [])]
+                    schedule_tables = [
+                        (table.get('headers', []), row.get('cells', []))
+                        for section in plan['sections']
+                        for table in [section.get('table') or {}]
+                        for row in table.get('rows', [])
+                    ]
                     if host == 'www.ticketlink.co.kr':
                         # Ticketlink's bridge uses a broad province label (for
                         # example 경기) while the product/venue names identify
@@ -546,12 +550,30 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                         listing_rows_in_table = all(
                             any(item['date'] in cells
                                 and item['venue'] in cells
-                                for cells in table_rows)
+                                for _, cells in schedule_tables)
                             for item in rows)
                     else:
+                        def matches_schedule_row(headers, cells, item):
+                            header_sets = {
+                                'region': {'지역'},
+                                'date': {'날짜', '공연 날짜', '공연일'},
+                                'venue': {'공연장', '장소'},
+                            }
+                            indexes = {}
+                            for key, labels in header_sets.items():
+                                indexes[key] = next(
+                                    (i for i, header in enumerate(headers) if header in labels), None)
+                                if indexes[key] is None or indexes[key] >= len(cells):
+                                    return False
+                            return (
+                                cells[indexes['region']] == item['region']
+                                and cells[indexes['date']] == item['date']
+                                and cells[indexes['venue']] == item['venue']
+                            )
+
                         listing_rows_in_table = all(
-                            any(cells[:3] == [item['region'], item['date'], item['venue']]
-                                for cells in table_rows)
+                            any(matches_schedule_row(headers, cells, item)
+                                for headers, cells in schedule_tables)
                             for item in rows)
                     if (not rows or rows != temporal.get('listing_entries')
                             or (nol_product and any(item['venue'] != legacy_nol['venue'] for item in rows))
