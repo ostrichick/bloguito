@@ -251,7 +251,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         def fake_run(args, **kwargs):
             calls.append((list(args), dict(kwargs)))
             remote = args[-1]
-            if ' wp eval-file ' in remote:
+            if ' wp eval ' in remote:
                 return subprocess.CompletedProcess(args, 0, stdout=json.dumps(inventory), stderr='')
             return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
 
@@ -260,9 +260,8 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport(module._WP_PREFIX + module._LIGHT_INVENTORY_ARGS,
                   capture_output=True, text=True, check=True)
         remote_commands = [args[-1] for args, _ in calls if args]
-        self.assertTrue(any(' wp eval-file ' in remote for remote in remote_commands))
-        self.assertFalse(any('$q' in remote for remote in remote_commands))
-        self.assertFalse(any('new WP_Query' in remote for remote in remote_commands))
+        self.assertTrue(any(' wp eval ' in remote for remote in remote_commands))
+        self.assertTrue(any('$q' in remote for remote in remote_commands))
         transport(module._WP_PREFIX + [
             'post', 'get', '700', '--format=json', '--allow-root'],
             capture_output=True, text=True, check=True)

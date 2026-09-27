@@ -17,8 +17,6 @@ has a fixed WP-CLI allowlist, and Tailscale diagnostics run only after SSH fails
 """
 
 import argparse
-import base64
-import hashlib
 import json
 import re
 import shlex
@@ -45,7 +43,6 @@ _LIST_ARGS = [
 ]
 _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
-_REMOTE_EVAL = re.compile(r'/tmp/editorial_eval_[0-9a-f]{16}\.php')
 _SUPPORTED_ACTIONS = {
     'publish', 'revise-draft', 'fast-revise-draft', 'update-draft', 'replace-legacy-draft',
     'promote-draft', 'reformat', 'fix-excerpt',
@@ -224,62 +221,15 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if command[:5] == _WP_PREFIX:
             wp = command[5:]
             kind = validate_wp(wp)
+            remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
             read_only = (wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS
                          or wp[:2] == ['post', 'get'] or (wp and wp[0] == 'eval'))
             idempotent_fast_update = action == 'fast-revise-draft' and wp[:2] == ['post', 'update']
-            if wp and wp[0] == 'eval':
-                # `ssh host <command>` still feeds the command through a remote
-                # shell. Passing PHP such as `$q=...` as an argv-looking string
-                # therefore lets an intermediate shell expand `$q` despite the
-                # local subprocess call using an argv list. Keep PHP out of the
-                # remote command entirely: transfer a base64 payload to a
-                # tightly-scoped temp file, copy it into the container, then run
-                # WP-CLI's eval-file on that fixed path.
-                php = wp[1]
-                token = hashlib.sha256(php.encode('utf-8')).hexdigest()[:16]
-                host_path = f'/tmp/editorial_eval_{token}.php'
-                if not _REMOTE_EVAL.fullmatch(host_path):
-                    raise ValueError('unexpected_remote_eval_path')
-                encoded = base64.b64encode(php.encode('utf-8')).decode('ascii')
-                stage = (
-                    'printf %s ' + shlex.quote(encoded)
-                    + ' | base64 -d > ' + shlex.quote(host_path)
-                )
-                copy_into_container = ' '.join(shlex.quote(item) for item in [
-                    'sudo', 'docker', 'cp', host_path, f'wordpress_app:{host_path}'
-                ])
-                eval_file = ' '.join(shlex.quote(item) for item in [
-                    'sudo', 'docker', 'exec', 'wordpress_app', 'wp',
-                    'eval-file', host_path, '--allow-root'
-                ])
-                cleanup_container = ' '.join(shlex.quote(item) for item in [
-                    'sudo', 'docker', 'exec', 'wordpress_app', 'rm', '-f', host_path
-                ])
-                cleanup_host = 'rm -f ' + shlex.quote(host_path)
-                setup_options = dict(kwargs)
-                setup_options['check'] = True
-                try:
-                    remote_run(stage, retry_255=True, **setup_options)
-                    remote_run(copy_into_container, retry_255=True, **setup_options)
-                    result = remote_run(eval_file, retry_255=read_only, **kwargs)
-                finally:
-                    cleanup_options = dict(kwargs)
-                    cleanup_options['check'] = False
-                    try:
-                        remote_run(cleanup_container, retry_255=True, **cleanup_options)
-                    except (OSError, subprocess.SubprocessError):
-                        pass
-                    try:
-                        remote_run(cleanup_host, retry_255=True, **cleanup_options)
-                    except (OSError, subprocess.SubprocessError):
-                        pass
-            else:
-                remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
-                result = remote_run(
-                    remote,
-                    retry_255=read_only or idempotent_fast_update,
-                    **kwargs,
-                )
+            result = remote_run(
+                remote,
+                retry_255=read_only or idempotent_fast_update,
+                **kwargs,
+            )
             if wp == _LIGHT_INVENTORY_ARGS and getattr(result, 'returncode', 0) == 0:
                 raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
                 rows = json.loads(raw)
