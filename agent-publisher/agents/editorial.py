@@ -225,11 +225,11 @@ def all_blocks(plan):
 
 
 def supported_currency_sums(text, quote_text, calculations):
-    """Allow only explicit KRW sums whose operands are all present in evidence.
+    """Allow only narrowly defined derived values whose inputs are in evidence.
 
-    This is intentionally narrow. It supports reader-useful reference prices
-    derived by adding official won amounts, while still rejecting inferred
-    dates, rates, averages, multiplication, subtraction and arbitrary math.
+    Supported operations are reader-useful KRW sums and a scheduled end time
+    derived from an explicit Korean start time plus an official running time.
+    Rates, averages, arbitrary date math and other calculations remain rejected.
     """
     if calculations in (None, []):
         return set(), []
@@ -243,8 +243,49 @@ def supported_currency_sums(text, quote_text, calculations):
     errors = []
     plain_text = text.replace(',', '')
     for item in calculations:
-        if (not isinstance(item, dict)
-                or set(item) != {'operation', 'unit', 'operands', 'result'}
+        if not isinstance(item, dict):
+            errors.append('invalid_derived_calculation')
+            continue
+        if item.get('operation') == 'add_duration':
+            if (set(item) != {'operation', 'unit', 'start', 'duration', 'result'}
+                    or item.get('unit') != '분'
+                    or type(item.get('duration')) is not int
+                    or not 1 <= item['duration'] <= 24 * 60
+                    or not isinstance(item.get('start'), str)
+                    or not isinstance(item.get('result'), str)):
+                errors.append('invalid_derived_calculation')
+                continue
+
+            clock = re.compile(r'^(오전|오후)\s*(\d{1,2})시\s*(\d{1,2})분$')
+            start_match = clock.fullmatch(item['start'])
+            result_match = clock.fullmatch(item['result'])
+            if not start_match or not result_match:
+                errors.append('invalid_derived_calculation')
+                continue
+
+            def minute_of_day(match):
+                period, hour, minute = match.groups()
+                hour, minute = int(hour), int(minute)
+                if not 1 <= hour <= 12 or not 0 <= minute <= 59:
+                    raise ValueError('invalid_clock')
+                return (hour % 12 + (12 if period == '오후' else 0)) * 60 + minute
+
+            try:
+                expected = (minute_of_day(start_match) + item['duration']) % (24 * 60)
+                actual = minute_of_day(result_match)
+            except ValueError:
+                errors.append('invalid_derived_calculation')
+                continue
+            if (expected != actual
+                    or item['start'] not in quote_text
+                    or not re.search(r'(?<!\d)' + str(item['duration']) + r'\s*분', quote_text)
+                    or item['result'] not in text):
+                errors.append('invalid_derived_calculation')
+                continue
+            supported.update(numbers(item['result']))
+            continue
+
+        if (set(item) != {'operation', 'unit', 'operands', 'result'}
                 or item.get('operation') != 'sum'
                 or item.get('unit') != '원'):
             errors.append('invalid_derived_calculation')

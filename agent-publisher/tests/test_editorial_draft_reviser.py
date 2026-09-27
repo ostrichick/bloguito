@@ -106,6 +106,18 @@ class EditorialDraftReviserTests(unittest.TestCase):
             _before_generated_source_footer(new),
         )
 
+    def test_missing_generated_source_footer_matches_current_renderer_body(self):
+        stored = '<div class="bloguito-article"><p>검토된 본문</p></div>'
+        rendered = (
+            '<div class="bloguito-article"><p>검토된 본문</p>'
+            '<div style="margin-top:44px"><h2 id="sources">출처</h2>'
+            '<ul class="source-list"><li>current</li></ul></div></div>'
+        )
+        self.assertEqual(
+            _before_generated_source_footer(stored),
+            _before_generated_source_footer(rendered),
+        )
+
     def test_source_footer_migration_does_not_hide_prose_change(self):
         old = (
             '<div class="bloguito-article"><p>검토된 본문</p>'

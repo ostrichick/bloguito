@@ -42,10 +42,12 @@ def _sha(text):
 
 
 def _before_generated_source_footer(content):
-    """Return authored/rendered content before the renderer-owned source footer.
+    """Return content with only the renderer-owned final source footer removed.
 
     This permits a renderer-only migration of the final source box while still
-    rejecting any change to the reviewed article body before that box.
+    rejecting any change to the reviewed article body.  Preserve the article's
+    outer closing tag so a stored pre-footer draft compares equal to the current
+    renderer with its generated source box removed.
     """
     marker = '<h2 id="sources"'
     if marker not in content:
@@ -54,7 +56,11 @@ def _before_generated_source_footer(content):
     container = content.rfind("<div", 0, heading)
     if container < 0:
         return content.replace("\r\n", "\n")
-    return content[:container].replace("\r\n", "\n")
+    footer_end = content.find("</div>", heading)
+    if footer_end < 0:
+        return content.replace("\r\n", "\n")
+    footer_end += len("</div>")
+    return (content[:container] + content[footer_end:]).replace("\r\n", "\n")
 
 
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,

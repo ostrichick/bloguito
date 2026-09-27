@@ -245,6 +245,77 @@ def _normalize_nol_product_text(text, url):
     return '\n'.join(line for line in text.splitlines() if line.strip())
 
 
+def _nol_product_booking_metadata(raw_html, url, now=None):
+    """Recover NOL's booking window/status from its official embedded product JSON.
+
+    The visible product page keeps the booking metadata in the Next.js payload,
+    which BeautifulSoup text extraction intentionally drops with ``script`` tags.
+    Bind the payload to the exact product ID in the reviewed URL, accept only one
+    consistent metadata tuple, and expose the same labelled evidence consumed by
+    the dated-concert availability validator.  An inactive/out-of-window product
+    never receives an ``예매중`` label merely because the product record exists.
+    """
+    parsed = urlsplit(url)
+    match = re.fullmatch(r'/ticket/products/(\d+)', parsed.path)
+    if parsed.scheme != 'https' or parsed.hostname != 'nol.yanolja.com' or not match:
+        return ''
+    if isinstance(raw_html, bytes):
+        raw_html = raw_html.decode('utf-8')
+    if not isinstance(raw_html, str):
+        return ''
+
+    # Next.js Flight data JSON-escapes quotes inside script strings.  This copy
+    # is used only for strict metadata matching; the original HTML is untouched.
+    searchable = raw_html.replace('\\"', '"')
+    product_id = match.group(1)
+    marker = f'"goodsCode":"{product_id}"'
+    records = set()
+    position = 0
+    while True:
+        start = searchable.find(marker, position)
+        if start < 0:
+            break
+        next_record = searchable.find('"goodsCode":"', start + len(marker))
+        segment = searchable[start:next_record if next_record >= 0 else start + 12000]
+        fields = re.search(
+            r'"bookingOpenTime":"([^"]+)".*?'
+            r'"bookingEndTime":"([^"]+)".*?'
+            r'"goodsStatus":"([^"]+)"',
+            segment,
+            flags=re.DOTALL,
+        )
+        if fields:
+            records.add(fields.groups())
+        position = start + len(marker)
+
+    if not records:
+        return ''
+    if len(records) != 1:
+        raise ValueError('nol_product_booking_metadata_ambiguous')
+    opened, closes, status = next(iter(records))
+    try:
+        opened_at = datetime.strptime(opened, '%Y-%m-%d %H:%M:%S').replace(tzinfo=KST)
+        closes_at = datetime.strptime(closes, '%Y-%m-%d %H:%M:%S').replace(tzinfo=KST)
+    except ValueError as exc:
+        raise ValueError('nol_product_booking_metadata_invalid') from exc
+    if closes_at <= opened_at:
+        raise ValueError('nol_product_booking_metadata_invalid')
+
+    now = now or datetime.now(KST)
+    if now.tzinfo is None:
+        raise ValueError('reference time must be timezone-aware')
+    now = now.astimezone(KST)
+    lines = [
+        '예매기간: '
+        + opened_at.strftime('%Y.%m.%d %H:%M')
+        + ' ~ '
+        + closes_at.strftime('%Y.%m.%d %H:%M')
+    ]
+    if status == 'Y' and opened_at <= now <= closes_at:
+        lines.append('예매상태: 예매중')
+    return '\n'.join(lines)
+
+
 def _normalize_efine_text(text, url):
     """Drop only eFine's volatile accessibility skip-link label.
 
@@ -516,6 +587,7 @@ def _fetch_sources_sequential(brief):
             title = brief['entity'] + ' 공식 첨부 PDF'
             sources.append({'id': f's{i}', **snapshot(url, title, text, source_type)})
             continue
+        nol_booking_metadata = _nol_product_booking_metadata(response.content, url)
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
         # NTS article metadata renders `<strong>조회수</strong>65289` as two
@@ -620,6 +692,8 @@ def _fetch_sources_sequential(brief):
         text = '\n'.join(line for line in text.splitlines()
                          if not re.fullmatch(r'조회수\s*:\s*\d+', line.strip()))
         text = _normalize_nol_product_text(text, url)
+        if nol_booking_metadata:
+            text = text.rstrip() + '\n' + nol_booking_metadata
         text = _normalize_efine_text(text, url)
         text = _normalize_seocho_property_tax_text(text, url)
         text = _normalize_post239_chuseok_sources(text, url)

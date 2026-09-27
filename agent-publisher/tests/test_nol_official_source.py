@@ -1,9 +1,11 @@
 """NOL ticket product pages remain strict evidence despite their UA gate."""
 import hashlib
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
-from agents.editorial_writer import fetch_sources
+from agents.editorial_writer import _nol_product_booking_metadata, fetch_sources
+from agents.temporal_validation import KST
 
 
 URL = 'https://nol.yanolja.com/ticket/products/26013136'
@@ -32,6 +34,27 @@ class Response:
 
 
 class NolOfficialSourceTests(unittest.TestCase):
+    def test_embedded_product_json_binds_booking_window_and_active_status(self):
+        raw = '''<script>self.__next_f.push([1,"{\\"goodsDetail\\":{\\"goodsCode\\":\\"26013136\\",\\"bookingOpenTime\\":\\"2026-09-03 14:00:00\\",\\"bookingEndTime\\":\\"2026-12-24 17:00:59\\",\\"goodsStatus\\":\\"Y\\"}}"])</script>'''
+        text = _nol_product_booking_metadata(
+            raw,
+            URL,
+            now=datetime(2026, 9, 27, 12, 0, tzinfo=KST),
+        )
+        self.assertEqual(
+            '예매기간: 2026.09.03 14:00 ~ 2026.12.24 17:00\n예매상태: 예매중',
+            text,
+        )
+
+    def test_embedded_product_json_does_not_claim_active_status_outside_window(self):
+        raw = '''<script>{"goodsCode":"26013136","bookingOpenTime":"2026-09-03 14:00:00","bookingEndTime":"2026-09-20 17:00:59","goodsStatus":"Y"}</script>'''
+        text = _nol_product_booking_metadata(
+            raw,
+            URL,
+            now=datetime(2026, 9, 27, 12, 0, tzinfo=KST),
+        )
+        self.assertEqual('예매기간: 2026.09.03 14:00 ~ 2026.09.20 17:00', text)
+
     def test_product_route_uses_browser_headers_and_volatile_counts_do_not_change_hash(self):
         with patch('agents.editorial_writer.requests.get', side_effect=[
                 Response(rank=16, likes='400', reviews=15),
