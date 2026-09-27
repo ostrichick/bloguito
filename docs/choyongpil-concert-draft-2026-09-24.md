@@ -114,3 +114,15 @@
 - 최종 reviewed render의 원문 SHA256은 `bb10dce4c4c4068fb6506991360d3d7aff4afb0dce4824b9d41077180e912e9f`이다. 원격 `wp post get --field=post_content` 출력의 개행을 포함한 SHA256 `d2a0b6626118ccdcb25b50b2b0128fc8966c6b89619256f83b4cad012e39b92d`가 로컬 reviewed render에 개행 하나를 붙인 SHA256과 일치했다.
 - 저장 후 독립 SSH 재조회는 연결이 간헐적으로 255 종료되는 현상이 있었지만, canonical 저장 후 검증과 별도 원격 본문 SHA 대조는 모두 통과했다.
 - 공개 전환은 수행하지 않았다.
+
+## 2026-09-27 일정표 열 순서 개선
+
+- 사용자 화면 피드백에 따라 첫 일정표의 열 순서를 `지역 / 공연 날짜 / 공연장 / 공연 시작시간`에서 `지역 / 공연 날짜 / 공연 시작시간 / 공연장`으로 변경했다. 날짜 바로 다음에 해당 회차의 시작시간을 읽을 수 있게 하는 표시 순서 변경이며, 지역·날짜·시간·공연장 값 자체와 제목·가격·CTA·출처는 바꾸지 않았다.
+- 기존 YES24 일정 결합 검증기가 `지역, 날짜, 공연장`을 앞의 세 열에 고정해 검사하던 제약을 확인했다. YES24 일정표는 헤더 이름으로 지역·날짜·공연장 열을 찾도록 수정해 중간에 `공연 시작시간` 열이 있어도 정확한 값이면 통과하게 했다. 잘못된 공연장은 계속 `schedule_listing_not_bound`로 차단하는 회귀 테스트를 추가했다.
+- WSL 경유 Tailscale SSH transport는 `wsl.exe ... --` 대신 `wsl.exe ... --exec`로 실행하도록 보정했다. 이 경로로 WordPress lightweight inventory의 PHP 변수가 보존되고 정규 `revise-draft`가 완료됐다. 운영 접속 대상은 Tailscale 노드명 `bloguito-server`를 사용했다.
+- 표적 일정 검증 테스트 14건, SSH transport 테스트 14건이 통과했다. 최종 공통 코드 기준 전체 `agent-publisher/tests`는 521건 실행, 모두 통과했고 1건은 skip됐다. `git diff --check`도 통과했다.
+- 기존 full review가 과거 후속 수정과 더 이상 결합되지 않아 fast 경로는 `FULL_REVIEW_REQUIRED`로 안전하게 중단했다. 현재 원고를 대상으로 전체 `manual-review`를 다시 수행했고 `status=ready`, `reasons=[]`를 확인한 뒤 일반 `check`도 `ready`였다.
+- 정규 `revise-draft`는 수정 전 본문 SHA256 `6fffae68b118ad5ae2f60d2dfc0557e69eaba5b34dcb35554aff08802dd12e8e`를 CAS 조건으로 사용했다. 원본 백업은 `agent-publisher/data/editorial_runs/draft-revision-465-20260927T122544096795.json`, 인덱스 백업은 `draft-revision-index-465-20260927T122544096795.json`에 생성됐다.
+- 저장 후 운영 WordPress를 독립 재조회해 #465가 계속 `draft`, 대표 이미지 `_thumbnail_id=563`임을 확인했다. 저장 본문 SHA256과 검토 후보 HTML SHA256은 모두 `25cc52e5407e62f1d4e5089b634e250337c0dd70cb79c4d8e90315f3bd598979`로 정확히 일치했다.
+- 검토 렌더를 1280px 데스크톱, 390px 모바일, 200% 장치 배율 화면에서 확인했다. 데스크톱과 확대 화면에서 네 열이 `지역 → 공연 날짜 → 공연 시작시간 → 공연장` 순서로 보이고, 모바일에서는 기존 가로 스크롤 영역과 안내 문구가 유지된다. 표 영역의 `role="region"`, `tabindex="0"` 구조도 유지했다. 로그인된 WordPress 관리자 미리보기에서의 실제 키보드 화살표 스크롤 동작은 이번 후속 확인 범위에서는 별도로 수행하지 않았다.
+- 공개 승격은 수행하지 않았다.
