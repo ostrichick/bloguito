@@ -12,7 +12,7 @@
 
 코드 변경은 적절한 테스트 후 의도한 파일만 커밋·푸시한다. 서버 배포 여부와 실제 검증 범위를 별도로 기록한다.
 
-Tailscale은 운영 서버의 비공개 관리 통로로만 사용한다. 로컬 편집·원고 작성·코드 수정·테스트·Git 작업·공개 웹/REST 조회·공개 페이지 QA에는 Tailscale 연결 확인을 선행하지 않는다. 운영 WordPress의 비공개 상태 조회·수정, 서버 설정·Docker/WP-CLI 실행, 서버 백업 동기화처럼 실제 운영 서버 SSH가 필요한 순간에만 Tailscale 경로를 사용한다. 정상 작업에서는 매번 `tailscale status`나 `tailscale ping`을 사전 실행하지 말고 SSH를 바로 시도하며, SSH가 실패했을 때만 Tailscale 상태·경로를 진단한다. 한 작업 안에서 이미 정상 연결을 확인했다면 새 장애 징후가 없는 한 같은 연결 확인을 반복하지 않는다.
+운영 서버 SSH가 필요한 작업도 기본 transport는 `ssh bloguito` 직접 SSH로 둔다. Tailscale은 직접 SSH로 처리할 수 없는 특수한 비상·복구·사설 관리 상황에서만 명시적으로 선택하며, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 설정으로 일반 작업의 기본 경로가 되게 하지 않는다. 로컬 편집·원고 작성·코드 수정·테스트·Git 작업·공개 웹/REST 조회·공개 페이지 QA에는 Tailscale 연결 확인을 선행하지 않는다. 직접 SSH가 실패하더라도 공개 웹/REST 등으로 목적을 달성할 수 있으면 Tailscale로 전환하지 않는다. 서버 설정·Docker/WP-CLI·비공개 WordPress 상태처럼 SSH가 반드시 필요한 작업에서 직접 SSH가 불가능할 때만 Tailscale을 한 번 선택하고, 같은 작업 안에서 새 장애 징후가 없는 한 상태 확인을 반복하지 않는다.
 
 작업 효율은 안전 검사를 없애는 방식이 아니라 같은 실행 안의 중복을 제거하는 방식으로 개선한다. 한 작업에서 이미 읽은 `docs/EDITORIAL_SYSTEM.md`와 `agent-publisher/editorial_policy.json`이 그 뒤 수정되지 않았다면 같은 에이전트가 다시 처음부터 읽지 않고 기존 이해를 재사용한다. 새 에이전트나 worker는 최초 1회 읽으며, 정책 파일이 변경된 경우에만 다시 읽는다. 이미 현재 변경안의 실제 적용을 사용자가 승인했다면 별도의 `prepare_post_approval.py` 승인 패키지를 다시 만들지 않고 정규 updater/reviser의 최신 inventory, source, CAS, 백업, 저장 후 검증을 사용한다. 승인 전 비교가 실제로 필요한 경우에만 approval package를 만든다.
 

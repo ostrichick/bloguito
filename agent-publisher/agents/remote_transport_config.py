@@ -48,10 +48,13 @@ class RemoteTransportConfig:
 
 def resolve_transport(*, ssh_mode=None, ssh_host=None, ssh_user=None, wsl_distro=None,
                       tailscale_ssh=False):
-    """Merge CLI overrides with stable project environment defaults.
+    """Resolve a transport with direct SSH as the ordinary default.
 
     Explicit legacy --wsl-distro/--tailscale-ssh options remain compatible;
-    ordinary calls can omit them once BLOGUITO_SSH_* is configured.
+    Tailscale and WSL modes are opt-in for exceptional recovery/admin work.
+    BLOGUITO_SSH_* may still provide parameters for an explicitly selected
+    transport, but a persisted non-direct mode must not silently become the
+    default for ordinary editorial work.
     """
     base = RemoteTransportConfig.from_env()
     mode = _clean(ssh_mode)
@@ -61,11 +64,21 @@ def resolve_transport(*, ssh_mode=None, ssh_host=None, ssh_user=None, wsl_distro
         elif _clean(wsl_distro):
             mode = "wsl"
         else:
-            mode = base.mode
+            mode = "direct"
+
+    implicit_direct = (
+        _clean(ssh_mode) is None
+        and not tailscale_ssh
+        and _clean(wsl_distro) is None
+        and mode == "direct"
+    )
+    use_base_direct_values = not implicit_direct or base.mode == "direct"
     config = RemoteTransportConfig(
         mode=mode,
-        host=_clean(ssh_host) or base.host,
-        user=_clean(ssh_user) if ssh_user is not None else base.user,
-        wsl_distro=_clean(wsl_distro) if wsl_distro is not None else base.wsl_distro,
+        host=_clean(ssh_host) or (base.host if use_base_direct_values else "bloguito"),
+        user=(_clean(ssh_user) if ssh_user is not None
+              else (base.user if use_base_direct_values else None)),
+        wsl_distro=(_clean(wsl_distro) if wsl_distro is not None
+                    else (base.wsl_distro if not implicit_direct else None)),
     )
     return config.validate()

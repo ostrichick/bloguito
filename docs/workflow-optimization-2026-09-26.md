@@ -185,16 +185,23 @@ fast path는 brief·중복·related link 구성이 변하지 않으므로 전체
 
 ### SSH/Tailscale 처리
 
-콘텐츠 수정 중 transport 코드를 즉석에서 변경하지 않는다. Bloguito 서버의 수동 편집 transport는 설정에서 한 방식으로 정한다. 현재 환경처럼 일반 22번 SSH보다 Tailscale SSH가 실제로 안정적이면 `BLOGUITO_SSH_MODE=tailscale` 또는 동등한 프로젝트 설정을 정본으로 두고 처음부터 그 경로를 사용한다.
+콘텐츠 수정 중 transport 코드를 즉석에서 변경하지 않는다. Bloguito 서버의 일반 수동 편집 transport는 Direct SSH를 기본으로 고정한다. Tailscale은 Direct SSH로 처리할 수 없는 비상·복구·사설 관리 작업에서만 일회성으로 명시 선택하며, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 설정을 일반 콘텐츠 작업의 정본으로 두지 않는다.
 
 fast mutation의 연결 정책은 다음처럼 단순하게 둔다.
 
-1. 설정된 transport로 대상 `post get` 시도.
-2. exit 255이면 Tailscale 사용 환경에 한해 `tailscale ping -c 1`로 한 번 진단.
-3. 같은 mutation을 최대 한 번만 재시도.
-4. 두 번째 실패에서는 `transport_unavailable`로 종료하고 WordPress 변경을 시도하지 않는다.
+1. Direct SSH로 대상 `post get`을 시도한다.
+2. 실패해도 공개 REST/웹 조회로 목적을 달성할 수 있으면 그 경로를 사용하고 Tailscale로 전환하지 않는다.
+3. 서버 내부 명령이 반드시 필요한 작업에서만 Tailscale을 명시적으로 선택하고, 실패 시 `tailscale ping -c 1`로 한 번 진단한다.
+4. 같은 mutation은 멱등성이 확인된 경우에만 최대 한 번 재시도한다.
+5. 두 번째 실패에서는 `transport_unavailable`로 종료하고 WordPress 변경을 시도하지 않는다.
 
 콘텐츠 작업 도중 일반 SSH↔Tailscale 전환 기능을 새로 구현하거나 companion/browser 재연결을 반복하지 않는다. transport 개선은 별도 인프라 작업으로 분리한다.
+
+#### 2026-09-27 후속 변경
+
+사용자 요청에 따라 `agents/remote_transport_config.py`의 일반 해석 규칙을 Direct SSH 우선으로 강화했다. 지속 환경설정에 `BLOGUITO_SSH_MODE=tailscale`과 Tailscale용 host/user/WSL 값이 남아 있어도 CLI에서 transport를 명시하지 않은 일반 호출은 `direct` + `bloguito` 별칭을 사용한다. Tailscale 설정값은 `--ssh-mode tailscale`처럼 예외 경로를 명시적으로 선택했을 때만 재사용한다.
+
+현재 운영 서버는 `bloguito-ssh-private-only.service`가 `tailscale0` 이외 인터페이스의 신규 TCP/22 연결을 차단하고 있어 `ssh bloguito`가 실제로 타임아웃된다. 이 보안 방화벽은 이번 transport 정책 변경에서 수정하지 않았다. 따라서 Direct SSH를 실제 기본 운영 경로로 사용하려면 별도 보안 변경으로 공개 SSH를 제한적으로 허용하거나 다른 직접 SSH 도달 경로를 마련해야 한다.
 
 ### 향후 작업에서의 테스트 정책
 
