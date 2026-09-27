@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Reader Flow
  * Description: Keep the first answer close to the title and prioritize reviewed next-reading links.
- * Version: 1.0.0
+ * Version: 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -42,12 +42,18 @@ function bloguito_reader_flow_styles() {
         .single-post .bloguito-top-share {
             margin: 0 0 12px !important;
         }
+        @media (min-width: 1025px) {
+            .single-post .inside-article .post-image img,
+            .single-post .inside-article .featured-image img {
+                max-height: 420px;
+            }
+        }
         @media (max-width: 768px) {
             .single-post .inside-article {
                 padding: 20px;
             }
             .single-post .inside-article .post-image img,
-        .single-post .inside-article .featured-image img {
+            .single-post .inside-article .featured-image img {
                 max-height: 120px;
             }
             .single-post .entry-title {

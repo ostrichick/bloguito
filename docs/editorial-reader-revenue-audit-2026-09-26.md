@@ -132,3 +132,11 @@ Google AdSense는 광고를 메뉴·탐색·다운로드 링크로 착각하게 
 ### 남은 범위
 
 공통 화면과 향후 편집 지침은 적용했고 대표 글 3편을 실제 개선했다. 모든 과거 글을 일괄 재작성한 작업은 아니다. 나머지 글의 이관, 계절성 관련 글의 만료 후 교체, 브라우저 자체 200% 확대 검증, GA4/AdSense 실측에 따른 효과 판단은 별도 후속 범위다. 체류 시간·광고 클릭·RPM 상승은 미측정이다.
+
+### 2026-09-27 desktop post-image size follow-up
+
+- Scope: desktop single-post cover/featured image sizing only.
+- `wordpress/mu-plugins/bloguito-reader-flow.php` now adds a `min-width: 1025px` rule raising the image `max-height` from the shared 200px cap to 420px. The mobile `max-height: 120px` rule is unchanged.
+- Production MU plugin SHA256 after deployment: `16db39721b253a693b645e2165cad80255024e4107e36dd61f76952047a14638`.
+- Production PHP syntax check passed. `wordpress/tests/reader-flow-test.php` passed inside the production WordPress PHP container.
+- Public QA on post 463 confirmed the live `bloguito-reader-flow` style contains the 1025px desktop breakpoint, 420px desktop cap, and 120px mobile cap.
