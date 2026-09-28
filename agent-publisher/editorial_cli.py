@@ -120,7 +120,7 @@ def _main():
         from agents.editorial_draft_reviser import revise_reviewed_draft
         print('Revised draft ID:', revise_reviewed_draft(
             args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
-            confirm_title_change=args.confirm_title_change))
+            confirm_title_change=args.confirm_title_change, image_path=args.image_path))
         return
     if args.action == 'fast-revise-draft':
         if args.inventory:

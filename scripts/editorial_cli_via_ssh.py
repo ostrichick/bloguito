@@ -45,6 +45,7 @@ _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
 _REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 _CREATE_ACTIONS = {'publish', 'prepare-draft'}
+_FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | {'revise-draft'}
 _SUPPORTED_ACTIONS = {
     'publish', 'prepare-draft', 'revise-draft', 'fast-revise-draft', 'update-draft', 'replace-legacy-draft',
     'promote-draft', 'reformat', 'fix-excerpt',
@@ -244,6 +245,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
                 and wp[4:] == ['--featured_image', '--allow-root']):
             return
+        if (action == 'revise-draft' and len(wp) == 7 and wp[:2] == ['media', 'import']
+                and _REMOTE_IMAGE.fullmatch(wp[2])
+                and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
+                and int(wp[3].split('=', 1)[1]) in allowed_ids
+                and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
+                and wp[4:] == ['--featured_image', '--porcelain', '--allow-root']):
+            return
+        if (action == 'revise-draft' and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
+                and wp[3].isdigit() and int(wp[3]) in allowed_ids
+                and wp[4:] == ['_thumbnail_id', '--allow-root']):
+            return
         raise ValueError('unexpected_wordpress_command_during_editorial_ssh')
 
     def run(command, *args, **kwargs):
@@ -301,14 +313,15 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 readable_ids.add(int(created))
             return result
 
-        if action in _CREATE_ACTIONS and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
+        if action in _FEATURED_IMAGE_ACTIONS and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
             source = Path(command[3])
             target = command[4]
             prefix = 'wordpress_app:'
             if not source.is_file() or not target.startswith(prefix):
                 raise ValueError('unexpected_docker_copy_during_draft_publish')
             remote_path = target[len(prefix):]
-            html_copy = source.suffix.lower() == '.html' and _REMOTE_HTML.fullmatch(remote_path)
+            html_copy = (action in _CREATE_ACTIONS and source.suffix.lower() == '.html'
+                         and _REMOTE_HTML.fullmatch(remote_path))
             image_match = _REMOTE_IMAGE.fullmatch(remote_path)
             image_copy = (
                 source.suffix.lower() in {'.jpg', '.jpeg', '.png', '.webp'}
@@ -325,7 +338,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             options['input'] = payload
             return remote_run(remote, **options)
 
-        if (action in _CREATE_ACTIONS and command[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'rm']
+        if (action in _FEATURED_IMAGE_ACTIONS and command[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'rm']
                 and len(command) == 7 and command[5] == '-f'):
             remote_path = command[6]
             image_match = _REMOTE_IMAGE.fullmatch(remote_path)

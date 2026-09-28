@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import fetch_sources, load_inventory
@@ -79,7 +80,7 @@ def _normalize_renderer_migrations(content):
 
 
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
-                           confirm_title_change=False):
+                           confirm_title_change=False, image_path=None):
     """Replace one unchanged reviewed draft with another fully reviewed version.
 
     This is intentionally separate from update_draft(), which only permits
@@ -89,6 +90,10 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         raise ValueError("specific_draft_revision_confirmation_required")
     if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
         raise ValueError("original_content_sha256_required")
+    image_path = Path(image_path).resolve() if image_path else None
+    if image_path is not None and (not image_path.is_file()
+            or image_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}):
+        raise ValueError("reviewed_featured_image_required")
 
     lock = ROOT / "data" / ".editorial-publish.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -202,6 +207,28 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 preserved={"post_name": live["post_name"]}):
             raise ValueError(f"draft_revision_save_verification_failed: recover from {post_backup}")
 
+        featured_attachment_id = None
+        if image_path is not None:
+            remote_image = f"/tmp/editorial_cover_{post_id}{image_path.suffix.lower()}"
+            subprocess.run(["sudo", "docker", "cp", str(image_path),
+                            f"wordpress_app:{remote_image}"], capture_output=True, check=True)
+            try:
+                imported = subprocess.run(
+                    base + ["media", "import", remote_image, f"--post_id={post_id}",
+                            "--featured_image", "--porcelain", "--allow-root"],
+                    capture_output=True, text=True, check=True)
+                featured_attachment_id = imported.stdout.strip()
+            finally:
+                subprocess.run(["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
+                               capture_output=True, check=False)
+            if not featured_attachment_id.isdigit():
+                raise ValueError("featured_image_attachment_id_missing")
+            observed_thumb = subprocess.run(
+                base + ["post", "meta", "get", str(post_id), "_thumbnail_id", "--allow-root"],
+                capture_output=True, text=True, check=True).stdout.strip()
+            if observed_thumb != featured_attachment_id:
+                raise ValueError("featured_image_save_verification_failed")
+
         if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
             raise ValueError(f"draft_index_changed: recover from {index_backup}")
         item["fact_manifest"]["editorial_bundle"] = bundle
@@ -211,6 +238,8 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         invalidate_inventory()
         print(f"Draft revision backup: {post_backup}")
         print(f"Draft index backup: {index_backup}")
+        if featured_attachment_id is not None:
+            print(f"Featured image attachment: {featured_attachment_id}")
         return post_id
     finally:
         lock.rmdir()
