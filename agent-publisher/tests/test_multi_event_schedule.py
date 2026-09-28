@@ -10,7 +10,7 @@ from tests.test_editorial_system import sample
 
 NOW = datetime(2026, 9, 14, 12, tzinfo=KST)
 URL = 'https://www.daejeon.go.kr/events/october'
-FIRST = '행사기간: 2026.10.02 ~ 2026.10.04\n가을축제는 뿌리공원에서 열립니다.'
+FIRST = '행사기간: 2026년 10월 2일부터 4일까지\n가을축제는 뿌리공원에서 열립니다.'
 SECOND = '행사기간: 2026.10.17 ~ 2026.11.01\n국화축제는 유림공원에서 열립니다.'
 SOURCE = FIRST + '\n' + SECOND
 
@@ -60,7 +60,7 @@ def roundup_bundle():
                 'headers': ['행사', '날짜', '장소'],
                 'rows': [
                     {
-                        'cells': ['가을축제', '2026.10.02 ~ 2026.10.04', '뿌리공원'],
+                        'cells': ['가을축제', '2026년 10월 2~4일', '뿌리공원'],
                         'evidence': [{'source_id': 's0', 'quote': FIRST}],
                         'answers': ['q1'],
                     },

@@ -261,7 +261,13 @@ def validate_multi_event_schedule(brief: dict, sources: list[dict], temporal: di
                 if inferred_year is None:
                     raise ValueError('year_missing')
                 quote_dates.append(date(inferred_year, int(month), int(day)))
-            if start not in quote_dates or end not in quote_dates:
+            end_supported = end in quote_dates
+            if (not end_supported and start in quote_dates
+                    and start.year == end.year and start.month == end.month
+                    and re.search(r'(?:부터|~|∼|～|–|—|-)\s*0?'
+                                  + re.escape(str(end.day)) + r'\s*일(?:까지)?', quote)):
+                end_supported = True
+            if start not in quote_dates or not end_supported:
                 raise ValueError('date_not_in_quote')
             ranges.append((start, end))
         except (KeyError, TypeError, ValueError):
