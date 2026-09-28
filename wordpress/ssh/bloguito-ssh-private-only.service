@@ -1,12 +1,16 @@
 [Unit]
-Description=Restrict new SSH connections to the Tailscale interface
+Description=Restrict SSH to Tailscale or an approved source IPv4
 After=network-pre.target
 Before=ssh.socket ssh.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c '/usr/sbin/iptables -w -C INPUT ! -i tailscale0 -p tcp --dport 22 -m conntrack --ctstate NEW -j DROP 2>/dev/null || /usr/sbin/iptables -w -I INPUT 1 ! -i tailscale0 -p tcp --dport 22 -m conntrack --ctstate NEW -j DROP'
-ExecStop=/bin/sh -c '/usr/sbin/iptables -w -D INPUT ! -i tailscale0 -p tcp --dport 22 -m conntrack --ctstate NEW -j DROP 2>/dev/null || true'
+# /etc/bloguito-ssh-source.env may define BLOGUITO_SSH_SOURCE_CIDR=x.x.x.x/32.
+# The dedicated chain is rebuilt on every start so a changed public IP cannot
+# leave a stale allow rule behind. Missing/empty configuration fails closed to
+# Tailscale-only access.
+ExecStart=/bin/sh -c '/usr/sbin/iptables -w -N BLOGUITO_SSH 2>/dev/null || true; /usr/sbin/iptables -w -F BLOGUITO_SSH; if [ -r /etc/bloguito-ssh-source.env ]; then . /etc/bloguito-ssh-source.env; fi; if [ -n "$BLOGUITO_SSH_SOURCE_CIDR" ]; then /usr/sbin/iptables -w -A BLOGUITO_SSH -s "$BLOGUITO_SSH_SOURCE_CIDR" -j ACCEPT; fi; /usr/sbin/iptables -w -A BLOGUITO_SSH -i tailscale0 -j ACCEPT; /usr/sbin/iptables -w -A BLOGUITO_SSH -j DROP; /usr/sbin/iptables -w -C INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -j BLOGUITO_SSH 2>/dev/null || /usr/sbin/iptables -w -I INPUT 1 -p tcp --dport 22 -m conntrack --ctstate NEW -j BLOGUITO_SSH'
+ExecStop=/bin/sh -c 'while /usr/sbin/iptables -w -D INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -j BLOGUITO_SSH 2>/dev/null; do :; done; /usr/sbin/iptables -w -F BLOGUITO_SSH 2>/dev/null || true; /usr/sbin/iptables -w -X BLOGUITO_SSH 2>/dev/null || true'
 RemainAfterExit=yes
 
 [Install]

@@ -201,7 +201,7 @@ fast mutation의 연결 정책은 다음처럼 단순하게 둔다.
 
 사용자 요청에 따라 `agents/remote_transport_config.py`의 일반 해석 규칙을 Direct SSH 우선으로 강화했다. 지속 환경설정에 `BLOGUITO_SSH_MODE=tailscale`과 Tailscale용 host/user/WSL 값이 남아 있어도 CLI에서 transport를 명시하지 않은 일반 호출은 `direct` + `bloguito` 별칭을 사용한다. Tailscale 설정값은 `--ssh-mode tailscale`처럼 예외 경로를 명시적으로 선택했을 때만 재사용한다.
 
-현재 운영 서버는 `bloguito-ssh-private-only.service`가 `tailscale0` 이외 인터페이스의 신규 TCP/22 연결을 차단하고 있어 `ssh bloguito`가 실제로 타임아웃된다. 이 보안 방화벽은 이번 transport 정책 변경에서 수정하지 않았다. 따라서 Direct SSH를 실제 기본 운영 경로로 사용하려면 별도 보안 변경으로 공개 SSH를 제한적으로 허용하거나 다른 직접 SSH 도달 경로를 마련해야 한다.
+2026-09-28 후속 보안 작업에서 운영 서버의 SSH 방화벽도 Direct 우선 정책에 맞췄다. `bloguito-ssh-private-only.service`는 전용 `BLOGUITO_SSH` 체인에서 승인된 운영자 IPv4 `/32`와 `tailscale0`만 허용하고 나머지 신규 TCP/22를 DROP한다. `ssh bloguito`는 Windows에서 `wordpress-blog` / `ubuntu` 실제 로그인까지 성공했으며 Tailscale 경로도 비상 접속으로 유지된다. 공인 IP가 바뀌면 Tailscale으로 접속해 서버의 비공개 source CIDR을 갱신한다. OCI Security List/NSG source 범위는 서버 Instance Principal에 조회 권한이 없어 콘솔 확인이 별도로 남아 있다.
 
 ### 향후 작업에서의 테스트 정책
 

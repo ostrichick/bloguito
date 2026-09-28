@@ -167,3 +167,26 @@
 2. 필요하면 OCI NSG에서도 공개 TCP/22 ingress rule 자체를 제거해 네트워크 계층에서도 이중 차단한다.
 3. 필요하면 로컬 백업 자체의 추가 암호화 또는 별도 오프사이트 저장소를 검토한다.
 4. Ubuntu phased update와 새 Oracle 커널은 배포가 안정화된 뒤 별도 유지보수 창에서 적용/검증.
+
+## Direct SSH 제한 허용 전환 — 2026-09-28
+
+사용자 요청에 따라 평상시 Bloguito 운영 작업은 Windows의 `ssh bloguito` Direct SSH를 우선하고, Tailscale은 비상·복구 경로로 유지하는 구조로 변경했다. 변경 전에 기존 Tailscale 경로를 먼저 살려 `wordpress-blog` / `ubuntu` 접속을 확인한 뒤 서버 설정을 읽기 전용으로 재검증했다.
+
+- 변경 전 Windows `ssh bloguito`는 `161.33.0.234:22`에서 timeout이었다.
+- `sshd -T` 실제 적용값: `port 22`, IPv4/IPv6 listen, `pubkeyauthentication yes`, `passwordauthentication no`, `kbdinteractiveauthentication no`, `permitrootlogin no`.
+- Fail2ban `sshd` jail은 active였고 현재 ban 0, 누적 ban 2를 확인했다.
+- 기존 `bloguito-ssh-private-only.service`는 `tailscale0`이 아닌 신규 TCP/22를 INPUT 체인 최상단에서 DROP하고 있었다.
+- 현재 운영자 공인 IP는 SK Broadband 주소였으며, 고정 IP 계약 여부는 한 번의 관측만으로 확정할 수 없어 동적 IP로 바뀔 수 있는 것으로 운영한다. 실제 CIDR 값은 공개 저장소에 기록하지 않고 서버의 `/etc/bloguito-ssh-source.env`에만 보관한다.
+- 서버 방화벽은 전용 `BLOGUITO_SSH` 체인으로 TCP/22를 한 곳에서 처리하도록 보강했다. 이 체인은 현재 운영자 `/32`를 먼저 허용하고 `tailscale0`을 허용한 뒤 나머지 신규 SSH를 DROP한다. 체인은 service가 시작될 때마다 flush 후 재구성하므로 공인 IP를 변경해도 이전 IP 허용 규칙이 남지 않는다.
+- `/etc/bloguito-ssh-source.env`가 없거나 값이 비어 있으면 `BLOGUITO_SSH` 체인은 `tailscale0`만 허용하고 나머지를 DROP하므로 이전 Tailscale-only 상태로 fail closed 된다. 이 파일은 `0600 root:root`다.
+- `netfilter-persistent`가 불러오는 `/etc/iptables/rules.v4`의 기존 일반 TCP/22 ACCEPT도 제거했다. 따라서 service가 규칙을 만들기 전 기본 영구 방화벽만 로드된 상태에서도 공개 22번 전체 허용으로 되돌아가지 않는다. 변경 전 `rules.v4`와 systemd unit은 서버에 별도 백업했다.
+- 변경 전 unit은 `/etc/systemd/system/bloguito-ssh-private-only.service.bak-20260928T091419`로 백업했다.
+- systemd unit은 enabled/active이고 서버의 `systemd-analyze verify`를 통과했다. 실제 재부팅은 수행하지 않았지만 `netfilter-persistent` 재로드 → unit 재시작 → 새 Windows Direct SSH 세션까지 성공해 부팅 시 핵심 순서를 모의 검증했다. 이 live reload 검증에서 `netfilter-persistent reload`가 기존 런타임 규칙에 동일한 영구 규칙을 한 번 더 추가하는 동작을 확인해, 테스트로 생긴 exact duplicate만 제거했고 최종 duplicate count는 0이다.
+- 변경 후 Windows `ssh bloguito`에서 `hostname=wordpress-blog`, `whoami=ubuntu`까지 실제 로그인 성공했다.
+- 로컬 제한형 `editorial_cli_via_ssh.py` transport를 Direct SSH로 사용해 #119 `post get` 읽기 전용 smoke test를 통과했다. WordPress 쓰기는 수행하지 않았다.
+- WSL Tailscale 경로에서도 `100.99.177.119`로 `hostname=wordpress-blog`, `whoami=ubuntu`를 다시 확인해 비상 경로가 유지됨을 검증했다.
+- OCI Instance Principal + `/tmp` 임시 Python SDK로 실제 VNIC 조회를 다시 시도했으나 `404 NotAuthorizedOrNotFound`가 반환되어 서버 자격으로는 OCI 네트워크 규칙을 조회·수정할 권한이 없음을 재확인했다. Direct SSH가 서버 allow 규칙 적용 후 성공하므로 OCI 네트워크 계층은 현재 TCP/22를 통과시키고 있지만, Security List/NSG의 source 범위 자체는 확인하지 못했다. OCI 계층도 동일 `/32`로 제한하는 작업은 OCI 콘솔의 실제 ingress 규칙 확인 후 완료해야 한다.
+- 공인 IP가 변경되어 Direct SSH가 막히면 Tailscale 비상 경로로 접속해 `/etc/bloguito-ssh-source.env`의 CIDR을 새 IP `/32`로 갱신하고 unit 규칙을 안전하게 재적용하는 방식으로 복구한다.
+- Windows 예약 작업 `Bloguito Daily Backup Sync`도 기존 WSL/Tailscale 경로 대신 `scripts/sync_backups_scheduled.ps1` → `scripts/sync_backups.py`의 Direct SSH/SCP 검증 경로를 사용하도록 전환했다. 예약 작업은 기존 04:30 트리거와 동일 wrapper를 가리키며, wrapper를 수동 실행해 로컬의 22개 백업을 모두 `VERIFIED_EXISTING`으로 검증하고 종료 코드 0을 확인했다. `sync_backups_tailscale.py`와 WSL wrapper는 비상 복구용으로 보존한다.
+- 현재 관측한 공인 IPv4는 SK Broadband 회선이며 한 번의 관측만으로 고정 IP 계약 여부를 확정할 수 없다. 운영상 동적 IP일 수 있다고 가정한다. 서버에서 확인된 global IPv6는 Tailscale 주소뿐이어서 이번 Direct SSH 허용은 IPv4만 대상으로 했다.
+- 최종 런타임 INPUT은 TCP/22의 `BLOGUITO_SSH` jump, Tailscale 체인, established/loopback/ICMP, 80/443 허용, 최종 reject 순이며 일반 TCP/22 ACCEPT는 없다. WordPress와 MariaDB 컨테이너는 계속 정상 기동했고 공개 홈도 HTTP 200을 유지했다.
