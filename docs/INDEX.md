@@ -11,6 +11,7 @@
 | 글 작성·검토·공개 정책 | [EDITORIAL_SYSTEM](EDITORIAL_SYSTEM.md) | 콘텐츠 업무의 유일한 서술형 현행 규약 |
 | 검증 임계값과 모델 설정 | [editorial_policy.json](../agent-publisher/editorial_policy.json) | 코드가 읽는 설정값의 유일한 정본 |
 | 명령어·백업·배포 체크리스트 | [OPERATIONS](OPERATIONS.md) | 현재 저장소의 코드와 확인 날짜를 구분한 운영 가이드 |
+| 콘텐츠 목록과 주제 대시보드 | [POST_CATALOG](POST_CATALOG.md) | 발행·임시글 현황 및 백로그 로컬 단일 정본 |
 | 다른 AI로 인계 | [PROJECT_HANDOVER](../PROJECT_HANDOVER.md) | 최소 맥락과 정본 링크; 과거 370줄 이력의 재복제 없음 |
 | 콘텐츠 구조·수요 실험 | [CONTENT_STRATEGY](CONTENT_STRATEGY_2026-09-20.md) | **제안**이며 현재 구현이나 배포 규약이 아님 |
 
@@ -42,6 +43,7 @@
 
 ## 최근 추가 점검
 
+- [2026-09-28 로컬 콘텐츠 카탈로그와 주제 백로그 갱신](post-catalog-workflow-2026-09-28.md): 새 글 탐색의 로컬 카탈로그 우선 사용, 저장 후 1회 동기화, 이미 draft/공개 글로 작성된 백로그 주제 자동 제외와 실제 WordPress 카테고리 반영을 정리한 기록.
 - [2026-09-27 Rank Math 편집정책 개편](rank-math-editorial-policy-2026-09-27.md): 짧은 단일 포커스 키워드, SEO title/description, 자연스러운 본문 배치, 기존 slug 보존, 75/80점 가이드와 신규 draft의 Rank Math title 저장을 정리한 기록.
 - [2026-09-26 작업 흐름 최적화 10개 항목 및 fast-edit 후속 설계](workflow-optimization-2026-09-26.md): Tailscale 선행 확인 제거, 중복 AI review·전체 WP inventory 왕복 축소, 승인 전 패키지 역할 분리, 로컬 편집 코드+제한형 원격 WordPress 실행, 동시작업 격리·단계형 테스트/브라우저 QA·정책 읽기 캐시·작업 기록 통합을 적용한 기록. 후속 절에는 reviewed draft의 표 재구성·문구 다듬기·중복 FAQ 삭제 같은 소규모 변경을 전체 inventory/전체 의미검토/전체 source 재수집 없이 처리하는 fast-edit 경로를 설계했다.
 - [2026-09-25 자동차검사·안심상속 evergreen 임시글 2편](evergreen-auto-inheritance-drafts-2026-09-25.md): 자동차검사 #470과 안심상속 #471을 현재 공식 원문과 독립 검토로 작성하고 대표 이미지를 연결한 뒤 두 글 모두 draft 상태와 저장 HTML을 검증한 기록.
