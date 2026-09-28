@@ -63,6 +63,21 @@ def _before_generated_source_footer(content):
     return (content[:container] + content[footer_end:]).replace("\r\n", "\n")
 
 
+def _normalize_renderer_migrations(content):
+    """Normalize only previously emitted renderer-owned markup migrations.
+
+    The event-image caption separator changed from a middle dot to a comma.
+    Limit the compatibility rule to the exact generated figcaption + official
+    source link shape so authored prose remains part of the CAS comparison.
+    """
+    return re.sub(
+        r'(<figcaption\b[^>]*>[^<]*) · '
+        r'(<a href="[^"]+"[^>]*>공식 자료</a></figcaption>)',
+        r'\1, \2',
+        content,
+    )
+
+
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
                            confirm_title_change=False):
     """Replace one unchanged reviewed draft with another fully reviewed version.
@@ -113,13 +128,15 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             raise ValueError("draft_revision_topic_or_title_mismatch")
 
         old_rendered = render(old_bundle["plan"], old_bundle["sources"])
+        current_comparable = _normalize_renderer_migrations(current["post_content"])
+        old_comparable = _normalize_renderer_migrations(old_rendered)
         same_exact = (
-            current["post_content"].replace("\r\n", "\n")
-            == old_rendered.replace("\r\n", "\n")
+            current_comparable.replace("\r\n", "\n")
+            == old_comparable.replace("\r\n", "\n")
         )
         same_before_source_footer = (
-            _before_generated_source_footer(current["post_content"])
-            == _before_generated_source_footer(old_rendered)
+            _before_generated_source_footer(current_comparable)
+            == _before_generated_source_footer(old_comparable)
         )
         if not (same_exact or same_before_source_footer):
             raise ValueError("draft_contains_unreviewed_edits")

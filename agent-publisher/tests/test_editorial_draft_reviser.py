@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from agents.editorial import excerpt_from_lead, render
 from agents.editorial_draft_reviser import (
     _before_generated_source_footer,
+    _normalize_renderer_migrations,
     revise_reviewed_draft,
 )
 from test_editorial_system import NOW, sample
@@ -130,6 +131,29 @@ class EditorialDraftReviserTests(unittest.TestCase):
         self.assertNotEqual(
             _before_generated_source_footer(old),
             _before_generated_source_footer(edited),
+        )
+
+    def test_event_image_caption_separator_renderer_migration_is_normalized(self):
+        old = (
+            '<figure><figcaption style="color:#64748b">공식 행사 이미지 · '
+            '<a href="https://example.org/event" rel="noopener noreferrer">공식 자료</a>'
+            '</figcaption></figure>'
+        )
+        new = old.replace('이미지 · ', '이미지, ')
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
+    def test_event_image_caption_migration_does_not_hide_authored_prose_change(self):
+        old = (
+            '<p>검토된 본문입니다.</p><figure><figcaption>공식 행사 이미지 · '
+            '<a href="https://example.org/event">공식 자료</a></figcaption></figure>'
+        )
+        edited = old.replace('검토된 본문입니다.', '사람이 바꾼 본문입니다.')
+        self.assertNotEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(edited),
         )
 
 

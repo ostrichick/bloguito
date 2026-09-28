@@ -1026,7 +1026,7 @@ def render(plan, sources, category_key=None):
                 f'alt="{html.escape(image["alt"], quote=True)}" loading="lazy" decoding="async" '
                 'style="display:block;width:100%;max-width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:10px" />'
                 '<figcaption style="margin-top:7px;font-size:13px;line-height:1.55;color:#64748b">'
-                f'{html.escape(image["caption"])} · '
+                f'{html.escape(image["caption"])}, '
                 f'<a href="{html.escape(source["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
                 'style="color:#0d7d59;text-decoration:underline">공식 자료</a></figcaption></figure>'
             )

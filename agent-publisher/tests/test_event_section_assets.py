@@ -41,6 +41,8 @@ class EventSectionAssetsTests(unittest.TestCase):
         page = render(self.bundle['plan'], self.bundle['sources'])
         self.assertIn('bloguito-event-image', page)
         self.assertIn('행사 현장 모습', page)
+        self.assertIn('행사 현장 모습, ', page)
+        self.assertNotIn('행사 현장 모습 · ', page)
         self.assertIn('festival-location-card', page)
         self.assertIn('map.kakao.com/link/search/', page)
         self.assertIn('map.naver.com/v5/search/', page)
