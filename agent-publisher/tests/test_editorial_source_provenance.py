@@ -32,6 +32,26 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         self.assertNotIn('\n568\n', '\n' + first['text'] + '\n')
         self.assertIn('참가자 75명 조건', first['text'])
 
+    def test_science_event_counter_filter_is_not_applied_to_other_event_page(self):
+        class Response:
+            status_code = 200
+            content = (
+                '<html><head><title>국립중앙과학관 교육</title></head><body>'
+                '<div>조회수</div><div>612</div>'
+                '<article><p>교육기간 2026. 10. 24.(토)</p>'
+                '<p>모집인원 75명, 참가비 무료, 교육시간 12:00~17:40입니다.</p></article>'
+                '<p>국립중앙과학관에서 생물 관찰과 탐사 프로그램을 운영하며 '
+                '행사 일정과 장소는 공식 교육 안내에 따라 확인합니다.</p>'
+                '</body></html>'
+            ).encode('utf-8')
+
+        url = 'https://www.science.go.kr/mps/0/bbs/163/moveBbsNttDetail.do?nttSn=49261'
+        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+            source = fetch_sources({'official_urls': [url], 'entity': '생물다양성 탐사'})[0]
+        self.assertIn('\n612\n', '\n' + source['text'] + '\n')
+        self.assertIn('모집인원 75명', source['text'])
+        self.assertIn('12:00~17:40', source['text'])
+
     def test_daejeontour_popularity_counter_is_stable_but_event_dates_are_hashed(self):
         class Response:
             status_code = 200
@@ -57,6 +77,22 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         self.assertNotEqual(first['sha256'], changed['sha256'])
         self.assertNotIn('4,488', first['text'])
         self.assertIn('2026.10.18', first['text'])
+
+    def test_daejeontour_popularity_filter_is_not_applied_to_other_festival_page(self):
+        class Response:
+            status_code = 200
+            content = (
+                '<html><head><title>대전관광 다른 행사</title></head><body>'
+                '<div>인기</div><div>123</div><div>0</div>'
+                '<article><p>행사기간 2026.10.20 ~ 2026.10.21</p>'
+                '<p>행사장과 프로그램에 관한 공식 안내입니다. 자세한 일정과 참여 방법을 확인하세요.</p></article>'
+                '</body></html>'
+            ).encode('utf-8')
+
+        url = 'https://daejeontour.co.kr/festival_djt/47'
+        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+            source = fetch_sources({'official_urls': [url], 'entity': '다른 행사'})[0]
+        self.assertIn('\n123\n', '\n' + source['text'] + '\n')
 
     def test_nts_metadata_view_count_is_stable_and_article_facts_are_preserved(self):
         class Response:

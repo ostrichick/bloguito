@@ -377,21 +377,22 @@ def _normalize_event_listing_counters(text, url):
     lines = text.splitlines()
 
     if (parsed.scheme == 'https' and parsed.hostname == 'www.science.go.kr'
-            and re.fullmatch(r'/mps/0/bbs/\d+/moveBbsNttDetail\.do', parsed.path)
-            and query.get('nttSn') and len(query['nttSn']) == 1
-            and query['nttSn'][0].isdigit()):
+            and parsed.path == '/mps/0/bbs/431/moveBbsNttDetail.do'
+            and query == {'nttSn': ['49259']}):
+        markers = [index for index, line in enumerate(lines) if line.strip() == '조회수']
         matches = [
             index for index in range(len(lines) - 1)
             if lines[index].strip() == '조회수'
             and re.fullmatch(r'[\d,]+', lines[index + 1].strip())
         ]
-        if len(matches) != 1:
+        if len(markers) != 1 or len(matches) != 1:
             raise ValueError('science_event_view_counter_structure_changed')
         index = matches[0]
         return '\n'.join(lines[:index] + lines[index + 2:])
 
     if (parsed.scheme == 'https' and parsed.hostname == 'daejeontour.co.kr'
-            and re.fullmatch(r'/festival_djt/\d+', parsed.path)):
+            and parsed.path == '/festival_djt/46'
+            and not parsed.query):
         matches = [
             index for index in range(1, len(lines) - 2)
             if lines[index - 1].strip() == '인기'
