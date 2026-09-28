@@ -180,6 +180,40 @@ def _koreakr_article_text(soup, url):
     return '\n'.join(parts)
 
 
+def _mcee_article_text(soup, url):
+    """Extract only the verified #219 ministry release body and stable metadata.
+
+    The board page increments a standalone view counter on reads.  Hash the
+    dated release body instead so a source recheck changes only when the
+    evidence-bearing article changes.
+    """
+    parsed = urlsplit(url)
+    if (parsed.scheme != 'https'
+            or parsed.hostname != 'www.mcee.go.kr'
+            or parsed.path != '/home/web/board/read.do'
+            or parse_qs(parsed.query, keep_blank_values=True) != {
+                'boardId': ['1892400'],
+                'boardMasterId': ['939'],
+                'menuId': ['10598'],
+            }):
+        return None
+    bodies = soup.select('div.view_con')
+    date_rows = []
+    for row in soup.select('#boardViewListForRead_0 dl'):
+        label = row.find('dt', recursive=False)
+        value = row.find('dd', recursive=False)
+        if (label and value
+                and label.get_text(' ', strip=True) == '등록일자'
+                and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value.get_text(' ', strip=True))):
+            date_rows.append(value.get_text(' ', strip=True))
+    if len(bodies) != 1 or len(date_rows) != 1:
+        raise ValueError('mcee_post219_release_main_missing_or_ambiguous')
+    body = bodies[0].get_text('\n', strip=True)
+    if not body:
+        raise ValueError('mcee_post219_release_main_missing_or_ambiguous')
+    return '\n'.join([date_rows[0], body])
+
+
 def _official_request_headers(url):
     """Use browser-equivalent headers only for verified public routes that gate Python UAs.
 
@@ -403,6 +437,8 @@ def fetch_sources(brief):
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
         text = _koreakr_article_text(soup, url)
+        if text is None:
+            text = _mcee_article_text(soup, url)
         if text is None:
             text = soup.get_text('\n', strip=True)
         # Government article page counters change on every read. They are not

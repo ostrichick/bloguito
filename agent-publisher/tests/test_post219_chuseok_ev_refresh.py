@@ -2,15 +2,17 @@
 import unittest
 from datetime import date
 
+from bs4 import BeautifulSoup
+
 from agents.editorial import dated_post_exception, topic_reasons
+from agents.editorial_writer import _mcee_article_text
 
 
 class Post219ChuseokEvRefreshTests(unittest.TestCase):
     def setUp(self):
         self.urls = [
-            'https://www.korea.kr/news/policyNewsView.do?newsId=148972359',
+            'https://www.mcee.go.kr/home/web/board/read.do?boardId=1892400&boardMasterId=939&menuId=10598',
             'https://www.kecowebzine.kr/data/vol53/sub0108.php',
-            'https://www.opinet.co.kr/user/cusmartapp/cusmartappView.do',
         ]
         self.brief = {
             'id': '2026-chuseok-ev-post-219-refresh',
@@ -41,6 +43,26 @@ class Post219ChuseokEvRefreshTests(unittest.TestCase):
         self.assertNotIn('insufficient_useful_lifetime', topic_reasons(self.brief, date(2026, 9, 24)))
         other = {**self.brief, 'id': 'another-ev-post', 'existing_post_id': 220}
         self.assertIn('insufficient_useful_lifetime', topic_reasons(other, date(2026, 9, 24)))
+
+    def test_ministry_release_ignores_view_counter_but_preserves_article_body(self):
+        url = self.urls[0]
+        template = '''
+        <html><body>
+          <div id="boardViewListForRead_0"><ul>
+            <li><dl><dt>조회수</dt><dd>{views}</dd></dl></li>
+            <li><dl><dt>등록일자</dt><dd>2026-09-21</dd></dl></li>
+          </ul></div>
+          <div class="view_con">
+            <p>고속도로 휴게소 8곳에 이동식 충전기 총 19기를 배치한다.</p>
+            <p>충전 차량별 20kWh 한도, 배터리 용량 50% 이하 차량 우선 충전.</p>
+          </div>
+        </body></html>
+        '''
+        first = _mcee_article_text(BeautifulSoup(template.format(views='1,000'), 'html.parser'), url)
+        second = _mcee_article_text(BeautifulSoup(template.format(views='1,001'), 'html.parser'), url)
+        self.assertEqual(first, second)
+        self.assertIn('20kWh', first)
+        self.assertNotIn('1,000', first)
 
 
 if __name__ == '__main__':
