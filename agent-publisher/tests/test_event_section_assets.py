@@ -1,0 +1,69 @@
+import copy
+import unittest
+
+from agents.editorial import render, validate_bundle
+from tests.test_editorial_system import NOW, sample
+
+
+class EventSectionAssetsTests(unittest.TestCase):
+    def setUp(self):
+        self.bundle = sample()
+        source = self.bundle['sources'][0]
+        section = self.bundle['plan']['sections'][0]
+        section['image'] = {
+            'url': 'https://www.seocho.go.kr/images/event.jpg',
+            'alt': '행사 현장 공식 이미지',
+            'caption': '행사 현장 모습',
+            'source_id': source['id'],
+        }
+        section['location'] = {
+            'venue': '서초 행사장',
+            'address': '서울 서초구 안내로 1',
+            'query': '서울 서초구 안내로 1 서초 행사장',
+            'evidence': [],
+        }
+        source['text'] += ' 서울 서초구 안내로 1 서초 행사장.'
+        section['location']['evidence'] = [{'source_id': source['id'], 'quote': source['text']}]
+        import hashlib
+        source['sha256'] = hashlib.sha256(source['text'].encode()).hexdigest()
+
+    def report(self):
+        return validate_bundle(
+            self.bundle,
+            {'checked_on': NOW.date().isoformat(), 'posts': []},
+            NOW,
+            require_review=False,
+        )
+
+    def test_event_image_and_location_render_with_keyless_map_links(self):
+        report = self.report()
+        self.assertEqual('ready', report['status'], report)
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn('bloguito-event-image', page)
+        self.assertIn('행사 현장 모습', page)
+        self.assertIn('festival-location-card', page)
+        self.assertIn('map.kakao.com/link/search/', page)
+        self.assertIn('map.naver.com/v5/search/', page)
+        self.assertIn('www.google.com/maps/dir/?api=1', page)
+        self.assertNotIn('<iframe', page)
+        self.assertNotIn('dapi.kakao.com/v2/maps/sdk.js', page)
+
+    def test_unofficial_image_source_is_rejected(self):
+        self.bundle['sources'][0]['source_type'] = 'reference'
+        report = self.report()
+        self.assertIn('invalid_section_assets', report['reasons'])
+
+    def test_location_evidence_must_be_bound_to_source(self):
+        self.bundle['plan']['sections'][0]['location']['evidence'][0]['quote'] = '없는 인용문입니다'
+        report = self.report()
+        self.assertIn('invalid_section_assets', report['reasons'])
+
+    def test_raw_provider_urls_are_not_accepted_as_location_schema(self):
+        location = self.bundle['plan']['sections'][0]['location']
+        location['map_url'] = 'https://example.com'
+        report = self.report()
+        self.assertIn('invalid_section_assets', report['reasons'])
+
+
+if __name__ == '__main__':
+    unittest.main()

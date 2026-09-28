@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime, date
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
@@ -223,6 +223,9 @@ def all_blocks(plan):
             *[{'text': ' '.join(row['cells']), 'evidence': row['evidence'],
                'answers': row.get('answers', []), 'calculations': row.get('calculations', [])}
               for s in plan['sections'] for row in (s.get('table') or {}).get('rows', [])],
+            *[{'text': f"{s['location']['venue']} {s['location']['address']}",
+               'evidence': s['location']['evidence'], 'answers': []}
+              for s in plan['sections'] if s.get('location')],
             *[f['answer'] for f in plan.get('faq', [])]]
 
 
@@ -317,6 +320,10 @@ def reader_visible_strings(plan, sources):
     for section in plan.get('sections', []):
         values.append(section.get('heading', ''))
         values.extend((p or {}).get('text', '') for p in section.get('paragraphs', []))
+        image = section.get('image') or {}
+        values.extend((image.get('alt', ''), image.get('caption', '')))
+        location = section.get('location') or {}
+        values.extend((location.get('venue', ''), location.get('address', '')))
         table = section.get('table') or {}
         values.append(table.get('caption', ''))
         values.extend(table.get('headers', []))
@@ -334,6 +341,57 @@ def reader_visible_strings(plan, sources):
             values.append(action.get('label', ''))
         values.append(source.get('citation_label') or source.get('title', ''))
     return [value for value in values if isinstance(value, str)]
+
+
+def validated_section_assets(plan, sources):
+    """Validate optional event image and location blocks bound to reviewed sources."""
+    source_map = {source.get('id'): source for source in sources if isinstance(source, dict)}
+    assets = []
+    for section in plan.get('sections', []):
+        image = section.get('image')
+        if image is not None:
+            if (not isinstance(image, dict)
+                    or set(image) != {'url', 'alt', 'caption', 'source_id'}):
+                raise ValueError('invalid_section_image')
+            url, alt, caption, source_id = (
+                image.get('url'), image.get('alt'), image.get('caption'), image.get('source_id'))
+            parsed = urlparse(url) if isinstance(url, str) else None
+            source = source_map.get(source_id)
+            if (not parsed or parsed.scheme != 'https' or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.fragment
+                    or re.search(r'[<>\r\n]', url)
+                    or not isinstance(alt, str) or not 4 <= len(alt.strip()) <= 200
+                    or re.search(r'[<>\r\n]', alt)
+                    or not isinstance(caption, str) or not 2 <= len(caption.strip()) <= 180
+                    or re.search(r'[<>\r\n]', caption)
+                    or not source or source.get('source_type') != 'official'):
+                raise ValueError('invalid_section_image')
+
+        location = section.get('location')
+        if location is not None:
+            if (not isinstance(location, dict)
+                    or set(location) != {'venue', 'address', 'query', 'evidence'}):
+                raise ValueError('invalid_section_location')
+            venue, address, query, evidence = (
+                location.get('venue'), location.get('address'), location.get('query'), location.get('evidence'))
+            if (not all(isinstance(value, str) for value in (venue, address, query))
+                    or not 2 <= len(venue.strip()) <= 120
+                    or not 4 <= len(address.strip()) <= 180
+                    or not 2 <= len(query.strip()) <= 180
+                    or re.search(r'[<>\r\n]', venue + address + query)
+                    or not isinstance(evidence, list) or not 1 <= len(evidence) <= 4):
+                raise ValueError('invalid_section_location')
+            for item in evidence:
+                if (not isinstance(item, dict) or set(item) != {'source_id', 'quote'}
+                        or item.get('source_id') not in source_map
+                        or source_map[item['source_id']].get('source_type') != 'official'
+                        or not isinstance(item.get('quote'), str)
+                        or len(normalized(item['quote'])) < 8
+                        or normalized(item['quote']) not in normalized(source_map[item['source_id']].get('text', ''))):
+                    raise ValueError('invalid_section_location')
+        if image or location:
+            assets.append({'image': image, 'location': location})
+    return assets
 
 
 def actionable_links(sources):
@@ -467,6 +525,11 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                 official_navigation_links(plan, sources)
             except (KeyError, TypeError, ValueError):
                 reasons.append('invalid_official_navigation')
+        if 'content' in scopes:
+            try:
+                validated_section_assets(plan, sources)
+            except (KeyError, TypeError, ValueError):
+                reasons.append('invalid_section_assets')
         if 'content' in scopes and legacy_85_welfare_navigation_exception(brief):
             reasons.extend(legacy_85_welfare_navigation_reasons(brief, sources, plan))
         related = plan.get('related_posts', [])
@@ -954,6 +1017,19 @@ def render(plan, sources, category_key=None):
                 f'font-weight:700;font-style:normal;letter-spacing:normal;text-align:left;'
                 f'line-height:1.45;margin:32px 0 14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">'
                 f'{badge}{html.escape(clean_heading)}</h2>')
+        image = section.get('image')
+        if image:
+            source = source_map[image['source_id']]
+            body += (
+                '<figure class="bloguito-event-image" style="margin:4px 0 18px">'
+                f'<img src="{html.escape(image["url"], quote=True)}" '
+                f'alt="{html.escape(image["alt"], quote=True)}" loading="lazy" decoding="async" '
+                'style="display:block;width:100%;max-width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:10px" />'
+                '<figcaption style="margin-top:7px;font-size:13px;line-height:1.55;color:#64748b">'
+                f'{html.escape(image["caption"])} · '
+                f'<a href="{html.escape(source["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
+                'style="color:#0d7d59;text-decoration:underline">공식 자료</a></figcaption></figure>'
+            )
         table = section.get('table')
         if table:
             headers = ''.join(f'<th scope="col" style="padding:10px;border-bottom:2px solid #cbd5e1;text-align:left">{html.escape(h)}</th>'
@@ -975,7 +1051,31 @@ def render(plan, sources, category_key=None):
                      + '<caption style="text-align:left;font-weight:700;margin-bottom:8px">'
                      + html.escape(table['caption']) + '</caption><thead style="background:#edf7f3"><tr>'
                      + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
-        return body + ''.join(paragraph(b) for b in section['paragraphs'])
+        body += ''.join(paragraph(b) for b in section['paragraphs'])
+        location = section.get('location')
+        if location:
+            query = quote(location['query'].strip(), safe='')
+            venue = html.escape(location['venue'])
+            address = html.escape(location['address'])
+            body += (
+                '<div class="festival-location-card" style="margin:16px 0 24px;padding:14px 18px;background:#f8fafc;'
+                'border:1px solid #e2e8f0;border-left:4px solid #0d7d59;border-radius:8px">'
+                '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 지도 및 길찾기</div>'
+                f'<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6"><strong>장소</strong>: {venue}<br/>'
+                f'<strong>주소</strong>: {address}</div>'
+                '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+                f'<a href="https://map.kakao.com/link/search/{query}" target="_blank" rel="noopener noreferrer" '
+                'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#fee500;color:#111827 !important;'
+                'font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">카카오맵 위치 보기 <span aria-hidden="true">↗</span></a>'
+                f'<a href="https://map.naver.com/v5/search/{query}" target="_blank" rel="noopener noreferrer" '
+                'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#03c75a;color:#ffffff !important;'
+                'font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">네이버지도 위치 보기 <span aria-hidden="true">↗</span></a>'
+                f'<a href="https://www.google.com/maps/dir/?api=1&amp;destination={query}" target="_blank" rel="noopener noreferrer" '
+                'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#ffffff;color:#0d7d59 !important;'
+                'border:1px solid #0d7d59;font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">길찾기 시작 <span aria-hidden="true">↗</span></a>'
+                '</div></div>'
+            )
+        return body
 
     if overview_first:
         result += section_markup(1, sections[0])
