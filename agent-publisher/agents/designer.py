@@ -493,7 +493,10 @@ class DesignerAgent:
         base = Image.alpha_composite(base, scrim)
         draw = ImageDraw.Draw(base)
 
-        left = int(width * 0.055)
+        safe_margin = float(
+            FEATURED_IMAGE_POLICY.get("composition", {}).get("safe_margin_percent", 8)
+        ) / 100.0
+        left = int(round(width * safe_margin))
         text_width_chars = max(10, min(16, int(FEATURED_IMAGE_POLICY["text"].get("primary_max_chars", 22))))
         lines = split_title(primary_text, max_first_line=text_width_chars)
         longest = max(map(len, lines)) if lines else 1
@@ -539,7 +542,10 @@ class DesignerAgent:
 
         # One large contemporary focal object on the right; the shape changes enough
         # to communicate the broad topic without turning into an icon collage.
-        cx, cy = int(width * 0.76), int(height * 0.50)
+        # Keep the fallback focal scene inside the same 8% critical-content
+        # margin required for generated covers. 0.72 leaves enough room for
+        # even the widest fallback subject on a 1200px canvas.
+        cx, cy = int(width * 0.72), int(height * 0.50)
         if profile == "concert":
             draw.rounded_rectangle([cx - 210, cy - 190, cx + 210, cy + 190], radius=44, fill=(24, 31, 58))
             draw.ellipse([cx - 82, cy - 82, cx + 82, cy + 82], fill=(241, 178, 73))
