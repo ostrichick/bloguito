@@ -11,6 +11,11 @@ class DongguOfficialSourceTests(unittest.TestCase):
         self.assertIn('Mozilla/5.0', headers.get('User-Agent', ''))
         self.assertIn('ko-KR', headers.get('Accept-Language', ''))
 
+    def test_public_event_list_uses_browser_headers(self):
+        headers = _official_request_headers(
+            'https://www.donggu.go.kr/yeyak/www/selectTnExprnListU.do?key=243&sc9=EVENT')
+        self.assertIn('Mozilla/5.0', headers.get('User-Agent', ''))
+
     def test_unrelated_donggu_page_does_not_inherit_browser_headers(self):
         self.assertEqual({}, _official_request_headers(
             'https://www.donggu.go.kr/dg/kor/article/newsNotice/143089'))

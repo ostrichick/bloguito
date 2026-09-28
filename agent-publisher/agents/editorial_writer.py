@@ -223,8 +223,11 @@ def _official_request_headers(url):
     donggu_public_event = (
         parsed.scheme == 'https'
         and parsed.hostname == 'www.donggu.go.kr'
-        and parsed.path == '/yeyak/www/viewTnExprnU.do'
-        and re.fullmatch(r'\d+', (parse_qs(parsed.query).get('exprnKey') or [''])[0])
+        and (
+            (parsed.path == '/yeyak/www/viewTnExprnU.do'
+             and re.fullmatch(r'\d+', (parse_qs(parsed.query).get('exprnKey') or [''])[0]))
+            or parsed.path == '/yeyak/www/selectTnExprnListU.do'
+        )
     )
     if nol_product or yes24_product or airport_public or donggu_public_event:
         return {
