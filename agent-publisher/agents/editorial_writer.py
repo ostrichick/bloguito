@@ -356,6 +356,55 @@ def _normalize_seocho_property_tax_text(text, url):
     return '\n'.join(lines[:index] + lines[index + 2:])
 
 
+def _normalize_movein_service_text(text, url):
+    """Remove only view counters from the exact official #475 evidence pages."""
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    lines = text.splitlines()
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'www.gov.kr'
+            and parsed.path == '/portal/faq/869' and query == {'backBtnYn': ['N']}):
+        matches = [
+            index for index in range(1, len(lines) - 1)
+            if lines[index - 1].strip() == '전입신고'
+            and re.fullmatch(r'[\d,]+', lines[index].strip())
+            and '온라인 전입신고 시 [세대주확인]' in lines[index + 1]
+        ]
+        if len(matches) != 1:
+            raise ValueError('movein_household_faq_view_counter_structure_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 1:])
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'www.gov.kr'
+            and parsed.path == '/portal/faq/867' and query == {'backBtnYn': ['N']}):
+        matches = [
+            index for index in range(1, len(lines) - 1)
+            if lines[index - 1].strip() == '처리결과'
+            and re.fullmatch(r'[\d,]+', lines[index].strip())
+            and '전입신고 담당자가 전입처리를 완료한 후' in lines[index + 1]
+        ]
+        if len(matches) != 1:
+            raise ValueError('movein_result_faq_view_counter_structure_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 1:])
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'www.110.go.kr'
+            and parsed.path == '/data/counselView.do'
+            and query.get('num') == ['A01_660027']):
+        matches = [
+            index for index in range(1, len(lines) - 1)
+            if lines[index - 1].strip() == '조회수 :'
+            and re.fullmatch(r'[\d,]+', lines[index].strip())
+            and lines[index + 1].strip() == '질문내용'
+        ]
+        if len(matches) != 1:
+            raise ValueError('movein_110_view_counter_structure_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 1:])
+
+    return text
+
+
 def _normalize_post239_chuseok_sources(text, url):
     """Remove only verified volatile chrome from the exact #239 source set."""
     parsed = urlsplit(url)
@@ -696,6 +745,7 @@ def _fetch_sources_sequential(brief):
             text = text.rstrip() + '\n' + nol_booking_metadata
         text = _normalize_efine_text(text, url)
         text = _normalize_seocho_property_tax_text(text, url)
+        text = _normalize_movein_service_text(text, url)
         text = _normalize_post239_chuseok_sources(text, url)
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')

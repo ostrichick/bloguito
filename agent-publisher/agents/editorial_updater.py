@@ -34,6 +34,55 @@ def _existing_lead_excerpt(content):
     return excerpt_from_lead({'text': text}) if len(text) >= 20 else None
 
 
+RANK_MATH_META_KEYS = (
+    'rank_math_focus_keyword',
+    'rank_math_title',
+    'rank_math_description',
+)
+
+
+def rank_math_meta_from_brief(brief):
+    """Return exact reviewed Rank Math values, or None when SEO was not reviewed."""
+    if 'seo' not in brief:
+        return None
+    seo = brief.get('seo')
+    focus = brief.get('primary_keyword')
+    if (not isinstance(seo, dict) or not isinstance(focus, str) or not focus.strip()
+            or not isinstance(seo.get('title'), str) or not seo['title'].strip()
+            or not isinstance(seo.get('description'), str) or not seo['description'].strip()
+            or any('\x00' in value for value in (focus, seo['title'], seo['description']))):
+        raise ValueError('invalid_reviewed_seo_metadata')
+    return {
+        'rank_math_focus_keyword': focus.strip(),
+        'rank_math_title': seo['title'],
+        'rank_math_description': seo['description'],
+    }
+
+
+def _read_post_meta(base, post_id, key):
+    result = subprocess.run(
+        list(base) + ['post', 'meta', 'get', str(post_id), key, '--allow-root'],
+        capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        return (result.stdout or '').rstrip('\r\n')
+    stderr = (result.stderr or '').lower()
+    if result.returncode == 1 and 'could not find the specified post meta field' in stderr:
+        return None
+    raise subprocess.CalledProcessError(
+        result.returncode, result.args, output=result.stdout, stderr=result.stderr)
+
+
+def _read_rank_math_meta(base, post_id):
+    return {key: _read_post_meta(base, post_id, key) for key in RANK_MATH_META_KEYS}
+
+
+def _set_rank_math_meta(base, post_id, values):
+    for key in RANK_MATH_META_KEYS:
+        subprocess.run(
+            list(base) + ['post', 'meta', 'set', str(post_id), key, values[key], '--allow-root'],
+            capture_output=True, text=True, check=True)
+
+
 def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False,
                                 confirm_title_change=False):
     """Change reviewed content after a fresh review and unchanged-content check.
@@ -48,6 +97,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         raise ValueError('reviewed_bundle_target_id_mismatch')
     if not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or ''):
         raise ValueError('original_content_sha256_required')
+    reviewed_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
     lock = ROOT / 'data' / '.editorial-publish.lock'
     lock.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -87,15 +137,22 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             raise ValueError('public_post_changed_during_review')
         if missing_internal_post_ids(current['post_content'], reviewed_content):
             raise ValueError('original_internal_post_navigation_missing')
+        current_meta = _read_rank_math_meta(base, post_id) if reviewed_meta else None
+        update_meta = reviewed_meta is not None and current_meta != reviewed_meta
         # Preserve manually written excerpts; repair blanks or our own old previews.
         old_excerpt = current.get('post_excerpt', '')
         new_excerpt = (excerpt_from_lead(bundle['plan']['lead'])
                        if bundle['plan'].get('lead') else None)
         update_excerpt = bool(new_excerpt and (not old_excerpt.strip()
                               or old_excerpt == _existing_lead_excerpt(current['post_content'])))
-        if current['post_content'] == reviewed_content and not update_excerpt and not title_changed:
+        if (current['post_content'] == reviewed_content and not update_excerpt
+                and not title_changed and not update_meta):
             return post_id
-        backup_path = backup_json(ROOT, 'public-edit', post_id, current, include_microseconds=False)
+        backup_payload = dict(current)
+        if current_meta is not None:
+            backup_payload['rank_math_meta'] = current_meta
+        backup_path = backup_json(
+            ROOT, 'public-edit', post_id, backup_payload, include_microseconds=False)
         save_report(bundle, report)
         # The reviewed, escaped renderer is the only content submitted.
         fields = {'post_content': reviewed_content}
@@ -104,6 +161,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if update_excerpt:
             fields['post_excerpt'] = new_excerpt
         update_post(base, post_id, fields)
+        if update_meta:
+            _set_rank_math_meta(base, post_id, reviewed_meta)
         saved = get_post(base, post_id)
         expected = {
             'post_status': 'publish',
@@ -114,6 +173,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             expected['post_excerpt'] = new_excerpt
         if not verify_saved_fields(saved, expected=expected,
                                    preserved={'post_name': current['post_name']}):
+            raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
+        if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
         invalidate_inventory()
         return post_id

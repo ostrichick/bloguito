@@ -46,6 +46,32 @@ class UpdateExistingViaSshTransportTests(unittest.TestCase):
             'sudo docker exec wordpress_app wp post list '))
         self.assertEqual(1, len(calls))
 
+    def test_tailscale_ssh_uses_wsl_exec_mode(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout='[]', stderr='')
+
+        module._RUN = fake_run
+        run = module.make_transport(
+            '100.99.177.119',
+            139,
+            'rendered',
+            wsl_distro='Ubuntu-24.04',
+            ssh_user='ubuntu',
+            tailscale_ssh=True,
+        )
+        run(module._PREFIX + module._LIST_ARGS,
+            capture_output=True, text=True, check=True)
+
+        self.assertEqual(
+            ['wsl.exe', '-d', 'Ubuntu-24.04', '--exec', 'tailscale', 'ssh',
+             'ubuntu@100.99.177.119'],
+            calls[0][:7],
+        )
+
     def test_wsl_route_diagnoses_only_after_ssh_failure_and_preserves_exception(self):
         module = load_module()
         calls = []
@@ -170,6 +196,40 @@ class UpdateExistingViaSshTransportTests(unittest.TestCase):
             capture_output=True, text=True, check=True)
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_write_arguments'):
             run(module._PREFIX + ['post', 'update', '700', '--post_content=x', '--allow-root'])
+
+    def test_rank_math_meta_transport_allows_only_reviewed_target_and_values(self):
+        module = load_module()
+        expected = {
+            'rank_math_focus_keyword': '전입신고 온라인 신청',
+            'rank_math_title': '검토된 SEO 제목',
+            'rank_math_description': '검토된 SEO 설명 $100 그대로',
+        }
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout='old value\n', stderr='')
+
+        module._RUN = fake_run
+        run = module.make_transport(
+            'bloguito', 475, 'rendered', expected_rank_math_meta=expected)
+        base = module._PREFIX
+
+        run(base + ['post', 'meta', 'get', '475', 'rank_math_title', '--allow-root'],
+            capture_output=True, text=True, check=False)
+        run(base + ['post', 'meta', 'set', '475', 'rank_math_description',
+                    expected['rank_math_description'], '--allow-root'],
+            capture_output=True, text=True, check=True)
+
+        self.assertIn("'검토된 SEO 설명 $100 그대로'", calls[-1][-1])
+        for command in (
+            ['post', 'meta', 'get', '476', 'rank_math_title', '--allow-root'],
+            ['post', 'meta', 'get', '475', 'unreviewed_meta', '--allow-root'],
+            ['post', 'meta', 'set', '475', 'rank_math_title', '다른 제목', '--allow-root'],
+            ['post', 'meta', 'set', '476', 'rank_math_title', expected['rank_math_title'], '--allow-root'],
+        ):
+            with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_write_arguments'):
+                run(base + command)
 
 
 if __name__ == '__main__':

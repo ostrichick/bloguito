@@ -11,7 +11,8 @@ from agents.temporal_validation import (KST, validate_availability, extract_evid
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
                                         extract_nol_product_schedule,
                                         validate_legacy_followup,
-                                        validate_legacy_reference_period)
+                                        validate_legacy_reference_period,
+                                        validate_reference_period)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 
@@ -414,6 +415,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             if any('·' in value for value in reader_visible_strings(plan, sources)):
                 reasons.append('reader_middle_dot_disallowed')
                 details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')
+            try:
+                validated_lead_image(plan)
+            except ValueError:
+                reasons.append('invalid_lead_image')
         related_post_ids = {
             item.get('post_id')
             for item in plan.get('related_posts', [])
@@ -518,7 +523,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                         reasons.append('specific_holiday_branch_details_missing')
             listing_only = temporal.get('schedule_listing_only') is True
             legacy_nol_mode = temporal.get('legacy_nol_product_listing') is True
-            if temporal.get('evidence') != available:
+            if temporal.get('reference_period') is None and temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')
             if listing_only or legacy_nol_mode:
                 # For an event schedule and booking *destinations*, evidence of an
@@ -647,6 +652,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                     # flu season are information applicability periods, not
                     # evidence of an active application or universal supply.
                     reasons.extend(validate_legacy_reference_period(
+                        brief, sources, temporal, plan, now,
+                        minimum_days=rules['min_remaining_days']))
+                elif temporal.get('reference_period') is not None:
+                    reasons.extend(validate_reference_period(
                         brief, sources, temporal, plan, now,
                         minimum_days=rules['min_remaining_days']))
                 elif not seasonal_exception:
@@ -849,6 +858,27 @@ def section_kind(section):
     return 'general'
 
 
+def validated_lead_image(plan):
+    """Return a reviewed lead image after enforcing a narrow safe schema."""
+    image = plan.get('lead_image')
+    if image is None:
+        return None
+    if not isinstance(image, dict) or set(image) != {'url', 'alt', 'width', 'height'}:
+        raise ValueError('invalid_lead_image')
+    url, alt = image.get('url'), image.get('alt')
+    width, height = image.get('width'), image.get('height')
+    if not isinstance(url, str) or not isinstance(alt, str):
+        raise ValueError('invalid_lead_image')
+    parsed = urlparse(url)
+    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username
+            or re.search(r'[<>\r\n]', url)
+            or not 1 <= len(alt.strip()) <= 200 or re.search(r'[<>\r\n]', alt)
+            or type(width) is not int or type(height) is not int
+            or not 1 <= width <= 10000 or not 1 <= height <= 10000):
+        raise ValueError('invalid_lead_image')
+    return image
+
+
 def excerpt_from_lead(lead, limit=240):
     """Create the archive preview from reviewed answer text, never HTML chrome."""
     text = normalized(lead['text'])
@@ -860,6 +890,7 @@ def excerpt_from_lead(lead, limit=240):
 
 def render(plan, sources, category_key=None):
     """Presentation is deterministic: retain every reviewed sentence and condition."""
+    lead_image = validated_lead_image(plan)
     source_map = {s['id']: s for s in sources}
     def inline_text(block):
         text = block['text']
@@ -886,6 +917,16 @@ def render(plan, sources, category_key=None):
               '<div class="bloguito-summary" style="padding:18px 20px;margin:16px 0 24px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:5px solid #0d7d59;border-radius:10px">'
               '<div style="font-size:18px;font-weight:700;color:#134e4a">한눈에 보기</div>'
               + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16px">{inline_text(plan["lead"])}</p></div>')
+    if lead_image:
+        result += (
+            '<figure class="bloguito-lead-image" style="margin:0 0 28px">'
+            f'<img src="{html.escape(lead_image["url"], quote=True)}" '
+            f'alt="{html.escape(lead_image["alt"], quote=True)}" '
+            f'width="{lead_image["width"]}" height="{lead_image["height"]}" '
+            'loading="eager" decoding="async" '
+            'style="display:block;width:100%;max-width:100%;height:auto;border-radius:10px" />'
+            '</figure>'
+        )
 
     # A source-reviewed overview table belongs immediately after the answer.
     sections = plan['sections']

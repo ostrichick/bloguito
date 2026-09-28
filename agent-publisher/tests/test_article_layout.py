@@ -34,6 +34,36 @@ class ArticleLayoutTests(unittest.TestCase):
         self.assertNotIn('STEP 1</span>배출 방법', page)
         self.assertIn('min-width:0;font-size:15px', page)
 
+    def test_reviewed_lead_image_is_validated_and_rendered_after_summary(self):
+        self.bundle['plan']['lead_image'] = {
+            'url': 'https://lifeinfo24.org/wp-content/uploads/reviewed-image.jpg?size=large&v=1',
+            'alt': '전입신고 온라인 신청 화면 안내',
+            'width': 1200,
+            'height': 675,
+        }
+        overview = {
+            'kind': 'overview', 'heading': '한눈에 보는 수거 기준', 'paragraphs': [],
+            'table': {'caption': '공식 수거 기준', 'headers': ['구분', '처리 방법'],
+                      'rows': [{'cells': ['가정용 선풍기', '아파트 단지 수집 거치대'],
+                                'evidence': self.bundle['plan']['lead']['evidence'], 'answers': ['q1']}]},
+        }
+        self.bundle['plan']['sections'].insert(0, overview)
+        sign(self.bundle)
+        self.assertEqual('ready', validate_bundle(self.bundle, self.inventory, NOW)['status'])
+
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertLess(page.index('bloguito-summary'), page.index('bloguito-lead-image'))
+        self.assertLess(page.index('bloguito-lead-image'), page.index('한눈에 보는 수거 기준'))
+        self.assertIn('width="1200" height="675"', page)
+        self.assertIn('width:100%;max-width:100%;height:auto', page)
+        self.assertIn('src="https://lifeinfo24.org/wp-content/uploads/reviewed-image.jpg?size=large&amp;v=1"', page)
+
+        self.bundle['plan']['lead_image']['url'] = 'javascript:alert(1)'
+        sign(self.bundle)
+        self.assertIn('invalid_lead_image', validate_bundle(self.bundle, self.inventory, NOW)['reasons'])
+        with self.assertRaisesRegex(ValueError, 'invalid_lead_image'):
+            render(self.bundle['plan'], self.bundle['sources'])
+
     def test_only_procedures_receive_step_numbers(self):
         self.bundle['plan']['sections'][0]['kind'] = 'eligibility'
         self.bundle['plan']['sections'].append({

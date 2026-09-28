@@ -20,7 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 from agents.editorial import render  # noqa: E402
-from agents.editorial_updater import update_existing_public_post  # noqa: E402
+from agents.editorial_updater import (  # noqa: E402
+    RANK_MATH_META_KEYS,
+    rank_math_meta_from_brief,
+    update_existing_public_post,
+)
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
@@ -36,7 +40,7 @@ _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 
 
 def make_transport(host, post_id, rendered_content, expected_title=None, wsl_distro=None,
-                   ssh_user=None, tailscale_ssh=False):
+                   ssh_user=None, tailscale_ssh=False, expected_rank_math_meta=None):
     """Translate only WP list/get/update performed by the canonical updater."""
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', host):
         raise ValueError('invalid_ssh_alias')
@@ -44,6 +48,12 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
         raise ValueError('invalid_ssh_user')
     if wsl_distro is not None and not re.fullmatch(r'[A-Za-z0-9_.-]+', wsl_distro):
         raise ValueError('invalid_wsl_distro')
+    if expected_rank_math_meta is not None:
+        if (not isinstance(expected_rank_math_meta, dict)
+                or set(expected_rank_math_meta) != set(RANK_MATH_META_KEYS)
+                or any(not isinstance(expected_rank_math_meta[key], str)
+                       for key in RANK_MATH_META_KEYS)):
+            raise ValueError('invalid_expected_rank_math_meta')
 
     tailscale_diagnosed = False
     readable_ids = {post_id}
@@ -81,7 +91,19 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
             len(wp) == 5 and wp[:2] == ['post', 'get'] and wp[2].isdigit()
             and int(wp[2]) in readable_ids and wp[3:] == ['--format=json', '--allow-root']
         )
-        if wp != _LIST_ARGS and not light_inventory and wp != get and not candidate_get:
+        meta_get = (
+            expected_rank_math_meta is not None and len(wp) == 6
+            and wp[:3] == ['post', 'meta', 'get'] and wp[3] == str(post_id)
+            and wp[4] in expected_rank_math_meta and wp[5] == '--allow-root'
+        )
+        meta_set = (
+            expected_rank_math_meta is not None and len(wp) == 7
+            and wp[:3] == ['post', 'meta', 'set'] and wp[3] == str(post_id)
+            and wp[4] in expected_rank_math_meta
+            and wp[5] == expected_rank_math_meta[wp[4]] and wp[6] == '--allow-root'
+        )
+        if (wp != _LIST_ARGS and not light_inventory and wp != get and not candidate_get
+                and not meta_get and not meta_set):
             if wp[:4] != expected_update:
                 raise ValueError('unexpected_wordpress_write_arguments')
             trailing = wp[4:]
@@ -103,7 +125,7 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
         if tailscale_ssh:
             if not wsl_distro:
                 raise ValueError('tailscale_ssh_requires_wsl_distro')
-            ssh = ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'ssh', destination, remote]
+            ssh = ['wsl.exe', '-d', wsl_distro, '--exec', 'tailscale', 'ssh', destination, remote]
         else:
             ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
         if wsl_distro and not tailscale_ssh:
@@ -160,6 +182,7 @@ def main():
         parser.error('reviewed bundle targets a different post')
     content = render(bundle['plan'], bundle['sources'])
     expected_title = bundle.get('plan', {}).get('title') if args.confirm_title_change else None
+    expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
     config = resolve_transport(
         ssh_mode=args.ssh_mode,
         ssh_host=args.ssh_host,
@@ -175,6 +198,7 @@ def main():
         wsl_distro=config.wsl_distro if config.mode in {'wsl', 'tailscale'} else None,
         ssh_user=config.user,
         tailscale_ssh=config.mode == 'tailscale',
+        expected_rank_math_meta=expected_rank_math_meta,
     )
     with patch('subprocess.run', side_effect=transport):
         updated = update_existing_public_post(

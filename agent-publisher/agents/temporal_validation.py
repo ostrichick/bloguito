@@ -125,6 +125,65 @@ def extract_evidence(text: str, url: str) -> list[dict]:
             for kind, expression in LABELS.items() if re.fullmatch(expression, m["label"])]
 
 
+def validate_reference_period(brief: dict, sources: list[dict], temporal: dict,
+                              plan: dict, now: datetime, minimum_days=30) -> list[str]:
+    """Validate a dated annual rule whose official applicability is not an application window.
+
+    This path is for a fixed, official reference period such as an annual statutory
+    rate. It does not certify an application, sale, booking, inventory or a person's
+    eligibility. The dates must be explicitly present in an official bound quote.
+    """
+    info = temporal.get('reference_period')
+    if not isinstance(info, dict) or info.get('kind') != 'annual_rule':
+        return ['reference_period_invalid']
+    if brief.get('content_type') != 'dated' or brief.get('category_key') == 'concert':
+        return ['reference_period_not_for_this_topic']
+    try:
+        start = date.fromisoformat(info['start_date'])
+        end = date.fromisoformat(info['end_date'])
+        useful = date.fromisoformat(brief['useful_until'])
+        evidence = info['evidence']
+        source = next(s for s in sources if s['id'] == evidence['source_id'])
+        quote = evidence['quote']
+        if (start > end or not isinstance(quote, str) or not 24 <= len(quote) <= 1200
+                or quote not in source['text'] or source.get('source_type') != 'official'
+                or source['url'] not in brief.get('official_urls', [])):
+            raise ValueError('reference_period_unbound')
+    except (TypeError, ValueError, KeyError, StopIteration):
+        return ['reference_period_dates_or_source_unverified']
+
+    def date_tokens(value: date) -> set[str]:
+        yy = value.year % 100
+        return {
+            value.isoformat(),
+            value.strftime('%Y.%m.%d'),
+            value.strftime('%Y/%m/%d'),
+            f"{value.year}년 {value.month}월 {value.day}일",
+            f"{value.year}년{value.month}월{value.day}일",
+            f"'{yy:02d}.{value.month:02d}.{value.day:02d}",
+            f"’{yy:02d}.{value.month:02d}.{value.day:02d}",
+        }
+
+    reasons = []
+    if not any(token in quote for token in date_tokens(start)) or not any(
+            token in quote for token in date_tokens(end)):
+        reasons.append('reference_period_dates_not_in_official_quote')
+    if now.date() > end or (end - now.date()).days < minimum_days:
+        reasons.append('reference_period_expired_or_too_short')
+    if useful != end:
+        reasons.append('reference_period_useful_until_mismatch')
+    visible = ' '.join([
+        plan.get('title', ''), plan.get('lead', {}).get('text', ''),
+        *(section.get('heading', '') for section in plan.get('sections', [])),
+        *(paragraph.get('text', '') for section in plan.get('sections', [])
+          for paragraph in section.get('paragraphs', [])),
+        *(faq.get('answer', {}).get('text', '') for faq in plan.get('faq', [])),
+    ])
+    if re.search(r'현재\s*(?:신청|접수|예매|판매)\s*(?:가능|중)|(?:신청|접수|예매|판매)\s*진행\s*중', visible):
+        reasons.append('reference_period_misleading_live_status_claim')
+    return sorted(set(reasons))
+
+
 def validate_legacy_followup(brief: dict, sources: list[dict], temporal: dict,
                              plan: dict, now: datetime) -> list[str]:
     """Check cited past and future dates in a *specific existing* welfare article.
