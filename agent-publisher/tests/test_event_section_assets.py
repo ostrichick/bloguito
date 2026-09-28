@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from agents.editorial import render, validate_bundle
+from agents.editorial import render, supported_official_number_notations, validate_bundle
 from tests.test_editorial_system import NOW, sample
 
 
@@ -63,6 +63,12 @@ class EventSectionAssetsTests(unittest.TestCase):
         location['map_url'] = 'https://example.com'
         report = self.report()
         self.assertIn('invalid_section_assets', report['reasons'])
+
+    def test_iso_and_dotted_official_dates_support_korean_reader_notation(self):
+        text = '2026년 10월 9일과 2026년 10월 17일 일정입니다.'
+        quote = '2026-10-09 ~ 2026-10-11 / 2026.10.17.(토)'
+        candidates = {'2026', '10', '9', '17'}
+        self.assertEqual(candidates, supported_official_number_notations(text, quote, candidates))
 
 
 if __name__ == '__main__':

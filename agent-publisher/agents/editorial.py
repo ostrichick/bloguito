@@ -899,7 +899,7 @@ def supported_official_number_notations(text, quote_text, candidates):
         if full in candidates and re.search(r'(?<!\d)' + full + r'년', text):
             supported.add(full)
     for year, month, day in re.findall(
-            r"(?<!\d)(20\d{2}|[’‘'ʼ]\d{2})\.(\d{1,2})\.(\d{0,2})", quote_text):
+            r"(?<!\d)(20\d{2}|[’‘'ʼ]\d{2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{0,2})", quote_text):
         full = str(2000 + int(year[1:])) if not year.isdigit() else year
         month_number = str(int(month))
         day_number = str(int(day)) if day else None
