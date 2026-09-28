@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
                                         extract_nol_product_schedule,
+                                        validate_multi_event_schedule,
                                         validate_legacy_followup,
                                         validate_legacy_reference_period,
                                         validate_reference_period)
@@ -523,9 +524,14 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                         reasons.append('specific_holiday_branch_details_missing')
             listing_only = temporal.get('schedule_listing_only') is True
             legacy_nol_mode = temporal.get('legacy_nol_product_listing') is True
+            multi_event = temporal.get('multi_event_schedule') is True
             if temporal.get('reference_period') is None and temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')
-            if listing_only or legacy_nol_mode:
+            if multi_event:
+                reasons.extend(validate_multi_event_schedule(
+                    brief, sources, temporal, plan, now,
+                    minimum_days=rules['min_remaining_days']))
+            elif listing_only or legacy_nol_mode:
                 # For an event schedule and booking *destinations*, evidence of an
                 # actual sale deadline is not available from the public listing.
                 # This mode cannot certify ticket availability or sale periods.

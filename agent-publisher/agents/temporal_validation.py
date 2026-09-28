@@ -184,6 +184,103 @@ def validate_reference_period(brief: dict, sources: list[dict], temporal: dict,
     return sorted(set(reasons))
 
 
+def validate_multi_event_schedule(brief: dict, sources: list[dict], temporal: dict,
+                                  plan: dict, now: datetime, minimum_days=30) -> list[str]:
+    """Validate a dated roundup containing several independently sourced events.
+
+    This contract proves only each event's published date range and the roundup's
+    remaining usefulness. It does not infer ticket inventory, admission price,
+    application status, or live availability from an event date.
+    """
+    reasons = []
+    if (temporal.get('multi_event_schedule') is not True
+            or brief.get('content_type') != 'dated'
+            or brief.get('category_key') == 'concert'):
+        return ['multi_event_schedule_not_for_this_topic']
+    if any(temporal.get(key) is not None for key in (
+            'reference_period', 'legacy_reference_period', 'legacy_followup')):
+        reasons.append('multi_event_schedule_conflicting_mode')
+    if temporal.get('schedule_listing_only') is True or temporal.get('legacy_nol_product_listing') is True:
+        reasons.append('multi_event_schedule_conflicting_mode')
+
+    entries = temporal.get('event_entries')
+    if not isinstance(entries, list) or not 2 <= len(entries) <= 20:
+        return sorted(set([*reasons, 'multi_event_schedule_entries_invalid']))
+
+    source_map = {s.get('id'): s for s in sources if isinstance(s, dict)}
+    official_urls = set(brief.get('official_urls') or [])
+    visible = ' '.join([
+        plan.get('title', ''), plan.get('lead', {}).get('text', ''),
+        *(section.get('heading', '') for section in plan.get('sections', [])),
+        *(paragraph.get('text', '') for section in plan.get('sections', [])
+          for paragraph in section.get('paragraphs', [])),
+        *(cell for section in plan.get('sections', []) if section.get('table')
+          for row in section['table'].get('rows', []) for cell in row.get('cells', [])),
+        *(faq.get('answer', {}).get('text', '') for faq in plan.get('faq', [])),
+    ])
+    seen_names = set()
+    ranges = []
+
+    for entry in entries:
+        if (not isinstance(entry, dict)
+                or set(entry) != {'name', 'start_date', 'end_date', 'evidence'}):
+            reasons.append('multi_event_schedule_entry_invalid')
+            continue
+        name = entry.get('name')
+        evidence = entry.get('evidence')
+        if (not isinstance(name, str) or not 2 <= len(name.strip()) <= 100
+                or name in seen_names or name not in visible
+                or not isinstance(evidence, dict)
+                or set(evidence) != {'source_id', 'quote'}):
+            reasons.append('multi_event_schedule_entry_invalid')
+            continue
+        seen_names.add(name)
+        try:
+            start = date.fromisoformat(entry['start_date'])
+            end = date.fromisoformat(entry['end_date'])
+            source = source_map[evidence['source_id']]
+            quote = evidence['quote']
+            if (start > end or not isinstance(quote, str) or not 16 <= len(quote) <= 1800
+                    or quote not in source.get('text', '')
+                    or source.get('source_type') != 'official'
+                    or source.get('url') not in official_urls):
+                raise ValueError('unbound')
+
+            matches = list(STAMP.finditer(quote))
+            if not matches:
+                raise ValueError('dates_missing')
+            inferred_year = None
+            quote_dates = []
+            fallback_year = start.year if start.year == end.year and str(start.year) in quote else None
+            for match in matches:
+                year, month, day, *_ = match.groups()
+                if year:
+                    inferred_year = int(year)
+                elif inferred_year is None:
+                    inferred_year = fallback_year
+                if inferred_year is None:
+                    raise ValueError('year_missing')
+                quote_dates.append(date(inferred_year, int(month), int(day)))
+            if start not in quote_dates or end not in quote_dates:
+                raise ValueError('date_not_in_quote')
+            ranges.append((start, end))
+        except (KeyError, TypeError, ValueError):
+            reasons.append('multi_event_schedule_date_or_evidence_unverified')
+
+    try:
+        useful = date.fromisoformat(brief['useful_until'])
+        if useful < now.date():
+            reasons.append('availability_not_verified')
+        if (useful - now.date()).days < minimum_days:
+            reasons.append('source_deadline_too_close')
+        if not ranges or max(end for _, end in ranges) < useful:
+            reasons.append('multi_event_schedule_useful_until_unbound')
+    except (KeyError, TypeError, ValueError):
+        reasons.append('multi_event_schedule_useful_until_unbound')
+
+    return sorted(set(reasons))
+
+
 def validate_legacy_followup(brief: dict, sources: list[dict], temporal: dict,
                              plan: dict, now: datetime) -> list[str]:
     """Check cited past and future dates in a *specific existing* welfare article.
