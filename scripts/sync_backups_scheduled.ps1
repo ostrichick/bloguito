@@ -14,7 +14,7 @@ Write-BackupLog "Scheduled backup sync started."
 
 try {
     $WslLocalBackupDir = "/mnt/c/Users/$env:USERNAME/BloguitoBackups"
-    $WslSyncScript = "/mnt/c/Users/$env:USERNAME/OneDrive/Documents/Projects/Bloguito/scripts/sync_backups_tailscale.py"
+    $WslSyncScript = "/mnt/c/Projects/Bloguito/scripts/sync_backups_tailscale.py"
     $TailscaleReady = $false
     for ($i = 0; $i -lt 30; $i++) {
         $TailscaleStatus = & wsl.exe -d Ubuntu-24.04 -- tailscale status 2>$null
