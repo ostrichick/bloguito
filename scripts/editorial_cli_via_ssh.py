@@ -253,6 +253,28 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if command[:5] == _WP_PREFIX:
             wp = command[5:]
             kind = validate_wp(wp)
+            # A full reviewed draft can easily exceed Windows' CreateProcess
+            # command-line limit when `--post_content=<html>` is embedded in the
+            # SSH argv. WP-CLI supports `wp post update <id> -`, which reads only
+            # post_content from STDIN. Keep validating the caller's original
+            # exact target/field set above, then transport that already-validated
+            # content over stdin while leaving the short reviewed fields quoted
+            # on the remote command line.
+            if action == 'revise-draft' and wp[:2] == ['post', 'update']:
+                content_args = [item for item in wp[3:-1] if item.startswith('--post_content=')]
+                if len(content_args) == 1:
+                    content_arg = content_args[0]
+                    content = content_arg.split('=', 1)[1]
+                    forwarded = [item for item in wp[3:-1] if item != content_arg]
+                    remote_wp = [*wp[:3], '-', *forwarded, '--allow-root']
+                    remote = ('sudo docker exec -i wordpress_app wp '
+                              + ' '.join(shlex.quote(item) for item in remote_wp))
+                    options = dict(kwargs)
+                    if options.get('text') or options.get('universal_newlines'):
+                        options['input'] = content
+                    else:
+                        options['input'] = content.encode('utf-8')
+                    return remote_run(remote, **options)
             remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
             read_only = (wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS
                          or wp[:2] == ['post', 'get'] or (wp and wp[0] == 'eval'))

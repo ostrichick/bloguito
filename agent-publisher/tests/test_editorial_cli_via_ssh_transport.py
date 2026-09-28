@@ -184,6 +184,30 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'update', '463', '--post_status=publish', '--allow-root'])
 
+    def test_revise_draft_streams_reviewed_content_over_stdin(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            return subprocess.CompletedProcess(args, 0, stdout='Success', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        reviewed = '<div>' + ('검토된 긴 본문' * 10000) + '</div>'
+        transport(module._WP_PREFIX + [
+            'post', 'update', '463', f'--post_content={reviewed}',
+            '--post_excerpt=검토된 요약', '--allow-root'],
+            capture_output=True, text=True, check=True)
+
+        self.assertEqual(1, len(calls))
+        argv, kwargs = calls[0]
+        remote = argv[-1]
+        self.assertIn('docker exec -i wordpress_app wp post update 463 -', remote)
+        self.assertIn('--post_excerpt=', remote)
+        self.assertNotIn('검토된 긴 본문', remote)
+        self.assertEqual(reviewed, kwargs['input'])
+
     def test_revise_draft_title_change_requires_explicit_transport_permission(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
