@@ -58,6 +58,15 @@ jobs:
           # HTML, which is intentionally excluded from the public repository.
           php -l wordpress/tests/legacy-table85-accessibility-test.php
 
+      - name: Check current reader and header polish plugins
+        run: |
+          php -l wordpress/mu-plugins/bloguito-reader-flow.php
+          php -l wordpress/tests/reader-flow-test.php
+          php wordpress/tests/reader-flow-test.php
+          php -l wordpress/mu-plugins/bloguito-front-end-polish.php
+          php -l wordpress/tests/front-end-polish-test.php
+          php wordpress/tests/front-end-polish-test.php
+
   bridge-test:
     runs-on: ubuntu-latest
     steps:
