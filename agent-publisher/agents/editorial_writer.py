@@ -220,7 +220,13 @@ def _official_request_headers(url):
         and parsed.hostname in {'www.airport.kr', 'airinfo.airport.kr'}
         and re.fullmatch(r'/ap_ko/\d+/subview\.do', parsed.path)
     )
-    if nol_product or yes24_product or airport_public:
+    donggu_public_event = (
+        parsed.scheme == 'https'
+        and parsed.hostname == 'www.donggu.go.kr'
+        and parsed.path == '/yeyak/www/viewTnExprnU.do'
+        and re.fullmatch(r'\d+', (parse_qs(parsed.query).get('exprnKey') or [''])[0])
+    )
+    if nol_product or yes24_product or airport_public or donggu_public_event:
         return {
             'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                            'AppleWebKit/537.36 (KHTML, like Gecko) '
