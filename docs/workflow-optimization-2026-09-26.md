@@ -311,3 +311,17 @@ backup → update → post get 검증
 사용자가 위 세 가지 최적화의 적용을 요청했다. 기존 코드가 경로별 검토·저장을 이미 지원하므로 새 자동 분류기나 연속 fast 수정 기능을 추가하지 않고, `AGENTS.md`의 기본 행동 규칙과 `OPERATIONS.md`의 구체적인 경로 선택·묶음 처리·재사용 조건에 반영했다. 시작 시 짧은 진행 설명, 같은 글의 승인된 수정 묶음, 저장 전 추가 요청 합치기, 저장 후 원본 재확인, 검토/목록/정책 재사용 조건, fast 경로 거부 시 전체 검토 전환과 종료 보고를 명시했다.
 
 편집 규범 `EDITORIAL_SYSTEM.md`와 `editorial_policy.json`, 실행 코드는 변경하지 않아 이번 문서 반영 때문에 기존 review fingerprint를 바꾸지 않는다. 실제 글·운영 서버 변경은 없다. 문서 diff와 정본 연결을 확인하며 전체 Python suite는 문서 변경에 불필요하므로 실행하지 않는다. 의도한 문서 세 개만 Git에 반영하고 다른 미커밋 작업은 보존한다.
+
+## 2026-09-28 신규 draft 원클릭 Fast 경로
+
+사용자 피드백에서 Antigravity 대비 Chat On Steroids 신규 글 작성 시간이 과도하게 길어진 핵심 원인이 개별 안전장치 자체보다 `manual-review → check → 대표 이미지 생성/검수 → publish → catalog sync`를 에이전트가 여러 차례 도구 왕복으로 실행하는 구조임을 확인했다. 기존 9/26 최적화로 source 병렬 수집, 경량 inventory, 동일 review 재사용, fast-edit는 이미 구현돼 있었으므로 이번 변경은 **일반 신규 draft의 후반부 오케스트레이션만 합치는 것**에 한정했다.
+
+`editorial_cli.py prepare-draft`를 추가했다. 구조화 bundle의 content/source 결정론 preflight는 WordPress inventory 없이 로컬에서 실행한다. preflight가 통과하면 현재 review가 없을 때 `EditorialWriterAgent(writing_enabled=False)` 의미 검토와 `DesignerAgent` 대표 이미지 생성·비전 검수를 최대 2개 worker thread에서 병렬 실행한다. bundle에 현행 content/policy에 결합된 current review가 있으면 reviewer를 다시 호출하지 않는다. 두 작업 뒤 content/source/review binding을 로컬에서 다시 확인하고 bundle과 HTML preview를 저장한다.
+
+실제 WordPress 쓰기는 기존 `PublisherAgent.publish()`를 그대로 사용한다. Publisher가 잠금 안에서 lightweight inventory를 한 번 새로 받아 site 중복·관련 글·review binding을 포함한 full validation을 수행하므로, Fast 경로가 별도의 사전 inventory와 `check`를 반복하지 않아도 저장 직전 안전 검사는 유지된다. `--image-path`가 없으면 현행 v2 대표 이미지 정책으로 자동 생성하고, 이미 검수한 로컬 jpg/jpeg/png/webp가 있으면 그 경로를 그대로 사용할 수 있다. `scripts/editorial_cli_via_ssh.py` allowlist도 `prepare-draft`의 draft create, Rank Math 3개 메타, 생성된 post ID에 한정된 featured-image import만 허용하도록 확장했다.
+
+SSH adapter에서 `prepare-draft`가 성공하면 `scripts/sync_post_catalog.py`를 별도 Direct SSH 읽기 경로로 자동 실행한다. 동기화는 한 번 실패하면 1회만 재시도한다. 두 번 모두 실패해도 이미 생성된 WordPress draft를 다시 만들지 않도록 전체 명령을 재실행하라는 오류로 처리하지 않고, `sync_post_catalog.py`만 별도로 재실행하라는 경고를 출력한다. 이는 post create 응답 이후의 비멱등 재시도로 중복 draft가 생기는 것을 막기 위한 경계다.
+
+운영 경로는 세 수준으로 정리했다. 일반 신규 draft는 Fast `prepare-draft`, 기존 draft/public 글 수정은 현행 updater/reviser를 사용하는 Standard 경로, 정책 예외·출처 충돌·공통 코드/정책 변경처럼 단계별 원인 진단이 필요한 작업은 기존 `manual-review/review → check → publish`를 분리하는 Strict 경로다. Fast는 검증을 생략하는 모드가 아니라 동일 안전 검사를 한 프로세스 안에서 재사용·병렬화하는 모드다.
+
+검증은 `test_prepare_draft_fast_path.py`, `test_editorial_cli_via_ssh_transport.py`, 기존 `test_publish_flow_efficiency.py`, `test_post_catalog.py`, 대표 이미지 safety/routing, workflow metrics를 묶어 66건 통과한 뒤 전체 `agent-publisher/tests`를 한 번 실행했다. 최종 결과는 **601 tests, OK**였고 변경 Python 파일 `py_compile`과 `git diff --check`도 통과했다. 테스트의 `simulated transfer interruption`, 이미지 API unavailable 폴백, catalog sync 실패 경고는 각각 기존 실패 주입/폴백 및 새 재시도 경계를 검증하는 의도된 출력이다. 이번 최적화 검증에서는 실제 WordPress draft를 만들거나 운영 글을 변경하지 않았다. 실제 신규 글 한 편의 wall-clock 절감률은 다음 실사용 `workflow-metrics.jsonl`에서 `semantic_review`, `cover_generation`, `inventory_sync`, `total_ms`를 비교해 확인한다.

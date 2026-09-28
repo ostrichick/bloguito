@@ -1,16 +1,18 @@
 """Shared manual/automation entry point. Review writes reports; publish creates drafts only."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 import json
 import sys
 from pathlib import Path
 from agents.editorial import validate_bundle, render
 from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, load_inventory, fetch_sources
-from agents.workflow_metrics import workflow_run
+from agents.workflow_metrics import timed, workflow_run
 
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'revise-draft', 'fast-revise-draft', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'revise-draft', 'fast-revise-draft', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -21,7 +23,9 @@ def _main():
     parser.add_argument('--edit-intent', help='fast-revise-draft only: the user-requested scope of this limited edit')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
-    parser.add_argument('--author-model', help='manual-review only: exact interactive author model, e.g. GPT-5.6 Sol')
+    parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
+    parser.add_argument('--image-path', type=Path,
+                        help='publish/prepare-draft: already reviewed local representative image; prepare-draft generates one when omitted')
     args = parser.parse_args()
 
     if args.action == 'list-drafts':
@@ -81,14 +85,15 @@ def _main():
         return
     args.file = Path(args.file)
     data = json.loads(args.file.read_text(encoding='utf-8'))
-    if args.action == 'manual-review':
-        if not args.author_model:
-            parser.error('manual-review requires --author-model so the interactive GPT author is recorded explicitly')
+    if args.action == 'manual-review' and args.author_model:
         data['authoring'] = {
             'mode': 'interactive_chatgpt',
             'model': args.author_model,
         }
         data['used_model'] = args.author_model
+    if args.action == 'manual-review':
+        if not args.author_model:
+            parser.error('manual-review requires --author-model so the interactive GPT author is recorded explicitly')
     if args.action == 'replace-legacy-draft':
         if args.inventory:
             parser.error('replace-legacy-draft always queries the live WordPress inventory')
@@ -144,13 +149,105 @@ def _main():
             parser.error('sources requires --output')
         args.output.write_text(json.dumps({'brief': data, 'sources': fetch_sources(data)}, ensure_ascii=False, indent=2), encoding='utf-8')
         return
-    if args.action == 'publish' and args.inventory:
-        parser.error('publish cannot use an inventory override')
+    if args.action in {'prepare-draft', 'publish'} and args.inventory:
+        parser.error(f'{args.action} cannot use an inventory override')
+    if args.image_path and (not args.image_path.is_file()
+                            or args.image_path.suffix.lower() not in {'.jpg', '.jpeg', '.png', '.webp'}):
+        parser.error('--image-path must point to an existing jpg/jpeg/png/webp file')
+    if args.action == 'prepare-draft':
+        # The fast manual-authoring path deliberately avoids a pre-review WordPress
+        # inventory round trip. Content/source checks run locally; the Publisher
+        # performs the one authoritative live inventory/full validation immediately
+        # before the draft write.
+        local_preflight = validate_bundle(
+            data, {}, require_review=False, scopes={'content', 'source'})
+        if local_preflight['status'] != 'ready':
+            print(json.dumps(local_preflight, ensure_ascii=False, indent=2))
+            raise SystemExit(2)
+
+        existing_review = validate_bundle(
+            data, {}, scopes={'content', 'source', 'review'}) if data.get('review') else None
+        review_is_current = bool(existing_review and existing_review['status'] == 'ready')
+        if not review_is_current and not args.author_model:
+            parser.error('prepare-draft requires --author-model when a current semantic review is not already bound')
+        if not review_is_current:
+            data['authoring'] = {
+                'mode': 'interactive_chatgpt',
+                'model': args.author_model,
+            }
+            data['used_model'] = args.author_model
+
+        def review_bundle():
+            if review_is_current:
+                return data['review']
+            return EditorialWriterAgent(writing_enabled=False).review(data)
+
+        def generate_cover():
+            if args.image_path:
+                return args.image_path
+            from agents.designer import DesignerAgent
+            from config import resolve_category
+            category = resolve_category(data.get('brief', {}).get('category_key', ''))
+            with timed('cover_generation'):
+                return DesignerAgent().generate_image(
+                    title=data['plan']['title'],
+                    category_name=category['name'],
+                    keyword=data['brief'].get('primary_keyword', ''),
+                    category_key=data['brief'].get('category_key', ''),
+                )
+
+        # Semantic review and representative-image generation are independent once
+        # the source-bound plan passes deterministic preflight, so run them together.
+        if not review_is_current and not args.image_path:
+            review_context = copy_context()
+            image_context = copy_context()
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                review_future = pool.submit(review_context.run, review_bundle)
+                image_future = pool.submit(image_context.run, generate_cover)
+                data['review'] = review_future.result()
+                image_path = Path(image_future.result())
+        else:
+            if not review_is_current:
+                data['review'] = review_bundle()
+            image_path = Path(generate_cover())
+
+        local_final = validate_bundle(
+            data, {}, scopes={'content', 'source', 'review'})
+        if local_final['status'] != 'ready':
+            print(json.dumps(local_final, ensure_ascii=False, indent=2))
+            raise SystemExit(2)
+
+        # Persist the completed review before the external write so an interrupted
+        # WordPress step can be resumed without paying for the same review again.
+        args.file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
+
+        from agents.publisher import PublisherAgent
+        post_id = PublisherAgent().publish(article_from_bundle(data), image_path=image_path)
+        seo = data.get('brief', {}).get('seo') or {}
+        receipt = {
+            'action': 'prepare-draft',
+            'post_id': int(post_id),
+            'status': 'draft',
+            'title': data['plan']['title'],
+            'focus_keyword': data['brief'].get('primary_keyword', ''),
+            'seo_title': seo.get('title') or data['plan']['title'],
+            'seo_description': seo.get('description') or data['plan']['lead']['text'][:160],
+            'semantic_review': 'reused' if review_is_current else 'created',
+            'featured_image_path': str(image_path),
+            'featured_image_attached': True,
+            'live_inventory_validation': 'passed',
+        }
+        print('Draft ID:', post_id)
+        print(json.dumps(receipt, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
     if args.action == 'publish':
         if not data.get('review'):
             raise ValueError('publish_requires_existing_semantic_review: run manual-review or review first')
         from agents.publisher import PublisherAgent
-        print('Draft ID:', PublisherAgent().publish(article_from_bundle(data)))
+        print('Draft ID:', PublisherAgent().publish(article_from_bundle(data), image_path=args.image_path))
         return
     inventory = json.loads(args.inventory.read_text(encoding='utf-8')) if args.inventory else load_inventory()
     if args.action in {'review', 'manual-review'}:

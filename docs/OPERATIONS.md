@@ -53,7 +53,8 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 
 | 요청 종류 | 선택할 경로 | 검토 범위 |
 | --- | --- | --- |
-| 새 글 | POST_CATALOG 1차 중복 확인 → sources → 구조화 원고 → manual-review/review → check → publish → POST_CATALOG 동기화 | 중복·최신 공식 근거·유효기간과 전체 원고; 기본 draft |
+| 일반 신규 draft (Fast) | POST_CATALOG 1차 중복 확인 → sources → 구조화 원고 → `prepare-draft` | 로컬 content/source preflight → 의미 검토와 대표 이미지 생성·검수 병렬 → Publisher의 최신 inventory 1회/full validation → draft 저장 → SSH adapter 사용 시 POST_CATALOG 자동 동기화 |
+| 신규 글 진단/예외 (Strict) | POST_CATALOG → sources → 구조화 원고 → manual-review/review → 필요 시 check → publish | 정책 예외·출처 충돌·공연 공식 이미지 수동 검토·공통 코드/정책 변경 등 단계별 결과를 따로 확인해야 하는 경우 |
 | 사실·숫자·날짜·대상·출처·제목·CTA 변경 | 대상 상태와 변경 내용에 맞는 update-draft / revise-draft / replace-legacy-draft / update-existing | 새로운 근거와 전체 검토; legacy 교체는 기존 별도 진입 조건 충족 필요 |
 | 검토된 임시글의 표현·중복 정리·기존 사실 재배치 | fast-revise-draft, 실제 요청 범위를 --edit-intent로 전달 | 기존 검토 유효성·불변 조건·변경 블록 검토·결정론 검사 |
 | 공개 글의 표현 정리 | update-existing | 현재 공개 글 갱신의 전체 검토·원본 보존 절차 |
@@ -67,13 +68,23 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 - 의미 검토: 원고·근거·정책의 결합과 검토 기한이 여전히 유효할 때만 재사용한다. 변경된 원고에는 변경 범위에 맞는 새 검토가 필요하다. 등록 코드가 동일 검토를 다시 호출하지 않도록 기존 경로를 그대로 사용한다.
 - 변경안 비교와 화면 확인: 같은 변경안 적용이 이미 승인됐으면 승인 전 비교 패키지를 다시 생성하지 않는다. CTA·레이아웃 등 검증 대상이 그대로이고 이전 확인이 현재 변경에도 유효한 범위만 재사용한다. 표 구조 변경은 전체 표 접근성 QA를 수행한다.
 
+**신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 통과하면 현재 의미 검토가 없는 경우 reviewer와 `DesignerAgent` 대표 이미지 생성·비전 검수를 동시에 실행한다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다.
+
+ChatGPT/CoS 로컬 환경에서는 다음 한 명령을 기본으로 사용한다. `--image-path`를 생략하면 현행 대표 이미지 정책으로 이미지를 자동 생성·검수하고, 이미 별도 검수한 이미지를 사용할 때만 경로를 전달한다.
+
+```powershell
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp/article/bundle.json --author-model "GPT-5.6 Sol" --output tmp/article/receipt.json
+```
+
+이 SSH adapter 경로는 draft 저장 성공 뒤 `scripts/sync_post_catalog.py`를 최대 2회까지 읽기 전용으로 시도한다. 카탈로그 동기화가 두 번 모두 실패한 경우 draft 저장 성공을 실패로 되돌리지 않는다. 이때는 출력된 post ID를 보존하고 `python scripts/sync_post_catalog.py`만 재실행한다. `prepare-draft` 자체를 재실행하면 새 draft가 중복 생성될 수 있으므로 금지한다.
+
 **로컬 카탈로그와 주제 백로그:** 새 글 주제 탐색은 `docs/POST_CATALOG.md`에서 시작한다. 이 문서는 빠른 1차 중복 확인과 현재 포트폴리오·주제 백로그 파악용이며, 실제 저장 직전 안전 검사를 대체하지 않는다. 신규 draft 생성, 공개 전환, 제목·카테고리·Rank Math 포커스 키워드/점수처럼 카탈로그에 표시되는 정보 변경이 성공적으로 끝난 뒤 `python scripts/sync_post_catalog.py`를 한 번 실행한다. 동기화 스크립트는 기존 `POST_CATALOG.md`의 사람이 검토한 백로그 행을 보존하고, 현재 공개·임시·예약·비공개 글의 제목 또는 포커스 키워드와 겹치는 후보를 제거한 뒤 우선순위를 다시 매긴다. 백로그를 보충할 때에는 주제 탐색 단계에서 공식 출처와 유효기간을 확인한 새 후보만 추가한다.
 
 최종 보고는 대상 글·변경 내용·임시글/공개 상태·통과한 검증·미검증/보류 사항을 짧게 전달하고 같은 주제의 기존 날짜별 MD에 이력을 추가한다. 이 절은 작업 실행 규칙이며 편집 검증 임계값이나 공개 승인 조건을 변경하지 않는다.
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
-3. `editorial_cli.py sources/review/check`의 안내에 따라 검증 원고를 구성한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 이미 검토된 사실·출처·CTA·제목을 그대로 유지하면서 표 재배치·중복 삭제·표현 다듬기만 할 때는 `fast-revise-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. `fast-revise-draft`는 `--edit-intent`에 이번 사용자 요청 범위를 명시해야 하며, 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 `FULL_REVIEW_REQUIRED`로 중단한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
+3. 일반 신규 draft는 `sources` 뒤 구조화 원고가 완성되면 `prepare-draft`를 사용한다. 단계별 원인 진단이 필요한 Strict 작업만 `review/check/publish`를 분리한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 이미 검토된 사실·출처·CTA·제목을 그대로 유지하면서 표 재배치·중복 삭제·표현 다듬기만 할 때는 `fast-revise-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. `fast-revise-draft`는 `--edit-intent`에 이번 사용자 요청 범위를 명시해야 하며, 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 `FULL_REVIEW_REQUIRED`로 중단한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 `scripts/prepare_post_approval.py`는 사용자가 아직 현재 변경안을 적용할지 검토하는 단계에서 변경 전후 비교 패키지를 만들기 위한 도구다. 같은 변경안의 실제 적용이 이미 명시적으로 승인된 뒤에는 이 패키지를 다시 만들지 않는다. 정규 `update-existing`/`revise-draft`/관련 updater가 자체적으로 최신 전체 inventory, 대상 글 CAS, 공식 source 재조회, 원본 백업, 저장 직전·직후 검증을 수행하므로 그 경로를 바로 사용한다. 승인 대상이나 변경안이 달라졌다면 새 승인으로 취급한다.

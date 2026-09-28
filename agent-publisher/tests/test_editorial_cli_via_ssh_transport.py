@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'editorial_cli_via_ssh.py'
@@ -241,6 +243,99 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '901', 'rank_math_robots', 'noindex', '--allow-root'])
+
+    def test_prepare_draft_can_create_and_attach_only_its_generated_image(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            remote = args[-1]
+            if ' wp post create ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='901\n', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('prepare-draft', set(), 'bloguito')
+        transport(module._WP_PREFIX + [
+            'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
+            '--post_status=draft', '--post_title=title', '--post_category=4',
+            '--post_excerpt=summary', '--comment_status=closed', '--allow-root', '--porcelain'],
+            capture_output=True, text=True, check=True)
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'cover.jpg'
+            source.write_bytes(b'image')
+            transport([
+                'sudo', 'docker', 'cp', str(source),
+                'wordpress_app:/tmp/editorial_cover_901.jpg'],
+                capture_output=True, check=True)
+
+        transport(module._WP_PREFIX + [
+            'media', 'import', '/tmp/editorial_cover_901.jpg', '--post_id=901',
+            '--featured_image', '--allow-root'], capture_output=True, check=True)
+
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'media', 'import', '/tmp/editorial_cover_902.jpg', '--post_id=902',
+                '--featured_image', '--allow-root'], capture_output=True, check=True)
+
+        self.assertTrue(any(b'image' == kwargs.get('input') for _, kwargs in calls))
+
+    def test_prepare_draft_wrapper_syncs_catalog_after_successful_editorial_command(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            return subprocess.CompletedProcess(args, 0, stdout='catalog synced\n', stderr='')
+
+        module._RUN = fake_run
+        with tempfile.TemporaryDirectory() as folder:
+            receipt_path = Path(folder) / 'receipt.json'
+            receipt_path.write_text(json.dumps({'action': 'prepare-draft'}), encoding='utf-8')
+            argv = [
+                'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
+                'prepare-draft', 'bundle.json', '--author-model', 'GPT-5.6 Sol',
+                '--output', str(receipt_path),
+            ]
+            with patch('sys.argv', argv), \
+                    patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                        mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                    patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None), \
+                    patch.object(module.editorial_cli, 'main') as cli_main:
+                module.main()
+            receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+
+        cli_main.assert_called_once()
+        catalog_calls = [args for args, _ in calls if args and args[-1].endswith('sync_post_catalog.py')]
+        self.assertEqual(1, len(catalog_calls))
+        self.assertEqual('passed', receipt['catalog_sync'])
+        self.assertEqual(1, receipt['catalog_sync_attempts'])
+
+    def test_prepare_draft_catalog_failure_retries_sync_only_without_replaying_create(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            return subprocess.CompletedProcess(args, 1, stdout='', stderr='offline')
+
+        module._RUN = fake_run
+        argv = [
+            'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
+            'prepare-draft', 'bundle.json', '--author-model', 'GPT-5.6 Sol',
+        ]
+        with patch('sys.argv', argv), \
+                patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                    mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None), \
+                patch.object(module.editorial_cli, 'main') as cli_main:
+            module.main()
+
+        cli_main.assert_called_once()
+        catalog_calls = [args for args, _ in calls if args and args[-1].endswith('sync_post_catalog.py')]
+        self.assertEqual(2, len(catalog_calls))
 
     def test_rejects_arbitrary_remote_wordpress_command(self):
         module = load_module()

@@ -43,8 +43,10 @@ _LIST_ARGS = [
 ]
 _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
+_REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
+_CREATE_ACTIONS = {'publish', 'prepare-draft'}
 _SUPPORTED_ACTIONS = {
-    'publish', 'revise-draft', 'fast-revise-draft', 'update-draft', 'replace-legacy-draft',
+    'publish', 'prepare-draft', 'revise-draft', 'fast-revise-draft', 'update-draft', 'replace-legacy-draft',
     'promote-draft', 'reformat', 'fix-excerpt',
 }
 _UPDATE_FIELDS = {
@@ -56,7 +58,7 @@ _UPDATE_FIELDS = {
     'reformat': {'post_content'},
     'fix-excerpt': {'post_excerpt'},
 }
-_PERMALINK_ACTIONS = {'publish', 'replace-legacy-draft', 'promote-draft', 'reformat'}
+_PERMALINK_ACTIONS = {'publish', 'prepare-draft', 'replace-legacy-draft', 'promote-draft', 'reformat'}
 
 
 def _safe_identifier(value, label):
@@ -84,6 +86,29 @@ def _target_ids(action, cli_args):
                 if value.isdigit():
                     ids.add(int(value))
     return ids
+
+
+def _receipt_output_path(cli_args):
+    if '--output' not in cli_args:
+        return None
+    index = cli_args.index('--output') + 1
+    if index >= len(cli_args):
+        return None
+    return Path(cli_args[index])
+
+
+def _mark_catalog_sync(cli_args, status, attempts):
+    target = _receipt_output_path(cli_args)
+    if target is None or not target.is_file():
+        return
+    try:
+        payload = json.loads(target.read_text(encoding='utf-8'))
+        if isinstance(payload, dict) and payload.get('action') == 'prepare-draft':
+            payload['catalog_sync'] = status
+            payload['catalog_sync_attempts'] = attempts
+            target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    except (OSError, ValueError, TypeError):
+        pass
 
 
 def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
@@ -172,7 +197,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if any(not isinstance(item, str) or '\x00' in item for item in wp):
             raise ValueError('unsafe_wordpress_argument')
-        if action == 'publish' and wp[:2] == ['post', 'create']:
+        if action in _CREATE_ACTIONS and wp[:2] == ['post', 'create']:
             if len(wp) < 10 or not _REMOTE_HTML.fullmatch(wp[2]):
                 raise ValueError('unexpected_wordpress_draft_create')
             flags = wp[3:]
@@ -207,10 +232,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and int(re.fullmatch(r'echo get_permalink\(([1-9][0-9]*)\);', wp[1]).group(1)) in allowed_ids
                 and wp[2] == '--allow-root'):
             return
-        if (action == 'publish' and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
+        if (action in _CREATE_ACTIONS and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4] in {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
                 and wp[6] == '--allow-root'):
+            return
+        if (action in _CREATE_ACTIONS and len(wp) == 6 and wp[:2] == ['media', 'import']
+                and _REMOTE_IMAGE.fullmatch(wp[2])
+                and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
+                and int(wp[3].split('=', 1)[1]) in allowed_ids
+                and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
+                and wp[4:] == ['--featured_image', '--allow-root']):
             return
         raise ValueError('unexpected_wordpress_command_during_editorial_ssh')
 
@@ -247,14 +279,21 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 readable_ids.add(int(created))
             return result
 
-        if action == 'publish' and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
+        if action in _CREATE_ACTIONS and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
             source = Path(command[3])
             target = command[4]
             prefix = 'wordpress_app:'
-            if not source.is_file() or source.suffix.lower() != '.html' or not target.startswith(prefix):
+            if not source.is_file() or not target.startswith(prefix):
                 raise ValueError('unexpected_docker_copy_during_draft_publish')
             remote_path = target[len(prefix):]
-            if not _REMOTE_HTML.fullmatch(remote_path):
+            html_copy = source.suffix.lower() == '.html' and _REMOTE_HTML.fullmatch(remote_path)
+            image_match = _REMOTE_IMAGE.fullmatch(remote_path)
+            image_copy = (
+                source.suffix.lower() in {'.jpg', '.jpeg', '.png', '.webp'}
+                and image_match is not None
+                and int(image_match.group(1)) in allowed_ids
+            )
+            if not (html_copy or image_copy):
                 raise ValueError('unexpected_docker_copy_during_draft_publish')
             payload = source.read_bytes()
             remote = 'sudo docker exec -i wordpress_app sh -c ' + shlex.quote('cat > ' + remote_path)
@@ -264,9 +303,16 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             options['input'] = payload
             return remote_run(remote, **options)
 
-        if (action == 'publish' and command[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'rm']
-                and len(command) == 7 and command[5] == '-f' and _REMOTE_HTML.fullmatch(command[6])):
-            return remote_run('sudo docker exec wordpress_app rm -f ' + shlex.quote(command[6]), **kwargs)
+        if (action in _CREATE_ACTIONS and command[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'rm']
+                and len(command) == 7 and command[5] == '-f'):
+            remote_path = command[6]
+            image_match = _REMOTE_IMAGE.fullmatch(remote_path)
+            allowed_cleanup = (
+                _REMOTE_HTML.fullmatch(remote_path)
+                or (image_match and int(image_match.group(1)) in allowed_ids)
+            )
+            if allowed_cleanup:
+                return remote_run('sudo docker exec wordpress_app rm -f ' + shlex.quote(remote_path), **kwargs)
 
         raise ValueError('unexpected_subprocess_command_during_editorial_ssh')
 
@@ -291,7 +337,7 @@ def main():
         parser.error('use -- followed by a supported editorial_cli action')
     action = cli_args[0]
     targets = _target_ids(action, cli_args)
-    if action != 'publish' and not targets:
+    if action not in _CREATE_ACTIONS and not targets:
         parser.error('a concrete target post ID is required for this action')
     config = resolve_transport(
         ssh_mode=args.ssh_mode,
@@ -308,6 +354,32 @@ def main():
     with patch('subprocess.run', side_effect=transport), \
             patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):
         editorial_cli.main()
+
+    # prepare-draft is the user-facing one-shot path. Keep the catalog follow-up
+    # outside the patched WordPress transport so it uses the normal Direct SSH
+    # sync script. A catalog failure must not make callers retry the already
+    # successful post create and accidentally produce a duplicate draft.
+    if action == 'prepare-draft':
+        sync_cmd = [sys.executable, str(ROOT / 'scripts' / 'sync_post_catalog.py')]
+        last = None
+        attempts = 0
+        for attempt in range(2):
+            attempts = attempt + 1
+            last = _RUN(sync_cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+            if last.returncode == 0:
+                if last.stdout:
+                    print(last.stdout.rstrip())
+                print('[Catalog Sync] POST_CATALOG.md updated.')
+                _mark_catalog_sync(cli_args, 'passed', attempts)
+                break
+        else:
+            _mark_catalog_sync(cli_args, 'failed', attempts)
+            detail = (last.stderr or last.stdout or '').strip() if last is not None else 'unknown error'
+            print('[Catalog Sync] WARNING: draft is already saved, but catalog sync failed. '
+                  'Run `python scripts/sync_post_catalog.py` only; do not rerun prepare-draft.',
+                  file=sys.stderr)
+            if detail:
+                print(detail, file=sys.stderr)
 
 
 if __name__ == '__main__':
