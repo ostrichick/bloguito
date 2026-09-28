@@ -365,6 +365,48 @@ def _normalize_seocho_property_tax_text(text, url):
     return '\n'.join(lines[:index] + lines[index + 2:])
 
 
+def _normalize_event_listing_counters(text, url):
+    """Remove only volatile list/view counters from two official event templates.
+
+    Event dates, times, prices, body numbers and attachment text remain hashed.
+    Fail closed when the verified metadata shape changes so a body number cannot
+    be silently mistaken for chrome.
+    """
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    lines = text.splitlines()
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'www.science.go.kr'
+            and re.fullmatch(r'/mps/0/bbs/\d+/moveBbsNttDetail\.do', parsed.path)
+            and query.get('nttSn') and len(query['nttSn']) == 1
+            and query['nttSn'][0].isdigit()):
+        matches = [
+            index for index in range(len(lines) - 1)
+            if lines[index].strip() == '조회수'
+            and re.fullmatch(r'[\d,]+', lines[index + 1].strip())
+        ]
+        if len(matches) != 1:
+            raise ValueError('science_event_view_counter_structure_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 2:])
+
+    if (parsed.scheme == 'https' and parsed.hostname == 'daejeontour.co.kr'
+            and re.fullmatch(r'/festival_djt/\d+', parsed.path)):
+        matches = [
+            index for index in range(1, len(lines) - 2)
+            if lines[index - 1].strip() == '인기'
+            and re.fullmatch(r'[\d,]+', lines[index].strip())
+            and re.fullmatch(r'\d+', lines[index + 1].strip())
+            and lines[index + 2].strip()
+        ]
+        if len(matches) != 1:
+            raise ValueError('daejeontour_popularity_counter_structure_changed')
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 1:])
+
+    return text
+
+
 def _normalize_movein_service_text(text, url):
     """Remove only view counters from the exact official #475 evidence pages."""
     parsed = urlsplit(url)
@@ -754,6 +796,7 @@ def _fetch_sources_sequential(brief):
             text = text.rstrip() + '\n' + nol_booking_metadata
         text = _normalize_efine_text(text, url)
         text = _normalize_seocho_property_tax_text(text, url)
+        text = _normalize_event_listing_counters(text, url)
         text = _normalize_movein_service_text(text, url)
         text = _normalize_post239_chuseok_sources(text, url)
         if not 80 <= len(text) <= 60000:

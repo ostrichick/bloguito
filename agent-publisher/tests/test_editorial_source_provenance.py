@@ -7,6 +7,57 @@ from agents.editorial_writer import fetch_sources
 
 
 class EditorialSourceProvenanceTests(unittest.TestCase):
+    def test_science_event_view_counter_is_stable_but_body_numbers_are_hashed(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, views, event_day):
+                self.content = (
+                    '<html><head><title>국립중앙과학관</title></head><body>'
+                    '<div>등록일</div><div>2026-09-21</div>'
+                    f'<div>조회수</div><div>{views}</div>'
+                    f'<article><p>행사기간 2026. 10. {event_day}.(목)~10. 17.(토)</p>'
+                    '<p>본문의 참가자 75명 조건은 실제 행사 사실입니다.</p></article>'
+                    '</body></html>'
+                ).encode('utf-8')
+
+        url = 'https://www.science.go.kr/mps/0/bbs/431/moveBbsNttDetail.do?nttSn=49259'
+        brief = {'official_urls': [url], 'entity': '테크콘E'}
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            Response(568, 15), Response(570, 15), Response(571, 16),
+        ]):
+            first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
+        self.assertEqual(first['sha256'], same['sha256'])
+        self.assertNotEqual(first['sha256'], changed['sha256'])
+        self.assertNotIn('\n568\n', '\n' + first['text'] + '\n')
+        self.assertIn('참가자 75명 조건', first['text'])
+
+    def test_daejeontour_popularity_counter_is_stable_but_event_dates_are_hashed(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, views, end_day):
+                self.content = (
+                    '<html><head><title>대전관광</title></head><body>'
+                    '<div>2026.08.31 17:25</div><div>인기</div>'
+                    f'<div>{views}</div><div>0</div>'
+                    '<article><h1>2026 대전 빵축제</h1>'
+                    f'<p>기간 2026.10.17.(토) ~ 2026.10.{end_day}.(일)</p>'
+                    '<p>장소 엑스포과학공원 일원</p></article>'
+                    '</body></html>'
+                ).encode('utf-8')
+
+        url = 'https://daejeontour.co.kr/festival_djt/46'
+        brief = {'official_urls': [url], 'entity': '대전 빵축제'}
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            Response('4,488', 18), Response('4,491', 18), Response('4,492', 19),
+        ]):
+            first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
+        self.assertEqual(first['sha256'], same['sha256'])
+        self.assertNotEqual(first['sha256'], changed['sha256'])
+        self.assertNotIn('4,488', first['text'])
+        self.assertIn('2026.10.18', first['text'])
+
     def test_nts_metadata_view_count_is_stable_and_article_facts_are_preserved(self):
         class Response:
             status_code = 200
