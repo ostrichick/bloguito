@@ -45,6 +45,7 @@
 
 - [2026-09-28 로컬 콘텐츠 카탈로그와 주제 백로그 갱신](post-catalog-workflow-2026-09-28.md): 새 글 탐색의 로컬 카탈로그 우선 사용, 저장 후 1회 동기화, 이미 draft/공개 글로 작성된 백로그 주제 자동 제외와 실제 WordPress 카테고리 반영을 정리한 기록.
 - [2026-09-27 Rank Math 편집정책 개편](rank-math-editorial-policy-2026-09-27.md): 짧은 단일 포커스 키워드, SEO title/description, 자연스러운 본문 배치, 기존 slug 보존, 75/80점 가이드와 신규 draft의 Rank Math title 저장을 정리한 기록.
+- [2026-09-27 하이패스 미납통행료, 모바일 주민등록증 evergreen 임시글 2편](hipass-mobile-id-drafts-2026-09-27.md): 최신 운영 인벤토리와 공식 원문, 독립 의미 검토를 거쳐 모바일 주민등록증 #559와 하이패스 미납통행료 #560을 신규 `draft`로 저장하고 저장 본문과 최종 WordPress 상태를 재검증한 기록.
 - [2026-09-26 작업 흐름 최적화 10개 항목 및 fast-edit 후속 설계](workflow-optimization-2026-09-26.md): Tailscale 선행 확인 제거, 중복 AI review·전체 WP inventory 왕복 축소, 승인 전 패키지 역할 분리, 로컬 편집 코드+제한형 원격 WordPress 실행, 동시작업 격리·단계형 테스트/브라우저 QA·정책 읽기 캐시·작업 기록 통합을 적용한 기록. 후속 절에는 reviewed draft의 표 재구성·문구 다듬기·중복 FAQ 삭제 같은 소규모 변경을 전체 inventory/전체 의미검토/전체 source 재수집 없이 처리하는 fast-edit 경로를 설계했다.
 - [2026-09-25 자동차검사·안심상속 evergreen 임시글 2편](evergreen-auto-inheritance-drafts-2026-09-25.md): 자동차검사 #470과 안심상속 #471을 현재 공식 원문과 독립 검토로 작성하고 대표 이미지를 연결한 뒤 두 글 모두 draft 상태와 저장 HTML을 검증한 기록.
 - [2026-09-25 Evergreen 주제 조사](evergreen-topic-research-2026-09-25.md): 운영 WordPress 36개 공개글·6개 초안을 기준으로 계절성 편중과 중복 클러스터를 확인하고, 외부 SERP·공식자료를 대조해 자동차검사·미납통행료·생활행정·상속·공공요금 등 20개 evergreen 후보의 편집 우선순위를 정리했다. 검색량·Search Console 성과는 미측정으로 명시.
