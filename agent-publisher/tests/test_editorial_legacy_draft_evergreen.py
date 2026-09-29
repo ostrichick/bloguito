@@ -18,7 +18,20 @@ class EvergreenLegacyDraftGuardTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'guard_passed'):
                 upgrade_legacy_draft(227, bundle, '0' * 64, confirmed=True)
 
-    def test_new_or_dated_nonexception_draft_is_still_rejected(self):
+    def test_explicit_existing_dated_draft_passes_initial_scope_guard(self):
+        bundle = {
+            'brief': {
+                'content_type': 'dated',
+                'useful_until': '2026-10-31',
+                'existing_post_id': 648,
+            }
+        }
+        with patch('agents.editorial_legacy_draft.sync_inventory',
+                   side_effect=RuntimeError('guard_passed')):
+            with self.assertRaisesRegex(RuntimeError, 'guard_passed'):
+                upgrade_legacy_draft(648, bundle, '0' * 64, confirmed=True)
+
+    def test_new_or_unsupported_content_type_draft_is_still_rejected(self):
         evergreen_new = {
             'brief': {
                 'content_type': 'evergreen',

@@ -11,8 +11,8 @@ import re
 import subprocess
 from datetime import datetime
 
-from agents.editorial import (ROOT, dated_post_exception, excerpt_from_lead,
-                              render, save_report, validate_bundle)
+from agents.editorial import (ROOT, excerpt_from_lead, render, save_report,
+                              validate_bundle)
 from agents.editorial_writer import fetch_sources, load_inventory
 from agents.publisher import PublisherAgent
 from agents.temporal_validation import KST
@@ -27,10 +27,14 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         and brief.get('useful_until') is None
         and brief.get('existing_post_id') == post_id
     )
-    dated_exception = dated_post_exception(brief, datetime.now(KST).date())
+    dated_existing = (
+        brief.get('content_type') == 'dated'
+        and isinstance(brief.get('useful_until'), str)
+        and brief.get('existing_post_id') == post_id
+    )
     if (not confirmed or not isinstance(post_id, int) or post_id <= 0
             or not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or '')
-            or not (evergreen_existing or dated_exception)
+            or not (evergreen_existing or dated_existing)
             or brief.get('existing_post_id') != post_id):
         raise ValueError('specific_legacy_draft_upgrade_confirmation_required')
 
