@@ -1,13 +1,14 @@
 import copy
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from agents.validation_router import build_validation_plan
-from agents.validation_runner import load_test_manifest, selected_test_files
+from agents.validation_runner import ROOT, _load_suite, load_test_manifest, selected_test_files
 from tests.test_editorial_system import sample
 
 
@@ -83,6 +84,27 @@ class ValidationRunnerTests(unittest.TestCase):
                 self.assertEqual(0, module.main([
                     '--before', str(before), '--after', str(after), '--run']))
                 run.assert_called_once()
+
+    def test_suite_loader_adds_repository_root_for_scripts_imports(self):
+        original_path = list(sys.path)
+        removed_modules = {
+            key: value for key, value in list(sys.modules.items())
+            if key == 'scripts' or key.startswith('scripts.')
+        }
+        try:
+            root = ROOT.resolve()
+            sys.path[:] = [
+                item for item in sys.path
+                if Path(item or '.').resolve() != root
+            ]
+            for key in removed_modules:
+                sys.modules.pop(key, None)
+            suite = _load_suite(['test_related_post_navigation.py'])
+            self.assertGreater(suite.countTestCases(), 0)
+            self.assertIn(str(ROOT), sys.path)
+        finally:
+            sys.path[:] = original_path
+            sys.modules.update(removed_modules)
 
 
 if __name__ == '__main__':

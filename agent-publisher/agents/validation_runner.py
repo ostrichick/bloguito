@@ -85,9 +85,10 @@ def selected_test_files(plan: dict, manifest: dict | None = None) -> list[str]:
 
 
 def _load_suite(files: list[str]) -> unittest.TestSuite:
+    repo_root = str(ROOT)
     agent_root = str(ROOT / "agent-publisher")
     tests_root = str(TESTS_DIR)
-    for path in (agent_root, tests_root):
+    for path in (repo_root, agent_root, tests_root):
         if path not in sys.path:
             sys.path.insert(0, path)
     suite = unittest.TestSuite()
