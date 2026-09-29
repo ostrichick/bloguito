@@ -34,6 +34,14 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertEqual(['post', 'get'], calls[0][5:7])
         self.assertIn('--post_content=new', calls[1])
 
+    def test_get_post_accepts_utf8_bom_from_remote_wp_cli(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        payload = '\ufeff' + json.dumps({'ID': 648, 'post_status': 'draft'})
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(stdout=payload)):
+            row = get_post(base, 648)
+        self.assertEqual(648, row['ID'])
+        self.assertEqual('draft', row['post_status'])
+
     def test_cas_and_saved_field_helpers(self):
         post = {'post_status': 'draft', 'post_title': 't', 'post_content': 'body', 'post_name': 'slug'}
         digest = content_sha256('body')

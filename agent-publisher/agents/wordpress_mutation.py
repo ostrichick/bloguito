@@ -68,7 +68,7 @@ def get_post(base, post_id, *, fields=None):
     with timed("wp_target_read"):
         increment("wp_roundtrips")
         result = subprocess.run(command, capture_output=True, text=True, check=True)
-    return json.loads(result.stdout)
+    return json.loads((result.stdout or "").lstrip("\ufeff"))
 
 
 def update_post(base, post_id, fields: dict[str, str]):
