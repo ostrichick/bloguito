@@ -62,7 +62,7 @@ def _read_post_meta(base, post_id: int, key: str) -> str | None:
         check=False,
     )
     if result.returncode == 0:
-        return (result.stdout or "").rstrip("\r\n")
+        return (result.stdout or "").lstrip("\ufeff").rstrip("\r\n")
     stderr = (result.stderr or "").lower()
     if result.returncode == 1 and "could not find the specified post meta field" in stderr:
         return None

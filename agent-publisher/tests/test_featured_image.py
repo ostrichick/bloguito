@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 from agents.featured_image import (
+    _read_post_meta,
     reconcile_featured_image_outcome,
     replace_featured_image,
     validate_featured_image_file,
@@ -26,6 +27,12 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             Image.new("RGB", (800, 450)).save(path, "JPEG")
             with self.assertRaisesRegex(ValueError, "featured_image_canvas_mismatch"):
                 validate_featured_image_file(path)
+
+    def test_post_meta_read_accepts_utf8_bom(self):
+        base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+        with patch("agents.featured_image.subprocess.run", return_value=Mock(
+                returncode=0, stdout="\ufeff650\r\n", stderr="")):
+            self.assertEqual("650", _read_post_meta(base, 648, "_thumbnail_id"))
 
     def test_replace_preserves_post_and_rank_math_and_verifies_alt(self):
         with tempfile.TemporaryDirectory() as folder:
