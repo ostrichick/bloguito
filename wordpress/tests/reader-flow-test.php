@@ -26,5 +26,7 @@ $single = true;
 ob_start(); bloguito_reader_flow_styles(); $single_css = ob_get_clean();
 check(strpos($single_css, '@media (min-width: 1025px)') !== false, 'Desktop image breakpoint is present');
 check(strpos($single_css, 'max-height: 420px') !== false, 'Desktop featured images are large enough to read');
-check(strpos($single_css, 'max-height: 120px') !== false, 'Mobile featured-image cap is preserved');
+check(strpos($single_css, 'width: 100%') !== false, 'Mobile featured images use the full content width');
+check(strpos($single_css, 'max-height: none') !== false, 'Mobile featured images are not height-capped');
+check(strpos($single_css, 'max-height: 120px') === false, 'Old narrow mobile featured-image cap is removed');
 echo "PASS reader-flow scope and navigation\n";

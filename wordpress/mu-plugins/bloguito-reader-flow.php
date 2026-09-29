@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Reader Flow
  * Description: Keep the first answer close to the title and prioritize reviewed next-reading links.
- * Version: 1.1.0
+ * Version: 1.1.1
  */
 
 if (!defined('ABSPATH')) {
@@ -54,7 +54,11 @@ function bloguito_reader_flow_styles() {
             }
             .single-post .inside-article .post-image img,
             .single-post .inside-article .featured-image img {
-                max-height: 120px;
+                display: block;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                max-height: none;
             }
             .single-post .entry-title {
                 font-size: 26px;
