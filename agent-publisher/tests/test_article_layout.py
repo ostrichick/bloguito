@@ -90,6 +90,30 @@ class ArticleLayoutTests(unittest.TestCase):
         self.assertIn('scope="col"', page)
         self.assertIn('scope="row"', page)
 
+    def test_mobile_overview_keeps_ascii_hangul_event_unit_together(self):
+        evidence = self.bundle['plan']['lead']['evidence']
+        self.bundle['plan']['sections'][0] = {
+            'kind': 'overview', 'heading': '2026 부산 10월 축제 일정 한눈에 보기', 'paragraphs': [],
+            'table': {
+                'caption': '부산 10월 행사 일정',
+                'headers': ['날짜', '행사', '볼거리와 체험'],
+                'mobile_cards': True,
+                'rows': [{
+                    'cells': ['10/3', '광안리 M 드론라이트쇼 10월 공연', '드론 공연'],
+                    'evidence': evidence, 'answers': ['q1'],
+                }],
+            },
+        }
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn(
+            '<span class="bloguito-semantic-unit">M 드론라이트쇼</span>',
+            page,
+        )
+        self.assertIn(
+            '.bloguito-semantic-unit{white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important}',
+            page,
+        )
+
     def test_invalid_section_kind_is_rejected(self):
         self.bundle['plan']['sections'][0]['kind'] = 'invented-layout'
         sign(self.bundle)

@@ -1040,6 +1040,21 @@ def render(plan, sources, category_key=None):
         return (f'<p style="margin:0 0 16px;line-height:1.8;color:#2d3748;'
                 f'font-size:16px;font-weight:400;letter-spacing:normal">{inline_text(block)}</p>')
 
+    def mobile_event_name(text):
+        """Keep compact ASCII+Hangul event-name units together on narrow cards.
+
+        Names such as ``M 드론라이트쇼`` are one reader-facing label even
+        though they contain an ASCII brand token followed by a space.  Mobile
+        fallback wrapping may otherwise strand ``M`` at the end of a line.
+        The source text is unchanged; only the rendered grouping is added.
+        """
+        escaped = html.escape(text)
+        return re.sub(
+            r'(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9.+-]{0,8})\s+([가-힣][가-힣0-9-]{1,20})',
+            r'<span class="bloguito-semantic-unit">\1 \2</span>',
+            escaped,
+        )
+
     # 1. Immediate answer, with one heading and no repeated decorative badges.
     result = ('<div class="bloguito-article" style="line-height:1.8;font-size:16px;color:#2d3748;'
               'font-family:-apple-system,BlinkMacSystemFont,\'Malgun Gothic\',\'Apple SD Gothic Neo\',\'Noto Sans KR\',sans-serif;'
@@ -1049,6 +1064,7 @@ def render(plan, sources, category_key=None):
               '@media(max-width:640px){'
               '.bloguito-article *{overflow-wrap:anywhere!important;word-break:break-word!important}'
               '.bloguito-summary p{word-break:keep-all!important;overflow-wrap:anywhere!important}'
+              '.bloguito-semantic-unit{white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important}'
               '.festival-facts{grid-template-columns:minmax(0,1fr)!important}'
               '.bloguito-info-table table{table-layout:fixed!important}'
               '.bloguito-info-table th,.bloguito-info-table td{overflow-wrap:anywhere!important;word-break:break-word!important}'
@@ -1160,7 +1176,7 @@ def render(plan, sources, category_key=None):
                         for idx, cell in enumerate(row['cells']) if idx != 1 and cell.strip())
                     cards.append(
                         '<article style="padding:14px 15px;background:#ffffff;border:1px solid #dbe5e1;border-left:4px solid #0d7d59;border-radius:10px">'
-                        f'<div style="font-size:16px;font-weight:800;color:#1f2937;margin-bottom:7px">{html.escape(row["cells"][1])}</div>'
+                        f'<div style="font-size:16px;font-weight:800;color:#1f2937;margin-bottom:7px">{mobile_event_name(row["cells"][1])}</div>'
                         + pairs + '</article>')
                 body += (
                     '<style>.bloguito-overview-mobile{display:none}@media(max-width:640px){.bloguito-overview-desktop{display:none!important}.bloguito-overview-mobile{display:grid!important}}</style>'
