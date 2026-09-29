@@ -402,6 +402,8 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             '--fields=term_id,name,slug', '--format=json', '--allow-root'])
         transport(module._WP_PREFIX + [
             'post', 'update', '648', '--post_category=4', '--allow-root'])
+        transport(module._WP_PREFIX + [
+            'eval', 'echo get_permalink(648);', '--allow-root'])
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
             transport(module._WP_PREFIX + [
                 'post', 'update', '648', '--post_category=life-health', '--allow-root'])

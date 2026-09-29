@@ -69,7 +69,10 @@ _UPDATE_FIELDS = {
     'reformat': {'post_content'},
     'fix-excerpt': {'post_excerpt'},
 }
-_PERMALINK_ACTIONS = {'publish', 'prepare-draft', 'replace-legacy-draft', 'promote-draft', 'reformat'}
+_PERMALINK_ACTIONS = {
+    'publish', 'prepare-draft', 'replace-legacy-draft', 'promote-draft', 'reformat',
+    'repair-draft-category',
+}
 
 
 def _safe_identifier(value, label):
