@@ -29,7 +29,8 @@
       "test_source_validation_cache.py",
       "test_source_fetch_efficiency.py",
       "test_source_limit.py",
-      "test_editorial_pdf_sources.py"
+      "test_editorial_pdf_sources.py",
+      "test_busan_junggu_source_normalization.py"
     ],
     "cta": [
       "test_action_destinations.py",

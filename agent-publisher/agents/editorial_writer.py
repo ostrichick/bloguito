@@ -448,6 +448,40 @@ def _normalize_event_listing_counters(text, url):
     return text
 
 
+def _normalize_busan_junggu_weather(text, url):
+    """Remove only the volatile weather widget from the exact Jung-gu event page.
+
+    The cultural-event schedule above the widget remains byte-for-byte part of
+    the source snapshot.  The live temperature and particulate status change
+    independently of the event facts, so hashing them would make a reviewed
+    draft impossible to save even when the official schedule is unchanged.
+    """
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if (parsed.scheme != 'https'
+            or parsed.hostname != 'www.bsjunggu.go.kr'
+            or parsed.path != '/tour/index.junggu'
+            or query != {'menuCd': ['DOM_000000203003000000']}):
+        return text
+
+    lines = text.splitlines()
+    matches = [
+        index for index in range(1, len(lines) - 4)
+        if lines[index - 1].strip() == '매우 불만족'
+        and re.fullmatch(r'-?\d+(?:\.\d+)?', lines[index].strip())
+        and lines[index + 1].strip() == '℃'
+        and lines[index + 2].strip() == '미세먼지'
+        and lines[index + 3].strip() in {'좋음', '보통', '나쁨', '매우 나쁨'}
+        and lines[index + 4].strip() == '관광도우미'
+    ]
+    if len(matches) == 1:
+        index = matches[0]
+        return '\n'.join(lines[:index] + lines[index + 4:])
+    if any(line.strip() in {'℃', '미세먼지'} for line in lines):
+        raise ValueError('busan_junggu_weather_widget_structure_changed')
+    return text
+
+
 def _normalize_movein_service_text(text, url):
     """Remove only view counters from the exact official #475 evidence pages."""
     parsed = urlsplit(url)
@@ -838,6 +872,7 @@ def _fetch_sources_sequential(brief):
         text = _normalize_efine_text(text, url)
         text = _normalize_seocho_property_tax_text(text, url)
         text = _normalize_event_listing_counters(text, url)
+        text = _normalize_busan_junggu_weather(text, url)
         text = _normalize_movein_service_text(text, url)
         text = _normalize_post239_chuseok_sources(text, url)
         if not 80 <= len(text) <= 60000:
