@@ -1,7 +1,12 @@
 import hashlib
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.patch_post_component import apply_component_patch, atomic_write_text, verify_and_patch
 
