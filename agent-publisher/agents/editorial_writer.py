@@ -49,6 +49,10 @@ class Section(BaseModel):
     heading: str
     paragraphs: list[Paragraph]
     table: InformationTable | None = None
+    actions: list[str] = Field(default_factory=list, description=(
+        'Optional reviewed action URLs to render inside this section. Each URL must '
+        'exactly match an official source action; scoped actions are omitted from the global CTA.'
+    ))
     kind: str | None = Field(default=None, description=(
         'Select overview, eligibility, comparison, procedure, exceptions, schedule or general. '
         'Only procedure is a numbered STEP. Use overview for a short at-a-glance table before links.'
@@ -392,7 +396,7 @@ def _normalize_event_listing_counters(text, url):
         return '\n'.join(lines[:index] + lines[index + 2:])
 
     if (parsed.scheme == 'https' and parsed.hostname == 'daejeontour.co.kr'
-            and parsed.path == '/festival_djt/46'
+            and parsed.path in {'/festival_djt/46', '/festival_djt/49'}
             and not parsed.query):
         matches = [
             index for index in range(1, len(lines) - 2)

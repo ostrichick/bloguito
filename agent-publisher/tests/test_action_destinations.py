@@ -62,6 +62,31 @@ class ActionDestinationsTests(unittest.TestCase):
             validate_bundle(bundle, inventory, NOW, require_review=False)['reasons'],
         )
 
+    def test_section_scoped_action_renders_only_inside_target_section(self):
+        bundle = sample()
+        action = {
+            'kind': 'booking',
+            'label': '탄동천 탐사 신청',
+            'url': 'https://rsvn.science.go.kr/nsm/edcarsvn/edcarsvnDetail?edcPrgmid=2782',
+        }
+        bundle['sources'][0]['actions'] = [action]
+        bundle['plan']['sections'][0]['actions'] = [action['url']]
+        content = render(bundle['plan'], bundle['sources'])
+        soup = BeautifulSoup(content, 'html.parser')
+        self.assertEqual(1, len(soup.select('.bloguito-section-cta a[href]')))
+        self.assertEqual(action['url'], soup.select_one('.bloguito-section-cta a')['href'])
+        self.assertIsNone(soup.select_one('.bloguito-cta'))
+        section_heading = soup.find('h2', string=lambda value: value and bundle['plan']['sections'][0]['heading'] in value)
+        self.assertIsNotNone(section_heading)
+        self.assertIsNotNone(section_heading.find_next('div', class_='bloguito-section-cta'))
+
+    def test_section_action_must_reference_verified_source_action(self):
+        bundle = sample()
+        bundle['plan']['sections'][0]['actions'] = ['https://example.com/unreviewed']
+        inventory = {'checked_on': NOW.date().isoformat(), 'posts': []}
+        report = validate_bundle(bundle, inventory, NOW, require_review=False)
+        self.assertIn('invalid_section_actions', report['reasons'])
+
     def test_footer_omits_exact_cta_url_and_uses_descriptive_evidence_label(self):
         bundle = sample()
         action_source = bundle['sources'][0]

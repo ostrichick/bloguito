@@ -46,7 +46,7 @@ class EventSectionAssetsTests(unittest.TestCase):
         self.assertIn('festival-location-card', page)
         self.assertIn('map.kakao.com/link/search/', page)
         self.assertIn('map.naver.com/v5/search/', page)
-        self.assertIn('www.google.com/maps/dir/?api=1', page)
+        self.assertNotIn('www.google.com/maps/dir/?api=1', page)
         self.assertNotIn('<iframe', page)
         self.assertNotIn('dapi.kakao.com/v2/maps/sdk.js', page)
 

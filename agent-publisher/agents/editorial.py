@@ -435,6 +435,25 @@ def actionable_links(sources):
     return links
 
 
+def validated_section_action_links(plan, sources):
+    """Bind optional section CTA URLs to already-reviewed official source actions."""
+    actions_by_url = {action['url']: action for action in actionable_links(sources)}
+    scoped = []
+    seen = set()
+    for section in plan.get('sections', []):
+        references = section.get('actions', [])
+        if not isinstance(references, list) or len(references) > 2:
+            raise ValueError('invalid_section_actions')
+        section_actions = []
+        for url in references:
+            if (not isinstance(url, str) or url not in actions_by_url or url in seen):
+                raise ValueError('invalid_section_actions')
+            seen.add(url)
+            section_actions.append(actions_by_url[url])
+        scoped.append(section_actions)
+    return scoped, seen
+
+
 def official_navigation_links(plan, sources):
     """Validate labeled official-site/menu navigation, never direct-service CTAs."""
     entries = plan.get('official_navigation', [])
@@ -535,6 +554,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                 validated_section_assets(plan, sources)
             except (KeyError, TypeError, ValueError):
                 reasons.append('invalid_section_assets')
+            try:
+                validated_section_action_links(plan, sources)
+            except (KeyError, TypeError, ValueError):
+                reasons.append('invalid_section_actions')
         if 'content' in scopes and legacy_85_welfare_navigation_exception(brief):
             reasons.extend(legacy_85_welfare_navigation_reasons(brief, sources, plan))
         related = plan.get('related_posts', [])
@@ -776,8 +799,11 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                     or any(not isinstance(h, str) or not 1 <= len(h.strip()) <= 60 for h in headers)
                     or any(not isinstance(row, dict) or not isinstance(row.get('cells'), list)
                            or len(row['cells']) != len(headers)
-                           or any(not isinstance(cell, str) or not 1 <= len(cell.strip()) <= 160
-                                  for cell in row['cells']) for row in rows)):
+                           or any(not isinstance(cell, str) or len(cell.strip()) > 160
+                                  for cell in row['cells'])
+                           or not row['cells'][0].strip()
+                           or (table.get('mobile_cards', False) and not row['cells'][1].strip())
+                           for row in rows)):
                 reasons.append('invalid_information_table')
         blocks = all_blocks(plan) if 'content' in scopes else []
         answered = set()
@@ -1006,6 +1032,13 @@ def render(plan, sources, category_key=None):
     result = ('<div class="bloguito-article" style="line-height:1.8;font-size:16px;color:#2d3748;'
               'font-family:-apple-system,BlinkMacSystemFont,\'Malgun Gothic\',\'Apple SD Gothic Neo\',\'Noto Sans KR\',sans-serif;'
               'font-weight:400;letter-spacing:normal;overflow-wrap:anywhere;word-break:keep-all">'
+              '<style id="bloguito-responsive-layout">'
+              '.bloguito-article *{box-sizing:border-box}'
+              '@media(max-width:640px){'
+              '.festival-facts{grid-template-columns:minmax(0,1fr)!important}'
+              '.bloguito-info-table table{table-layout:fixed!important}'
+              '.bloguito-info-table th,.bloguito-info-table td{overflow-wrap:anywhere!important;word-break:break-word!important}'
+              '}</style>'
               '<div class="bloguito-summary" style="padding:18px 20px;margin:16px 0 24px;background:#f0f8f5;border:1px solid #d1e7dd;border-left:5px solid #0d7d59;border-radius:10px">'
               '<div style="font-size:18px;font-weight:700;color:#134e4a">한눈에 보기</div>'
               + f'<p style="margin:8px 0 0;line-height:1.75;color:#1f2937;font-size:16px">{inline_text(plan["lead"])}</p></div>')
@@ -1027,6 +1060,21 @@ def render(plan, sources, category_key=None):
     # One isolated procedure is not a sequence. A lonely STEP 1 confuses the
     # heading hierarchy and was mistakenly included in the table of contents.
     numbered_procedures = sum(section_kind(section) == 'procedure' for section in sections) > 1
+
+    actions = actionable_links(sources)
+    section_actions, scoped_action_urls = validated_section_action_links(plan, sources)
+
+    def action_button(action, *, block=False):
+        display = 'flex' if block else 'inline-flex'
+        width = 'width:100%;' if block else ''
+        return (
+            f'<a href="{html.escape(action["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
+            f'style="display:{display};{width}align-items:center;justify-content:center;gap:10px;min-width:0;'
+            'padding:13px 16px;background:#0d7d59;color:#ffffff !important;border:1px solid #0d7d59;'
+            'text-decoration:none !important;border-radius:10px;font-size:16px;font-weight:700;overflow-wrap:anywhere">'
+            f'<span style="flex-grow:1;text-align:center">{html.escape(action["label"])}</span>'
+            '<span aria-hidden="true">↗</span></a>'
+        )
 
     def section_markup(number, section):
         nonlocal procedure_number
@@ -1095,7 +1143,7 @@ def render(plan, sources, category_key=None):
                         '<div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;padding:4px 0">'
                         f'<span style="font-size:12px;font-weight:700;color:#64748b">{html.escape(table["headers"][idx])}</span>'
                         f'<span style="font-size:14px;color:#334155;line-height:1.5">{html.escape(cell)}</span></div>'
-                        for idx, cell in enumerate(row['cells']) if idx != 1)
+                        for idx, cell in enumerate(row['cells']) if idx != 1 and cell.strip())
                     cards.append(
                         '<article style="padding:14px 15px;background:#ffffff;border:1px solid #dbe5e1;border-left:4px solid #0d7d59;border-radius:10px">'
                         f'<div style="font-size:16px;font-weight:800;color:#1f2937;margin-bottom:7px">{html.escape(row["cells"][1])}</div>'
@@ -1105,6 +1153,15 @@ def render(plan, sources, category_key=None):
                     '<div class="bloguito-overview-mobile" style="grid-template-columns:1fr;gap:10px;margin:8px 0 24px">'
                     + ''.join(cards) + '</div>')
         body += ''.join(paragraph(b) for b in section['paragraphs'])
+        scoped = section_actions[number - 1]
+        if scoped:
+            body += (
+                '<div class="bloguito-section-cta" style="margin:4px 0 20px;padding:14px;background:#f8fafc;'
+                'border:1px solid #cbd5e1;border-radius:10px">'
+                '<div style="display:grid;grid-template-columns:1fr;gap:10px">'
+                + ''.join(action_button(action, block=True) for action in scoped)
+                + '</div></div>'
+            )
         location = section.get('location')
         if location:
             query = quote(location['query'].strip(), safe='')
@@ -1113,7 +1170,7 @@ def render(plan, sources, category_key=None):
             body += (
                 '<div class="festival-location-card" style="margin:16px 0 24px;padding:14px 18px;background:#f8fafc;'
                 'border:1px solid #e2e8f0;border-left:4px solid #0d7d59;border-radius:8px">'
-                '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 지도 및 길찾기</div>'
+                '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 위치</div>'
                 f'<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6"><strong>장소</strong>: {venue}<br/>'
                 f'<strong>주소</strong>: {address}</div>'
                 '<div style="display:flex;gap:8px;flex-wrap:wrap">'
@@ -1123,9 +1180,6 @@ def render(plan, sources, category_key=None):
                 f'<a href="https://map.naver.com/v5/search/{query}" target="_blank" rel="noopener noreferrer" '
                 'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#03c75a;color:#ffffff !important;'
                 'font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">네이버지도 위치 보기 <span aria-hidden="true">↗</span></a>'
-                f'<a href="https://www.google.com/maps/dir/?api=1&amp;destination={query}" target="_blank" rel="noopener noreferrer" '
-                'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#ffffff;color:#0d7d59 !important;'
-                'border:1px solid #0d7d59;font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">길찾기 시작 <span aria-hidden="true">↗</span></a>'
                 '</div></div>'
             )
         return body
@@ -1135,13 +1189,13 @@ def render(plan, sources, category_key=None):
 
     # 2. Only confirmed booking/apply/lookup/purchase/install destinations are actions.
     # Informational sources remain in the citations below, never in the CTA.
-    actions = actionable_links(sources)
-    if actions:
+    global_actions = [action for action in actions if action['url'] not in scoped_action_urls]
+    if global_actions:
         buttons = []
-        for idx, action in enumerate(actions):
-            primary = idx == 0 and len(actions) <= 2
-            background = '#0d7d59' if primary or len(actions) > 2 else '#ffffff'
-            color = '#ffffff' if primary or len(actions) > 2 else '#0d7d59'
+        for idx, action in enumerate(global_actions):
+            primary = idx == 0 and len(global_actions) <= 2
+            background = '#0d7d59' if primary or len(global_actions) > 2 else '#ffffff'
+            color = '#ffffff' if primary or len(global_actions) > 2 else '#0d7d59'
             buttons.append(
                 f'<a href="{html.escape(action["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
                 f'style="display:flex;align-items:center;justify-content:center;gap:10px;min-width:0;padding:13px 16px;background:{background};color:{color} !important;border:1px solid #0d7d59;text-decoration:none !important;border-radius:10px;font-size:16px;font-weight:700;overflow-wrap:anywhere">'

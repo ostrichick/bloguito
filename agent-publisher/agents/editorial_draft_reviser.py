@@ -75,16 +75,36 @@ def _before_generated_source_footer(content):
 def _normalize_renderer_migrations(content):
     """Normalize only previously emitted renderer-owned markup migrations.
 
-    The event-image caption separator changed from a middle dot to a comma.
-    Limit the compatibility rule to the exact generated figcaption + official
-    source link shape so authored prose remains part of the CAS comparison.
+    Keep compatibility rules scoped to exact generated markup so authored prose
+    remains part of the CAS comparison.
     """
-    return re.sub(
+    content = re.sub(
+        r'<style id="bloguito-responsive-layout">.*?</style>',
+        '',
+        content,
+        flags=re.DOTALL,
+    )
+    content = re.sub(
         r'(<figcaption\b[^>]*>[^<]*) · '
         r'(<a href="[^"]+"[^>]*>공식 자료</a></figcaption>)',
         r'\1, \2',
         content,
     )
+    content = content.replace(
+        '>📍 행사장 지도 및 길찾기</div>',
+        '>📍 행사장 위치</div>',
+    )
+    content = re.sub(
+        r'<a href="https://www\.google\.com/maps/dir/\?api=1&amp;destination=[^"]+" '
+        r'target="_blank" rel="noopener noreferrer" '
+        r'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;'
+        r'background:#ffffff;color:#0d7d59 !important;border:1px solid #0d7d59;'
+        r'font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">'
+        r'길찾기 시작 <span aria-hidden="true">↗</span></a>',
+        '',
+        content,
+    )
+    return content
 
 
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,

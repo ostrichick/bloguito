@@ -94,6 +94,33 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
             source = fetch_sources({'official_urls': [url], 'entity': '다른 행사'})[0]
         self.assertIn('\n123\n', '\n' + source['text'] + '\n')
 
+    def test_daejeontour_daecheongho_counter_is_stable_but_recruitment_fact_is_hashed(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, views, status):
+                self.content = (
+                    '<html><head><title>대전관광</title></head><body>'
+                    '<div>2026.09.07 18:13</div><div>인기</div>'
+                    f'<div>{views}</div><div>0</div>'
+                    '<article><h1>2026 대청호 오백리길 걷기대회</h1>'
+                    '<p>기간 2026.10.31.(토) ~ 2026.10.31.(토)</p>'
+                    '<p>장소 대청공원 동광장</p>'
+                    f"<p>※ 대청호 오백리길 걷기대회 {status}('26. 9. 7. 기준)</p>"
+                    '</article></body></html>'
+                ).encode('utf-8')
+
+        url = 'https://daejeontour.co.kr/festival_djt/49'
+        brief = {'official_urls': [url], 'entity': '대청호 오백리길 걷기대회'}
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            Response('798', '모집마감'), Response('804', '모집마감'), Response('805', '모집중'),
+        ]):
+            first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
+        self.assertEqual(first['sha256'], same['sha256'])
+        self.assertNotEqual(first['sha256'], changed['sha256'])
+        self.assertNotIn('798', first['text'].splitlines())
+        self.assertIn("모집마감('26. 9. 7. 기준)", first['text'])
+
     def test_nts_metadata_view_count_is_stable_and_article_facts_are_preserved(self):
         class Response:
             status_code = 200

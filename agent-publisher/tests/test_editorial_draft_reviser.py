@@ -160,6 +160,50 @@ class EditorialDraftReviserTests(unittest.TestCase):
             _normalize_renderer_migrations(edited),
         )
 
+    def test_location_card_google_button_removal_is_normalized(self):
+        old = (
+            '<div class="festival-location-card">'
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 지도 및 길찾기</div>'
+            '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+            '<a href="https://map.kakao.com/link/search/test">카카오맵 위치 보기</a>'
+            '<a href="https://www.google.com/maps/dir/?api=1&amp;destination=test" target="_blank" rel="noopener noreferrer" '
+            'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#ffffff;color:#0d7d59 !important;'
+            'border:1px solid #0d7d59;font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">'
+            '길찾기 시작 <span aria-hidden="true">↗</span></a>'
+            '</div></div>'
+        )
+        new = (
+            '<div class="festival-location-card">'
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 위치</div>'
+            '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+            '<a href="https://map.kakao.com/link/search/test">카카오맵 위치 보기</a>'
+            '</div></div>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
+    def test_location_card_migration_does_not_hide_authored_prose_change(self):
+        old = '<p>검토된 본문</p><div>📍 행사장 지도 및 길찾기</div>'
+        edited = '<p>사람이 바꾼 본문</p><div>📍 행사장 위치</div>'
+        self.assertNotEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(edited),
+        )
+
+    def test_responsive_style_renderer_migration_is_normalized(self):
+        old = '<div class="bloguito-article"><p>검토된 본문</p></div>'
+        new = (
+            '<div class="bloguito-article">'
+            '<style id="bloguito-responsive-layout">.bloguito-article *{box-sizing:border-box}</style>'
+            '<p>검토된 본문</p></div>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,6 +219,43 @@ class EditorialTests(unittest.TestCase):
         self.assertIn('raw_markup_or_url_in_prose',self.check()['reasons'])
         self.assertNotIn('<script>',render(self.b['plan'],self.b['sources']))
 
+    def test_information_table_allows_blank_optional_cells_and_mobile_skips_them(self):
+        self.b['plan']['sections'][0]['table'] = {
+            'caption': '행사 비교',
+            'headers': ['날짜', '행사', '비용'],
+            'mobile_cards': True,
+            'rows': [{
+                'cells': ['가을', '선풍기 행사', ''],
+                'evidence': self.b['plan']['lead']['evidence'],
+                'answers': ['q1'],
+            }],
+        }
+        self.assertNotIn('invalid_information_table', self.check(review=False)['reasons'])
+        content = render(self.b['plan'], self.b['sources'])
+        self.assertIn('<td style="padding:10px;border-bottom:1px solid #e2e8f0;vertical-align:top"></td>', content)
+        self.assertNotIn('>비용</span><span style="font-size:14px;color:#334155;line-height:1.5"></span>', content)
+
+    def test_location_card_uses_kakao_and_naver_without_google_directions(self):
+        self.b['plan']['sections'][0]['location'] = {
+            'venue': '서초구 행사장',
+            'address': '서울 서초구 행사장 1',
+            'query': '서초구 행사장',
+            'evidence': self.b['plan']['lead']['evidence'],
+        }
+        content = render(self.b['plan'], self.b['sources'])
+        self.assertIn('행사장 위치', content)
+        self.assertIn('map.kakao.com/link/search', content)
+        self.assertIn('map.naver.com/v5/search', content)
+        self.assertNotIn('google.com/maps/dir', content)
+        self.assertNotIn('길찾기 시작', content)
+
+    def test_render_includes_mobile_overflow_guards(self):
+        content = render(self.b['plan'], self.b['sources'])
+        self.assertIn('id="bloguito-responsive-layout"', content)
+        self.assertIn('@media(max-width:640px)', content)
+        self.assertIn('.festival-facts{grid-template-columns:minmax(0,1fr)!important}', content)
+        self.assertIn('.bloguito-info-table table{table-layout:fixed!important}', content)
+
     def test_expired_review_and_malformed_payload(self):
         self.b['review']['checked_at']=(NOW-timedelta(days=2)).isoformat()
         self.assertIn('review_stale',self.check()['reasons'])
