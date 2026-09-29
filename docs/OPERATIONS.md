@@ -184,6 +184,7 @@ WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, �
 
 - 게시물 한 건의 HTML 조각을 넣거나 바꾸기 위해 `patch_post_<ID>_*.py`를 만들지 않고 `scripts/patch_post_component.py`를 사용한다. 이 도구는 로컬 파일 한 곳만 수정하며 target regex가 0건 또는 2건 이상이면 fail closed한다. WordPress 쓰기는 수행하지 않는다.
 - 한 번만 필요한 조사·변환·검증 Python, 다운로드한 원문, 중간 bundle/HTML/이미지는 `scratch/tasks/<작업명>/`에 둔다. `scratch/`는 Git에 포함하지 않는다.
+- `DesignerAgent`가 자동 생성한 대표이미지는 `%TEMP%/bloguito/covers/`에만 만들고 WordPress 저장 성공·실패 뒤 즉시 삭제한다. 사용자가 `--image-path`로 지정한 파일은 자동 삭제하지 않는다. 프로세스 강제 종료로 남은 24시간 이상 된 generated cover와 과거 `tmp/`의 browser user-data profile만 `python scripts/cleanup_workspaces.py`로 dry-run 확인한 뒤 `--apply`로 정리한다.
 - 재현·사고 분석을 위해 one-off 코드를 보존해야 하면 작업 종료 후 `scripts/archive/<날짜 또는 작업명>/`로 이동한다. 새 archive 산출물은 Git에 넣지 않고 정규 도구처럼 호출하지 않는다.
 - `scripts/` 루트의 Python 파일은 `scripts/maintained_scripts.json`과 정확히 일치해야 하며 unit test가 이를 검사한다. 두 번째 독립 사용 사례가 생긴 임시 도구만 명시적 인터페이스와 테스트를 갖춘 뒤 루트 도구로 승격한다.
 - 자세한 규칙과 예시는 `scripts/README.md`를 따른다.

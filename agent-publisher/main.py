@@ -5,7 +5,7 @@ from config import CATEGORIES
 from agents.radar import RadarAgent
 from agents.curator import CuratorAgent
 from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent
-from agents.designer import DesignerAgent
+from agents.designer import DesignerAgent, cleanup_generated_cover
 from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import ensure_inventory, sync_inventory
 from notifier import notify_published, notify_error, notify_pipeline_summary
@@ -89,7 +89,10 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 )
 
                 # 5. 워드프레스 포스팅 및 썸네일 등록 (Publisher)
-                post_id = publisher.publish(article, image_path=img_path)
+                try:
+                    post_id = publisher.publish(article, image_path=img_path)
+                finally:
+                    cleanup_generated_cover(img_path)
 
                 # 6. 중복 방지 히스토리 저장 (구글 뉴스 URL + 언론사 원문 URL 모두 기록)
                 radar.save_to_history(raw_item.get("link", ""), curated.get("link", ""))

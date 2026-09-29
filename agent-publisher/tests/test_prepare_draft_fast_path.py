@@ -39,11 +39,13 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.validate_bundle", return_value=READY) as validate, \
                     patch("editorial_cli.load_inventory") as load_inventory, \
                     patch("editorial_cli.EditorialWriterAgent.review", return_value=expected_review) as review, \
+                    patch("agents.designer.cleanup_generated_cover") as cleanup, \
                     patch("agents.publisher.PublisherAgent.publish", return_value=901) as publish:
                 editorial_cli.main()
 
             saved = json.loads(bundle_path.read_text(encoding="utf-8"))
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertTrue(image_path.exists())
 
         load_inventory.assert_not_called()
         review.assert_called_once()
@@ -55,6 +57,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
         self.assertEqual("draft", receipt["status"])
         self.assertEqual("created", receipt["semantic_review"])
         self.assertTrue(receipt["featured_image_attached"])
+        cleanup.assert_not_called()
         self.assertGreaterEqual(validate.call_count, 2)
 
     def test_prepare_draft_reuses_current_review_and_generates_cover_without_new_review(self):
@@ -72,6 +75,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.validate_bundle", return_value=READY), \
                     patch("editorial_cli.EditorialWriterAgent.review") as review, \
                     patch("agents.designer.DesignerAgent.generate_image", return_value=generated_image) as generate, \
+                    patch("agents.designer.cleanup_generated_cover") as cleanup, \
                     patch("agents.publisher.PublisherAgent.publish", return_value=902) as publish:
                 editorial_cli.main()
 
@@ -79,6 +83,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
         generate.assert_called_once()
         publish.assert_called_once()
         self.assertEqual(generated_image, publish.call_args.kwargs["image_path"])
+        cleanup.assert_called_once_with(generated_image)
 
     def test_prepare_draft_blocks_before_review_image_or_wordpress_when_local_preflight_fails(self):
         bundle = sample()

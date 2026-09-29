@@ -17,6 +17,9 @@ class DesignerSafetyTests(unittest.TestCase):
         self.designer.client = None
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
+        self.cover_root = self.enterContext(
+            patch("agents.designer.generated_cover_root", return_value=Path(self.temp_dir.name))
+        )
 
     def capture_text(self, render):
         drawn = []

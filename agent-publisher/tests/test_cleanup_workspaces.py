@@ -62,6 +62,33 @@ class CleanupWorkspacesTests(unittest.TestCase):
             self.assertFalse(profile.exists())
             self.assertTrue(evidence.exists())
 
+    def test_generated_cover_cleanup_only_targets_old_owned_cover_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "repo"
+            (root / "tmp").mkdir(parents=True)
+            cover_root = Path(folder) / "os-temp" / "bloguito" / "covers"
+            cover_root.mkdir(parents=True)
+            old_cover = cover_root / "thumb_deadbeef_old.jpg"
+            old_cover.write_bytes(b"old")
+            self._old(cover_root)
+
+            recent_cover = cover_root / "thumb_deadbeef_recent.jpg"
+            recent_cover.write_bytes(b"recent")
+            unrelated = cover_root / "keep.jpg"
+            unrelated.write_bytes(b"keep")
+
+            result = cleanup_workspaces.cleanup(
+                root,
+                apply=True,
+                min_age_hours=24,
+                cover_root=cover_root,
+            )
+            self.assertEqual(1, result["cover_candidate_count"])
+            self.assertEqual(1, result["cover_removed_count"])
+            self.assertFalse(old_cover.exists())
+            self.assertTrue(recent_cover.exists())
+            self.assertTrue(unrelated.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

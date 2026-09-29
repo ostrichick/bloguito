@@ -307,51 +307,65 @@ def _main():
 
         # Semantic review and representative-image generation are independent once
         # the source-bound plan passes deterministic preflight, so run them together.
-        if not review_is_current and not args.image_path:
-            review_context = copy_context()
-            image_context = copy_context()
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                review_future = pool.submit(review_context.run, review_bundle)
-                image_future = pool.submit(image_context.run, generate_cover)
-                data['review'] = review_future.result()
-                image_path = Path(image_future.result())
-        else:
-            if not review_is_current:
-                data['review'] = review_bundle()
-            image_path = Path(generate_cover())
+        auto_generated_cover = not bool(args.image_path)
+        image_path = None
+        try:
+            if not review_is_current and auto_generated_cover:
+                review_context = copy_context()
+                image_context = copy_context()
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    review_future = pool.submit(review_context.run, review_bundle)
+                    image_future = pool.submit(image_context.run, generate_cover)
+                    try:
+                        data['review'] = review_future.result()
+                    except BaseException:
+                        try:
+                            image_path = Path(image_future.result())
+                        except BaseException:
+                            pass
+                        raise
+                    image_path = Path(image_future.result())
+            else:
+                if not review_is_current:
+                    data['review'] = review_bundle()
+                image_path = Path(generate_cover())
 
-        local_final = validate_bundle(
-            data, {}, scopes={'content', 'source', 'review'})
-        if local_final['status'] != 'ready':
-            print(json.dumps(local_final, ensure_ascii=False, indent=2))
-            raise SystemExit(2)
+            local_final = validate_bundle(
+                data, {}, scopes={'content', 'source', 'review'})
+            if local_final['status'] != 'ready':
+                print(json.dumps(local_final, ensure_ascii=False, indent=2))
+                raise SystemExit(2)
 
-        # Persist the completed review before the external write so an interrupted
-        # WordPress step can be resumed without paying for the same review again.
-        args.file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
+            # Persist the completed review before the external write so an interrupted
+            # WordPress step can be resumed without paying for the same review again.
+            args.file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+            args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
 
-        from agents.publisher import PublisherAgent
-        post_id = PublisherAgent().publish(article_from_bundle(data), image_path=image_path)
-        seo = data.get('brief', {}).get('seo') or {}
-        receipt = {
-            'action': 'prepare-draft',
-            'post_id': int(post_id),
-            'status': 'draft',
-            'title': data['plan']['title'],
-            'focus_keyword': data['brief'].get('primary_keyword', ''),
-            'seo_title': seo.get('title') or data['plan']['title'],
-            'seo_description': seo.get('description') or data['plan']['lead']['text'][:160],
-            'semantic_review': 'reused' if review_is_current else 'created',
-            'featured_image_path': str(image_path),
-            'featured_image_attached': True,
-            'live_inventory_validation': 'passed',
-        }
-        print('Draft ID:', post_id)
-        print(json.dumps(receipt, ensure_ascii=False, indent=2))
-        if args.output:
-            args.output.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
-        return
+            from agents.publisher import PublisherAgent
+            post_id = PublisherAgent().publish(article_from_bundle(data), image_path=image_path)
+            seo = data.get('brief', {}).get('seo') or {}
+            receipt = {
+                'action': 'prepare-draft',
+                'post_id': int(post_id),
+                'status': 'draft',
+                'title': data['plan']['title'],
+                'focus_keyword': data['brief'].get('primary_keyword', ''),
+                'seo_title': seo.get('title') or data['plan']['title'],
+                'seo_description': seo.get('description') or data['plan']['lead']['text'][:160],
+                'semantic_review': 'reused' if review_is_current else 'created',
+                'featured_image_path': str(image_path),
+                'featured_image_attached': True,
+                'live_inventory_validation': 'passed',
+            }
+            print('Draft ID:', post_id)
+            print(json.dumps(receipt, ensure_ascii=False, indent=2))
+            if args.output:
+                args.output.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+            return
+        finally:
+            if auto_generated_cover and image_path is not None:
+                from agents.designer import cleanup_generated_cover
+                cleanup_generated_cover(image_path)
     if args.action == 'publish':
         if not data.get('review'):
             raise ValueError('publish_requires_existing_semantic_review: run manual-review or review first')

@@ -9,6 +9,7 @@ from agents.designer import (
     _cover_profile,
     _load_font,
     build_editorial_cover_prompt,
+    cleanup_generated_cover,
     derive_cover_copy,
     split_title,
 )
@@ -18,6 +19,34 @@ class DesignerRoutingTests(unittest.TestCase):
     def setUp(self):
         self.designer = DesignerAgent()
         self.designer.client = None
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.enterContext(
+            patch("agents.designer.generated_cover_root", return_value=Path(self.temp_dir.name))
+        )
+
+    def test_generated_cover_cleanup_is_scoped_to_bloguito_temp_root(self):
+        generated = Path(self.temp_dir.name) / "thumb_test.jpg"
+        generated.write_bytes(b"generated")
+        self.assertTrue(cleanup_generated_cover(generated))
+        self.assertFalse(generated.exists())
+
+        with tempfile.TemporaryDirectory() as external_dir:
+            external = Path(external_dir) / "user-cover.jpg"
+            external.write_bytes(b"user")
+            self.assertFalse(cleanup_generated_cover(external))
+            self.assertTrue(external.exists())
+
+    def test_generate_image_removes_reserved_temp_file_when_rendering_fails(self):
+        with patch.object(self.designer, "_render_editorial_cover", side_effect=RuntimeError("render failed")):
+            with self.assertRaisesRegex(RuntimeError, "render failed"):
+                self.designer.generate_image(
+                    title="실패 테스트",
+                    category_name="생활/건강 정보",
+                    keyword="실패",
+                    category_key="life-health",
+                )
+        self.assertEqual([], list(Path(self.temp_dir.name).glob("thumb_*.jpg")))
 
     def test_mode_selection_concert_with_unreviewed_poster(self):
         curated = {"poster_url": "https://example.com/poster.jpg", "title": "임영웅 콘서트"}
@@ -141,7 +170,7 @@ class DesignerRoutingTests(unittest.TestCase):
             self.assertNotRegex(rendered, r"(?:10만원|3개월|2시간)\n(?:미만|이하|이내)")
 
     def test_render_editorial_fallback_outputs_valid_image(self):
-        out_path = Path(tempfile.gettempdir()) / "test_editorial_fallback_output.jpg"
+        out_path = Path(self.temp_dir.name) / "test_editorial_fallback_output.jpg"
         self.designer._render_minimal_fallback(
             primary_text="기초연금 신청",
             secondary_text="자격 확인",
@@ -163,7 +192,7 @@ class DesignerRoutingTests(unittest.TestCase):
             MagicMock(text='{"pass": true, "issues": []}'),
         ]
 
-        out_path = Path(tempfile.gettempdir()) / "test_generated_editorial_output.jpg"
+        out_path = Path(self.temp_dir.name) / "test_generated_editorial_output.jpg"
         self.designer._render_editorial_cover(
             title="전입신고 온라인 신청과 세대주 확인",
             keyword="전입신고 온라인 신청",
@@ -193,7 +222,7 @@ class DesignerRoutingTests(unittest.TestCase):
             MagicMock(text='{"pass": true, "issues": []}'),
         ]
 
-        out_path = Path(tempfile.gettempdir()) / "test_generated_editorial_retry.jpg"
+        out_path = Path(self.temp_dir.name) / "test_generated_editorial_retry.jpg"
         self.designer._render_editorial_cover(
             title="전입신고 온라인 신청과 세대주 확인",
             keyword="전입신고 온라인 신청",
@@ -217,7 +246,7 @@ class DesignerRoutingTests(unittest.TestCase):
         mock_resp.read.return_value = raw_bytes
         mock_resp.__enter__.return_value = mock_resp
 
-        out_path = Path(tempfile.gettempdir()) / "test_hybrid_output.jpg"
+        out_path = Path(self.temp_dir.name) / "test_hybrid_output.jpg"
         with patch("urllib.request.urlopen", return_value=mock_resp):
             self.designer._render_hybrid_poster(
                 poster_url="https://example.com/poster.jpg",
@@ -232,7 +261,7 @@ class DesignerRoutingTests(unittest.TestCase):
             self.assertEqual(img.size, (1200, 675))
 
     def test_render_hybrid_poster_network_failure_falls_back_to_editorial_cover(self):
-        out_path = Path(tempfile.gettempdir()) / "test_fallback_output.jpg"
+        out_path = Path(self.temp_dir.name) / "test_fallback_output.jpg"
         with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
             # generate_image should catch exception and fallback to Mode 2
             res_path = self.designer.generate_image(

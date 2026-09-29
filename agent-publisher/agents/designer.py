@@ -16,6 +16,44 @@ except Exception:
     pass
 
 
+def generated_cover_root() -> Path:
+    """Return the OS temp directory reserved for generated Bloguito covers."""
+    root = Path(tempfile.gettempdir()) / "bloguito" / "covers"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _new_generated_cover_path(title: str) -> Path:
+    digest = hashlib.md5(title.encode("utf-8")).hexdigest()[:8]
+    fd, name = tempfile.mkstemp(
+        prefix=f"thumb_{digest}_",
+        suffix=".jpg",
+        dir=generated_cover_root(),
+    )
+    os.close(fd)
+    return Path(name)
+
+
+def cleanup_generated_cover(path) -> bool:
+    """Delete only a cover created in Bloguito's dedicated generated-cover temp root."""
+    if not isinstance(path, (str, os.PathLike)):
+        return False
+    candidate = Path(path).resolve(strict=False)
+    root = generated_cover_root().resolve(strict=False)
+    if candidate.parent != root:
+        return False
+    try:
+        candidate.unlink(missing_ok=True)
+    except OSError:
+        return False
+    try:
+        root.rmdir()
+        root.parent.rmdir()
+    except OSError:
+        pass
+    return True
+
+
 DEFAULT_FEATURED_IMAGE_POLICY = {
     "canvas": {"width": 1200, "height": 675},
     "text": {
@@ -709,32 +747,33 @@ class DesignerAgent:
         기본은 현대적 에디토리얼 커버를 만든다. 독립 검토한 공연 공식 이미지 주소를
         별도 인자로 전달한 경우에만 포스터를 사용하며 실패 시 같은 에디토리얼 커버로 폴백한다.
         """
-        h = hashlib.md5(title.encode("utf-8")).hexdigest()[:8]
-        tmp_dir = Path(tempfile.gettempdir())
-        output_path = tmp_dir / f"thumb_{h}.jpg"
+        output_path = _new_generated_cover_path(title)
+        try:
+            mode = self.select_mode(category_key, curated, title, keyword, reviewed_poster_url)
+            poster_url = reviewed_poster_url
 
-        mode = self.select_mode(category_key, curated, title, keyword, reviewed_poster_url)
-        poster_url = reviewed_poster_url
+            print(f"[DesignerAgent] 🎨 대표 이미지 자동 라우팅: [모드 {mode}] 선정 (주제: '{title[:20]}...', 카테고리: {category_name})")
 
-        print(f"[DesignerAgent] 🎨 대표 이미지 자동 라우팅: [모드 {mode}] 선정 (주제: '{title[:20]}...', 카테고리: {category_name})")
+            # 1. 모드 4: 하이브리드 포스터
+            if mode == 4 and poster_url:
+                try:
+                    self._render_hybrid_poster(poster_url, title, category_name, curated, output_path)
+                    with Image.open(output_path) as poster_cover:
+                        passed, issues = self._vision_review_cover(
+                            poster_cover.convert("RGB"),
+                            title=title,
+                            primary_text=None,
+                            secondary_text=None,
+                            source_kind="official_poster",
+                        )
+                    if passed:
+                        return output_path
+                    print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 품질 검수 실패: {issues} -> 에디토리얼 커버로 폴백")
+                except Exception as e:
+                    print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 재구성 실패 ({e}) -> 에디토리얼 커버로 폴백")
 
-        # 1. 모드 4: 하이브리드 포스터
-        if mode == 4 and poster_url:
-            try:
-                self._render_hybrid_poster(poster_url, title, category_name, curated, output_path)
-                with Image.open(output_path) as poster_cover:
-                    passed, issues = self._vision_review_cover(
-                        poster_cover.convert("RGB"),
-                        title=title,
-                        primary_text=None,
-                        secondary_text=None,
-                        source_kind="official_poster",
-                    )
-                if passed:
-                    return output_path
-                print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 품질 검수 실패: {issues} -> 에디토리얼 커버로 폴백")
-            except Exception as e:
-                print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 재구성 실패 ({e}) -> 에디토리얼 커버로 폴백")
-
-        self._render_editorial_cover(title, keyword, category_key, category_name, output_path)
-        return output_path
+            self._render_editorial_cover(title, keyword, category_key, category_name, output_path)
+            return output_path
+        except Exception:
+            cleanup_generated_cover(output_path)
+            raise

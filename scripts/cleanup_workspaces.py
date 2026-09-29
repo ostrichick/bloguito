@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -94,10 +95,38 @@ def find_browser_profiles(root: Path, *, min_age_hours: float = 24.0):
     return candidates
 
 
-def cleanup(root: Path, *, apply: bool = False, min_age_hours: float = 24.0):
+def find_generated_covers(cover_root: Path, *, min_age_hours: float = 24.0):
+    cover_root = cover_root.resolve()
+    if not cover_root.exists():
+        return []
+    cutoff = time.time() - max(0.0, min_age_hours) * 3600
+    candidates = []
+    for path in sorted(cover_root.glob("thumb_*.jpg")):
+        if not path.is_file() or path.parent.resolve() != cover_root:
+            continue
+        stat = path.stat()
+        if stat.st_mtime > cutoff:
+            continue
+        candidates.append({
+            "path": path.resolve(),
+            "size_bytes": stat.st_size,
+            "latest_mtime": stat.st_mtime,
+        })
+    return candidates
+
+
+def cleanup(
+    root: Path,
+    *,
+    apply: bool = False,
+    min_age_hours: float = 24.0,
+    cover_root: Path | None = None,
+):
     root = root.resolve()
     tmp_root = (root / "tmp").resolve()
+    cover_root = (cover_root or (Path(tempfile.gettempdir()) / "bloguito" / "covers")).resolve()
     candidates = find_browser_profiles(root, min_age_hours=min_age_hours)
+    cover_candidates = find_generated_covers(cover_root, min_age_hours=min_age_hours)
     removed = []
     for item in candidates:
         path = item["path"]
@@ -106,12 +135,24 @@ def cleanup(root: Path, *, apply: bool = False, min_age_hours: float = 24.0):
         if apply:
             shutil.rmtree(path)
             removed.append(path)
+    removed_covers = []
+    for item in cover_candidates:
+        path = item["path"]
+        if path.parent.resolve() != cover_root:
+            raise ValueError(f"cleanup_cover_outside_root:{path}")
+        if apply:
+            path.unlink(missing_ok=True)
+            removed_covers.append(path)
     return {
         "mode": "apply" if apply else "dry-run",
         "candidate_count": len(candidates),
         "candidate_bytes": sum(item["size_bytes"] for item in candidates),
         "removed_count": len(removed),
         "candidates": candidates,
+        "cover_candidate_count": len(cover_candidates),
+        "cover_candidate_bytes": sum(item["size_bytes"] for item in cover_candidates),
+        "cover_removed_count": len(removed_covers),
+        "cover_candidates": cover_candidates,
     }
 
 
@@ -131,6 +172,12 @@ def main():
             f"- {item['path']} ({item['file_count']} files, "
             f"{item['size_bytes'] / 1024 / 1024:.1f} MiB)"
         )
+    print(
+        f"{result['mode']}: {result['cover_candidate_count']} stale generated covers, "
+        f"{result['cover_candidate_bytes'] / 1024 / 1024:.1f} MiB"
+    )
+    for item in result["cover_candidates"]:
+        print(f"- {item['path']} ({item['size_bytes']} bytes)")
 
 
 if __name__ == "__main__":
