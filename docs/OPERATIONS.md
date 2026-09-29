@@ -15,6 +15,7 @@
 | `agent-publisher/whatsapp-bridge/` | 원격 상태·초안/공개 명령, `package-lock.json`·명령 정책 포함. 실제 systemd/env 배포와 구분 |
 | `scripts/` | 반복 사용 가능한 운영·진단 도구만 유지. 게시물 한 건을 위한 임시 Python은 두지 않으며 목록은 `scripts/maintained_scripts.json`으로 검증 |
 | `scratch/` | 한 작업에서만 필요한 probe, 변환 코드, 중간 JSON/HTML/이미지. Git 비추적 |
+| `tmp/` | 과거 작업 증거가 연결된 legacy 임시 영역. 새 일반 작업·브라우저 프로필의 출력 위치로 사용하지 않음 |
 | `scripts/archive/` | 보존할 가치가 있는 과거 one-off 스크립트. 새 archive 파일은 Git 비추적이며 정규 실행 경로로 사용하지 않음 |
 
 ## 로컬 설치 및 무변경 검사
@@ -105,19 +106,19 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 
 ```powershell
 # reviewed draft/public 공통 수정: 상태와 Fast/Standard를 먼저 자동 판정
-python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post tmp/article/bundle.json `
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post scratch/tasks/article/bundle.json `
   --post-id 641 --expected-content-sha256 <현재본문SHA> --confirm-update `
   --edit-intent "표현 정리와 기존 사실의 표 재배치"
 
 # 중단된 같은 작업 재개: task-state fingerprint와 live SHA가 맞아야만 이어감
-python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post tmp/article/bundle.json `
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post scratch/tasks/article/bundle.json `
   --post-id 641 --expected-content-sha256 <작업시작본문SHA> --confirm-update --resume `
   --edit-intent "표현 정리와 기존 사실의 표 재배치"
 
 # 대표이미지만 교체: 본문/source/review pipeline을 열지 않음
 python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- replace-featured-image `
   --post-id 641 --expected-content-sha256 <현재본문SHA> --expected-thumbnail-id <현재이미지ID> `
-  --image-path tmp/article/cover.jpg --alt-text "대전 10월 행사 일정 안내" --confirm-update
+  --image-path scratch/tasks/article/cover.jpg --alt-text "대전 10월 행사 일정 안내" --confirm-update
 
 # 실제 브라우저 QA가 끝난 뒤 로컬 task-state 종료
 python agent-publisher/editorial_cli.py complete-task-qa `
@@ -134,7 +135,7 @@ python agent-publisher/editorial_cli.py complete-task-qa `
 ChatGPT/CoS 로컬 환경에서는 다음 한 명령을 기본으로 사용한다. `--image-path`를 생략하면 현행 대표 이미지 정책으로 이미지를 자동 생성·검수하고, 이미 별도 검수한 이미지를 사용할 때만 경로를 전달한다.
 
 ```powershell
-python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp/article/bundle.json --author-model "GPT-5.6 Sol" --output tmp/article/receipt.json
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --output scratch/tasks/article/receipt.json
 ```
 
 이 SSH adapter 경로는 draft 저장 성공 뒤 `scripts/sync_post_catalog.py`를 최대 2회까지 읽기 전용으로 시도한다. 카탈로그 동기화가 두 번 모두 실패한 경우 draft 저장 성공을 실패로 되돌리지 않는다. 이때는 출력된 post ID를 보존하고 `python scripts/sync_post_catalog.py`만 재실행한다. `prepare-draft` 자체를 재실행하면 새 draft가 중복 생성될 수 있으므로 금지한다.
@@ -149,6 +150,8 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 `scripts/prepare_post_approval.py`는 사용자가 아직 현재 변경안을 적용할지 검토하는 단계에서 변경 전후 비교 패키지를 만들기 위한 도구다. 같은 변경안의 실제 적용이 이미 명시적으로 승인된 뒤에는 이 패키지를 다시 만들지 않는다. 정규 `update-existing`/`revise-draft`/관련 updater가 자체적으로 최신 전체 inventory, 대상 글 CAS, 공식 source 재조회, 원본 백업, 저장 직전·직후 검증을 수행하므로 그 경로를 바로 사용한다. 승인 대상이나 변경안이 달라졌다면 새 승인으로 취급한다.
+
+승인 비교 패키지와 일반 one-off 산출물의 기본 위치는 `scratch/tasks/<작업명>/`이다. 같은 작업의 retry는 새 timestamp 디렉터리를 계속 추가하지 않고 동일 workspace의 안정된 파일명을 재사용한다. 브라우저 QA는 가능한 한 이미 열린 세션을 재사용한다. 독립 user-data-dir가 필요한 경우 repo 밖 OS temp에 만들고 성공 시 즉시 삭제하며, 최종 screenshot/결과 JSON만 task workspace에 남긴다. 과거 `tmp/`에는 문서에서 참조하는 legacy 증거가 있으므로 전체 자동 삭제하지 않고 `scripts/cleanup_workspaces.py`의 보수적 브라우저-profile 정리만 사용한다.
 
 ### 작성 모델 경로
 

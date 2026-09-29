@@ -102,10 +102,10 @@ def private_json(path, value):
 
 
 def prepare(post_id, bundle_path, out_dir, host='bloguito', confirm_title_change=False):
-    root_tmp = (ROOT / 'tmp').resolve()
+    task_root = (ROOT / 'scratch' / 'tasks').resolve()
     out_dir = out_dir.resolve()
-    if out_dir == root_tmp or root_tmp not in out_dir.parents:
-        raise ValueError('approval_output_must_be_inside_gitignored_tmp')
+    if out_dir == task_root or task_root not in out_dir.parents:
+        raise ValueError('approval_output_must_be_inside_scratch_tasks')
     if out_dir.exists() and any(out_dir.iterdir()):
         raise FileExistsError('approval_package_must_use_new_empty_directory')
     bundle = json.loads(bundle_path.read_text(encoding='utf-8'))

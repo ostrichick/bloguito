@@ -15,8 +15,8 @@ class ApprovalPreparationTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        (self.root / 'tmp').mkdir()
-        self.out = self.root / 'tmp' / 'pilot'
+        (self.root / 'scratch' / 'tasks').mkdir(parents=True)
+        self.out = self.root / 'scratch' / 'tasks' / 'pilot'
         self.original = {'ID': 137, 'post_title': 'Original title',
             'post_content': '<h2>Old</h2><p>Original content</p>',
             'post_status': 'publish', 'post_name': 'stable-slug',
@@ -27,7 +27,7 @@ class ApprovalPreparationTests(unittest.TestCase):
              ['https://example.org/official']}, 'plan': {'title': 'Original title',
               'lead': {'text': 'Reviewed answer'}},
               'sources': [{'url': 'https://example.org/official', 'sha256': 'a' * 64}]}
-        self.bundle_path = self.root / 'tmp' / 'bundle.json'
+        self.bundle_path = self.root / 'scratch' / 'tasks' / 'bundle.json'
         self.bundle_path.write_text(json.dumps(self.bundle), encoding='utf-8')
 
     def _patch(self, *, report=None, sources=None, post=None, inventory=None):
@@ -69,7 +69,7 @@ class ApprovalPreparationTests(unittest.TestCase):
         result = approval.prepare(137, self.bundle_path, self.out)
         self.assertIn('reviewed_plan_would_not_preserve_current_title', result['reasons'])
 
-        second = self.root / 'tmp' / 'pilot-title'
+        second = self.root / 'scratch' / 'tasks' / 'pilot-title'
         result = approval.prepare(137, self.bundle_path, second, confirm_title_change=True)
         self.assertEqual('ready', result['preflight_status'])
         self.assertIn('post_title', result['changes_allowed_if_later_approved'])
@@ -98,11 +98,11 @@ class ApprovalPreparationTests(unittest.TestCase):
         result = approval.prepare(137, self.bundle_path, self.out)
         self.assertIn('semantic_review_failed', result['reasons'])
 
-    def test_wrong_id_and_outside_tmp_fail_before_remote_access(self):
+    def test_wrong_id_and_outside_task_workspace_fail_before_remote_access(self):
         self._patch()
         with self.assertRaisesRegex(ValueError, 'bundle_target_post_id_mismatch'):
             approval.prepare(244, self.bundle_path, self.out)
-        with self.assertRaisesRegex(ValueError, 'approval_output_must_be_inside_gitignored_tmp'):
+        with self.assertRaisesRegex(ValueError, 'approval_output_must_be_inside_scratch_tasks'):
             approval.prepare(137, self.bundle_path, self.root / 'docs' / 'public')
         self.wp.assert_not_called()
 

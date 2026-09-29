@@ -5,11 +5,11 @@ is used only as a restricted transport for the WordPress/Docker commands emitted
 by those actions::
 
     python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- \
-        publish tmp/article/bundle.json
+        publish scratch/tasks/article/bundle.json
 
     python scripts/editorial_cli_via_ssh.py --ssh-host 100.x.y.z \
         --ssh-user ubuntu --wsl-distro Ubuntu-24.04 -- \
-        revise-draft tmp/article/bundle.json --post-id 463 \
+        revise-draft scratch/tasks/article/bundle.json --post-id 463 \
         --expected-content-sha256 <sha> --confirm-update
 
 The adapter is deliberately not a general remote shell.  Each supported action

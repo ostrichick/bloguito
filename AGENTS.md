@@ -14,7 +14,7 @@
 
 코드 변경은 적절한 테스트 후 의도한 파일만 커밋·푸시한다. 서버 배포 여부와 실제 검증 범위를 별도로 기록한다.
 
-일회성 게시물 작업 때문에 `scripts/` 또는 `agent-publisher/tests/`에 새 Python 파일을 바로 만들지 않는다. 먼저 `prepare-draft`, `edit-post`, `replace-featured-image`, `scripts/patch_post_component.py` 같은 공통 진입점으로 처리한다. 정말 한 번만 필요한 코드·probe·중간 JSON/HTML은 Git 비추적 `scratch/tasks/`에 두고, 보존할 가치가 있는 one-off는 작업 후 `scripts/archive/`로 옮긴다. `scripts/` 루트의 유지보수 도구는 `scripts/maintained_scripts.json`에 등록된 재사용 도구만 허용한다. 자세한 파일 수명주기는 `scripts/README.md`를 따른다.
+일회성 게시물 작업 때문에 `scripts/` 또는 `agent-publisher/tests/`에 새 Python 파일을 바로 만들지 않는다. 먼저 `prepare-draft`, `edit-post`, `replace-featured-image`, `scripts/patch_post_component.py` 같은 공통 진입점으로 처리한다. 정말 한 번만 필요한 코드·probe·중간 JSON/HTML은 Git 비추적 `scratch/tasks/`에 두고, 보존할 가치가 있는 one-off는 작업 후 `scripts/archive/`로 옮긴다. 한 작업에서는 timestamp 폴더를 재시도마다 새로 만들지 말고 같은 `scratch/tasks/<작업명>/`을 재사용하며, 성공 후 재생성 가능한 중간 파일은 정리한다. 브라우저 QA는 기존 브라우저 세션 재사용을 우선하고, 별도 Edge/Chrome 프로필이 꼭 필요하면 저장소 `tmp/`/`scratch/` 아래가 아니라 OS 임시 디렉터리에 만들고 성공 시 삭제한다. 스크린샷·QA JSON처럼 필요한 증거만 task workspace에 남긴다. `scripts/` 루트의 유지보수 도구는 `scripts/maintained_scripts.json`에 등록된 재사용 도구만 허용한다. 자세한 파일 수명주기는 `scripts/README.md`를 따른다.
 
 운영 서버 SSH가 필요한 작업도 기본 transport는 `ssh bloguito` 직접 SSH로 둔다. Tailscale은 직접 SSH로 처리할 수 없는 특수한 비상·복구·사설 관리 상황에서만 명시적으로 선택하며, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 설정으로 일반 작업의 기본 경로가 되게 하지 않는다. 로컬 편집·원고 작성·코드 수정·테스트·Git 작업·공개 웹/REST 조회·공개 페이지 QA에는 Tailscale 연결 확인을 선행하지 않는다. 직접 SSH가 실패하더라도 공개 웹/REST 등으로 목적을 달성할 수 있으면 Tailscale로 전환하지 않는다. 서버 설정·Docker/WP-CLI·비공개 WordPress 상태처럼 SSH가 반드시 필요한 작업에서 직접 SSH가 불가능할 때만 Tailscale을 한 번 선택하고, 같은 작업 안에서 새 장애 징후가 없는 한 상태 확인을 반복하지 않는다.
 

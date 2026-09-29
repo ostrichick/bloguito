@@ -140,6 +140,7 @@
     "test_analytics_receiver.py",
     "test_backup_recovery_v3.py",
     "test_backup_restore.py",
+    "test_cleanup_workspaces.py",
     "test_designer_routing.py",
     "test_designer_safety.py",
     "test_donggu_official_source.py",

@@ -87,8 +87,8 @@ class RelatedPostNavigationTests(unittest.TestCase):
     def test_read_only_approval_preflight_blocks_link_deletion_without_wp_write(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'tmp').mkdir()
-            bundle_file = root / 'tmp' / 'bundle.json'
+            (root / 'scratch' / 'tasks').mkdir(parents=True)
+            bundle_file = root / 'scratch' / 'tasks' / 'bundle.json'
             bundle_file.write_text(json.dumps(self.bundle, ensure_ascii=False), encoding='utf-8')
             old = {'ID': 81, 'post_title': '예방접종 일정', 'post_status': 'publish',
                    'post_content': '<p><a href="https://lifeinfo24.org/?p=63">종합</a></p>',
@@ -99,7 +99,7 @@ class RelatedPostNavigationTests(unittest.TestCase):
                  patch.object(approval, 'render', return_value=proposed), \
                  patch.object(approval, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
                  patch.object(approval, 'fetch_sources', return_value=self.bundle['sources']):
-                result = approval.prepare(81, bundle_file, root / 'tmp' / 'approval')
+                result = approval.prepare(81, bundle_file, root / 'scratch' / 'tasks' / 'approval')
             self.assertEqual('blocked', result['preflight_status'])
             self.assertEqual([63], result['lost_internal_post_ids'])
             self.assertIn('original_internal_post_navigation_missing', result['reasons'])
