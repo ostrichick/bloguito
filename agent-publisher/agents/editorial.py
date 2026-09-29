@@ -1040,6 +1040,7 @@ def render(plan, sources, category_key=None):
               '<style id="bloguito-responsive-layout">'
               '.bloguito-article *{box-sizing:border-box}'
               '@media(max-width:640px){'
+              '.bloguito-article *{overflow-wrap:anywhere!important;word-break:break-word!important}'
               '.festival-facts{grid-template-columns:minmax(0,1fr)!important}'
               '.bloguito-info-table table{table-layout:fixed!important}'
               '.bloguito-info-table th,.bloguito-info-table td{overflow-wrap:anywhere!important;word-break:break-word!important}'

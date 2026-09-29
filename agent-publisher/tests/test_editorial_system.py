@@ -253,6 +253,7 @@ class EditorialTests(unittest.TestCase):
         content = render(self.b['plan'], self.b['sources'])
         self.assertIn('id="bloguito-responsive-layout"', content)
         self.assertIn('@media(max-width:640px)', content)
+        self.assertIn('.bloguito-article *{overflow-wrap:anywhere!important;word-break:break-word!important}', content)
         self.assertIn('.festival-facts{grid-template-columns:minmax(0,1fr)!important}', content)
         self.assertIn('.bloguito-info-table table{table-layout:fixed!important}', content)
 
