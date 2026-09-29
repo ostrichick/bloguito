@@ -13,6 +13,11 @@ from datetime import datetime
 
 from agents.editorial import (ROOT, excerpt_from_lead, render, save_report,
                               validate_bundle)
+from agents.editorial_updater import (
+    _read_rank_math_meta,
+    _set_rank_math_meta,
+    rank_math_meta_from_brief,
+)
 from agents.editorial_writer import fetch_sources, load_inventory
 from agents.publisher import PublisherAgent
 from agents.temporal_validation import KST
@@ -79,6 +84,7 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
 
         target_html = render(bundle['plan'], bundle['sources'])
         excerpt = excerpt_from_lead(bundle['plan']['lead'])
+        reviewed_meta = rank_math_meta_from_brief(brief)
         category = resolve_category(bundle['brief']['category_key'])
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         current = json.loads(subprocess.run(
@@ -93,10 +99,15 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         archive = ROOT / 'data' / 'editorial_runs'
         archive.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime('%Y%m%dT%H%M%S%f')
+        current_meta = _read_rank_math_meta(base, post_id) if reviewed_meta else None
+        update_meta = reviewed_meta is not None and current_meta != reviewed_meta
         backup = archive / f'legacy-draft-{post_id}-{stamp}.json'
         index_backup = archive / f'legacy-draft-index-{post_id}-{stamp}.json'
         with backup.open('x', encoding='utf-8') as file:
-            json.dump(current, file, ensure_ascii=False, indent=2)
+            backup_payload = dict(current)
+            if current_meta is not None:
+                backup_payload['rank_math_meta'] = current_meta
+            json.dump(backup_payload, file, ensure_ascii=False, indent=2)
         index_backup.write_text(index_before, encoding='utf-8')
         os.chmod(backup, 0o600)
         os.chmod(index_backup, 0o600)
@@ -106,12 +117,16 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
                                '--post_content=' + target_html,
                                '--post_excerpt=' + excerpt, '--allow-root'],
                        check=True, capture_output=True, text=True)
+        if update_meta:
+            _set_rank_math_meta(base, post_id, reviewed_meta)
         saved = json.loads(subprocess.run(
             base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
             check=True, capture_output=True, text=True).stdout)
         if (saved['post_status'] != 'draft' or saved['post_title'] != current['post_title']
                 or saved['post_name'] != current['post_name']
                 or saved['post_content'] != target_html or saved['post_excerpt'] != excerpt):
+            raise ValueError(f'legacy_draft_saved_mismatch: recover from {backup}')
+        if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
             raise ValueError(f'legacy_draft_saved_mismatch: recover from {backup}')
 
         if DRAFTS_INDEX_FILE.read_text(encoding='utf-8') != index_before:
