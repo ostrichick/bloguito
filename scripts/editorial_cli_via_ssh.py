@@ -57,13 +57,14 @@ _CLI_ACTIONS = {
     'publish', 'prepare-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft',
     'update-existing',
     'replace-featured-image', 'update-draft', 'replace-legacy-draft', 'promote-draft',
-    'reformat', 'fix-excerpt',
+    'reformat', 'fix-excerpt', 'repair-draft-category',
 }
 _TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
     'update-draft': {'post_content'},
     'replace-legacy-draft': {'post_content', 'post_excerpt'},
+    'repair-draft-category': {'post_category'},
     'promote-draft': {'post_status'},
     'reformat': {'post_content'},
     'fix-excerpt': {'post_excerpt'},
@@ -213,6 +214,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             raise ValueError('unexpected_wordpress_update_flags')
         if action == 'promote-draft' and fields.get('post_status') != 'publish':
             raise ValueError('unexpected_wordpress_update_flags')
+        if action == 'repair-draft-category' and not fields.get('post_category', '').isdigit():
+            raise ValueError('unexpected_wordpress_update_flags')
         return post_id
 
     def validate_guarded_payload(raw):
@@ -303,6 +306,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                              '--format=json', '--allow-root'],
                             ['--fields=ID,guid,post_title,post_mime_type', '--format=json', '--allow-root']):
                 raise ValueError('unexpected_wordpress_get_flags')
+            return
+        if (action == 'repair-draft-category'
+                and len(wp) == 8
+                and wp[:3] == ['post', 'term', 'list']
+                and wp[3].isdigit() and int(wp[3]) in allowed_ids
+                and wp[4:] == ['category', '--fields=term_id,name,slug', '--format=json', '--allow-root']):
             return
         if wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']:
             return 'guarded_mutation'

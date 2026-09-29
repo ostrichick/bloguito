@@ -393,6 +393,23 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '648', 'rank_math_description', 'unreviewed', '--allow-root'])
 
+    def test_repair_draft_category_allows_only_target_category_update(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='[]\n', stderr='')
+        transport = module.make_transport('repair-draft-category', {648}, 'bloguito')
+        transport(module._WP_PREFIX + [
+            'post', 'term', 'list', '648', 'category',
+            '--fields=term_id,name,slug', '--format=json', '--allow-root'])
+        transport(module._WP_PREFIX + [
+            'post', 'update', '648', '--post_category=4', '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            transport(module._WP_PREFIX + [
+                'post', 'update', '648', '--post_category=life-health', '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'post', 'term', 'list', '649', 'category',
+                '--fields=term_id,name,slug', '--format=json', '--allow-root'])
+
     def test_prepare_draft_can_create_and_attach_only_its_generated_image(self):
         module = load_module()
         calls = []
