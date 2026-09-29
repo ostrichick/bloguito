@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from agents.editorial import render
@@ -16,7 +17,13 @@ from agents.fast_edit import (
     validate_fast_edit,
     validate_prepared_delta_review,
 )
-from agents.task_state import fail_task_state, load_task_state, start_task_state, update_task_state
+from agents.task_state import (
+    fail_task_state,
+    intent_sha256,
+    load_task_state,
+    start_task_state,
+    update_task_state,
+)
 from agents.validation_reuse import assess_validation_reuse
 from agents.workflow_metrics import increment
 from agents.wordpress_mutation import content_sha256, get_post
@@ -99,13 +106,19 @@ def edit_reviewed_draft(
         state = load_task_state(post_id)
         if not state or state.get("action") != "edit-draft":
             raise ValueError("resumable_edit_task_state_required")
-        if state.get("status") not in {"in_progress", "saved_pending_qa"}:
+        if state.get("status") not in {"in_progress", "saved_pending_qa", "failed"}:
             raise ValueError("task_state_not_resumable")
         baseline = state.get("baseline", {})
+        state_policy = (
+            (state.get("reuse") or {}).get("fingerprint_after", {}).get("policy_digest")
+        )
+        current_policy = decision["reuse"]["fingerprint_after"]["policy_digest"]
         if (baseline.get("expected_content_sha256") != expected_content_sha256
                 or baseline.get("desired_content_sha256") != desired_sha
                 or baseline.get("candidate_content_digest")
-                    != decision["reuse"]["fingerprint_after"]["content_digest"]):
+                    != decision["reuse"]["fingerprint_after"]["content_digest"]
+                or state.get("edit_intent_sha256") != intent_sha256(edit_intent)
+                or state_policy != current_policy):
             raise ValueError("resume_state_fingerprint_conflict")
         live = get_post(
             ["sudo", "docker", "exec", "wordpress_app", "wp"],
@@ -203,6 +216,13 @@ def edit_reviewed_draft(
                 "wordpress_saved",
             ]
         else:
+            def checkpoint_standard(preflight):
+                update_task_state(
+                    post_id,
+                    completed=["source_validation", "content_review"],
+                    checkpoints={"standard_preflight": preflight},
+                )
+
             updated = revise_reviewed_draft(
                 post_id,
                 bundle,
@@ -210,6 +230,7 @@ def edit_reviewed_draft(
                 confirmed=True,
                 confirm_title_change=confirm_title_change,
                 image_path=image_path,
+                checkpoint_callback=checkpoint_standard,
             )
             completed = [
                 "baseline_read",
@@ -236,7 +257,21 @@ def edit_reviewed_draft(
             "validation_reuse": decision["reuse"],
         }
     except Exception as exc:
-        blocked = isinstance(exc, ValueError) and (
+        message = str(exc).lower()
+        transient = (
+            isinstance(exc, (TimeoutError, subprocess.TimeoutExpired, ConnectionError))
+            or (isinstance(exc, subprocess.CalledProcessError) and exc.returncode == 255)
+            or any(marker in message for marker in (
+                "official_source_http_500",
+                "official_source_http_502",
+                "official_source_http_503",
+                "official_source_http_504",
+                "timed out",
+                "timeout",
+                "transport_unavailable",
+            ))
+        )
+        blocked = not transient and isinstance(exc, ValueError) and (
             FULL_REVIEW_REQUIRED in str(exc)
             or "review" in str(exc).lower()
             or "source" in str(exc).lower()

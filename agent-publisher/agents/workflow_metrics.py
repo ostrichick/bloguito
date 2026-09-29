@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -20,16 +21,27 @@ from agents.temporal_validation import KST
 _current = ContextVar("editorial_workflow_metrics", default=None)
 
 
-def _default_path() -> Path:
+def _run_context() -> str:
+    override = os.getenv("EDITORIAL_METRICS_CONTEXT")
+    if override:
+        return override.strip().lower()
+    if any(name.startswith("test_") or ".test_" in name for name in sys.modules):
+        return "test"
+    return "live"
+
+
+def _default_path(context: str | None = None) -> Path:
     override = os.getenv("EDITORIAL_METRICS_FILE")
     if override:
         return Path(override)
-    return Path(__file__).resolve().parents[1] / "data" / "editorial_runs" / "workflow-metrics.jsonl"
+    filename = "workflow-metrics-test.jsonl" if (context or _run_context()) == "test" else "workflow-metrics.jsonl"
+    return Path(__file__).resolve().parents[1] / "data" / "editorial_runs" / filename
 
 
 class WorkflowMetrics:
     def __init__(self, action: str):
         self.action = action or "unknown"
+        self.run_context = _run_context()
         self.started_at = datetime.now(KST).isoformat()
         self.started = time.perf_counter()
         self.timings_ms: dict[str, float] = {}
@@ -53,13 +65,14 @@ class WorkflowMetrics:
             "started_at": self.started_at,
             "finished_at": datetime.now(KST).isoformat(),
             "action": self.action,
+            "run_context": self.run_context,
             "status": self.status,
             "error_type": self.error_type,
             "total_ms": round((time.perf_counter() - self.started) * 1000, 2),
             "timings_ms": self.timings_ms,
             "counters": self.counters,
         }
-        target = _default_path()
+        target = _default_path(self.run_context)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")

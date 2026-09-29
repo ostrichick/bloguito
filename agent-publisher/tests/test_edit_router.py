@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from agents.edit_router import classify_edit_route, edit_reviewed_draft
 from agents.editorial import render
+from agents.task_state import intent_sha256
 from agents.validation_reuse import assess_validation_reuse
 from test_editorial_system import sample
 
@@ -100,6 +101,7 @@ class EditRouterTests(unittest.TestCase):
         state = {
             "action": "edit-draft",
             "status": "saved_pending_qa",
+            "edit_intent_sha256": intent_sha256("표현만 간결하게"),
             "route": "fast",
             "route_reasons": [],
             "reuse": reuse,
@@ -147,7 +149,8 @@ class EditRouterTests(unittest.TestCase):
         new_sha = hashlib.sha256(new_body.encode()).hexdigest()
         reuse = assess_validation_reuse(old, new)
         state = {
-            "action": "edit-draft", "status": "in_progress", "route": "fast",
+            "action": "edit-draft", "status": "in_progress",
+            "edit_intent_sha256": intent_sha256("표현만 간결하게"), "route": "fast",
             "route_reasons": [], "reuse": reuse,
             "baseline": {
                 "expected_content_sha256": old_sha,
@@ -173,6 +176,43 @@ class EditRouterTests(unittest.TestCase):
                     393, new, old_sha, confirmed=True, edit_intent="표현만 간결하게", resume=True
                 )
         fail.assert_called_once()
+
+    def test_standard_route_records_preflight_checkpoint_from_reviser(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        new["plan"]["lead"]["text"] += " 999원"
+        body_sha = hashlib.sha256(render(old["plan"], old["sources"]).encode()).hexdigest()
+        decision = {
+            "route": "standard",
+            "reasons": ["new_fact_tokens:999원"],
+            "fast_report": {"status": "FULL_REVIEW_REQUIRED", "reasons": ["new_fact_tokens:999원"]},
+            "reuse": assess_validation_reuse(old, new),
+        }
+
+        def standard_side_effect(*args, **kwargs):
+            kwargs["checkpoint_callback"]({
+                "inventory_checked_on": "2026-09-29",
+                "source_validation": {"all_unchanged": True},
+                "review_digest": "review",
+            })
+            return 393
+
+        with patch("agents.edit_router.classify_edit_route", return_value=decision), \
+             patch("agents.edit_router.start_task_state"), \
+             patch("agents.edit_router.update_task_state") as update, \
+             patch("agents.edit_router.revise_reviewed_draft", side_effect=standard_side_effect) as standard, \
+             patch("agents.edit_router.fast_revise_reviewed_draft") as fast:
+            result = edit_reviewed_draft(
+                393, new, body_sha, confirmed=True, edit_intent="새 가격 정보 반영"
+            )
+        self.assertEqual("standard", result["route"])
+        standard.assert_called_once()
+        fast.assert_not_called()
+        self.assertTrue(any(
+            call.kwargs.get("checkpoints", {}).get("standard_preflight", {}).get("source_validation")
+            == {"all_unchanged": True}
+            for call in update.call_args_list
+        ))
 
 
 if __name__ == "__main__":

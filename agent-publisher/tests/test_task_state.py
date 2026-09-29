@@ -3,9 +3,12 @@ import unittest
 from pathlib import Path
 
 from agents.task_state import (
+    STATE_VERSION,
+    intent_sha256,
     load_task_state,
     mark_browser_qa_complete,
     start_task_state,
+    task_state_path,
     update_task_state,
 )
 
@@ -36,6 +39,9 @@ class TaskStateTests(unittest.TestCase):
         self.assertNotIn("wordpress_saved", reread["pending"])
         self.assertIn("browser_qa", reread["pending"])
         self.assertNotIn("post_content", str(reread))
+        self.assertNotIn("edit_intent", reread)
+        self.assertEqual(intent_sha256("문구 정리"), reread["edit_intent_sha256"])
+        self.assertEqual(STATE_VERSION, reread["version"])
 
     def test_unknown_phase_fails_closed(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -100,6 +106,34 @@ class TaskStateTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "browser_qa_content_sha_mismatch"):
                 mark_browser_qa_complete(641, "b" * 64, root=root)
+
+    def test_terminal_state_is_archived_before_next_task(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = start_task_state(641, action="edit-draft", edit_intent="첫 작업", root=root)
+            update_task_state(641, status="complete", root=root)
+            second = start_task_state(641, action="edit-draft", edit_intent="두 번째 작업", root=root)
+            archive = task_state_path(641, root).parent / "archive"
+            archived = list(archive.glob("*.json"))
+        self.assertEqual(1, len(archived))
+        self.assertNotEqual(first["task_id"], second["task_id"])
+
+    def test_legacy_v1_state_loads_without_raw_intent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            legacy = root / "data" / "editorial_runs" / "task-state" / "post-641.json"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text(
+                '{"version":1,"task_id":"legacy","post_id":641,"action":"edit-draft",'
+                '"edit_intent":"문구 정리","status":"failed","started_at":"x","updated_at":"x",'
+                '"baseline":{},"reuse":{},"route":null,"route_reasons":[],"completed":{},'
+                '"pending":[],"artifacts":{},"result":{},"error":null}',
+                encoding="utf-8",
+            )
+            state = load_task_state(641, root)
+        self.assertEqual(STATE_VERSION, state["version"])
+        self.assertNotIn("edit_intent", state)
+        self.assertEqual(intent_sha256("문구 정리"), state["edit_intent_sha256"])
 
 
 if __name__ == "__main__":

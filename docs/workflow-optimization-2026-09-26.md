@@ -338,3 +338,17 @@ SSH adapter에서 `prepare-draft`가 성공하면 `scripts/sync_post_catalog.py`
 - Windows CLI 진입점은 stdout/stderr를 UTF-8 `errors=replace`로 재구성하고 자식 Python 기본 인코딩도 UTF-8로 고정한다. 진단용 한글·기호 출력 실패가 성공한 편집 작업을 `UnicodeEncodeError`로 뒤집는 문제를 차단한다.
 
 대표이미지 import는 비멱등 media mutation이므로 SSH 255에서 자동 재시도하지 않는다. 반대로 `edit-draft`의 동일 post update는 CAS가 전제된 멱등적 동일값 쓰기이므로 기존 fast-edit와 같은 1회 재시도 범위를 사용할 수 있다. P0 구현 자체에서는 실제 WordPress 글이나 대표이미지를 변경하지 않는다.
+
+## 2026-09-29 P1 검증 재사용·Standard 지연 개선
+
+P0 이후 남은 실제 병목을 `workflow-metrics.jsonl`로 다시 확인했다. 정상 source fetch는 대체로 약 0.5~2.5초였지만 semantic review는 보통 10~20초에서 길게는 70~150초까지 변동했고, `revise-draft` 성공 실행의 target read가 약 10~13초, inventory sync가 약 3~10초를 차지했다. 따라서 P1은 장기 source cache보다 **연속 Fast 검토 연결, semantic review 재사용/timeout, Standard read-only 단계 병렬화**를 우선했다.
+
+- `fast_edit.py`에 full-review anchor와 digest-bound `fast_edit_chain`을 추가했다. 각 delta는 original full review/policy, 정확한 이전 content digest, 정확한 결과 content digest, delta digest, edit-intent digest에 결합된다. 모든 검토가 current이고 source/policy/factual scope가 그대로일 때 최대 5개 delta까지 연속 Fast 수정할 수 있고, chain 단절·만료·한도 초과에서는 Standard로 fail closed한다. 이전 full review의 digest를 새 원고에 직접 덮어써서 current인 것처럼 가장하지 않는다.
+- `review_cache.py`를 추가해 semantic review를 정확한 review body, 현재 policy fingerprint, 실제 reviewer 구현 파일 digest에 content-addressed 방식으로 저장한다. review 기한이 유효하고 세 fingerprint가 모두 같을 때만 모델 호출을 생략한다. malformed/stale/policy·code mismatch cache는 단순 miss로 처리한다.
+- reviewer HTTP 요청은 기본 45초 timeout을 사용하고 preferred model과 capacity fallback 한 개까지만 시도한다. 429/503/timeout은 즉시 fallback하고 500/502/504는 같은 모델에서 1회만 짧게 재시도한다. semantic/schema/auth 오류는 fallback으로 우회하지 않는다. 진단 문구도 Windows console encoding 때문에 작업 자체가 실패하지 않도록 ASCII-safe 경고를 사용한다.
+- `source_validation_cache.py`를 추가했다. 최근 동일 URL/SHA를 검증한 source는 기본 15분, 최대 30분의 짧은 receipt를 재사용하고 누락·만료된 ID만 기존 `fetch_sources_subset()`으로 다시 받는다. extractor 구현 digest가 바뀌면 receipt를 무효화하고, 미래 timestamp도 거부한다. 현재 예매·판매·신청·재고·매진 같은 상태 source는 receipt를 항상 우회해 live refresh한다. 새 SHA는 기존처럼 즉시 전체 revision을 차단한다.
+- Standard `revise-draft`의 inventory sync, 초기 target read, source recheck를 `ThreadPoolExecutor`와 독립 `contextvars` context로 병렬화했다. 세 snapshot을 서로 대조한 후 full validation을 수행하며, mutation 직전 fresh target CAS와 저장 후 target readback은 제거하지 않았다. P1의 목적은 안전 read를 없애는 것이 아니라 독립 read의 wall-clock을 겹치는 것이다.
+- task-state를 v2로 올려 `task-state/post-<ID>/current.json`과 `archive/` 구조를 사용한다. raw edit intent 대신 SHA256, artifact path+SHA, Standard preflight checkpoint와 sanitized error type/code를 저장한다. transient timeout/SSH 255/일시적 5xx는 integrity block과 구분해 같은 fingerprint의 `--resume` 후보로 남기며, v1 state는 읽기 호환한다.
+- workflow metrics는 실사용 `workflow-metrics.jsonl`과 unit-test `workflow-metrics-test.jsonl`을 기본 분리하고 `run_context`를 기록한다. review cache hit/miss/store, source receipt hit/refetch, model timeout/retry/fallback 카운터도 같은 실행 context에 기록한다.
+
+P1에서도 실제 WordPress 글을 검증 목적으로 수정하지 않는다. 구현 검증은 mock/temp 상태와 회귀 테스트로 수행하고, 실운영 첫 적용은 사용자가 실제 특정 글 수정을 요청했을 때 P0/P1 경로의 metrics와 task-state를 관찰하는 방식으로 한다.

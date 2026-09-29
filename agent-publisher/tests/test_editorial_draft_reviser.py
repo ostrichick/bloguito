@@ -42,7 +42,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
                 "fact_manifest": {"editorial_bundle": old},
             }]), encoding="utf-8")
 
+            calls = []
+
             def run(args, **kwargs):
+                calls.append(args)
                 if args[5:7] == ["post", "get"]:
                     return Mock(stdout=json.dumps(live))
                 if args[5:7] == ["post", "update"]:
@@ -65,7 +68,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
                  patch("agents.editorial_draft_reviser.invalidate_inventory") as invalidate, \
                  patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
                  patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
-                 patch("agents.editorial_draft_reviser.fetch_sources", return_value=new["sources"]), \
+                 patch("agents.editorial_draft_reviser.verify_sources_unchanged", return_value={
+                     "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
+                     "all_unchanged": True,
+                 }) as source_recheck, \
                  patch("agents.editorial_draft_reviser.save_report"), \
                  patch("agents.editorial_draft_reviser.subprocess.run", side_effect=run):
                 result = revise_reviewed_draft(
@@ -86,6 +92,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
             self.assertEqual(saved_index[0]["fact_manifest"]["editorial_bundle"], new)
             self.assertEqual(len(list((data / "editorial_runs").glob("draft-revision-393-*.json"))), 1)
             self.assertEqual(len(list((data / "editorial_runs").glob("draft-revision-index-393-*.json"))), 1)
+            # Initial target baseline now overlaps inventory/source work, while the
+            # final CAS read and post-save readback remain mandatory safety checks.
+            self.assertEqual(3, sum(args[5:7] == ["post", "get"] for args in calls))
+            source_recheck.assert_called_once()
 
     def test_revision_requires_confirmation(self):
         with self.assertRaisesRegex(ValueError, "specific_draft_revision_confirmation_required"):

@@ -5,13 +5,16 @@ import json
 import os
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import datetime
 from pathlib import Path
 
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
-from agents.editorial_writer import fetch_sources, load_inventory
+from agents.editorial_writer import load_inventory
+from agents.source_validation_cache import verify_sources_unchanged
 from config import DRAFTS_INDEX_FILE
-from sync_wordpress_inventory import hydrate_duplicate_candidates, hydrate_post, inventory_content_sha, invalidate_inventory, sync_inventory
+from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import backup_json, get_post, update_post, verify_cas, verify_saved_fields
 
 try:
@@ -80,7 +83,8 @@ def _normalize_renderer_migrations(content):
 
 
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
-                           confirm_title_change=False, image_path=None):
+                           confirm_title_change=False, image_path=None,
+                           checkpoint_callback=None):
     """Replace one unchanged reviewed draft with another fully reviewed version.
 
     This is intentionally separate from update_draft(), which only permits
@@ -103,15 +107,6 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         raise ValueError("editorial_publication_busy: inspect the existing job")
 
     try:
-        sync_inventory()
-        inventory = load_inventory()
-        current = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
-        if (not current or current["post_status"] != "draft"
-                or inventory_content_sha(current) != expected_content_sha256):
-            raise ValueError("draft_missing_or_modified")
-        inventory = hydrate_post(inventory, post_id)
-        current = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
-
         if not DRAFTS_INDEX_FILE.is_file():
             raise ValueError("reviewed_draft_index_missing")
         index_before = DRAFTS_INDEX_FILE.read_text(encoding="utf-8")
@@ -124,11 +119,46 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         old_brief = old_bundle.get("brief", {})
         new_brief = bundle.get("brief", {})
         new_title = bundle.get("plan", {}).get("title")
-        title_changed = new_title != current["post_title"]
         if (old_brief.get("id") != new_brief.get("id")
                 or old_brief.get("category_key") != new_brief.get("category_key")
-                or old_brief.get("entity") != new_brief.get("entity")
-                or current["post_title"] != old_bundle.get("plan", {}).get("title")
+                or old_brief.get("entity") != new_brief.get("entity")):
+            raise ValueError("draft_revision_topic_or_title_mismatch")
+
+        base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+        post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+        # Inventory, the target baseline and official-source recheck are independent
+        # read-only prerequisites. Run them together, then reconcile their snapshots
+        # before any validation can lead to a write.
+        inventory_context = copy_context()
+        target_context = copy_context()
+        source_context = copy_context()
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            inventory_future = pool.submit(inventory_context.run, sync_inventory)
+            target_future = pool.submit(
+                target_context.run, get_post, base, post_id, fields=post_fields)
+            source_future = pool.submit(
+                source_context.run,
+                verify_sources_unchanged,
+                bundle["brief"],
+                bundle["sources"],
+            )
+            inventory_future.result()
+            initial_live = target_future.result()
+            source_validation = source_future.result()
+
+        inventory = load_inventory()
+        current_row = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
+        if (not current_row or current_row["post_status"] != "draft"
+                or inventory_content_sha(current_row) != expected_content_sha256):
+            raise ValueError("draft_missing_or_modified")
+        if (initial_live.get("post_status") != current_row.get("post_status")
+                or initial_live.get("post_title") != current_row.get("post_title")
+                or hashlib.sha256(initial_live.get("post_content", "").encode("utf-8")).hexdigest()
+                    != inventory_content_sha(current_row)):
+            raise ValueError("inventory_post_detail_changed")
+        current = initial_live
+        title_changed = new_title != current["post_title"]
+        if (current["post_title"] != old_bundle.get("plan", {}).get("title")
                 or (title_changed and not confirm_title_change)):
             raise ValueError("draft_revision_topic_or_title_mismatch")
 
@@ -160,15 +190,20 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         report = validate_bundle(bundle, remaining)
         if report["status"] != "ready":
             raise ValueError(f'draft_editorial_review_failed: {report["reasons"]}')
+        if checkpoint_callback is not None:
+            checkpoint_callback({
+                "inventory_checked_on": inventory.get("checked_on"),
+                "source_validation": source_validation,
+                "review_digest": bundle.get("review", {}).get("digest"),
+                "candidate_content_sha256": hashlib.sha256(
+                    render(bundle["plan"], bundle["sources"]).encode("utf-8")
+                ).hexdigest(),
+            })
 
-        fresh_sources = fetch_sources(bundle["brief"])
-        expected_sources = {s["url"]: s["sha256"] for s in bundle["sources"]}
-        observed_sources = {s["url"]: s["sha256"] for s in fresh_sources}
-        if expected_sources != observed_sources:
-            raise ValueError("official_sources_changed_since_review")
-
-        base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
-        live = get_post(base, post_id)
+        # This second target read is intentionally retained. It is the final CAS
+        # immediately before the mutation and closes the race window after the
+        # parallel read-only preflight.
+        live = get_post(base, post_id, fields=post_fields)
         if (not verify_cas(live, status="draft", title=current["post_title"],
                            content_sha=expected_content_sha256)
                 or DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before):

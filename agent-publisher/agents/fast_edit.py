@@ -21,6 +21,8 @@ from agents.editorial import (
     all_blocks,
     digest,
     excerpt_from_lead,
+    fresh,
+    policy,
     policy_fingerprint,
     render,
     validate_bundle,
@@ -33,10 +35,102 @@ from agents.wordpress_mutation import backup_json, get_post, update_post, verify
 
 
 FULL_REVIEW_REQUIRED = "FULL_REVIEW_REQUIRED"
+FAST_CHAIN_MAX_LENGTH = 5
 
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _review_body(bundle):
+    return {
+        key: bundle[key]
+        for key in ("brief", "sources", "plan", "temporal_source")
+        if key in bundle
+    }
+
+
+def _edit_intent_digest(edit_intent):
+    return digest({"edit_intent": edit_intent.strip()})
+
+
+def _delta_checks_pass(delta_review):
+    return (
+        isinstance(delta_review, dict)
+        and delta_review.get("issues") == []
+        and all(value is True for value in delta_review.get("checks", {}).values())
+    )
+
+
+def validate_fast_review_lineage(bundle, now=None):
+    """Validate a full-review anchor plus zero or more bound Fast deltas.
+
+    The full semantic review remains the trust anchor. Every Fast delta must bind
+    the exact prior content digest to the exact resulting content digest. This
+    permits consecutive wording/layout edits without pretending that the old full
+    review directly reviewed the newest prose.
+    """
+    now = now or datetime.now(KST)
+    review = bundle.get("review") if isinstance(bundle.get("review"), dict) else {}
+    current_policy = policy_fingerprint()
+    body_digest = digest(_review_body(bundle))
+    reasons = []
+    if review.get("policy_digest") != current_policy:
+        reasons.append("review_policy_changed")
+    if not fresh(review.get("checked_at"), now, policy()["review_max_age_hours"]):
+        reasons.append("review_stale")
+    required_checks = policy()["review_checks"]
+    if (any(review.get("checks", {}).get(key) is not True for key in required_checks)
+            or review.get("issues") != []):
+        reasons.append("semantic_review_failed")
+    if reasons:
+        return {"status": FULL_REVIEW_REQUIRED, "reasons": reasons, "chain_length": 0}
+    if review.get("digest") == body_digest:
+        return {"status": "ready", "reasons": [], "chain_length": 0}
+
+    chain = bundle.get("fast_edit_chain")
+    if not isinstance(chain, list) or not chain:
+        return {
+            "status": FULL_REVIEW_REQUIRED,
+            "reasons": ["review_not_bound_to_current_content"],
+            "chain_length": 0,
+        }
+    if len(chain) > FAST_CHAIN_MAX_LENGTH:
+        return {
+            "status": FULL_REVIEW_REQUIRED,
+            "reasons": ["fast_review_chain_limit"],
+            "chain_length": len(chain),
+        }
+
+    expected_base = review.get("digest")
+    for index, delta_review in enumerate(chain):
+        if not _delta_checks_pass(delta_review):
+            reasons.append(f"fast_delta_review_failed:{index}")
+            break
+        if delta_review.get("base_review_digest") != review.get("digest"):
+            reasons.append(f"fast_delta_anchor_mismatch:{index}")
+            break
+        if delta_review.get("base_policy_digest") != current_policy:
+            reasons.append(f"fast_delta_policy_mismatch:{index}")
+            break
+        if delta_review.get("base_content_digest") != expected_base:
+            reasons.append(f"fast_delta_base_mismatch:{index}")
+            break
+        result_digest = delta_review.get("result_content_digest")
+        if not isinstance(result_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", result_digest):
+            reasons.append(f"fast_delta_result_missing:{index}")
+            break
+        if not fresh(delta_review.get("checked_at"), now, policy()["review_max_age_hours"]):
+            reasons.append(f"fast_delta_review_stale:{index}")
+            break
+        expected_base = result_digest
+    if not reasons and expected_base != body_digest:
+        reasons.append("fast_review_chain_not_bound_to_current_content")
+    return {
+        "status": "ready" if not reasons else FULL_REVIEW_REQUIRED,
+        "reasons": reasons,
+        "chain_length": len(chain),
+    }
 
 
 def _evidence_pairs(bundle):
@@ -223,6 +317,8 @@ def classify_fast_edit(old_bundle, new_bundle):
         "status": "candidate" if not reasons else FULL_REVIEW_REQUIRED,
         "reasons": reasons,
         "changed_blocks": delta,
+        "base_content_digest": digest(_review_body(old_bundle)),
+        "result_content_digest": digest(_review_body(new_bundle)),
     }
 
 
@@ -241,12 +337,36 @@ def validate_fast_edit(old_bundle, new_bundle, now=None):
     if classification["status"] != "candidate":
         return classification
 
-    old_report = validate_bundle(old_bundle, _synthetic_inventory(old_bundle, now), now=now)
+    old_report = validate_bundle(
+        old_bundle,
+        _synthetic_inventory(old_bundle, now),
+        now=now,
+        require_review=False,
+    )
     if old_report["status"] != "ready":
         return {
             "status": FULL_REVIEW_REQUIRED,
             "reasons": ["base_review_not_current", *old_report["reasons"]],
             "changed_blocks": classification["changed_blocks"],
+            "base_content_digest": classification["base_content_digest"],
+            "result_content_digest": classification["result_content_digest"],
+        }
+    lineage = validate_fast_review_lineage(old_bundle, now=now)
+    if lineage["status"] != "ready":
+        return {
+            "status": FULL_REVIEW_REQUIRED,
+            "reasons": ["base_review_not_current", *lineage["reasons"]],
+            "changed_blocks": classification["changed_blocks"],
+            "base_content_digest": classification["base_content_digest"],
+            "result_content_digest": classification["result_content_digest"],
+        }
+    if lineage.get("chain_length", 0) >= FAST_CHAIN_MAX_LENGTH:
+        return {
+            "status": FULL_REVIEW_REQUIRED,
+            "reasons": ["fast_review_chain_limit"],
+            "changed_blocks": classification["changed_blocks"],
+            "base_content_digest": classification["base_content_digest"],
+            "result_content_digest": classification["result_content_digest"],
         }
     new_report = validate_bundle(
         new_bundle,
@@ -259,6 +379,8 @@ def validate_fast_edit(old_bundle, new_bundle, now=None):
             "status": FULL_REVIEW_REQUIRED,
             "reasons": ["fast_deterministic_check_failed", *new_report["reasons"]],
             "changed_blocks": classification["changed_blocks"],
+            "base_content_digest": classification["base_content_digest"],
+            "result_content_digest": classification["result_content_digest"],
         }
     return classification
 
@@ -270,6 +392,8 @@ def _review_delta(old_bundle, new_bundle, delta, edit_intent):
             "base_review_digest": old_bundle["review"]["digest"],
             "base_policy_digest": old_bundle["review"]["policy_digest"],
             "delta_digest": digest(delta),
+            "base_content_digest": digest(_review_body(old_bundle)),
+            "result_content_digest": digest(_review_body(new_bundle)),
             "checks": {
                 "meaning_preserved": True,
                 "evidence_still_supports": True,
@@ -278,7 +402,7 @@ def _review_delta(old_bundle, new_bundle, delta, edit_intent):
                 "reader_task_preserved": True,
             },
             "issues": [],
-            "edit_intent": edit_intent,
+            "edit_intent_digest": _edit_intent_digest(edit_intent),
             "checked_at": datetime.now(KST).isoformat(),
         }
     return EditorialWriterAgent(writing_enabled=False).review_delta(
@@ -306,11 +430,13 @@ def validate_prepared_delta_review(old_bundle, report, delta_review, edit_intent
         return False
     if delta_review.get("delta_digest") != digest(report.get("changed_blocks", {})):
         return False
-    if delta_review.get("edit_intent") != edit_intent:
+    if delta_review.get("base_content_digest") != report.get("base_content_digest"):
         return False
-    if delta_review.get("issues") != []:
+    if delta_review.get("result_content_digest") != report.get("result_content_digest"):
         return False
-    return all(value is True for value in delta_review.get("checks", {}).values())
+    if delta_review.get("edit_intent_digest") != _edit_intent_digest(edit_intent):
+        return False
+    return _delta_checks_pass(delta_review)
 
 
 def prepare_fast_delta_review(old_bundle, new_bundle, report, edit_intent):
@@ -404,6 +530,12 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         stored = copy.deepcopy(bundle)
         stored["review"] = old_bundle["review"]
         stored["fast_edit_review"] = delta_review
+        prior_chain = old_bundle.get("fast_edit_chain", [])
+        if not isinstance(prior_chain, list):
+            raise ValueError(FULL_REVIEW_REQUIRED + ":invalid_fast_edit_chain")
+        if len(prior_chain) >= FAST_CHAIN_MAX_LENGTH:
+            raise ValueError(FULL_REVIEW_REQUIRED + ":fast_review_chain_limit")
+        stored["fast_edit_chain"] = [*copy.deepcopy(prior_chain), copy.deepcopy(delta_review)]
         item["fact_manifest"]["editorial_bundle"] = stored
         temporary = DRAFTS_INDEX_FILE.with_suffix(".fast-revision-tmp")
         temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")

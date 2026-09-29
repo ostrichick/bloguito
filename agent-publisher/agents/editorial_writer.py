@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from config import GEMINI_API_KEY, CATEGORIES, resolve_category
 from agents.editorial import policy, policy_fingerprint, digest, validate_bundle, render, topic_reasons, ROOT, save_report
 from agents.fact_validation import snapshot
+from agents.review_cache import load_cached_review, store_cached_review
 from agents.search_intent import INVENTORY
 from agents.temporal_validation import KST, extract_evidence
 from agents.workflow_metrics import increment, timed
@@ -807,13 +808,25 @@ def _fetch_sources_sequential(brief):
 
 
 class EditorialWriterAgent:
-    def __init__(self, client=None, writing_enabled=True):
+    def __init__(self, client=None, writing_enabled=True, review_cache_enabled=None):
         self.writing_enabled = writing_enabled
+        self.review_cache_enabled = (client is None) if review_cache_enabled is None else bool(review_cache_enabled)
+        raw_timeout = os.getenv('EDITORIAL_MODEL_TIMEOUT_SECONDS', '45')
+        try:
+            self.model_timeout_seconds = max(10, min(int(raw_timeout), 120))
+        except (TypeError, ValueError):
+            self.model_timeout_seconds = 45
         if client is not None:
             self.client = client
         else:
             from google import genai
-            self.client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+            self.client = (
+                genai.Client(
+                    api_key=GEMINI_API_KEY,
+                    http_options={'timeout': self.model_timeout_seconds * 1000},
+                )
+                if GEMINI_API_KEY else None
+            )
 
     def _call(self, task, data, schema, role):
         if self.client is None:
@@ -823,9 +836,15 @@ class EditorialWriterAgent:
         instructions = (ROOT.parent / 'docs' / 'EDITORIAL_SYSTEM.md').read_text(encoding='utf-8')
         preferred = os.getenv(f'EDITORIAL_{role.upper()}_MODEL', policy().get(role+'_model', 'gemini-3.6-flash'))
         candidates = get_model_cascade(preferred)
+        # Keep one preferred model plus one capacity-oriented fallback. A policy
+        # preference that differs from the global cascade used to create a three-
+        # model chain, multiplying long provider stalls. The last cascade entry is
+        # intentionally the high-capacity fallback.
+        if len(candidates) > 2:
+            candidates = [candidates[0], candidates[-1]]
         last_exc = None
         for model_name in candidates:
-            for attempt in range(3):
+            for attempt in range(2):
                 try:
                     response = self.client.models.generate_content(
                         model=model_name,
@@ -842,17 +861,39 @@ class EditorialWriterAgent:
                 except Exception as exc:
                     last_exc = exc
                     code = getattr(exc, 'code', None)
-                    if code in (429, 503) or '429' in str(exc) or '503' in str(exc):
-                        print(f"⚠️ [Editorial] 모델 {model_name} 지연/할당량 한도 도달 ({exc}). 다음 백업 모델로 자동 전환합니다...")
+                    message = str(exc).lower()
+                    timed_out = (
+                        'timeout' in message
+                        or 'timed out' in message
+                        or type(exc).__name__.lower() in {'timeouterror', 'readtimeout', 'connecttimeout'}
+                    )
+                    if timed_out:
+                        increment('model_timeout')
+                        increment('model_fallback')
+                        print(f"[Editorial] WARNING: model {model_name} timed out; switching to fallback")
                         break
-                    if code not in {500, 502, 504} or attempt == 2:
+                    if code in (429, 503) or '429' in message or '503' in message:
+                        increment('model_fallback')
+                        print(f"[Editorial] WARNING: model {model_name} unavailable/quota-limited; switching to fallback ({exc})")
+                        break
+                    if code not in {500, 502, 504}:
                         raise
-                    time.sleep(attempt+1)
+                    if attempt == 0:
+                        increment('model_retry')
+                        time.sleep(1)
+                        continue
+                    increment('model_fallback')
+                    break
         if last_exc:
             raise last_exc
 
     def review(self, bundle):
         body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
+        if self.review_cache_enabled:
+            cached = load_cached_review(bundle)
+            if cached is not None:
+                self.last_used_model = 'cached-semantic-review'
+                return cached
         with timed('semantic_review'):
             result = self._call(
                 '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, 표의 각 행·셀, FAQ를 원문과 대조하라. '
@@ -870,8 +911,11 @@ class EditorialWriterAgent:
             '내부 관련 글은 공식 출처나 신청·조회 버튼이 아니다. '
             '각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
                 body, Review, 'reviewer')
-        return {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
-                'checked_at': datetime.now(KST).isoformat()}
+        review = {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
+                  'checked_at': datetime.now(KST).isoformat()}
+        if self.review_cache_enabled:
+            store_cached_review(bundle, review)
+        return review
 
     def review_delta(self, old_bundle, new_bundle, delta, edit_intent):
         old_sources = {source['id']: source for source in old_bundle['sources']}
@@ -904,6 +948,7 @@ class EditorialWriterAgent:
                 'reviewer',
             )
         base_body = {k: old_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in old_bundle}
+        result_body = {k: new_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in new_bundle}
         return {
             **result,
             'mode': 'delta',
@@ -911,7 +956,8 @@ class EditorialWriterAgent:
             'base_policy_digest': old_bundle.get('review', {}).get('policy_digest'),
             'delta_digest': digest(delta),
             'base_content_digest': digest(base_body),
-            'edit_intent': edit_intent,
+            'result_content_digest': digest(result_body),
+            'edit_intent_digest': digest({'edit_intent': edit_intent.strip()}),
             'checked_at': datetime.now(KST).isoformat(),
         }
 

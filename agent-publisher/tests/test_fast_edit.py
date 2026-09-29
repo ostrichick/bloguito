@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agents.editorial import render
+from agents.editorial import digest, render
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
     _review_delta,
@@ -17,6 +17,7 @@ from agents.fast_edit import (
     prepare_fast_delta_review,
     validate_prepared_delta_review,
     validate_fast_edit,
+    validate_fast_review_lineage,
 )
 from test_editorial_system import NOW, sample
 
@@ -143,7 +144,9 @@ class FastEditTests(unittest.TestCase):
             'mode': 'delta',
             'base_review_digest': old['review']['digest'],
             'base_policy_digest': old['review']['policy_digest'],
-            'delta_digest': __import__('agents.editorial', fromlist=['digest']).digest(report['changed_blocks']),
+            'delta_digest': digest(report['changed_blocks']),
+            'base_content_digest': report['base_content_digest'],
+            'result_content_digest': report['result_content_digest'],
             'checks': {
                 'meaning_preserved': True,
                 'evidence_still_supports': True,
@@ -152,7 +155,7 @@ class FastEditTests(unittest.TestCase):
                 'reader_task_preserved': True,
             },
             'issues': [],
-            'edit_intent': '소제목 표현만 간단하게 다듬기',
+            'edit_intent_digest': digest({'edit_intent': '소제목 표현만 간단하게 다듬기'}),
         }
         self.assertTrue(validate_prepared_delta_review(
             old, report, delta_review, '소제목 표현만 간단하게 다듬기'))
@@ -166,7 +169,9 @@ class FastEditTests(unittest.TestCase):
             'mode': 'delta',
             'base_review_digest': old['review']['digest'],
             'base_policy_digest': old['review']['policy_digest'],
-            'delta_digest': __import__('agents.editorial', fromlist=['digest']).digest(report['changed_blocks']),
+            'delta_digest': digest(report['changed_blocks']),
+            'base_content_digest': report['base_content_digest'],
+            'result_content_digest': report['result_content_digest'],
             'checks': {
                 'meaning_preserved': True,
                 'evidence_still_supports': True,
@@ -175,7 +180,7 @@ class FastEditTests(unittest.TestCase):
                 'reader_task_preserved': True,
             },
             'issues': [],
-            'edit_intent': '소제목 표현만 간단하게 다듬기',
+            'edit_intent_digest': digest({'edit_intent': '소제목 표현만 간단하게 다듬기'}),
         }
         with patch('agents.fast_edit._review_delta', return_value=reviewed) as review:
             prepared = prepare_fast_delta_review(
@@ -224,11 +229,24 @@ class FastEditTests(unittest.TestCase):
                 raise AssertionError(args)
 
             changed = {'removed': [], 'added': []}
+            report = {
+                'status': 'candidate',
+                'reasons': [],
+                'changed_blocks': changed,
+                'base_content_digest': digest({
+                    key: old[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in old
+                }),
+                'result_content_digest': digest({
+                    key: new[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in new
+                }),
+            }
             delta = {
                 'mode': 'delta',
                 'base_review_digest': old['review']['digest'],
                 'base_policy_digest': old['review']['policy_digest'],
-                'delta_digest': __import__('agents.editorial', fromlist=['digest']).digest(changed),
+                'delta_digest': digest(changed),
+                'base_content_digest': report['base_content_digest'],
+                'result_content_digest': report['result_content_digest'],
                 'checks': {
                     'meaning_preserved': True,
                     'evidence_still_supports': True,
@@ -237,13 +255,12 @@ class FastEditTests(unittest.TestCase):
                     'reader_task_preserved': True,
                 },
                 'issues': [],
-                'edit_intent': '소제목 표현만 간단하게 다듬기',
+                'edit_intent_digest': digest({'edit_intent': '소제목 표현만 간단하게 다듬기'}),
                 'checked_at': datetime.now().astimezone().isoformat(),
             }
             with patch('agents.fast_edit.ROOT', root), \
                  patch('agents.fast_edit.DRAFTS_INDEX_FILE', index), \
-                 patch('agents.fast_edit.validate_fast_edit', return_value={
-                     'status': 'candidate', 'reasons': [], 'changed_blocks': changed}), \
+                 patch('agents.fast_edit.validate_fast_edit', return_value=report), \
                  patch('agents.fast_edit._review_delta', return_value=delta), \
                  patch('agents.fast_edit.subprocess.run', side_effect=run):
                 result = fast_revise_reviewed_draft(
@@ -256,7 +273,45 @@ class FastEditTests(unittest.TestCase):
             self.assertFalse(any(args[5:7] == ['post', 'list'] for args in calls))
             saved = json.loads(index.read_text(encoding='utf-8'))[0]['fact_manifest']['editorial_bundle']
             self.assertIn('fast_edit_review', saved)
+            self.assertEqual(1, len(saved['fast_edit_chain']))
             self.assertEqual(old['review'], saved['review'])
+
+    def test_consecutive_fast_edits_keep_valid_review_lineage(self):
+        old = sample()
+        first = copy.deepcopy(old)
+        first['plan']['sections'][0]['heading'] = '첫 번째 간단한 소제목'
+        report_one = validate_fast_edit(old, first, now=NOW)
+        self.assertEqual('candidate', report_one['status'])
+        intent_one = '첫 번째 표현 정리'
+        delta_one = {
+            'mode': 'delta',
+            'base_review_digest': old['review']['digest'],
+            'base_policy_digest': old['review']['policy_digest'],
+            'delta_digest': digest(report_one['changed_blocks']),
+            'base_content_digest': report_one['base_content_digest'],
+            'result_content_digest': report_one['result_content_digest'],
+            'checks': {
+                'meaning_preserved': True,
+                'evidence_still_supports': True,
+                'conditions_preserved': True,
+                'no_new_claims': True,
+                'reader_task_preserved': True,
+            },
+            'issues': [],
+            'edit_intent_digest': digest({'edit_intent': intent_one}),
+            'checked_at': NOW.isoformat(),
+        }
+        first['review'] = old['review']
+        first['fast_edit_review'] = delta_one
+        first['fast_edit_chain'] = [delta_one]
+        lineage = validate_fast_review_lineage(first, now=NOW)
+        self.assertEqual('ready', lineage['status'])
+
+        second = copy.deepcopy(first)
+        second['plan']['sections'][0]['heading'] = '두 번째 간단한 소제목'
+        report_two = validate_fast_edit(first, second, now=NOW)
+        self.assertEqual('candidate', report_two['status'])
+        self.assertEqual(report_one['result_content_digest'], report_two['base_content_digest'])
 
     def test_fast_revision_requires_edit_intent(self):
         old, new = self._pair()

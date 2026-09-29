@@ -312,7 +312,7 @@ class EditorialTests(unittest.TestCase):
         with patch('agents.editorial_writer.time.sleep'):
             with self.assertRaises(Busy):
                 writer._call('test',{},Plan,'writer')
-        self.assertEqual(writer.client.models.generate_content.call_count,3)
+        self.assertEqual(writer.client.models.generate_content.call_count,2)
 
     def test_model_auth_error_does_not_retry(self):
         from agents.editorial_writer import Plan

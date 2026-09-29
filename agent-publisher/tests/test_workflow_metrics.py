@@ -21,6 +21,7 @@ class WorkflowMetricsTests(unittest.TestCase):
             rows = [json.loads(line) for line in target.read_text(encoding='utf-8').splitlines()]
             self.assertEqual(1, len(rows))
             self.assertEqual('revise-draft', rows[0]['action'])
+            self.assertEqual('test', rows[0]['run_context'])
             self.assertEqual('ok', rows[0]['status'])
             self.assertEqual(2, rows[0]['counters']['wp_roundtrips'])
             self.assertIn('source_fetch', rows[0]['timings_ms'])

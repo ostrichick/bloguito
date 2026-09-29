@@ -61,18 +61,19 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 | 검토된 임시글의 표현·중복 정리·기존 사실 재배치 (저수준 직접 호출) | `fast-revise-draft`, 실제 요청 범위를 --edit-intent로 전달 | 일반 작업에서는 `edit-draft`를 우선하고, 진단·테스트에서 Fast 경로를 명시적으로 고정할 때만 직접 호출 |
 | 공개 글의 표현 정리 | update-existing | 현재 공개 글 갱신의 전체 검토·원본 보존 절차 |
 
-**묶음 처리:** 같은 글·같은 승인 범위의 문구 다듬기, 중복 FAQ 제거, 기존 사실의 표 정리를 한 후보 bundle에 모아 검토한 뒤 한 번 저장한다. 단순 이동·삭제가 아니라 의미가 달라지는지 변경 블록을 검토한다. 저장 전에 추가 요청이 오면 범위와 경로를 다시 분류해 후보에 합치고 최종 후보로 검토한다. 저장 후 추가 요청은 새 원본과 검토 유효성을 기준으로 처리한다. 현재 fast 수정은 기존 full review를 보존하므로 첫 수정 뒤 두 번째 fast 수정은 원고/검토 불일치로 전체 재검토가 필요할 수 있다. 검토 digest나 timestamp를 수동으로 바꿔 통과시키지 않는다. FULL_REVIEW_REQUIRED이면 필요한 전체 검토 경로로 전환하고 사용자에게 이유를 짧게 알린다. 요청 범위 자체를 확대해야 한다면 먼저 필요한 정보를 확인한다.
+**묶음 처리:** 같은 글·같은 승인 범위의 문구 다듬기, 중복 FAQ 제거, 기존 사실의 표 정리를 한 후보 bundle에 모아 검토한 뒤 한 번 저장한다. 단순 이동·삭제가 아니라 의미가 달라지는지 변경 블록을 검토한다. 저장 전에 추가 요청이 오면 범위와 경로를 다시 분류해 후보에 합치고 최종 후보로 검토한다. 저장 후 추가 요청은 새 원본과 검토 유효성을 기준으로 처리한다. P1부터 Fast 수정은 최초 full review를 trust anchor로 두고 각 delta의 `base_content_digest → result_content_digest`를 연결한 `fast_edit_chain`을 검증한다. 정책과 review 기한이 그대로이고 각 delta 검토가 모두 유효하면 최대 5개 delta까지 연속 Fast 수정이 가능하며, chain이 끊기거나 한도에 도달하면 `FULL_REVIEW_REQUIRED`로 Standard에 승격한다. 검토 digest나 timestamp를 수동으로 바꿔 통과시키지 않는다. FULL_REVIEW_REQUIRED이면 필요한 전체 검토 경로로 전환하고 사용자에게 이유를 짧게 알린다. 요청 범위 자체를 확대해야 한다면 먼저 필요한 정보를 확인한다.
 
 **같은 작업 안의 재사용:** 다음 조건을 충족하는 자료만 재사용한다.
 
 - 정책 문서와 설정: 같은 작업자가 이미 읽었고 이후 파일이 바뀌지 않았으면 기존 이해를 사용한다. 다른 작업이 파일을 수정했을 가능성이 있으면 변경 여부부터 확인한다.
 - WordPress 목록: 같은 실행에서 확보한 목록은 읽기 전용 review/check에 재사용한다. 실제 신규 등록·일반 갱신의 최신 inventory와 저장 직전 원본 일치 확인은 정규 코드가 수행하도록 유지한다. 쓰기 이후 무효화된 목록이나 다른 작업의 오래된 목록을 재사용하지 않는다. fast 경로는 기존 구현대로 대상 한 글만 조회한다.
-- 의미 검토: 원고·근거·정책의 결합과 검토 기한이 여전히 유효할 때만 재사용한다. 변경된 원고에는 변경 범위에 맞는 새 검토가 필요하다. 등록 코드가 동일 검토를 다시 호출하지 않도록 기존 경로를 그대로 사용한다.
+- 의미 검토: 원고·근거·정책과 reviewer contract의 fingerprint 및 검토 기한이 모두 같을 때 `data/editorial_runs/review-cache/`의 content-addressed review를 재사용한다. reviewer 코드를 바꾸면 contract digest가 달라져 cache가 자동 무효화된다. 변경된 원고에는 변경 범위에 맞는 새 검토가 필요하다. 모델 호출은 기본 45초 요청 timeout(`EDITORIAL_MODEL_TIMEOUT_SECONDS`, 10~120초 제한)을 사용하고 preferred model 뒤 capacity fallback 한 개까지만 시도한다. 429/503/timeout은 fallback 대상으로 취급하지만 semantic/schema 실패를 다른 모델로 우회하지 않는다.
+- 공식 source 재확인: Standard revision 중 이미 같은 URL/SHA를 최근 확인한 source는 `data/editorial_runs/source-validation/`의 짧은 receipt를 재사용한다. 기본 TTL은 15분이며 `EDITORIAL_SOURCE_RECEIPT_TTL_MINUTES`로 조절하되 최대 30분이다. receipt가 없거나 만료됐거나 extractor 코드가 바뀐 source만 `fetch_sources_subset()`으로 다시 받는다. 예매·판매·신청·재고·매진 등 현재 상태를 직접 담은 source는 TTL과 무관하게 항상 live refresh한다. 새 SHA가 관측되면 `official_sources_changed_since_review`로 차단한다.
 - 변경안 비교와 화면 확인: 같은 변경안 적용이 이미 승인됐으면 승인 전 비교 패키지를 다시 생성하지 않는다. CTA·레이아웃 등 검증 대상이 그대로이고 이전 확인이 현재 변경에도 유효한 범위만 재사용한다. 표 구조 변경은 전체 표 접근성 QA를 수행한다.
 
 `edit-draft`는 위 재사용 규칙을 코드로 강제한다. 기존 tracked bundle과 새 후보의 source/policy/review fingerprint를 기록하고, Fast 적합성이 확인되면 전체 inventory·전체 source 재수집·전체 semantic review 대신 기존 검증과 changed-block delta review를 사용한다. Fast 조건을 벗어나면 검사를 우회하지 않고 기존 `revise-draft` Standard 경로로 전환한다.
 
-수정 명령은 `agent-publisher/data/editorial_runs/task-state/post-<ID>.json`에 Git 비추적 작업 상태를 원자적으로 기록한다. 세션 압축·연결 중단 뒤에는 이 파일의 `pending` 단계와 WordPress 현재 SHA를 먼저 비교하고 완료된 source/review/image 단계를 반복하지 않는다. WordPress 저장이 끝났지만 화면 확인이 남아 있으면 상태는 `saved_pending_qa`이며, 브라우저 QA 후에만 `browser_qa`를 완료 처리한다.
+수정 명령은 `agent-publisher/data/editorial_runs/task-state/post-<ID>/current.json`에 Git 비추적 작업 상태를 원자적으로 기록하고, 종료된 이전 상태는 같은 디렉터리의 `archive/`에 보존한다. v2 state에는 raw `edit_intent`를 저장하지 않고 SHA256만 기록하며, artifact는 경로와 가능한 경우 파일 SHA를 함께 기록한다. 세션 압축·연결 중단 뒤에는 `pending` 단계, candidate/policy/edit-intent fingerprint와 WordPress 현재 SHA를 먼저 비교하고 완료된 source/review/image 단계를 반복하지 않는다. Standard read-only preflight가 완료된 뒤 실패한 경우에도 source validation/review checkpoint를 남긴다. WordPress 저장이 끝났지만 화면 확인이 남아 있으면 상태는 `saved_pending_qa`이며, 브라우저 QA 후에만 `browser_qa`를 완료 처리한다. 기존 v1 `post-<ID>.json`은 읽을 때 v2 형태로 호환 처리한다.
 
 ```powershell
 # reviewed draft 일반 수정: Fast 적합성을 먼저 자동 판정하고 필요할 때만 Standard로 전환
@@ -96,6 +97,8 @@ python agent-publisher/editorial_cli.py complete-task-qa `
 ```
 
 `replace-featured-image`의 media import는 응답 유실 시 중복 attachment를 만들 수 있어 SSH 255 자동 재시도를 하지 않는다. 이 경우 active task-state를 덮어쓰지 말고 현재 `_thumbnail_id`를 확인해 복구한다. `edit-draft --resume`은 live 본문 SHA가 작업 시작 SHA 또는 저장 예정 SHA 중 하나일 때만 이어가며 제3의 SHA가 관측되면 동시 변경으로 차단한다.
+
+**Standard P1 preflight:** `revise-draft`는 전체 inventory sync, 대상 글의 초기 baseline read, 공식 source 동일성 recheck를 서로 독립적인 읽기 작업으로 보고 최대 3개 worker에서 병렬 실행한다. 세 결과를 대조한 뒤 기존 full validation을 수행하며, 저장 직전 대상 글을 다시 읽는 최종 CAS와 저장 직후 readback은 계속 유지한다. 즉 P1은 원격 안전 read 횟수를 삭제하는 단계가 아니라 겹칠 수 있는 읽기 시간을 병렬화하는 단계이며, WP roundtrip 자체를 합치는 작업은 P2 범위다.
 
 **신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 통과하면 현재 의미 검토가 없는 경우 reviewer와 `DesignerAgent` 대표 이미지 생성·비전 검수를 동시에 실행한다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다.
 
@@ -141,7 +144,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 
 WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, 본문 SHA256, 본문 URL signature만 수집한다. 신규 글의 URL 중복과 제목 중복은 이 경량 정보로 검사하고, 기존 글 수정에서 동일 공식 URL이 단순 출처인지 본문·CTA 중복인지 구분해야 할 때만 해당 후보 글의 본문을 단건 `post get`으로 추가 조회한다. 제한형 SSH transport는 inventory에서 관측된 후보 ID에 읽기 권한만 추가하며 mutation 대상 ID 집합은 확장하지 않는다.
 
-내부 성능 기록은 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에 JSONL로 쌓인다. `total_ms`, inventory/source/semantic-review 등 단계별 시간과 WordPress/source 요청 횟수만 저장하고 원고·출처 본문은 기록하지 않는다.
+내부 실사용 성능 기록은 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에 JSONL로 쌓인다. unit test는 기본적으로 `workflow-metrics-test.jsonl`로 분리되며 각 행의 `run_context`가 `live`/`test`를 표시한다. `total_ms`, inventory/source/semantic-review 등 단계별 시간과 WordPress/source 요청 횟수, cache hit/fallback 같은 운영 카운터만 저장하고 원고·출처 본문은 기록하지 않는다. 경로를 명시적으로 바꿀 때는 `EDITORIAL_METRICS_FILE`, context를 바꿀 때는 `EDITORIAL_METRICS_CONTEXT`를 사용한다.
 
 상세 인자와 제한은 [편집 규약](EDITORIAL_SYSTEM.md) 및 코드 [`editorial_cli.py`](../agent-publisher/editorial_cli.py)를 우선 확인한다. 과거 작업 기록의 '발행'은 draft 생성과 공개 승격을 혼용했으므로 명시적으로 구분한다.
 
