@@ -246,7 +246,7 @@ def replace_featured_image(
                 text=True,
                 check=True,
             )
-            attachment_id = (imported.stdout or "").strip()
+            attachment_id = (imported.stdout or "").lstrip("\ufeff").strip()
         finally:
             subprocess.run(
                 ["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],

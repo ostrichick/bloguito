@@ -74,7 +74,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                     return Mock(stdout=rank[key] + "\n", stderr="", returncode=0)
                 if wp and wp[:2] == ["media", "import"]:
                     thumbnail = "777"
-                    return Mock(stdout="777\n", stderr="", returncode=0)
+                    return Mock(stdout="\ufeff777\n", stderr="", returncode=0)
                 if args[:3] == ["sudo", "docker", "cp"]:
                     return Mock(stdout=b"", stderr=b"", returncode=0)
                 if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "rm"]:

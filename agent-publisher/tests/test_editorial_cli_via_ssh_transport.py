@@ -569,6 +569,23 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual(255, result.returncode)
         self.assertEqual(1, ssh_attempts)
 
+    def test_featured_image_import_accepts_utf8_bom_media_id(self):
+        module = load_module()
+
+        def fake_run(args, **kwargs):
+            remote = args[-1] if args else ''
+            if ' wp media import ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='\ufeff703\n', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {648}, 'bloguito')
+        result = transport(module._WP_PREFIX + [
+            'media', 'import', '/tmp/editorial_cover_648.webp', '--post_id=648',
+            '--featured_image', '--title=검토된 제목', '--alt=대체텍스트',
+            '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
+        self.assertEqual(0, result.returncode)
+
     def test_prepare_draft_wrapper_syncs_catalog_after_successful_editorial_command(self):
         module = load_module()
         calls = []

@@ -457,14 +457,14 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                         readable_ids.add(row['ID'])
             if kind == 'create' and getattr(result, 'returncode', 0) == 0:
                 raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
-                created = raw.strip()
+                created = raw.lstrip('\ufeff').strip()
                 if not created.isdigit() or int(created) <= 0:
                     raise ValueError('invalid_created_wordpress_post_id')
                 allowed_ids.add(int(created))
                 readable_ids.add(int(created))
             if kind == 'media_import' and getattr(result, 'returncode', 0) == 0:
                 raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
-                attachment_id = raw.strip()
+                attachment_id = raw.lstrip('\ufeff').strip()
                 if not attachment_id.isdigit() or int(attachment_id) <= 0:
                     raise ValueError('invalid_imported_media_id')
                 readable_ids.add(int(attachment_id))
