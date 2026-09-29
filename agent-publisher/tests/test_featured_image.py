@@ -75,7 +75,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                 raise AssertionError(args)
 
             with patch("agents.featured_image.ROOT", root), \
-                 patch("agents.featured_image.start_task_state"), \
+                 patch("agents.featured_image.start_task_state") as start_state, \
                  patch("agents.featured_image.update_task_state"), \
                  patch("agents.featured_image.fail_task_state"), \
                  patch("agents.featured_image.subprocess.run", side_effect=run):
@@ -93,6 +93,9 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             self.assertEqual("stable-slug", live["post_name"])
             self.assertEqual("<p>검토된 본문</p>", live["post_content"])
             self.assertEqual(1, len(list((root / "data" / "editorial_runs").glob("featured-image-edit-641-*.json"))))
+            validation_plan = start_state.call_args.kwargs["validation_plan"]
+            self.assertEqual("quick-image", validation_plan["profile"])
+            self.assertEqual("image-only", validation_plan["binding"]["route"])
 
     def test_thumbnail_cas_mismatch_blocks_before_import(self):
         with tempfile.TemporaryDirectory() as folder:

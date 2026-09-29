@@ -536,8 +536,20 @@ def main():
             image_path = Path(cli_args[image_index])
         if action == 'edit-post':
             if bundle is None:
+                from agents.edit_post import reviewed_target_kind
+                from agents.validation_router import build_validation_plan
+                target_status = reviewed_target_kind(post_ids[0])
+                expected_sha = (cli_args[cli_args.index('--expected-content-sha256') + 1]
+                                if '--expected-content-sha256' in cli_args else None)
                 transport_action = 'replace-featured-image'
-                decision = {'route': 'image-only', 'reasons': []}
+                decision = {
+                    'route': 'image-only',
+                    'reasons': [],
+                    'validation_plan': build_validation_plan(
+                        None, None, image_changed=True, target_status=target_status,
+                        resume='--resume' in cli_args, route='image-only', post_id=post_ids[0],
+                        expected_content_sha256=expected_sha),
+                }
             else:
                 from agents.edit_post import classify_reviewed_post_route
                 decision = classify_reviewed_post_route(
@@ -545,7 +557,8 @@ def main():
                     expected_content_sha256=(cli_args[cli_args.index('--expected-content-sha256') + 1]
                                              if '--expected-content-sha256' in cli_args else None),
                     confirm_title_change='--confirm-title-change' in cli_args,
-                    image_path=image_path)
+                    image_path=image_path,
+                    resume='--resume' in cli_args)
                 if decision['target_status'] == 'draft':
                     transport_action = 'fast-revise-draft' if decision['route'] == 'fast' else 'revise-draft'
                 else:
@@ -565,6 +578,17 @@ def main():
             expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
         print(f"[Edit Route] {decision['route']}" +
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
+        if action == 'edit-post':
+            # Run local regression tests before subprocess.run is replaced by the
+            # restricted WordPress transport.  This keeps test processes away from
+            # the SSH allowlist and guarantees failures happen before any mutation.
+            from agents.validation_runner import require_validation_success
+            validation = require_validation_success(decision['validation_plan'], verbosity=0)
+            print(
+                f"[Validation] {validation['profile']}: "
+                f"{validation['tests_run']} tests PASS "
+                f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
+            )
 
     transport = make_transport(
         transport_action, targets, config.host, ssh_user=config.user,

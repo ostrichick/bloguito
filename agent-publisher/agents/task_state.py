@@ -107,6 +107,7 @@ def _migrate_state(payload: dict[str, Any]) -> dict[str, Any]:
         # means that phase was either completed or intentionally skipped.
         completed["image_saved"] = True
     migrated.setdefault("qa_requirements", [])
+    migrated.setdefault("validation_plan", {})
     migrated["pending"] = [phase for phase in _PHASES if not completed[phase]]
     return migrated
 
@@ -157,6 +158,7 @@ def start_task_state(
     reuse: dict[str, Any] | None = None,
     artifacts: dict[str, Any] | None = None,
     qa_requirements: list[str] | tuple[str, ...] | None = None,
+    validation_plan: dict[str, Any] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(action, str) or not action.strip():
@@ -185,6 +187,7 @@ def start_task_state(
         "pending": list(_PHASES),
         "artifacts": _normalize_artifacts(artifacts),
         "qa_requirements": sorted(set(qa_requirements or [])),
+        "validation_plan": deepcopy(validation_plan or {}),
         "checkpoints": {},
         "result": {},
         "error": None,
@@ -202,6 +205,7 @@ def update_task_state(
     reuse: dict[str, Any] | None = None,
     artifacts: dict[str, Any] | None = None,
     qa_requirements: list[str] | tuple[str, ...] | None = None,
+    validation_plan: dict[str, Any] | None = None,
     checkpoints: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
     status: str | None = None,
@@ -228,6 +232,8 @@ def update_task_state(
         payload["artifacts"].update(_normalize_artifacts(artifacts))
     if qa_requirements is not None:
         payload["qa_requirements"] = sorted(set(qa_requirements))
+    if validation_plan is not None:
+        payload["validation_plan"] = deepcopy(validation_plan)
     if checkpoints:
         payload.setdefault("checkpoints", {}).update(deepcopy(checkpoints))
     if result:

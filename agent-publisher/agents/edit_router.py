@@ -28,6 +28,7 @@ from agents.task_state import (
 )
 from agents.qa_scope import qa_requirements_for_edit
 from agents.validation_reuse import assess_validation_reuse
+from agents.validation_router import build_validation_plan
 from agents.workflow_metrics import increment
 from agents.wordpress_mutation import content_sha256, get_post
 from config import DRAFTS_INDEX_FILE
@@ -92,6 +93,8 @@ def classify_edit_route(
     *,
     confirm_title_change: bool = False,
     image_path: Path | str | None = None,
+    resume: bool = False,
+    expected_content_sha256: str | None = None,
 ) -> dict:
     old_bundle = _load_tracked_bundle(post_id)
     reuse = assess_validation_reuse(old_bundle, bundle)
@@ -100,6 +103,10 @@ def classify_edit_route(
     if confirm_title_change:
         reasons.append("explicit_title_change_requires_standard_revision")
     route = "fast" if fast_report.get("status") == "candidate" and not reasons else "standard"
+    validation_plan = build_validation_plan(
+        old_bundle, bundle, image_changed=image_path is not None,
+        target_status="draft", resume=resume, route=route, post_id=post_id,
+        expected_content_sha256=expected_content_sha256)
     return {
         "route": route,
         "reasons": reasons,
@@ -107,6 +114,7 @@ def classify_edit_route(
         "reuse": reuse,
         "qa_requirements": qa_requirements_for_edit(
             old_bundle, bundle, image_changed=image_path is not None, target_status="draft"),
+        "validation_plan": validation_plan,
     }
 
 
@@ -150,6 +158,8 @@ def edit_reviewed_draft(
         bundle,
         confirm_title_change=confirm_title_change,
         image_path=image_path,
+        resume=resume,
+        expected_content_sha256=expected_content_sha256,
     )
     qa_requirements = decision.get("qa_requirements", [])
     desired = render(bundle["plan"], bundle["sources"])
@@ -224,6 +234,7 @@ def edit_reviewed_draft(
                     "reasons": state.get("route_reasons", []),
                     "validation_reuse": state.get("reuse", {}),
                     "qa_requirements": state.get("qa_requirements", qa_requirements),
+                    "validation_plan": state.get("validation_plan", decision.get("validation_plan", {})),
                     "resumed": True,
                     "wordpress_saved": True,
                 }
@@ -247,14 +258,20 @@ def edit_reviewed_draft(
             reuse=decision["reuse"],
             artifacts={"image_path": str(image_path)} if image_path else None,
             qa_requirements=qa_requirements,
+            validation_plan=decision.get("validation_plan"),
         )
         update_task_state(
             post_id,
             completed=["route_selected"],
             route=decision["route"],
             route_reasons=decision["reasons"],
+            validation_plan=decision.get("validation_plan"),
         )
     increment("edit_route_fast" if decision["route"] == "fast" else "edit_route_standard")
+    profile = (decision.get("validation_plan") or {}).get("profile")
+    if profile:
+        increment("validation_profile_" + profile.replace("-", "_"))
+        increment("validation_test_groups_planned", len(decision["validation_plan"].get("test_groups", [])))
     if decision["reuse"].get("reuse_sources"):
         increment("validation_reuse_sources")
     if decision["reuse"].get("reuse_full_semantic_review"):
@@ -366,6 +383,7 @@ def edit_reviewed_draft(
             "reasons": decision["reasons"],
             "validation_reuse": decision["reuse"],
             "qa_requirements": qa_requirements,
+            "validation_plan": decision.get("validation_plan"),
             "image": image_result,
         }
     except Exception as exc:

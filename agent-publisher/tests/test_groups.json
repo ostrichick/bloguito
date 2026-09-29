@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "groups": {
+    "core-safe-edit": [
+      "test_edit_post.py",
+      "test_wordpress_mutation.py",
+      "test_qa_scope.py",
+      "test_validation_reuse.py"
+    ],
+    "fast-edit": [
+      "test_fast_edit.py",
+      "test_edit_router.py"
+    ],
+    "fact": [
+      "test_fact_validation.py",
+      "test_critical_facts.py",
+      "test_numeric_evidence_notation.py",
+      "test_derived_currency_calculations.py",
+      "test_derived_time_calculations.py"
+    ],
+    "temporal": [
+      "test_temporal_validation.py",
+      "test_reference_period.py"
+    ],
+    "source": [
+      "test_editorial_source_provenance.py",
+      "test_reference_sources.py",
+      "test_duplicate_citation_scope.py",
+      "test_source_validation_cache.py",
+      "test_source_fetch_efficiency.py",
+      "test_source_limit.py",
+      "test_editorial_pdf_sources.py"
+    ],
+    "cta": [
+      "test_action_destinations.py",
+      "test_official_site_navigation.py",
+      "test_related_post_navigation.py"
+    ],
+    "layout": [
+      "test_article_layout.py",
+      "test_article_layout_contract.py",
+      "test_information_tables.py",
+      "test_reader_handoff.py",
+      "test_reader_punctuation_contract.py",
+      "test_summary_label.py"
+    ],
+    "event": [
+      "test_multi_event_schedule.py",
+      "test_event_section_assets.py"
+    ],
+    "ticket": [
+      "test_ticket_validation.py",
+      "test_nol_official_source.py",
+      "test_nol_schedule_listing.py",
+      "test_schedule_listing.py"
+    ],
+    "image": [
+      "test_featured_image.py"
+    ],
+    "catalog": [
+      "test_post_catalog.py",
+      "test_audit_rank_math.py",
+      "test_tag_governance.py",
+      "test_indexing_and_interlinking.py"
+    ],
+    "legacy": [
+      "test_legacy_85_welfare_navigation.py",
+      "test_legacy_current_dashboard.py",
+      "test_legacy_draft_copy.py",
+      "test_legacy_full_approval_index.py",
+      "test_legacy_mokpo_conflict.py",
+      "test_legacy_post_audit.py",
+      "test_legacy_reference_period.py",
+      "test_legacy_source_citation_scope.py",
+      "test_legacy_temporal_lifecycle.py",
+      "test_post144_property_tax_refresh.py",
+      "test_post145_chuseok_toll_refresh.py",
+      "test_post163_chuseok_medical_refresh.py",
+      "test_post217_chuseok_rail_refresh.py",
+      "test_post219_chuseok_ev_refresh.py",
+      "test_post225_publication.py",
+      "test_post229_chuseok_seoul_waste_publish.py",
+      "test_post233_price_reference.py",
+      "test_post233_yna_reference.py",
+      "test_post237_chuseok_free_parking_publish.py",
+      "test_post239_source_normalization.py"
+    ],
+    "system": [
+      "test_editorial_system.py",
+      "test_editorial_draft_reviser.py",
+      "test_editorial_updater.py",
+      "test_validation_scopes.py",
+      "test_publisher_cli_safety.py",
+      "test_prepare_draft_fast_path.py",
+      "test_publish_flow_efficiency.py",
+      "test_editorial_cli_via_ssh_transport.py",
+      "test_inventory_cache_lifecycle.py",
+      "test_lightweight_inventory.py",
+      "test_reformat_review_binding.py",
+      "test_post_approval_preflight.py",
+      "test_validation_router.py",
+      "test_validation_runner.py",
+      "test_validation_ssh_integration.py"
+    ],
+    "resume": [
+      "test_task_state.py"
+    ],
+    "public-edit": [
+      "test_public_fast_edit.py"
+    ],
+    "draft-standard": [
+      "test_editorial_draft_reviser.py",
+      "test_edit_router.py"
+    ],
+    "public-standard": [
+      "test_editorial_updater.py",
+      "test_edit_post.py"
+    ],
+    "editorial-contract": [
+      "test_validation_scopes.py"
+    ]
+  },
+  "post_selectors": {
+    "85": ["test_legacy_85_welfare_navigation.py"],
+    "144": ["test_post144_property_tax_refresh.py"],
+    "145": ["test_post145_chuseok_toll_refresh.py"],
+    "163": ["test_post163_chuseok_medical_refresh.py"],
+    "217": ["test_post217_chuseok_rail_refresh.py"],
+    "219": ["test_post219_chuseok_ev_refresh.py"],
+    "225": ["test_post225_publication.py"],
+    "229": ["test_post229_chuseok_seoul_waste_publish.py"],
+    "233": ["test_post233_price_reference.py", "test_post233_yna_reference.py"],
+    "237": ["test_post237_chuseok_free_parking_publish.py"],
+    "239": ["test_post239_source_normalization.py"]
+  },
+  "full_only": [
+    "test_airport_official_source.py",
+    "test_analytics_collector.py",
+    "test_analytics_receiver.py",
+    "test_backup_recovery_v3.py",
+    "test_backup_restore.py",
+    "test_designer_routing.py",
+    "test_designer_safety.py",
+    "test_donggu_official_source.py",
+    "test_editorial_draft_category.py",
+    "test_editorial_legacy_draft_evergreen.py",
+    "test_efine_official_source.py",
+    "test_internal_editorial_notes.py",
+    "test_koreakr_briefing_source.py",
+    "test_koreakr_source.py",
+    "test_mohw_attachment_counters.py",
+    "test_movein_source_normalization.py",
+    "test_national_flu_reference.py",
+    "test_patch_post_component.py",
+    "test_pipeline_exit_status.py",
+    "test_quota_tracker.py",
+    "test_remote_transport_config.py",
+    "test_review_cache.py",
+    "test_runtime_stdio.py",
+    "test_script_hygiene.py",
+    "test_search_intent.py",
+    "test_sync_editorial_state_via_ssh.py",
+    "test_system_improvements.py",
+    "test_tax_points_version.py",
+    "test_topic_duplicates.py",
+    "test_update_existing_via_ssh_shim.py",
+    "test_workflow_metrics.py",
+    "test_workflow_metrics_summary.py",
+    "test_wp_cli_provisioning.py"
+  ]
+}

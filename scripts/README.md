@@ -12,6 +12,7 @@
 - 대표이미지 전용 교체: `edit-post --image-path ...` 또는 저수준 `replace-featured-image`
 - 로컬 HTML의 한 컴포넌트 삽입·교체·삭제: `patch_post_component.py`
 - workflow 병목 확인: `summarize_workflow_metrics.py`
+- 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
 
 직접 WP-CLI나 임시 PHP로 편집 검증을 우회하지 않는다.
 

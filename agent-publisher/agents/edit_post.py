@@ -31,6 +31,7 @@ from agents.task_state import (
     update_task_state,
 )
 from agents.validation_reuse import assess_validation_reuse
+from agents.validation_router import build_validation_plan
 from agents.workflow_metrics import increment
 from agents.wordpress_mutation import content_sha256, get_post
 from config import DRAFTS_INDEX_FILE, POSTS_INDEX_FILE
@@ -69,12 +70,14 @@ def classify_reviewed_post_route(
     expected_content_sha256: str | None = None,
     confirm_title_change: bool = False,
     image_path: Path | str | None = None,
+    resume: bool = False,
 ) -> dict:
     kind = reviewed_target_kind(post_id)
     if kind == "draft":
         from agents.edit_router import classify_edit_route
         result = classify_edit_route(
-            post_id, bundle, confirm_title_change=confirm_title_change, image_path=image_path)
+            post_id, bundle, confirm_title_change=confirm_title_change, image_path=image_path,
+            resume=resume, expected_content_sha256=expected_content_sha256)
         return {**result, "target_status": "draft"}
     decision = classify_public_fast_edit(post_id, bundle)
     reasons = list(decision["reasons"])
@@ -85,6 +88,10 @@ def classify_reviewed_post_route(
         reasons.append("explicit_title_change_requires_standard_revision")
     route = "fast" if decision["route"] == "fast" and not reasons else "standard"
     candidate = decision["candidate"] if route == "fast" else bundle
+    validation_plan = build_validation_plan(
+        decision["tracked_bundle"], candidate, image_changed=image_path is not None,
+        target_status="publish", resume=resume, route=route, post_id=post_id,
+        expected_content_sha256=expected_content_sha256)
     return {
         **decision,
         "route": route,
@@ -93,6 +100,7 @@ def classify_reviewed_post_route(
         "qa_requirements": qa_requirements_for_edit(
             decision["tracked_bundle"], candidate,
             image_changed=image_path is not None, target_status="publish"),
+        "validation_plan": validation_plan,
     }
 
 
@@ -148,9 +156,13 @@ def _edit_reviewed_public_post(
 
     decision = classify_reviewed_post_route(
         post_id, bundle, expected_content_sha256=expected_content_sha256,
-        confirm_title_change=confirm_title_change, image_path=image_path)
+        confirm_title_change=confirm_title_change, image_path=image_path, resume=resume)
     increment("edit_target_public")
     increment("edit_route_fast" if decision["route"] == "fast" else "edit_route_standard")
+    profile = (decision.get("validation_plan") or {}).get("profile")
+    if profile:
+        increment("validation_profile_" + profile.replace("-", "_"))
+        increment("validation_test_groups_planned", len(decision["validation_plan"].get("test_groups", [])))
     candidate = decision["candidate"] if decision["route"] == "fast" else bundle
     desired = render(candidate["plan"], candidate["sources"])
     desired_sha = content_sha256(desired)
@@ -207,6 +219,7 @@ def _edit_reviewed_public_post(
                     "target_status": "publish",
                     "route": state.get("route") or "public-" + decision["route"],
                     "qa_requirements": state.get("qa_requirements", decision["qa_requirements"]),
+                    "validation_plan": state.get("validation_plan", decision.get("validation_plan", {})),
                     "resumed": True,
                 }
         elif live_sha != expected_content_sha256:
@@ -228,6 +241,7 @@ def _edit_reviewed_public_post(
             reuse=reuse,
             artifacts={"image_path": str(image_path)} if image_path else None,
             qa_requirements=decision["qa_requirements"],
+            validation_plan=decision.get("validation_plan"),
         )
         update_task_state(
             post_id, completed=["route_selected"], route="public-" + decision["route"],
@@ -291,6 +305,7 @@ def _edit_reviewed_public_post(
             "route": "public-" + decision["route"],
             "reasons": decision["reasons"],
             "qa_requirements": decision["qa_requirements"],
+            "validation_plan": decision.get("validation_plan"),
             "image": image_result,
         }
     except Exception as exc:
@@ -315,11 +330,17 @@ def edit_reviewed_post(
     if bundle is None:
         if not image_path:
             raise ValueError("edit_post_bundle_or_image_required")
+        kind = reviewed_target_kind(post_id)
+        validation_plan = build_validation_plan(
+            None, None, image_changed=True, target_status=kind, resume=resume,
+            route="image-only", post_id=post_id,
+            expected_content_sha256=expected_content_sha256)
         result = replace_featured_image(
             post_id, image_path, expected_content_sha256,
             expected_thumbnail_id=expected_thumbnail_id,
-            alt_text=alt_text, confirmed=confirmed)
-        return {**result, "route": "image-only"}
+            alt_text=alt_text, confirmed=confirmed, validation_plan=validation_plan)
+        return {**result, "route": "image-only", "target_status": kind,
+                "validation_plan": validation_plan}
     if not edit_intent:
         raise ValueError("edit_intent_required")
     kind = reviewed_target_kind(post_id)

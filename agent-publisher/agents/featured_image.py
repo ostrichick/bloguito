@@ -126,6 +126,7 @@ def replace_featured_image(
     confirmed: bool = False,
     manage_task_state: bool = True,
     outcome_callback=None,
+    validation_plan: dict | None = None,
 ) -> dict:
     """Replace only ``_thumbnail_id`` while preserving post body/SEO/URL/status."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -161,6 +162,12 @@ def replace_featured_image(
             raise ValueError("featured_image_changed_before_replacement")
         before_rank_math = _rank_math_meta(base, post_id)
         if manage_task_state:
+            if validation_plan is None:
+                from agents.validation_router import build_validation_plan
+                validation_plan = build_validation_plan(
+                    None, None, image_changed=True,
+                    target_status=live.get("post_status", "draft"), route="image-only",
+                    post_id=post_id, expected_content_sha256=expected_content_sha256)
             start_task_state(
                 post_id,
                 action="replace-featured-image",
@@ -181,6 +188,7 @@ def replace_featured_image(
                 artifacts={"image_path": str(image_path)},
                 qa_requirements=qa_requirements_for_edit(
                     None, None, image_changed=True, target_status=live.get("post_status", "draft")),
+                validation_plan=validation_plan,
             )
             state_started = True
             update_task_state(

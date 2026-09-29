@@ -382,3 +382,20 @@ P3는 실행 검증을 줄이지 않고 **파일 수명주기와 공식 진입�
 - 9월 12일 초기 조사에 사용한 `test_ddg.py`, `test_*`, `verify_stock.py` 같은 네트워크 probe는 `scripts/archive/diagnostics-20260912/`로 이동해 루트 도구 목록에서 제외한다.
 
 P3에서도 실제 WordPress 글, 공개 상태, 운영 서버 설정은 정리 검증을 위해 변경하지 않는다. 완료 기준은 새 hygiene/patch/metrics/shim 테스트, 기존 편집/SSH 표적 회귀, 전체 Python suite 1회, `py_compile`, `git diff --check`, 그리고 기존 main의 콘텐츠 관련 미커밋 변경을 보존한 상태에서 P3 변경만 별도 커밋하는 것이다.
+
+## 2026-09-29 P4 변경 범위 기반 검증 자동화
+
+P0~P3 뒤에도 콘텐츠 한 건을 수정한 결과 보고에서 저장소 전체 **646개** 회귀 테스트를 반복 실행하는 관성이 남아 있었다. 전체 suite 자체는 공유 코드 회귀를 잡는 안전망으로 가치가 있지만, 대표이미지 한 장이나 기존 근거 안의 표현 수정과 analytics·backup·legacy post·ticket parser 테스트를 매번 함께 실행하는 것은 검증 의미를 늘리지 않고 작업 종료만 늦췄다. P4의 목표는 테스트를 삭제하는 것이 아니라 **실제 변경 범위와 canonical Fast/Standard route를 regression 범위에 결합**하는 것이다.
+
+- `agents/validation_router.py`가 기존 `fast_edit` classifier와 `qa_scope` 결과를 재사용해 `quick-text`, `quick-image`, `standard-fact`, `standard-source`, `standard-cta`, `standard-layout`, `standard-event`, `full-regression` profile을 만든다. 계획은 post ID, draft/public 상태, 실제 Fast/Standard/image-only route, 저장 전·후 content SHA와 digest에 결합된다. canonical router가 Standard를 고른 작업을 validation router가 다시 Quick으로 낮출 수 없다.
+- 숫자·사실, temporal 정보, source, CTA, layout, event/ticket, image를 독립 dimension으로 취급한다. 예를 들어 CTA-only 변경은 fact regression을 자동으로 끌어오지 않고, 행사 날짜 변경은 temporal+event 검증을 선택하되 일반 fact group을 중복 실행하지 않는다. 공연 글도 소제목 표현만 바꾸는 Fast 작업이면 ticket parser 전체를 반복하지 않고, 공연일·판매상태·출처·CTA 등 ticket identity/state가 실제로 바뀔 때 ticket group을 추가한다.
+- `agent-publisher/tests/test_groups.json`이 관련 테스트 파일 집합과 일부 과거 글의 정확한 post selector를 선언한다. `validation_runner.py`는 manifest 밖 임의 파일이나 shell command를 실행하지 않고 plan에 등록된 group만 하나의 unittest process에서 중복 제거해 실행한다. plan digest가 바뀌면 실행을 거부한다.
+- 정규 `scripts/editorial_cli_via_ssh.py ... -- edit-post ...`는 제한형 WordPress transport를 설치하기 전에 선택 regression을 자동 실행한다. 실패하면 WordPress mutation 단계에 들어가지 않는다. 테스트 실행을 `subprocess.run`이 SSH allowlist로 패치된 구간 안에 넣지 않아 로컬 unittest 명령이 원격 WP 명령으로 오인되지 않게 했다.
+- 별도 `scripts/run_validation.py`는 진단·CI용이다. 기본은 plan-only이고 `--run`을 명시해야 실제 테스트를 실행한다. 공유 `agents/`, policy, renderer/transport/test infrastructure 변경은 자동으로 `full-regression`에 승격한다.
+- 선택 plan은 task-state에 원고/source 원문 없이 저장된다. `run-validation` metrics는 profile/group/file/test 수와 테스트 시간·실패 수를 별도 action으로 기록해 `edit-post` mutation latency와 섞지 않는다.
+
+P4 구현 시 측정한 일반 draft regression 선택량은 표현-only **36**, 대표이미지-only **17**, 새 일반 사실 **64**, CTA **52**, layout **59**, source **67**, 일반 행사 날짜 변경 **65**였다. 공연의 날짜·판매상태처럼 ticket identity/state 검증이 실제 필요한 Standard 변경은 이보다 많을 수 있다. 이 수치는 테스트 suite가 성장하면 변하므로 운영 보고는 고정 숫자가 아니라 실제 validation receipt를 사용한다. 핵심은 공통 source/semantic/CAS/backup/readback/브라우저 QA를 제거한 것이 아니라 **무관한 코드 회귀 테스트만 같은 콘텐츠 작업에서 제외**했다는 점이다.
+
+P4 자체는 validation/router/SSH orchestration이라는 공유 코드를 변경하므로 구현 완료 시에는 표적 회귀 뒤 전체 Python suite를 한 번 실행한다. 이후 개별 콘텐츠 작업에서는 선택 profile만 사용하고, 공유 코드가 다시 바뀌지 않았다면 같은 full suite를 반복하지 않는다. 이 작업의 검증을 위해 실제 WordPress 글이나 공개 상태는 수정하지 않는다.
+
+구현 최종 검증에서는 P4 router/runner/SSH ordering, Fast/Standard draft/public, task-state, featured-image, script hygiene 표적 테스트가 통과했고, 실제 `run_validation.py --run` smoke에서 `quick-text`가 6개 파일 **36 tests**만 선택해 통과했다. 변경 Python `py_compile`, `git diff --check`, `pip check`, runner `--help`도 통과했다. 공유 코드 변경 완료 뒤 전체 suite를 한 번 실행한 결과는 P4 신규 회귀 20개를 포함해 **666 tests, OK (skipped=1)**였다. 출력의 `simulated transfer interruption`, 이미지 생성 unavailable 폴백, catalog sync 경고는 기존 실패 주입/폴백 테스트의 의도된 메시지이며 실제 운영 WordPress mutation은 수행하지 않았다.

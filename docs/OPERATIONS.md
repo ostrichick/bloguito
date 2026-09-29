@@ -43,10 +43,33 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 
 ### 작업 범위에 맞춘 검증
 
-- 문서만 수정한 경우에는 `git diff --check`와 링크/문서 구조 확인으로 충분하며 전체 Python suite를 자동으로 반복하지 않는다.
-- 구조화 원고의 사실·표·문구만 수정하고 공통 코드가 그대로라면 해당 bundle의 `manual-review`/`check`와 글별 저장 검증을 수행한다. 이미 같은 digest로 독립 의미 검토를 통과한 뒤 `check`만 다시 확인하는 경우에는 원고·정책이 실제로 바뀌지 않았는지 먼저 본다.
-- 특정 source parser, action-link, schedule binding처럼 범위가 좁은 코드는 관련 테스트 파일을 우선 실행한다. 공통 renderer, validator, publisher, 정책 로직을 바꾼 경우에만 표적 테스트 뒤 전체 `agent-publisher/tests`를 1회 실행한다. 전체 suite 통과 뒤 공통 코드가 바뀌지 않았다면 원고나 문서 변경 때문에 같은 suite를 다시 실행하지 않는다.
-- 화면 검증은 CSS/renderer/표·목차 구조가 바뀌면 360/390px, 데스크톱, 200% 확대와 키보드 접근까지 수행한다. 구조가 그대로인 본문 데이터 수정은 대표 모바일 1개와 데스크톱 1개에서 변경 영역을 확인하고, CTA 목적지만 바뀐 경우에는 실제 도착 화면과 버튼 smoke test를 우선한다.
+P4부터 reviewed post 수정은 원고 diff와 실제 Fast/Standard route를 한 번 분석해 `validation_plan`을 만든다. 정규 `scripts/editorial_cli_via_ssh.py ... -- edit-post ...` 경로는 WordPress용 제한 transport를 설치하거나 mutation을 시작하기 **전에** 이 plan의 regression group만 로컬에서 실행한다. 테스트 실패 시 WordPress 쓰기는 시작하지 않는다. source freshness, semantic review, CAS, backup, guarded readback은 regression test 선택과 별개의 기존 안전장치이므로 profile이 좁아져도 제거되지 않는다.
+
+| 대표 profile | 예 | regression 범위 | content/source review |
+| --- | --- | --- | --- |
+| `quick-text` | 오탈자, 표현 정리, 기존 사실 재배치 | 공통 safe-edit + Fast classifier | source 재사용 + changed-block delta review |
+| `quick-image` | 대표이미지만 교체 | 공통 safe-edit + featured-image | 본문/source semantic review 없음; 본문 SHA/SEO/thumbnail 보존 검증 |
+| `standard-fact` | 새 숫자·가격·조건·제목 | 실제 draft/public Standard mutator + validation contract + fact | Standard full semantic review + current source receipt/live 규칙 |
+| `standard-source` | source snapshot/URL 변경 | Standard mutator + source | source 전체 동일성 재검증 + full semantic review |
+| `standard-cta` | 조회·신청·예매 목적지 변경 | Standard mutator + CTA/navigation | 목적지/근거 확인 + full semantic review |
+| `standard-layout` | 표/section/FAQ topology 변경 | Standard mutator + layout/accessibility | Standard route면 full review; Fast로 증명된 구조 재배치는 delta review |
+| `standard-event` | 행사·공연의 날짜/장소/판매상태 등 도메인 사실 변경 | 위 관련 group + event, 공연이면 ticket | 변경 위험도에 따라 affected/live source + full review |
+| `full-regression` | `agents/`, policy, renderer, SSH transport, test infrastructure 같은 공유 코드 변경 | 전체 `agent-publisher/tests` 1회 | 코드 변경에 맞는 기존 editorial 검증 유지 |
+
+현재 P4 기준의 일반 draft 예시는 표현 수정 36개, 이미지 전용 17개, 사실 변경 64개, CTA 52개, 레이아웃 59개, source 변경 67개 regression test를 선택한다. 테스트 파일이 늘면 숫자는 달라질 수 있으므로 결과 보고에는 고정 수치 대신 실제 runner receipt의 profile/test count를 사용한다. 특정 과거 글은 `test_groups.json`의 post selector가 해당 글 전용 회귀만 추가한다.
+
+문서만 수정한 경우에는 `git diff --check`와 링크/문서 구조 확인으로 충분하다. 공통 renderer, validator, publisher, 정책·transport 로직을 바꾼 경우에만 표적 테스트 뒤 전체 suite를 1회 실행하고, 이후 공통 코드가 바뀌지 않았다면 콘텐츠/문서 수정 때문에 같은 full suite를 반복하지 않는다. 화면 검증도 CSS/renderer/표·목차 구조가 바뀌면 360/390px, 데스크톱, 200% 확대와 키보드 접근까지 수행하고, 구조가 그대로인 본문 데이터 수정은 대표 모바일+데스크톱의 변경 영역, CTA-only는 실제 도착 화면과 버튼 smoke test를 우선한다.
+
+`scripts/run_validation.py`는 진단·CI용 별도 runner다. 기본 실행은 **plan 출력만** 하며 테스트를 실행하지 않는다. 실제 실행은 `--run`을 명시한다.
+
+```powershell
+# 공유 코드 변경: full-regression plan만 확인
+python scripts/run_validation.py --changed-file agent-publisher/agents/editorial.py
+
+# 두 reviewed bundle의 scope를 확인하고 선택된 regression을 실제 실행
+python scripts/run_validation.py --before scratch/tasks/edit/before.json `
+  --after scratch/tasks/edit/after.json --route standard --post-id 641 --run
+```
 
 ## 원고 경로: 기본은 draft
 
@@ -76,7 +99,7 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 
 `edit-post`는 위 재사용 규칙을 draft/public 공통 상위 경로에서 강제한다. 기존 tracked bundle과 새 후보의 source/policy/review fingerprint를 기록하고, Fast 적합성이 확인되면 전체 inventory·전체 source 재수집·전체 semantic review 대신 기존 검증과 changed-block delta review를 사용한다. public Fast는 `published_posts.json`에 reviewed bundle이 유일하게 존재하고 그 렌더 SHA가 사용자가 넘긴 현재 본문 SHA와 일치할 때만 허용한다. Fast 조건을 벗어나면 검사를 우회하지 않고 상태별 Standard 경로로 전환한다.
 
-수정 명령은 `agent-publisher/data/editorial_runs/task-state/post-<ID>/current.json`에 Git 비추적 작업 상태를 원자적으로 기록하고, 종료된 이전 상태는 같은 디렉터리의 `archive/`에 보존한다. v3 state는 raw `edit_intent` 대신 SHA256을 저장하고 `content_saved`, `image_saved`를 독립 phase로 기록한다. artifact는 경로와 가능한 경우 파일 SHA를 함께 기록한다. 세션 압축·연결 중단 뒤에는 candidate/policy/edit-intent/image fingerprint와 WordPress 현재 SHA를 먼저 비교하고 완료된 source/review/content/image 단계를 반복하지 않는다. WordPress 본문은 저장됐지만 local manifest 갱신 직전에 중단된 좁은 구간은 baseline/desired fingerprint가 정확히 맞을 때만 manifest를 전진시킨다. 이미지 import가 끝난 직후에는 attachment ID와 image/ALT/content SHA를 checkpoint하고, 재개 시 같은 attachment의 thumbnail/ALT/MIME/URL/본문·SEO 보존을 검증만 하며 재import하지 않는다. WordPress 저장이 끝났지만 화면 확인이 남아 있으면 `saved_pending_qa`이며, 요구된 QA scope를 모두 완료한 뒤에만 `browser_qa`를 완료 처리한다. 기존 v1/v2 state는 읽을 때 v3 형태로 호환 처리한다.
+수정 명령은 `agent-publisher/data/editorial_runs/task-state/post-<ID>/current.json`에 Git 비추적 작업 상태를 원자적으로 기록하고, 종료된 이전 상태는 같은 디렉터리의 `archive/`에 보존한다. v3 state는 raw `edit_intent` 대신 SHA256을 저장하고 `content_saved`, `image_saved`를 독립 phase로 기록한다. P4에서는 선택된 `validation_plan`의 profile, group, binding digest도 함께 저장해 재개/결과 보고 때 어떤 regression 범위가 선택됐는지 확인할 수 있게 했다. plan 자체에는 원고/source 본문을 복제하지 않는다. artifact는 경로와 가능한 경우 파일 SHA를 함께 기록한다. 세션 압축·연결 중단 뒤에는 candidate/policy/edit-intent/image fingerprint와 WordPress 현재 SHA를 먼저 비교하고 완료된 source/review/content/image 단계를 반복하지 않는다. WordPress 본문은 저장됐지만 local manifest 갱신 직전에 중단된 좁은 구간은 baseline/desired fingerprint가 정확히 맞을 때만 manifest를 전진시킨다. 이미지 import가 끝난 직후에는 attachment ID와 image/ALT/content SHA를 checkpoint하고, 재개 시 같은 attachment의 thumbnail/ALT/MIME/URL/본문·SEO 보존을 검증만 하며 재import하지 않는다. WordPress 저장이 끝났지만 화면 확인이 남아 있으면 `saved_pending_qa`이며, 요구된 QA scope를 모두 완료한 뒤에만 `browser_qa`를 완료 처리한다. 기존 v1/v2 state는 읽을 때 v3 형태로 호환 처리한다.
 
 ```powershell
 # reviewed draft/public 공통 수정: 상태와 Fast/Standard를 먼저 자동 판정
@@ -116,7 +139,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 
 **로컬 카탈로그와 주제 백로그:** 새 글 주제 탐색은 `docs/POST_CATALOG.md`에서 시작한다. 이 문서는 빠른 1차 중복 확인과 현재 포트폴리오·주제 백로그 파악용이며, 실제 저장 직전 안전 검사를 대체하지 않는다. 신규 draft 생성, 공개 전환, 제목·카테고리·Rank Math 포커스 키워드/점수처럼 카탈로그에 표시되는 정보 변경이 성공적으로 끝난 뒤 `python scripts/sync_post_catalog.py`를 한 번 실행한다. 동기화 스크립트는 기존 `POST_CATALOG.md`의 사람이 검토한 백로그 행을 보존하고, 현재 공개·임시·예약·비공개 글의 제목 또는 포커스 키워드와 겹치는 후보를 제거한 뒤 우선순위를 다시 매긴다. 백로그를 보충할 때에는 주제 탐색 단계에서 공식 출처와 유효기간을 확인한 새 후보만 추가한다.
 
-최종 보고는 대상 글·변경 내용·임시글/공개 상태·통과한 검증·미검증/보류 사항을 짧게 전달하고 같은 주제의 기존 날짜별 MD에 이력을 추가한다. 이 절은 작업 실행 규칙이며 편집 검증 임계값이나 공개 승인 조건을 변경하지 않는다.
+최종 보고는 대상 글·변경 내용·임시글/공개 상태·통과한 검증·미검증/보류 사항을 짧게 전달하고 같은 주제의 기존 날짜별 MD에 이력을 추가한다. P4 이후에는 `Validation: <profile>`, `관련 regression: N/N PASS`, source refresh/reuse, semantic review 범위, WP CAS/readback, browser QA scope를 구분해 적는다. 공유 코드를 실제로 바꿔 full suite를 실행한 경우에만 `Full regression: N/N PASS`를 추가하며, 콘텐츠 한 건을 수정했다는 이유만으로 전체 테스트 수를 결과 보고의 기본 지표로 쓰지 않는다. 이 절은 작업 실행 규칙이며 편집 검증 임계값이나 공개 승인 조건을 변경하지 않는다.
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
@@ -148,7 +171,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 
 WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, 본문 SHA256, 본문 URL signature만 수집한다. 신규 글의 URL 중복과 제목 중복은 이 경량 정보로 검사하고, 기존 글 수정에서 동일 공식 URL이 단순 출처인지 본문·CTA 중복인지 구분해야 할 때만 해당 후보 글의 본문을 단건 `post get`으로 추가 조회한다. 제한형 SSH transport는 inventory에서 관측된 후보 ID에 읽기 권한만 추가하며 mutation 대상 ID 집합은 확장하지 않는다.
 
-내부 실사용 성능 기록은 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에 JSONL로 쌓인다. unit test는 기본적으로 `workflow-metrics-test.jsonl`로 분리되며 각 행의 `run_context`가 `live`/`test`를 표시한다. `total_ms`, inventory/source/semantic-review 등 단계별 시간과 WordPress/source 요청 횟수, cache hit/fallback 같은 운영 카운터만 저장하고 원고·출처 본문은 기록하지 않는다. 경로를 명시적으로 바꿀 때는 `EDITORIAL_METRICS_FILE`, context를 바꿀 때는 `EDITORIAL_METRICS_CONTEXT`를 사용한다.
+내부 실사용 성능 기록은 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에 JSONL로 쌓인다. unit test는 기본적으로 `workflow-metrics-test.jsonl`로 분리되며 각 행의 `run_context`가 `live`/`test`를 표시한다. `total_ms`, inventory/source/semantic-review 등 단계별 시간과 WordPress/source 요청 횟수, cache hit/fallback 같은 운영 카운터만 저장하고 원고·출처 본문은 기록하지 않는다. P4의 선택 regression 실행은 별도 `run-validation` action으로 profile/group/file/test 수와 `validation_tests` 시간·실패 수를 기록하므로 edit-post mutation latency와 섞지 않는다. 경로를 명시적으로 바꿀 때는 `EDITORIAL_METRICS_FILE`, context를 바꿀 때는 `EDITORIAL_METRICS_CONTEXT`를 사용한다.
 
 반복 성능 분석을 위해 별도 임시 Python을 만들지 않는다. `python scripts/summarize_workflow_metrics.py --context live --status ok`를 사용하면 action별 실행 건수, median/P90 `total_ms`, 평균 WordPress 왕복, 단계별 평균 시간을 JSON으로 확인할 수 있다. 특정 action만 보려면 `--action edit-post`처럼 반복 지정한다.
 

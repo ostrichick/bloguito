@@ -43,6 +43,22 @@ class TaskStateTests(unittest.TestCase):
         self.assertEqual(intent_sha256("문구 정리"), reread["edit_intent_sha256"])
         self.assertEqual(STATE_VERSION, reread["version"])
 
+    def test_validation_plan_is_persisted_without_article_content(self):
+        plan = {
+            "version": 1,
+            "profile": "quick-text",
+            "plan_digest": "a" * 64,
+            "test_groups": ["core-safe-edit"],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            start_task_state(
+                641, action="edit-draft", edit_intent="문구 정리",
+                validation_plan=plan, root=root)
+            state = load_task_state(641, root)
+        self.assertEqual(plan, state["validation_plan"])
+        self.assertNotIn("post_content", str(state["validation_plan"]))
+
     def test_unknown_phase_fails_closed(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
