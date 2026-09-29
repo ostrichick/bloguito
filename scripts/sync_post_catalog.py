@@ -74,7 +74,7 @@ def run_ssh_inventory() -> list:
 
     # Clean up local temp file
     temp_php.unlink(missing_ok=True)
-    return json.loads(res.stdout)
+    return json.loads((res.stdout or "").lstrip("\ufeff"))
 
 def determine_type_and_category(title: str, categories=None):
     """Classify post into category and Evergreen vs Seasonal."""

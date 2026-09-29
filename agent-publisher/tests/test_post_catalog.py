@@ -4,12 +4,13 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CATALOG_MD = ROOT_DIR / "docs" / "POST_CATALOG.md"
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 
-from sync_post_catalog import extract_backlog_rows, generate_catalog_markdown
+from sync_post_catalog import extract_backlog_rows, generate_catalog_markdown, run_ssh_inventory
 
 class TestPostCatalog(unittest.TestCase):
     def test_catalog_file_exists(self):
@@ -89,6 +90,13 @@ class TestPostCatalog(unittest.TestCase):
         backlog = content.split("## 3. 🎯 추진 예정 백로그 (Topic Backlog)", 1)[1]
         self.assertIn("현재 검토 대기 후보가 없습니다", backlog)
         self.assertNotIn("임플란트 건강보험", backlog)
+
+    def test_remote_inventory_accepts_utf8_bom(self):
+        payload = '\ufeff[{"ID":648,"post_status":"draft"}]'
+        with patch('sync_post_catalog.subprocess.run', return_value=Mock(
+                returncode=0, stdout=payload, stderr='')):
+            rows = run_ssh_inventory()
+        self.assertEqual(648, rows[0]['ID'])
 
 if __name__ == "__main__":
     unittest.main()
