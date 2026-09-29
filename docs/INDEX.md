@@ -9,6 +9,7 @@
 | 프로젝트 개요와 로컬 환경 | [README](../README.md) | 진입점·구성요소·빠른 시작만 요약 |
 | 코딩·협업·배포 안전 규칙 | [AGENTS](../AGENTS.md) | 공통 작업 지침; 기존 미커밋 파일 보존 |
 | 글 작성·검토·공개 정책 | [EDITORIAL_SYSTEM](EDITORIAL_SYSTEM.md) | 콘텐츠 업무의 유일한 서술형 현행 규약 |
+| 행사 일정형 글 전용 확장 | [EVENT_POST_STANDARD](EVENT_POST_STANDARD.md) | 월간 다중 행사 글의 작성·이미지·CTA·SEO·QA 세부 표준; EDITORIAL_SYSTEM과 함께 적용 |
 | 검증 임계값과 모델 설정 | [editorial_policy.json](../agent-publisher/editorial_policy.json) | 코드가 읽는 설정값의 유일한 정본 |
 | 명령어·백업·배포 체크리스트 | [OPERATIONS](OPERATIONS.md) | 현재 저장소의 코드와 확인 날짜를 구분한 운영 가이드 |
 | 콘텐츠 목록과 주제 대시보드 | [POST_CATALOG](POST_CATALOG.md) | 발행·임시글 현황 및 백로그 로컬 단일 정본 |
