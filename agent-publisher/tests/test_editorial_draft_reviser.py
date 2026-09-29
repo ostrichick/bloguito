@@ -285,6 +285,32 @@ class EditorialDraftReviserTests(unittest.TestCase):
             _normalize_renderer_migrations(new),
         )
 
+    def test_mobile_semantic_unit_renderer_migration_is_normalized(self):
+        old = (
+            '<article><div>광안리 M 드론라이트쇼 10월 공연</div>'
+            '<p>검토된 본문</p></article>'
+        )
+        new = (
+            '<article><div>광안리 <span class="bloguito-semantic-unit">'
+            'M 드론라이트쇼</span> 10월 공연</div>'
+            '<p>검토된 본문</p></article>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
+    def test_mobile_semantic_unit_migration_does_not_hide_prose_change(self):
+        old = '<div>광안리 M 드론라이트쇼 10월 공연</div><p>검토된 본문</p>'
+        edited = (
+            '<div>광안리 <span class="bloguito-semantic-unit">M 드론라이트쇼</span> '
+            '10월 공연</div><p>사람이 바꾼 본문</p>'
+        )
+        self.assertNotEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(edited),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,6 +90,11 @@ def _normalize_renderer_migrations(content):
         flags=re.DOTALL,
     )
     content = re.sub(
+        r'<span class="bloguito-semantic-unit">([^<]*)</span>',
+        r'\1',
+        content,
+    )
+    content = re.sub(
         r'(<figcaption\b[^>]*>[^<]*) · '
         r'(<a href="[^"]+"[^>]*>공식 자료</a></figcaption>)',
         r'\1, \2',
