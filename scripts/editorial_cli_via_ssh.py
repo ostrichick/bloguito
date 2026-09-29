@@ -605,6 +605,8 @@ def main():
             transport_action = 'public-standard'
             decision = {'route': 'standard', 'reasons': []}
             expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
+        if transport_action == 'revise-draft' and bundle is not None:
+            expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
         print(f"[Edit Route] {decision['route']}" +
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
         if action == 'edit-post':

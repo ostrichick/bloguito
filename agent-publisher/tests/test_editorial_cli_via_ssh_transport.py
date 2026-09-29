@@ -325,9 +325,50 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                      'route': 'fast', 'reasons': [],
                  }), \
                  patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
-                 patch.object(module.editorial_cli, 'main'):
+                    patch.object(module.editorial_cli, 'main'):
                 module.main()
         self.assertEqual('fast-revise-draft', make.call_args.args[0])
+
+    def test_edit_post_standard_wrapper_passes_reviewed_rank_math_meta(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as folder:
+            bundle = Path(folder) / 'bundle.json'
+            bundle.write_text(json.dumps({
+                'brief': {
+                    'primary_keyword': '2026 부산 10월 축제',
+                    'seo': {
+                        'title': '2026 부산 10월 축제 일정',
+                        'description': '2026 부산 10월 축제 일정과 주요 프로그램을 확인합니다.',
+                    },
+                },
+            }, ensure_ascii=False), encoding='utf-8')
+            argv = [
+                'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
+                'edit-post', str(bundle), '--post-id', '648',
+                '--expected-content-sha256', '0' * 64, '--confirm-update',
+                '--edit-intent', '행사 정보 보완',
+            ]
+            with patch('sys.argv', argv), \
+                 patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                     mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                 patch('agents.edit_post.classify_reviewed_post_route', return_value={
+                     'route': 'standard', 'reasons': [], 'target_status': 'draft',
+                     'validation_plan': {},
+                 }), \
+                 patch('agents.validation_runner.require_validation_success', return_value={
+                     'profile': 'standard-event', 'tests_run': 1, 'selected_files': ['test.py'],
+                     'duration_ms': 1.0,
+                 }), \
+                 patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
+                 patch.object(module.editorial_cli, 'main'):
+                module.main()
+
+        self.assertEqual('revise-draft', make.call_args.args[0])
+        self.assertEqual({
+            'rank_math_focus_keyword': '2026 부산 10월 축제',
+            'rank_math_title': '2026 부산 10월 축제 일정',
+            'rank_math_description': '2026 부산 10월 축제 일정과 주요 프로그램을 확인합니다.',
+        }, make.call_args.kwargs['expected_rank_math_meta'])
 
     def test_promote_allows_only_publish_status(self):
         module = load_module()
