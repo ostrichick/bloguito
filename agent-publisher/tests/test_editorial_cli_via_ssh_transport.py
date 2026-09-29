@@ -355,6 +355,25 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '901', 'rank_math_robots', 'noindex', '--allow-root'])
 
+    def test_revise_draft_allows_only_reviewed_rank_math_meta(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='reviewed value\n', stderr='')
+        expected = {
+            'rank_math_focus_keyword': '10월 대전 행사',
+            'rank_math_title': '10월 대전 행사 2026',
+            'rank_math_description': '10월 대전 행사 설명',
+        }
+        transport = module.make_transport(
+            'revise-draft', {641}, 'bloguito', expected_rank_math_meta=expected)
+        for key, value in expected.items():
+            transport(module._WP_PREFIX + [
+                'post', 'meta', 'get', '641', key, '--allow-root'])
+            transport(module._WP_PREFIX + [
+                'post', 'meta', 'set', '641', key, value, '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'post', 'meta', 'set', '641', 'rank_math_title', 'unreviewed title', '--allow-root'])
+
     def test_prepare_draft_can_create_and_attach_only_its_generated_image(self):
         module = load_module()
         calls = []

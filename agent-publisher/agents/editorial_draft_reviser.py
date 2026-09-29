@@ -13,6 +13,11 @@ from pathlib import Path
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import load_inventory
 from agents.source_validation_cache import verify_sources_unchanged
+from agents.editorial_updater import (
+    _read_rank_math_meta,
+    _set_rank_math_meta,
+    rank_math_meta_from_brief,
+)
 from config import DRAFTS_INDEX_FILE
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
@@ -143,6 +148,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
 
         old_brief = old_bundle.get("brief", {})
         new_brief = bundle.get("brief", {})
+        reviewed_meta = rank_math_meta_from_brief(new_brief)
         new_title = bundle.get("plan", {}).get("title")
         if (old_brief.get("id") != new_brief.get("id")
                 or old_brief.get("category_key") != new_brief.get("category_key")
@@ -239,7 +245,12 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         desired = render(bundle["plan"], bundle["sources"])
         new_excerpt = excerpt_from_lead(bundle["plan"]["lead"])
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
-        post_backup = backup_json(ROOT, "draft-revision", post_id, live)
+        current_meta = _read_rank_math_meta(base, post_id) if reviewed_meta else None
+        update_meta = reviewed_meta is not None and current_meta != reviewed_meta
+        backup_payload = dict(live)
+        if current_meta is not None:
+            backup_payload["rank_math_meta"] = current_meta
+        post_backup = backup_json(ROOT, "draft-revision", post_id, backup_payload)
         archive = ROOT / "data" / "editorial_runs"
         index_backup = archive / f"draft-revision-index-{post_id}-{stamp}.json"
         index_backup.write_text(index_before, encoding="utf-8")
@@ -264,6 +275,8 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             },
             updates=update_fields,
         )
+        if update_meta:
+            _set_rank_math_meta(base, post_id, reviewed_meta)
         if not verify_saved_fields(
                 saved,
                 expected={
@@ -273,6 +286,8 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                     "post_excerpt": new_excerpt,
                 },
                 preserved={"post_name": live["post_name"]}):
+            raise ValueError(f"draft_revision_save_verification_failed: recover from {post_backup}")
+        if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
             raise ValueError(f"draft_revision_save_verification_failed: recover from {post_backup}")
 
         featured_attachment_id = None

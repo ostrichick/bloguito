@@ -354,12 +354,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                               'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
                 and wp[5] == '--allow-root'):
             return
-        if (action == 'public-standard' and expected_rank_math_meta is not None
+        if (action in {'public-standard', 'revise-draft'} and expected_rank_math_meta is not None
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4] in expected_rank_math_meta and wp[5] == '--allow-root'):
             return
-        if (action == 'public-standard' and expected_rank_math_meta is not None
+        if (action in {'public-standard', 'revise-draft'} and expected_rank_math_meta is not None
                 and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4] in expected_rank_math_meta
@@ -589,6 +589,13 @@ def main():
                 f"{validation['tests_run']} tests PASS "
                 f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
             )
+
+    if action == 'revise-draft':
+        bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None
+        if bundle_path is None or not bundle_path.is_file():
+            parser.error('revise-draft bundle file not found')
+        bundle = json.loads(bundle_path.read_text(encoding='utf-8'))
+        expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
 
     transport = make_transport(
         transport_action, targets, config.host, ssh_user=config.user,

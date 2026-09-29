@@ -12,7 +12,7 @@ from agents.editorial_draft_reviser import (
     _normalize_renderer_migrations,
     revise_reviewed_draft,
 )
-from test_editorial_system import NOW, sample
+from test_editorial_system import NOW, sample, sign
 
 
 class EditorialDraftReviserTests(unittest.TestCase):
@@ -90,6 +90,87 @@ class EditorialDraftReviserTests(unittest.TestCase):
             self.assertEqual(1, sum(args[5:7] == ["post", "get"] for args in calls))
             self.assertEqual(1, sum(args[5] == "eval" for args in calls))
             source_recheck.assert_called_once()
+
+    def test_full_reviewed_draft_revision_updates_reviewed_rank_math_metadata(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        new["brief"]["primary_keyword"] = "선풍기 무료 배출"
+        new["brief"]["seo"] = {
+            "title": "선풍기 무료 배출: 서초구 배출 방법",
+            "description": "선풍기 무료 배출 방법과 서초구 수거 위치를 공식 기준으로 확인합니다.",
+        }
+        sign(new)
+        old_body = render(old["plan"], old["sources"])
+        live = {
+            "ID": 393,
+            "post_title": old["plan"]["title"],
+            "post_status": "draft",
+            "post_name": "same-slug",
+            "post_content": old_body,
+            "post_excerpt": excerpt_from_lead(old["plan"]["lead"]),
+        }
+        meta = {
+            "rank_math_focus_keyword": "old keyword",
+            "rank_math_title": "old title",
+            "rank_math_description": "old description",
+        }
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / "data"
+            data.mkdir()
+            index = data / "draft_posts.json"
+            index.write_text(json.dumps([{
+                "id": 393,
+                "fact_manifest": {"editorial_bundle": old},
+            }]), encoding="utf-8")
+
+            def run(args, **kwargs):
+                if args[5:7] == ["post", "get"]:
+                    return Mock(stdout=json.dumps(live))
+                if args[5:8] == ["post", "meta", "get"]:
+                    return Mock(returncode=0, stdout=meta[args[9]] + "\n", stderr="")
+                if args[5:8] == ["post", "meta", "set"]:
+                    meta[args[9]] = args[10]
+                    return Mock(returncode=0, stdout="Success\n", stderr="")
+                if args[5] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    live.update(payload["updates"])
+                    return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
+                raise AssertionError(args)
+
+            inventory = {"checked_on": NOW.date().isoformat(), "posts": [live]}
+            with patch("agents.editorial_draft_reviser.ROOT", root), \
+                 patch("agents.editorial_draft_reviser.DRAFTS_INDEX_FILE", index), \
+                 patch("agents.editorial_draft_reviser.sync_inventory"), \
+                 patch("agents.editorial_draft_reviser.invalidate_inventory"), \
+                 patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
+                 patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
+                 patch("agents.editorial_draft_reviser.verify_sources_unchanged", return_value={
+                     "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
+                     "all_unchanged": True,
+                 }), \
+                 patch("agents.editorial_draft_reviser.save_report"), \
+                 patch("agents.editorial_draft_reviser.subprocess.run", side_effect=run):
+                result = revise_reviewed_draft(
+                    393,
+                    new,
+                    hashlib.sha256(old_body.encode()).hexdigest(),
+                    confirmed=True,
+                )
+
+            self.assertEqual(result, 393)
+            self.assertEqual(meta, {
+                "rank_math_focus_keyword": "선풍기 무료 배출",
+                "rank_math_title": "선풍기 무료 배출: 서초구 배출 방법",
+                "rank_math_description": "선풍기 무료 배출 방법과 서초구 수거 위치를 공식 기준으로 확인합니다.",
+            })
+            backup = json.loads(next((data / "editorial_runs").glob("draft-revision-393-*.json")).read_text(encoding="utf-8"))
+            self.assertEqual(backup["rank_math_meta"], {
+                "rank_math_focus_keyword": "old keyword",
+                "rank_math_title": "old title",
+                "rank_math_description": "old description",
+            })
 
     def test_revision_requires_confirmation(self):
         with self.assertRaisesRegex(ValueError, "specific_draft_revision_confirmation_required"):
