@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from config import GEMINI_API_KEY, CATEGORIES, resolve_category
 from agents.editorial import policy, policy_fingerprint, digest, validate_bundle, render, topic_reasons, ROOT, save_report
+from agents.event_post_standard import event_review_instruction, event_writer_instruction
 from agents.fact_validation import snapshot
 from agents.review_cache import load_cached_review, store_cached_review
 from agents.search_intent import INVENTORY
@@ -43,12 +44,46 @@ class InformationTable(BaseModel):
     caption: str
     headers: list[str]
     rows: list[InformationTableRow]
+    mobile_cards: bool = Field(default=False, description=(
+        'For event/comparison overviews, render one card per row on narrow screens.'
+    ))
+
+
+class SectionFact(BaseModel):
+    label: str
+    value: str
+    evidence: list[Evidence]
+    answers: list[str] = Field(default_factory=list)
+
+
+class SectionImage(BaseModel):
+    url: str
+    alt: str
+    caption: str
+    source_id: str
+    year: int | None = Field(default=None, description=(
+        'Event-post v1 should set the actual photo/poster year so prior-year use can be disclosed deterministically.'
+    ))
+
+
+class SectionLocation(BaseModel):
+    venue: str
+    address: str
+    query: str
+    evidence: list[Evidence]
 
 
 class Section(BaseModel):
     heading: str
     paragraphs: list[Paragraph]
     table: InformationTable | None = None
+    facts: list[SectionFact] = Field(default_factory=list)
+    image: SectionImage | None = None
+    location: SectionLocation | None = None
+    event_name: str | None = Field(default=None, description=(
+        'Event-post v1 only: exact temporal_source.event_entries[].name for one detailed event section. '
+        'Leave empty on overview/comparison/FAQ-oriented sections.'
+    ))
     actions: list[str] = Field(default_factory=list, description=(
         'Optional reviewed action URLs to render inside this section. Each URL must '
         'exactly match an official source action; scoped actions are omitted from the global CTA.'
@@ -898,6 +933,7 @@ class EditorialWriterAgent:
             if cached is not None:
                 self.last_used_model = 'cached-semantic-review'
                 return cached
+        event_rules = event_review_instruction(bundle)
         with timed('semantic_review'):
             result = self._call(
                 '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, 표의 각 행·셀, FAQ를 원문과 대조하라. '
@@ -913,7 +949,8 @@ class EditorialWriterAgent:
             '링크 접근을 직접 확인하지 못했다면 검증했다고 추정하지 말 것. '
             'plan.related_posts가 있으면 각 ID·현재 공개 상태·관련성·도착 주제와 기존 관련 글 링크의 보존을 검토하라. '
             '내부 관련 글은 공식 출처나 신청·조회 버튼이 아니다. '
-            '각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
+            + event_rules +
+            ' 각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
                 body, Review, 'reviewer')
         review = {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
                   'checked_at': datetime.now(KST).isoformat()}
@@ -969,6 +1006,7 @@ class EditorialWriterAgent:
         if not self.writing_enabled:
             raise ValueError('editorial_writer_disabled_for_manual_flow')
         bundle = {'brief': brief, 'sources': sources, 'temporal_source': temporal_source or {}}
+        event_rules = event_writer_instruction(brief, temporal_source or {})
         feedback = []
         for attempt in range(policy()['max_revisions']+1):
             plan = self._call(
@@ -993,7 +1031,8 @@ class EditorialWriterAgent:
                 '본문의 숫자는 해당 문단의 인용으로 증명해야 한다. 제품 개수는 5개 미만 같은 명시적 범위에 '
                 '속하는 1개 등으로 설명할 수 있으나 반드시 그 범위가 있는 인용을 연결하라. 금액·날짜는 원문 수치 표기를 유지하라. '
                 '새로운 계산/근거 없는 이유/조언/분량 채우기를 하지 말 것. '
-                '유효한 조건과 절차를 보존하고 기존 issues를 고쳐라.',
+                '유효한 조건과 절차를 보존하고 기존 issues를 고쳐라.'
+                + event_rules,
                 {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, Plan, 'writer')
             bundle['plan'] = plan
             report = validate_bundle(bundle, inventory, require_review=False)

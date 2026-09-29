@@ -89,6 +89,8 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 
 **묶음 처리:** 같은 글·같은 승인 범위의 문구 다듬기, 중복 FAQ 제거, 기존 사실의 표 정리를 한 후보 bundle에 모아 검토한 뒤 한 번 저장한다. 단순 이동·삭제가 아니라 의미가 달라지는지 변경 블록을 검토한다. 저장 전에 추가 요청이 오면 범위와 경로를 다시 분류해 후보에 합치고 최종 후보로 검토한다. 저장 후 추가 요청은 새 원본과 검토 유효성을 기준으로 처리한다. P1부터 Fast 수정은 최초 full review를 trust anchor로 두고 각 delta의 `base_content_digest → result_content_digest`를 연결한 `fast_edit_chain`을 검증한다. 정책과 review 기한이 그대로이고 각 delta 검토가 모두 유효하면 최대 5개 delta까지 연속 Fast 수정이 가능하며, chain이 끊기거나 한도에 도달하면 `FULL_REVIEW_REQUIRED`로 Standard에 승격한다. 검토 digest나 timestamp를 수동으로 바꿔 통과시키지 않는다. FULL_REVIEW_REQUIRED이면 필요한 전체 검토 경로로 전환하고 사용자에게 이유를 짧게 알린다. 요청 범위 자체를 확대해야 한다면 먼저 필요한 정보를 확인한다.
 
+**행사 일정형 글:** 한 도시의 여러 행사·축제를 월간 가이드로 작성하거나 기존 Gemini draft를 개선할 때에는 [EVENT_POST_STANDARD.md](EVENT_POST_STANDARD.md)를 적용한다. Gemini 초안은 행사 후보·레이아웃·공식 URL·미디어 후보를 재사용할 수 있는 scaffold로 취급하고, 현재 연도 날짜·시간·비용·신청·프로그램을 공식 source로 다시 검증한 뒤 필요한 행사 section을 통째로 재작성한다. 새 표준 bundle은 `event_post_standard_version=1`, `multi_event_schedule=true`, 행사별 `event_name` binding을 사용한다. 기존 draft는 다음 Standard revision에서 이관하며, 도시별 고정 행사 수·1,200단어 기준·인터랙티브 지도·`test_<city>_festival_post.py` 같은 one-off 테스트를 새 품질 게이트로 만들지 않는다. 행사 사실·source·CTA·SEO가 바뀌는 수정은 `standard-event` 검증과 full semantic review를 거치고, actual image relevance/quality와 desktop/mobile 배치는 browser/visual QA로 확인한다.
+
 **같은 작업 안의 재사용:** 다음 조건을 충족하는 자료만 재사용한다.
 
 - 정책 문서와 설정: 같은 작업자가 이미 읽었고 이후 파일이 바뀌지 않았으면 기존 이해를 사용한다. 다른 작업이 파일을 수정했을 가능성이 있으면 변경 여부부터 확인한다.

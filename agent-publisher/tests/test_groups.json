@@ -46,7 +46,8 @@
     ],
     "event": [
       "test_multi_event_schedule.py",
-      "test_event_section_assets.py"
+      "test_event_section_assets.py",
+      "test_event_post_standard.py"
     ],
     "ticket": [
       "test_ticket_validation.py",

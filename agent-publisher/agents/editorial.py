@@ -16,6 +16,7 @@ from agents.temporal_validation import (KST, validate_availability, extract_evid
                                         validate_reference_period)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
+from agents.event_post_standard import validate_event_post_standard
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -356,7 +357,8 @@ def validated_section_assets(plan, sources):
         image = section.get('image')
         if image is not None:
             if (not isinstance(image, dict)
-                    or set(image) != {'url', 'alt', 'caption', 'source_id'}):
+                    or set(image) - {'url', 'alt', 'caption', 'source_id', 'year'}
+                    or not {'url', 'alt', 'caption', 'source_id'}.issubset(image)):
                 raise ValueError('invalid_section_image')
             url, alt, caption, source_id = (
                 image.get('url'), image.get('alt'), image.get('caption'), image.get('source_id'))
@@ -369,6 +371,8 @@ def validated_section_assets(plan, sources):
                     or re.search(r'[<>\r\n]', alt)
                     or not isinstance(caption, str) or not 2 <= len(caption.strip()) <= 180
                     or re.search(r'[<>\r\n]', caption)
+                    or (image.get('year') is not None
+                        and (type(image.get('year')) is not int or not 2000 <= image['year'] <= 2100))
                     or not source or source.get('source_type') != 'official'):
                 raise ValueError('invalid_section_image')
 
@@ -558,6 +562,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                 validated_section_action_links(plan, sources)
             except (KeyError, TypeError, ValueError):
                 reasons.append('invalid_section_actions')
+            reasons.extend(validate_event_post_standard(bundle))
         if 'content' in scopes and legacy_85_welfare_navigation_exception(brief):
             reasons.extend(legacy_85_welfare_navigation_reasons(brief, sources, plan))
         related = plan.get('related_posts', [])

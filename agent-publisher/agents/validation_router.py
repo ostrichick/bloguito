@@ -311,7 +311,9 @@ def _test_groups_for_scope(profile: str, scope: dict, route: str | None) -> list
         "factual_risk", "sources_changed", "temporal_changed", "actions_changed",
         "brief_changed", "title_changed", "category_changed",
     ))
-    if scope.get("event_domain") and domain_sensitive_change and profile != "quick-image":
+    if (scope.get("event_domain")
+            and (domain_sensitive_change or profile == "standard-event")
+            and profile != "quick-image"):
         groups.add("event")
     if scope.get("ticket_domain") and domain_sensitive_change and profile != "quick-image":
         groups.add("ticket")

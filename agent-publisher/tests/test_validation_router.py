@@ -80,6 +80,14 @@ class ValidationRouterTests(unittest.TestCase):
         self.assertIn('ticket', concert_standard['test_groups'])
         self.assertEqual('affected-or-live', concert_standard['source_validation'])
 
+    def test_content_only_event_standard_route_still_runs_event_contract(self):
+        old = roundup_bundle()
+        new = copy.deepcopy(old)
+        new['plan']['sections'][0]['heading'] = '10월 행사 일정 다시 보기'
+        plan = build_validation_plan(old, new, route='standard')
+        self.assertEqual('standard-event', plan['profile'])
+        self.assertIn('event', plan['test_groups'])
+
     def test_canonical_standard_route_cannot_downgrade_to_quick(self):
         old = sample()
         new = copy.deepcopy(old)
