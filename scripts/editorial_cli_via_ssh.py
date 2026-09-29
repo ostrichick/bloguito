@@ -49,6 +49,8 @@ _LIST_ARGS = [
 _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
 _REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
+_REMOTE_SECTION_IMAGE = re.compile(
+    r'/tmp/editorial_section_([1-9][0-9]*)_[0-9a-f]{12}\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 _CREATE_ACTIONS = {'publish', 'prepare-draft'}
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
 _IMAGE_EDIT_ACTIONS = {'revise-draft', 'fast-revise-draft', 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
@@ -57,7 +59,7 @@ _CLI_ACTIONS = {
     'publish', 'prepare-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft',
     'update-existing',
     'replace-featured-image', 'update-draft', 'replace-legacy-draft', 'promote-draft',
-    'reformat', 'fix-excerpt', 'repair-draft-category',
+    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image',
 }
 _TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
@@ -139,7 +141,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     readable_ids = set(allowed_ids)
     diagnosed = False
     image_mutation_allowed = bool(
-        action in _CREATE_ACTIONS or action == 'replace-featured-image' or allow_image
+        action in _CREATE_ACTIONS or action in {'replace-featured-image', 'import-section-image'} or allow_image
     )
     if expected_rank_math_meta is not None:
         allowed_rank_keys = {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
@@ -355,11 +357,20 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and wp[6].startswith('--alt=') and '\x00' not in wp[6]
                 and wp[7:] == ['--porcelain', '--allow-root']):
             return 'media_import'
+        if (action == 'import-section-image' and len(wp) == 8 and wp[:2] == ['media', 'import']
+                and _REMOTE_SECTION_IMAGE.fullmatch(wp[2])
+                and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
+                and int(wp[3].split('=', 1)[1]) in allowed_ids
+                and int(_REMOTE_SECTION_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
+                and wp[4].startswith('--title=') and '\x00' not in wp[4]
+                and wp[5].startswith('--alt=') and '\x00' not in wp[5]
+                and wp[6:] == ['--porcelain', '--allow-root']):
+            return 'media_import'
         if (allow_image and action == 'revise-draft' and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4:] == ['_thumbnail_id', '--allow-root']):
             return
-        if (image_mutation_allowed and action in _IMAGE_EDIT_ACTIONS
+        if (image_mutation_allowed and action in {*_IMAGE_EDIT_ACTIONS, 'import-section-image'}
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in readable_ids
                 and wp[4] in {'_thumbnail_id', '_wp_attachment_image_alt',
@@ -469,10 +480,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             html_copy = (action in _CREATE_ACTIONS and source.suffix.lower() == '.html'
                          and _REMOTE_HTML.fullmatch(remote_path))
             image_match = _REMOTE_IMAGE.fullmatch(remote_path)
+            section_image_match = _REMOTE_SECTION_IMAGE.fullmatch(remote_path)
             image_copy = (
                 source.suffix.lower() in {'.jpg', '.jpeg', '.png', '.webp'}
-                and image_match is not None
-                and int(image_match.group(1)) in allowed_ids
+                and ((image_match is not None and int(image_match.group(1)) in allowed_ids)
+                     or (section_image_match is not None
+                         and int(section_image_match.group(1)) in allowed_ids))
             )
             if not (html_copy or image_copy):
                 raise ValueError('unexpected_docker_copy_during_draft_publish')
@@ -488,9 +501,11 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and len(command) == 7 and command[5] == '-f'):
             remote_path = command[6]
             image_match = _REMOTE_IMAGE.fullmatch(remote_path)
+            section_image_match = _REMOTE_SECTION_IMAGE.fullmatch(remote_path)
             allowed_cleanup = (
                 _REMOTE_HTML.fullmatch(remote_path)
                 or (image_match and int(image_match.group(1)) in allowed_ids)
+                or (section_image_match and int(section_image_match.group(1)) in allowed_ids)
             )
             if allowed_cleanup:
                 return remote_run('sudo docker exec wordpress_app rm -f ' + shlex.quote(remote_path), **kwargs)
@@ -603,6 +618,14 @@ def main():
                 f"{validation['tests_run']} tests PASS "
                 f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
             )
+
+    if action == 'import-section-image':
+        if '--image-path' not in cli_args:
+            parser.error('import-section-image requires --image-path')
+        image_index = cli_args.index('--image-path') + 1
+        if image_index >= len(cli_args):
+            parser.error('--image-path requires a value')
+        image_path = Path(cli_args[image_index])
 
     if action in {'revise-draft', 'replace-legacy-draft'}:
         bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None

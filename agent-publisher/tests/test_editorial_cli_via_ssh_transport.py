@@ -19,6 +19,29 @@ def load_module():
 
 
 class EditorialCliViaSshTransportTests(unittest.TestCase):
+    def test_section_image_import_allows_non_featured_media_only_for_target(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout='777\n', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('import-section-image', {648}, 'bloguito')
+        remote = '/tmp/editorial_section_648_0123456789ab.webp'
+        result = transport(module._WP_PREFIX + [
+            'media', 'import', remote, '--post_id=648', '--title=행사 이미지', '--alt=행사 장면',
+            '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
+        self.assertEqual(0, result.returncode)
+        transport(module._WP_PREFIX + [
+            'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
+            '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'media', 'import', remote, '--post_id=649', '--title=행사 이미지', '--alt=행사 장면',
+                '--porcelain', '--allow-root'])
+
     def test_successful_inventory_uses_direct_ssh_without_tailscale_probe(self):
         module = load_module()
         calls = []

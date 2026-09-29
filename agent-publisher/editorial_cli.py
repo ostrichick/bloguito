@@ -16,7 +16,7 @@ configure_utf8_stdio()
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'complete-task-qa', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'import-section-image', 'complete-task-qa', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -30,6 +30,7 @@ def _main():
     parser.add_argument('--resume', action='store_true',
                         help='edit-draft: resume a matching interrupted task-state after live SHA reconciliation')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
+    parser.add_argument('--media-title', help='import-section-image: reviewed WordPress attachment title')
     parser.add_argument('--qa-scope', action='append',
                         choices=['content-mobile-desktop', 'cta-destination', 'layout-accessibility',
                                  'featured-image', 'public-page'],
@@ -117,6 +118,22 @@ def _main():
             args.expected_content_sha256,
             expected_thumbnail_id=args.expected_thumbnail_id,
             alt_text=args.alt_text,
+            confirmed=args.confirm_update,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
+    if args.action == 'import-section-image':
+        if args.inventory or args.file:
+            parser.error('import-section-image uses --post-id/--image-path and no bundle file')
+        if not args.image_path or not args.alt_text or not args.media_title:
+            parser.error('import-section-image requires --image-path, --media-title and --alt-text')
+        from agents.section_image import import_section_image
+        result = import_section_image(
+            args.post_id, args.image_path, args.expected_content_sha256,
+            media_title=args.media_title, alt_text=args.alt_text,
             confirmed=args.confirm_update,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))

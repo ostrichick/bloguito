@@ -102,7 +102,8 @@
       "test_post_approval_preflight.py",
       "test_validation_router.py",
       "test_validation_runner.py",
-      "test_validation_ssh_integration.py"
+      "test_validation_ssh_integration.py",
+      "test_section_image.py"
     ],
     "resume": [
       "test_task_state.py"
