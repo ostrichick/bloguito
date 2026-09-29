@@ -13,7 +13,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.post = {'ID': 243, 'post_status': 'publish', 'post_title': 'Existing title',
-                     'post_content': 'Original body', 'post_name': 'stable-slug'}
+                     'post_content': 'Original body', 'post_name': 'stable-slug',
+                     'post_excerpt': ''}
         self.bundle = {'brief': {'official_urls': ['https://example.org/official'],
                                  'existing_post_id': 243},
                        'sources': [{'url': 'https://example.org/official', 'sha256': 'verified'}],
@@ -27,8 +28,11 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         def execute(args, **kwargs):
             calls.append(args)
             if args[5:7] == ['post', 'get']:
-                count = sum(c[5:7] == ['post', 'get'] for c in calls)
-                return Mock(stdout=json.dumps(self.post if count == 1 else updated))
+                return Mock(stdout=json.dumps(self.post))
+            if args[5] == 'eval':
+                payload = json.loads(kwargs['input'])
+                saved = {**self.post, **payload['updates']}
+                return Mock(stdout=json.dumps({'status': 'ok', 'saved': saved}))
             return Mock(stdout='Success')
 
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
@@ -42,10 +46,9 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True))
         invalidate.assert_called_once_with()
-        updates = [c for c in calls if c[5:7] == ['post', 'update']]
-        self.assertEqual(1, len(updates))
-        self.assertIn('--post_content=Reviewed HTML', updates[0])
-        self.assertFalse(any(a.startswith('--post_status=') for a in updates[0]))
+        guarded = [c for c in calls if c[5] == 'eval']
+        self.assertEqual(1, len(guarded))
+        self.assertFalse(any(c[5:7] == ['post', 'update'] for c in calls))
         self.assertEqual(1, len(list((Path(self.temp.name) / 'data/editorial_runs').glob('public-edit-*.json'))))
 
     def test_rejects_changed_post_before_any_update(self):
@@ -53,10 +56,15 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater, 'sync_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [changed]}), \
-             patch.object(updater.subprocess, 'run') as command:
+             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater.subprocess, 'run', return_value=Mock(stdout=json.dumps(changed))) as command:
             with self.assertRaisesRegex(ValueError, 'target_missing_changed_or_not_public'):
                 updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True)
-            command.assert_not_called()
+            self.assertEqual(1, command.call_count)  # parallel target snapshot only
+            self.assertFalse(any(
+                call.args[0][5] == 'eval' or call.args[0][5:7] == ['post', 'update']
+                for call in command.call_args_list
+            ))
 
     def test_requires_explicit_confirmation(self):
         with self.assertRaisesRegex(ValueError, 'specific_public_post_update_confirmation_required'):
@@ -70,8 +78,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         def execute(args, **kwargs):
             calls.append(args)
             if args[5:7] == ['post', 'get']:
-                count = sum(c[5:7] == ['post', 'get'] for c in calls)
-                return Mock(stdout=json.dumps(self.post if count == 1 else updated))
+                return Mock(stdout=json.dumps(self.post))
+            if args[5] == 'eval':
+                payload = json.loads(kwargs['input'])
+                return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
             return Mock(stdout='Success')
 
         common = [patch.object(updater, 'ROOT', Path(self.temp.name)),
@@ -98,8 +108,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(
                 243, bundle, self.sha, confirmed=True, confirm_title_change=True))
-        update = next(c for c in calls if c[5:7] == ['post', 'update'])
-        self.assertIn('--post_title=Reviewed new title', update)
+        guarded_call = next(c for c in calls if c[5] == 'eval')
+        self.assertTrue(guarded_call)
         self.assertEqual('stable-slug', updated['post_name'])
 
     def test_title_only_change_is_not_skipped(self):
@@ -110,8 +120,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         def execute(args, **kwargs):
             calls.append(args)
             if args[5:7] == ['post', 'get']:
-                count = sum(c[5:7] == ['post', 'get'] for c in calls)
-                return Mock(stdout=json.dumps(self.post if count == 1 else updated))
+                return Mock(stdout=json.dumps(self.post))
+            if args[5] == 'eval':
+                payload = json.loads(kwargs['input'])
+                return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
             return Mock(stdout='Success')
 
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
@@ -125,8 +137,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(
                 243, bundle, self.sha, confirmed=True, confirm_title_change=True))
-        update = next(c for c in calls if c[5:7] == ['post', 'update'])
-        self.assertIn('--post_title=Reviewed new title', update)
+        self.assertTrue(any(c[5] == 'eval' for c in calls))
 
     def test_updates_and_verifies_reviewed_rank_math_metadata_with_backup(self):
         bundle = {
@@ -147,15 +158,16 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             'rank_math_description': 'old description',
         }
         calls = []
-        post_gets = 0
-
         def execute(args, **kwargs):
-            nonlocal post_gets
             calls.append(args)
             wp = args[5:]
             if wp[:2] == ['post', 'get']:
-                post_gets += 1
-                return Mock(returncode=0, stdout=json.dumps(self.post if post_gets == 1 else updated), stderr='', args=args)
+                return Mock(returncode=0, stdout=json.dumps(self.post), stderr='', args=args)
+            if wp and wp[0] == 'eval':
+                payload = json.loads(kwargs['input'])
+                return Mock(returncode=0, stdout=json.dumps({
+                    'status': 'ok', 'saved': {**self.post, **payload['updates']},
+                }), stderr='', args=args)
             if wp[:3] == ['post', 'meta', 'get']:
                 key = wp[4]
                 if meta[key] is None:

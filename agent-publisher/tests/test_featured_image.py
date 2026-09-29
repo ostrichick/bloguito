@@ -7,7 +7,11 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from agents.featured_image import replace_featured_image, validate_featured_image_file
+from agents.featured_image import (
+    reconcile_featured_image_outcome,
+    replace_featured_image,
+    validate_featured_image_file,
+)
 
 
 class FeaturedImageReplacementTests(unittest.TestCase):
@@ -115,6 +119,51 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                         641, image_path, sha, expected_thumbnail_id=642,
                         alt_text="대체텍스트", confirmed=True,
                     )
+
+    def test_resume_reconciles_checkpointed_attachment_without_reimport(self):
+        live = {
+            "post_status": "draft", "post_title": "제목", "post_name": "slug",
+            "post_content": "body", "post_excerpt": "요약",
+        }
+        rank = {
+            "rank_math_focus_keyword": "키워드",
+            "rank_math_title": "SEO",
+            "rank_math_description": "설명",
+        }
+        checkpoint = {
+            "attachment_id": 777,
+            "content_sha256": hashlib.sha256(b"body").hexdigest(),
+            "preserved_post": {
+                "post_status": "draft", "post_title": "제목", "post_name": "slug",
+                "post_excerpt": "요약",
+            },
+            "before_rank_math": rank,
+            "backup": "backup.json",
+        }
+
+        def meta(base, post_id, key):
+            if key == "_thumbnail_id":
+                return "777"
+            if post_id == 777 and key == "_wp_attachment_image_alt":
+                return "대체텍스트"
+            raise AssertionError((post_id, key))
+
+        attachment = {
+            "ID": 777, "guid": "https://lifeinfo24.org/uploads/cover.jpg",
+            "post_title": "제목", "post_mime_type": "image/jpeg",
+        }
+        with patch("agents.featured_image._read_post_meta", side_effect=meta), \
+             patch("agents.featured_image._rank_math_meta", return_value=rank), \
+             patch("agents.featured_image.get_post", side_effect=[live, attachment]):
+            result = reconcile_featured_image_outcome(641, checkpoint, "대체텍스트")
+        self.assertTrue(result["reconciled"])
+        self.assertEqual(777, result["attachment_id"])
+
+    def test_resume_rejects_third_party_thumbnail_after_import_checkpoint(self):
+        checkpoint = {"attachment_id": 777}
+        with patch("agents.featured_image._read_post_meta", return_value="888"):
+            with self.assertRaisesRegex(ValueError, "featured_image_resume_thumbnail_conflict"):
+                reconcile_featured_image_outcome(641, checkpoint, "대체텍스트")
 
 
 if __name__ == "__main__":

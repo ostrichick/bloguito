@@ -352,3 +352,17 @@ P0 이후 남은 실제 병목을 `workflow-metrics.jsonl`로 다시 확인했�
 - workflow metrics는 실사용 `workflow-metrics.jsonl`과 unit-test `workflow-metrics-test.jsonl`을 기본 분리하고 `run_context`를 기록한다. review cache hit/miss/store, source receipt hit/refetch, model timeout/retry/fallback 카운터도 같은 실행 context에 기록한다.
 
 P1에서도 실제 WordPress 글을 검증 목적으로 수정하지 않는다. 구현 검증은 mock/temp 상태와 회귀 테스트로 수행하고, 실운영 첫 적용은 사용자가 실제 특정 글 수정을 요청했을 때 P0/P1 경로의 metrics와 task-state를 관찰하는 방식으로 한다.
+
+## 2026-09-29 P2 통합 수정·원격 왕복 축소
+
+P2 기준선은 실사용 `workflow-metrics.jsonl`의 최근 성공 Standard `revise-draft`였다. 해당 실행은 약 21.5초, WordPress 왕복 5회였고 target read가 약 10.6초를 차지했다. P2는 이 CAS/readback 안전 검사를 삭제하지 않고 **서버 안에서 하나의 제한된 guarded mutation으로 원자화**해 네트워크 왕복만 줄이는 방향으로 구현했다.
+
+- `wordpress_mutation.py`에 고정 PHP 프로그램과 엄격한 JSON stdin schema를 사용하는 `guarded_update_post()`를 추가했다. 클라이언트가 허용한 post ID, expected status/title/slug/excerpt/content SHA, 변경 필드만 전달하며 서버가 CAS → `wp_update_post()` → fresh readback → 전체 desired state 검증을 한 WP-CLI process에서 수행한다. Fast draft는 target `get → guarded mutation` 2회, Standard draft는 보통 inventory + initial target get + guarded mutation 약 3회로 줄어든다.
+- SSH transport는 guarded eval의 **정확한 고정 script 문자열과 payload schema**만 허용한다. Fast/Standard, draft/public별 허용 status와 update field를 분리하고, raw `post update`에 Fast 재시도 권한을 주지 않는다. guarded mutation만 SSH 255에서 1회 replay할 수 있으며 서버는 이미 desired state가 정확히 적용돼 있으면 `already_applied`로 종료한다. title/status/slug/excerpt/content 중 하나라도 제3자 변경과 충돌하면 recovery로 오인하지 않는다. media import는 계속 non-idempotent라 자동 재시도하지 않는다.
+- `edit-post`를 reviewed 기존 글의 통합 상위 진입점으로 추가했다. draft/public reviewed index 중 정확히 한 곳에서 target을 찾고, Fast classifier를 content scope에 적용한 뒤 status별 narrow mutator를 선택한다. 기존 `edit-draft`, `update-existing`, `replace-featured-image`는 호환·진단용으로 남긴다.
+- public Fast는 `published_posts.json`에 reviewed editorial bundle이 있고, 그 bundle을 렌더한 SHA가 caller가 제시한 현재 공개 본문 SHA와 정확히 같을 때만 허용한다. 표현·구조 정리만 changed-block delta review로 처리하고 사람이 작성한 public excerpt는 보존한다. Standard public 저장 성공 뒤에는 기존 reviewed public manifest도 새 bundle로 원자 갱신해 다음 Fast 기준점이 stale하지 않게 한다. reviewed manifest가 없는 legacy public post를 임의로 Fast 대상에 편입하지 않는다.
+- 본문+대표이미지 요청은 content와 image를 두 phase로 분리한다. content 저장·local manifest 갱신을 먼저 끝낸 뒤 새 content SHA와 기존 thumbnail ID를 CAS로 image-only mutation한다. 본문 저장 직후 중단돼 local manifest가 이전 상태인 좁은 crash window는 baseline/desired fingerprint가 정확히 일치할 때만 manifest를 재조정한다. 이미지 import 직후에는 attachment ID와 image/ALT/content SHA를 task-state checkpoint로 기록하고, 재개 시 같은 attachment의 thumbnail/ALT/MIME/URL/본문·SEO 보존을 검증만 하므로 중복 import를 만들지 않는다.
+- task-state는 v3로 확장해 `content_saved`, `image_saved`, image outcome checkpoint, QA 요구 scope를 기록한다. QA scope는 reader-visible content 변화, CTA destination, table/layout topology, featured image, public-page 여부에서 결정하며, featured-image QA는 저장된 attachment ID와 실제 관측 `_thumbnail_id`가 같아야 완료할 수 있다. v1/v2 state는 읽기 호환한다.
+- public Standard도 draft Standard와 같은 read-only 병렬화 패턴을 사용하고 guarded mutation을 통해 저장한다. Rank Math 업데이트는 기존 reviewed 3개 key/value allowlist를 유지하며 Fast public은 SEO를 변경하지 않는다.
+
+P2 구현 검증에서는 실제 WordPress 글을 테스트 목적으로 수정하지 않았다. mock/temp 기반으로 guarded CAS/replay, draft/public Fast/Standard, public manifest binding, content+image resume, image outcome reconciliation, scope-aware QA와 SSH allowlist를 검증한다. 실운영 절감률은 다음 자연스러운 reviewed 글 수정에서 `workflow-metrics.jsonl`의 `wp_roundtrips`, `wp_guarded_mutations`, `total_ms`를 P2 기준선과 비교해 확인한다.

@@ -117,7 +117,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             '--fields=post_status,post_title,post_name,post_content,post_excerpt',
             '--format=json', '--allow-root'])
 
-    def test_fast_revise_streamed_update_retries_255_once(self):
+    def test_fast_revise_guarded_mutation_retries_255_once(self):
         module = load_module()
         ssh_attempts = 0
 
@@ -132,10 +132,17 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport('fast-revise-draft', {463}, 'bloguito')
+        payload = json.dumps({
+            'protocol': 1, 'post_id': 463,
+            'expected': {
+                'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                'post_excerpt': 'old', 'content_sha256': '0' * 64,
+            },
+            'updates': {'post_content': '<p>reviewed</p>', 'post_excerpt': 'summary'},
+        })
         result = transport(module._WP_PREFIX + [
-            'post', 'update', '463', '--post_content=<p>reviewed</p>',
-            '--post_excerpt=summary', '--allow-root'],
-            capture_output=True, text=True, check=False)
+            'eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+            input=payload, capture_output=True, text=True, check=False)
         self.assertEqual(0, result.returncode)
         self.assertEqual(2, ssh_attempts)
 
@@ -193,20 +200,32 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual('--exec', calls[0][3])
         self.assertNotIn('--', calls[0][:4])
 
-    def test_revise_draft_allows_only_exact_target_and_fields(self):
+    def test_revise_draft_allows_only_exact_guarded_target_and_fields(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
         transport = module.make_transport('revise-draft', {463}, 'bloguito')
-        transport(module._WP_PREFIX + [
-            'post', 'update', '463', '--post_content=reviewed', '--post_excerpt=summary', '--allow-root'])
+        expected = {
+            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+            'post_excerpt': 'old', 'content_sha256': '0' * 64,
+        }
+        transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                  input=json.dumps({'protocol': 1, 'post_id': 463, 'expected': expected,
+                                    'updates': {'post_content': 'reviewed', 'post_excerpt': 'summary'}}),
+                  text=True)
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_target'):
-            transport(module._WP_PREFIX + [
-                'post', 'update', '464', '--post_content=reviewed', '--post_excerpt=summary', '--allow-root'])
+            transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                      input=json.dumps({'protocol': 1, 'post_id': 464, 'expected': expected,
+                                        'updates': {'post_content': 'reviewed', 'post_excerpt': 'summary'}}),
+                      text=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                      input=json.dumps({'protocol': 1, 'post_id': 463, 'expected': expected,
+                                        'updates': {'post_content': 'reviewed'}}), text=True)
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
             transport(module._WP_PREFIX + [
-                'post', 'update', '463', '--post_status=publish', '--allow-root'])
+                'post', 'update', '463', '--post_content=reviewed', '--post_excerpt=summary', '--allow-root'])
 
-    def test_revise_draft_streams_reviewed_content_over_stdin(self):
+    def test_revise_draft_streams_guarded_payload_over_stdin(self):
         module = load_module()
         calls = []
 
@@ -217,29 +236,41 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         module._RUN = fake_run
         transport = module.make_transport('revise-draft', {463}, 'bloguito')
         reviewed = '<div>' + ('검토된 긴 본문' * 10000) + '</div>'
-        transport(module._WP_PREFIX + [
-            'post', 'update', '463', f'--post_content={reviewed}',
-            '--post_excerpt=검토된 요약', '--allow-root'],
-            capture_output=True, text=True, check=True)
+        payload = json.dumps({
+            'protocol': 1, 'post_id': 463,
+            'expected': {
+                'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                'post_excerpt': 'old', 'content_sha256': '0' * 64,
+            },
+            'updates': {'post_content': reviewed, 'post_excerpt': '검토된 요약'},
+        }, ensure_ascii=False)
+        transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                  input=payload, capture_output=True, text=True, check=True)
 
         self.assertEqual(1, len(calls))
         argv, kwargs = calls[0]
         remote = argv[-1]
-        self.assertIn('docker exec -i wordpress_app wp post update 463 -', remote)
-        self.assertIn('--post_excerpt=', remote)
+        self.assertIn('docker exec -i wordpress_app wp eval', remote)
         self.assertNotIn('검토된 긴 본문', remote)
-        self.assertEqual(reviewed, kwargs['input'])
+        self.assertEqual(reviewed, json.loads(kwargs['input'])['updates']['post_content'])
 
-    def test_revise_draft_title_change_requires_explicit_transport_permission(self):
+    def test_revise_draft_guarded_title_change_requires_explicit_transport_permission(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
-        command = module._WP_PREFIX + [
-            'post', 'update', '463', '--post_content=reviewed', '--post_excerpt=summary',
-            '--post_title=reviewed title', '--allow-root']
+        command = module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root']
+        payload = json.dumps({
+            'protocol': 1, 'post_id': 463,
+            'expected': {
+                'post_status': 'draft', 'post_title': 'old title', 'post_name': 'slug',
+                'post_excerpt': 'old', 'content_sha256': '0' * 64,
+            },
+            'updates': {'post_content': 'reviewed', 'post_excerpt': 'summary',
+                        'post_title': 'reviewed title'},
+        })
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
-            module.make_transport('revise-draft', {463}, 'bloguito')(command)
+            module.make_transport('revise-draft', {463}, 'bloguito')(command, input=payload, text=True)
         module.make_transport(
-            'revise-draft', {463}, 'bloguito', allow_title_change=True)(command)
+            'revise-draft', {463}, 'bloguito', allow_title_change=True)(command, input=payload, text=True)
 
     def test_edit_draft_transport_must_be_preclassified(self):
         module = load_module()

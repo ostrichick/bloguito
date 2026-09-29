@@ -16,7 +16,7 @@ configure_utf8_stdio()
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'complete-task-qa', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'complete-task-qa', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -30,6 +30,12 @@ def _main():
     parser.add_argument('--resume', action='store_true',
                         help='edit-draft: resume a matching interrupted task-state after live SHA reconciliation')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
+    parser.add_argument('--qa-scope', action='append',
+                        choices=['content-mobile-desktop', 'cta-destination', 'layout-accessibility',
+                                 'featured-image', 'public-page'],
+                        help='complete-task-qa: QA scope actually completed; repeat for multiple scopes')
+    parser.add_argument('--observed-thumbnail-id', type=int,
+                        help='complete-task-qa: thumbnail ID observed during featured-image browser QA')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
@@ -87,7 +93,9 @@ def _main():
         if args.inventory or args.file:
             parser.error('complete-task-qa requires only --post-id and --expected-content-sha256')
         from agents.task_state import mark_browser_qa_complete
-        state = mark_browser_qa_complete(args.post_id, args.expected_content_sha256)
+        state = mark_browser_qa_complete(
+            args.post_id, args.expected_content_sha256, completed_scopes=args.qa_scope,
+            observed_thumbnail_id=args.observed_thumbnail_id)
         print(json.dumps(state, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -110,6 +118,41 @@ def _main():
             expected_thumbnail_id=args.expected_thumbnail_id,
             alt_text=args.alt_text,
             confirmed=args.confirm_update,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
+    if args.action == 'edit-post':
+        if args.inventory:
+            parser.error('edit-post always uses tracked reviewed state and live WordPress CAS')
+        if not args.post_id or not args.expected_content_sha256 or not args.confirm_update:
+            parser.error('edit-post requires --post-id, --expected-content-sha256 and --confirm-update')
+        bundle = None
+        if args.file:
+            candidate = Path(args.file)
+            if not candidate.is_file():
+                parser.error('edit-post bundle file not found')
+            bundle = json.loads(candidate.read_text(encoding='utf-8'))
+            if not args.edit_intent:
+                parser.error('edit-post with a bundle requires --edit-intent')
+        if args.image_path and (not args.expected_thumbnail_id or not args.alt_text):
+            parser.error('edit-post with --image-path requires --expected-thumbnail-id and --alt-text')
+        if bundle is None and not args.image_path:
+            parser.error('edit-post requires either a bundle file or --image-path')
+        from agents.edit_post import edit_reviewed_post
+        result = edit_reviewed_post(
+            args.post_id,
+            bundle,
+            args.expected_content_sha256,
+            confirmed=True,
+            edit_intent=args.edit_intent,
+            confirm_title_change=args.confirm_title_change,
+            image_path=args.image_path,
+            expected_thumbnail_id=args.expected_thumbnail_id,
+            alt_text=args.alt_text,
+            resume=args.resume,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
@@ -169,6 +212,8 @@ def _main():
             parser.error('edit-draft reads only the tracked draft and selected route requirements')
         if not args.edit_intent:
             parser.error('edit-draft requires --edit-intent')
+        if args.image_path and (not args.expected_thumbnail_id or not args.alt_text):
+            parser.error('edit-draft with --image-path requires --expected-thumbnail-id and --alt-text')
         from agents.edit_router import edit_reviewed_draft
         result = edit_reviewed_draft(
             args.post_id,
@@ -178,6 +223,8 @@ def _main():
             edit_intent=args.edit_intent,
             confirm_title_change=args.confirm_title_change,
             image_path=args.image_path,
+            expected_thumbnail_id=args.expected_thumbnail_id,
+            alt_text=args.alt_text,
             resume=args.resume,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))

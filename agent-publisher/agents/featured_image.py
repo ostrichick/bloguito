@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -12,8 +13,9 @@ from PIL import Image
 from agents.editorial import ROOT
 from agents.editorial_updater import RANK_MATH_META_KEYS
 from agents.task_state import fail_task_state, start_task_state, update_task_state
-from agents.wordpress_mutation import backup_json, get_post, verify_cas
+from agents.wordpress_mutation import backup_json, content_sha256, get_post, verify_cas
 from agents.designer import FEATURED_IMAGE_POLICY
+from agents.qa_scope import qa_requirements_for_edit
 from agents.workflow_metrics import increment
 
 
@@ -73,6 +75,47 @@ def _rank_math_meta(base, post_id: int) -> dict[str, str | None]:
     return {key: _read_post_meta(base, post_id, key) for key in RANK_MATH_META_KEYS}
 
 
+def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: str) -> dict | None:
+    """Verify a previously imported attachment without importing a second copy."""
+    if not isinstance(checkpoint, dict) or not checkpoint.get("attachment_id"):
+        return None
+    attachment_id = int(checkpoint["attachment_id"])
+    base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+    observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
+    if observed_thumb != str(attachment_id):
+        raise ValueError("featured_image_resume_thumbnail_conflict")
+    fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+    saved = get_post(base, post_id, fields=fields)
+    expected_post = checkpoint.get("preserved_post") or {}
+    if (saved.get("post_status") != expected_post.get("post_status")
+            or saved.get("post_title") != expected_post.get("post_title")
+            or saved.get("post_name") != expected_post.get("post_name")
+            or saved.get("post_excerpt", "") != expected_post.get("post_excerpt", "")
+            or content_sha256(saved.get("post_content", "")) != checkpoint.get("content_sha256")):
+        raise ValueError("featured_image_resume_post_conflict")
+    if _rank_math_meta(base, post_id) != checkpoint.get("before_rank_math"):
+        raise ValueError("featured_image_resume_seo_conflict")
+    attachment = get_post(
+        base, attachment_id, fields=["ID", "guid", "post_title", "post_mime_type"])
+    observed_alt = _read_post_meta(base, attachment_id, "_wp_attachment_image_alt")
+    if observed_alt != alt_text:
+        raise ValueError("featured_image_resume_alt_conflict")
+    if not str(attachment.get("post_mime_type", "")).startswith("image/"):
+        raise ValueError("featured_image_resume_attachment_conflict")
+    guid = str(attachment.get("guid", ""))
+    if not guid.startswith(("https://", "http://")):
+        raise ValueError("featured_image_resume_url_conflict")
+    return {
+        "post_id": post_id,
+        "status": saved.get("post_status"),
+        "attachment_id": attachment_id,
+        "attachment_url": guid,
+        "alt_text": alt_text,
+        "backup": checkpoint.get("backup"),
+        "reconciled": True,
+    }
+
+
 def replace_featured_image(
     post_id: int,
     image_path: Path | str,
@@ -81,6 +124,8 @@ def replace_featured_image(
     expected_thumbnail_id: int,
     alt_text: str,
     confirmed: bool = False,
+    manage_task_state: bool = True,
+    outcome_callback=None,
 ) -> dict:
     """Replace only ``_thumbnail_id`` while preserving post body/SEO/URL/status."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -115,31 +160,37 @@ def replace_featured_image(
         if before_thumb != str(expected_thumbnail_id):
             raise ValueError("featured_image_changed_before_replacement")
         before_rank_math = _rank_math_meta(base, post_id)
-        start_task_state(
-            post_id,
-            action="replace-featured-image",
-            edit_intent="대표이미지만 교체하고 본문, URL, 상태, SEO 메타데이터는 보존",
-            baseline={
-                "expected_content_sha256": expected_content_sha256,
-                "status": live.get("post_status"),
-                "title": live.get("post_title"),
-                "post_name": live.get("post_name"),
-                "thumbnail_id": before_thumb,
-            },
-            reuse={
-                "content_unchanged": True,
-                "source_validation_skipped": True,
-                "semantic_review_skipped": True,
-                "reason": "image_only_post_content_unchanged",
-            },
-            artifacts={"image_path": str(image_path)},
-        )
-        state_started = True
-        update_task_state(
-            post_id,
-            completed=["baseline_read", "route_selected", "source_validation", "content_review", "image_validated"],
-            route="image-only",
-        )
+        if manage_task_state:
+            start_task_state(
+                post_id,
+                action="replace-featured-image",
+                edit_intent="대표이미지만 교체하고 본문, URL, 상태, SEO 메타데이터는 보존",
+                baseline={
+                    "expected_content_sha256": expected_content_sha256,
+                    "status": live.get("post_status"),
+                    "title": live.get("post_title"),
+                    "post_name": live.get("post_name"),
+                    "thumbnail_id": before_thumb,
+                },
+                reuse={
+                    "content_unchanged": True,
+                    "source_validation_skipped": True,
+                    "semantic_review_skipped": True,
+                    "reason": "image_only_post_content_unchanged",
+                },
+                artifacts={"image_path": str(image_path)},
+                qa_requirements=qa_requirements_for_edit(
+                    None, None, image_changed=True, target_status=live.get("post_status", "draft")),
+            )
+            state_started = True
+            update_task_state(
+                post_id,
+                completed=[
+                    "baseline_read", "route_selected", "source_validation", "content_review",
+                    "image_validated", "content_saved",
+                ],
+                route="image-only",
+            )
         increment("edit_route_image_only")
         increment("validation_skipped_image_only")
 
@@ -154,6 +205,12 @@ def replace_featured_image(
                 "replacement_image": image_info,
             },
         )
+
+        def record_outcome(payload):
+            if manage_task_state:
+                update_task_state(post_id, checkpoints={"image_outcome": payload})
+            if outcome_callback is not None:
+                outcome_callback(payload)
 
         if _read_post_meta(base, post_id, "_thumbnail_id") != str(expected_thumbnail_id):
             raise ValueError(f"featured_image_changed_before_import: backup {backup}")
@@ -191,6 +248,22 @@ def replace_featured_image(
         if not attachment_id.isdigit():
             raise ValueError("featured_image_attachment_id_missing")
 
+        outcome = {
+            "attachment_id": int(attachment_id),
+            "expected_thumbnail_id": expected_thumbnail_id,
+            "image_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+            "alt_text_sha256": hashlib.sha256(alt_text.encode("utf-8")).hexdigest(),
+            "content_sha256": expected_content_sha256,
+            "preserved_post": {
+                key: live.get(key, "")
+                for key in ("post_status", "post_title", "post_name", "post_excerpt")
+            },
+            "before_rank_math": before_rank_math,
+            "backup": str(backup),
+            "verified": False,
+        }
+        record_outcome(outcome)
+
         observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         saved = get_post(base, post_id, fields=fields)
         after_rank_math = _rank_math_meta(base, post_id)
@@ -215,20 +288,23 @@ def replace_featured_image(
         guid = str(attachment.get("guid", ""))
         if not guid.startswith(("https://", "http://")):
             raise ValueError(f"featured_image_url_verification_failed: recover from {backup}")
+        outcome = {**outcome, "verified": True, "attachment_url": guid}
+        record_outcome(outcome)
 
-        update_task_state(
-            post_id,
-            completed=["wordpress_saved"],
-            status="saved_pending_qa",
-            result={
-                "post_id": post_id,
-                "attachment_id": int(attachment_id),
-                "attachment_url": guid,
-                "alt_text": alt_text,
-                "image": image_info,
-                "backup": str(backup),
-            },
-        )
+        if manage_task_state:
+            update_task_state(
+                post_id,
+                completed=["image_saved", "wordpress_saved"],
+                status="saved_pending_qa",
+                result={
+                    "post_id": post_id,
+                    "attachment_id": int(attachment_id),
+                    "attachment_url": guid,
+                    "alt_text": alt_text,
+                    "image": image_info,
+                    "backup": str(backup),
+                },
+            )
         return {
             "post_id": post_id,
             "status": saved.get("post_status"),

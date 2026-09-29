@@ -188,7 +188,7 @@ class FastEditTests(unittest.TestCase):
         self.assertEqual(reviewed, prepared)
         review.assert_called_once()
 
-    def test_fast_revision_uses_only_target_get_update_get(self):
+    def test_fast_revision_uses_target_get_plus_guarded_mutation(self):
         old, new = self._pair()
         old_body = render(old['plan'], old['sources'])
         new_body = render(new['plan'], new['sources'])
@@ -222,10 +222,10 @@ class FastEditTests(unittest.TestCase):
                     self.assertIn(
                         '--fields=post_status,post_title,post_name,post_content,post_excerpt', args)
                     return Mock(stdout=json.dumps(live))
-                if args[5:7] == ['post', 'update']:
-                    live['post_content'] = next(x.split('=', 1)[1] for x in args if x.startswith('--post_content='))
-                    live['post_excerpt'] = next(x.split('=', 1)[1] for x in args if x.startswith('--post_excerpt='))
-                    return Mock(stdout='Success')
+                if args[5] == 'eval':
+                    payload = json.loads(kwargs['input'])
+                    live.update(payload['updates'])
+                    return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}))
                 raise AssertionError(args)
 
             changed = {'removed': [], 'added': []}
@@ -269,7 +269,9 @@ class FastEditTests(unittest.TestCase):
 
             self.assertEqual(393, result)
             self.assertEqual(new_body, live['post_content'])
-            self.assertEqual(3, len(calls))
+            self.assertEqual(2, len(calls))
+            self.assertEqual(1, sum(args[5] == 'eval' for args in calls))
+            self.assertFalse(any(args[5:7] == ['post', 'update'] for args in calls))
             self.assertFalse(any(args[5:7] == ['post', 'list'] for args in calls))
             saved = json.loads(index.read_text(encoding='utf-8'))[0]['fact_manifest']['editorial_bundle']
             self.assertIn('fast_edit_review', saved)

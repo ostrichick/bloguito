@@ -48,17 +48,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
                 calls.append(args)
                 if args[5:7] == ["post", "get"]:
                     return Mock(stdout=json.dumps(live))
-                if args[5:7] == ["post", "update"]:
-                    live["post_content"] = next(
-                        arg.split("=", 1)[1] for arg in args if arg.startswith("--post_content=")
-                    )
-                    live["post_excerpt"] = next(
-                        arg.split("=", 1)[1] for arg in args if arg.startswith("--post_excerpt=")
-                    )
-                    title_args = [arg for arg in args if arg.startswith("--post_title=")]
-                    if title_args:
-                        live["post_title"] = title_args[0].split("=", 1)[1]
-                    return Mock(stdout="Success")
+                if args[5] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    live.update(payload["updates"])
+                    return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
                 raise AssertionError(args)
 
             inventory = {"checked_on": NOW.date().isoformat(), "posts": [live]}
@@ -92,9 +85,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
             self.assertEqual(saved_index[0]["fact_manifest"]["editorial_bundle"], new)
             self.assertEqual(len(list((data / "editorial_runs").glob("draft-revision-393-*.json"))), 1)
             self.assertEqual(len(list((data / "editorial_runs").glob("draft-revision-index-393-*.json"))), 1)
-            # Initial target baseline now overlaps inventory/source work, while the
-            # final CAS read and post-save readback remain mandatory safety checks.
-            self.assertEqual(3, sum(args[5:7] == ["post", "get"] for args in calls))
+            # P2 keeps the initial backup snapshot, then performs final CAS,
+            # mutation and readback inside one guarded WP process.
+            self.assertEqual(1, sum(args[5:7] == ["post", "get"] for args in calls))
+            self.assertEqual(1, sum(args[5] == "eval" for args in calls))
             source_recheck.assert_called_once()
 
     def test_revision_requires_confirmation(self):

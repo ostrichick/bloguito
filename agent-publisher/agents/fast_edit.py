@@ -31,7 +31,13 @@ from agents.editorial_writer import EditorialWriterAgent
 from agents.temporal_validation import KST
 from agents.workflow_metrics import increment, timed
 from config import DRAFTS_INDEX_FILE
-from agents.wordpress_mutation import backup_json, get_post, update_post, verify_cas, verify_saved_fields
+from agents.wordpress_mutation import (
+    backup_json,
+    get_post,
+    guarded_update_post,
+    verify_cas,
+    verify_saved_fields,
+)
 
 
 FULL_REVIEW_REQUIRED = "FULL_REVIEW_REQUIRED"
@@ -449,6 +455,20 @@ def prepare_fast_delta_review(old_bundle, new_bundle, report, edit_intent):
     return delta_review
 
 
+def build_fast_stored_bundle(old_bundle, new_bundle, delta_review):
+    """Return the candidate plus the exact full-review/delta lineage to persist."""
+    stored = copy.deepcopy(new_bundle)
+    stored["review"] = old_bundle["review"]
+    stored["fast_edit_review"] = copy.deepcopy(delta_review)
+    prior_chain = old_bundle.get("fast_edit_chain", [])
+    if not isinstance(prior_chain, list):
+        raise ValueError(FULL_REVIEW_REQUIRED + ":invalid_fast_edit_chain")
+    if len(prior_chain) >= FAST_CHAIN_MAX_LENGTH:
+        raise ValueError(FULL_REVIEW_REQUIRED + ":fast_review_chain_limit")
+    stored["fast_edit_chain"] = [*copy.deepcopy(prior_chain), copy.deepcopy(delta_review)]
+    return stored
+
+
 def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
                                edit_intent=None, prepared_delta_review=None):
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -512,8 +532,18 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         index_backup.write_text(index_before, encoding="utf-8")
         os.chmod(index_backup, 0o600)
 
-        update_post(base, post_id, {"post_content": desired, "post_excerpt": new_excerpt})
-        saved = get_post(base, post_id, fields=post_fields)
+        saved = guarded_update_post(
+            base,
+            post_id,
+            expected={
+                "post_status": "draft",
+                "post_title": live.get("post_title", ""),
+                "post_name": live.get("post_name", ""),
+                "post_excerpt": live.get("post_excerpt", ""),
+                "content_sha256": expected_content_sha256,
+            },
+            updates={"post_content": desired, "post_excerpt": new_excerpt},
+        )
         if not verify_saved_fields(
                 saved,
                 expected={
@@ -527,15 +557,7 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
             raise ValueError(f"draft_index_changed: recover from {index_backup}")
 
-        stored = copy.deepcopy(bundle)
-        stored["review"] = old_bundle["review"]
-        stored["fast_edit_review"] = delta_review
-        prior_chain = old_bundle.get("fast_edit_chain", [])
-        if not isinstance(prior_chain, list):
-            raise ValueError(FULL_REVIEW_REQUIRED + ":invalid_fast_edit_chain")
-        if len(prior_chain) >= FAST_CHAIN_MAX_LENGTH:
-            raise ValueError(FULL_REVIEW_REQUIRED + ":fast_review_chain_limit")
-        stored["fast_edit_chain"] = [*copy.deepcopy(prior_chain), copy.deepcopy(delta_review)]
+        stored = build_fast_stored_bundle(old_bundle, bundle, delta_review)
         item["fact_manifest"]["editorial_bundle"] = stored
         temporary = DRAFTS_INDEX_FILE.with_suffix(".fast-revision-tmp")
         temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")

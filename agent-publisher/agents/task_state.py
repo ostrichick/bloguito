@@ -20,14 +20,16 @@ from agents.editorial import ROOT
 from agents.temporal_validation import KST
 
 
-STATE_VERSION = 2
-LEGACY_STATE_VERSION = 1
+STATE_VERSION = 3
+LEGACY_STATE_VERSIONS = {1, 2}
 _PHASES = (
     "baseline_read",
     "route_selected",
     "source_validation",
     "content_review",
     "image_validated",
+    "content_saved",
+    "image_saved",
     "wordpress_saved",
     "browser_qa",
 )
@@ -85,16 +87,27 @@ def _migrate_state(payload: dict[str, Any]) -> dict[str, Any]:
     version = payload.get("version")
     if version == STATE_VERSION:
         return payload
-    if version != LEGACY_STATE_VERSION:
+    if version not in LEGACY_STATE_VERSIONS:
         raise ValueError("invalid_task_state")
     migrated = deepcopy(payload)
     migrated["version"] = STATE_VERSION
-    raw_intent = migrated.pop("edit_intent", None)
-    if raw_intent:
-        migrated["edit_intent_sha256"] = intent_sha256(raw_intent)
+    if version == 1:
+        raw_intent = migrated.pop("edit_intent", None)
+        if raw_intent:
+            migrated["edit_intent_sha256"] = intent_sha256(raw_intent)
     migrated.setdefault("edit_intent_sha256", None)
     migrated.setdefault("checkpoints", {})
     migrated["artifacts"] = _normalize_artifacts(migrated.get("artifacts", {}))
+    completed = migrated.setdefault("completed", {})
+    for phase in _PHASES:
+        completed.setdefault(phase, False)
+    if completed.get("wordpress_saved"):
+        completed["content_saved"] = True
+        # v1/v2 had no explicit image phase. A terminal WordPress save therefore
+        # means that phase was either completed or intentionally skipped.
+        completed["image_saved"] = True
+    migrated.setdefault("qa_requirements", [])
+    migrated["pending"] = [phase for phase in _PHASES if not completed[phase]]
     return migrated
 
 
@@ -143,6 +156,7 @@ def start_task_state(
     baseline: dict[str, Any] | None = None,
     reuse: dict[str, Any] | None = None,
     artifacts: dict[str, Any] | None = None,
+    qa_requirements: list[str] | tuple[str, ...] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(action, str) or not action.strip():
@@ -170,6 +184,7 @@ def start_task_state(
         "completed": {phase: False for phase in _PHASES},
         "pending": list(_PHASES),
         "artifacts": _normalize_artifacts(artifacts),
+        "qa_requirements": sorted(set(qa_requirements or [])),
         "checkpoints": {},
         "result": {},
         "error": None,
@@ -186,6 +201,7 @@ def update_task_state(
     route_reasons: list[str] | None = None,
     reuse: dict[str, Any] | None = None,
     artifacts: dict[str, Any] | None = None,
+    qa_requirements: list[str] | tuple[str, ...] | None = None,
     checkpoints: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
     status: str | None = None,
@@ -210,6 +226,8 @@ def update_task_state(
         payload["reuse"].update(deepcopy(reuse))
     if artifacts:
         payload["artifacts"].update(_normalize_artifacts(artifacts))
+    if qa_requirements is not None:
+        payload["qa_requirements"] = sorted(set(qa_requirements))
     if checkpoints:
         payload.setdefault("checkpoints", {}).update(deepcopy(checkpoints))
     if result:
@@ -238,6 +256,8 @@ def mark_browser_qa_complete(
     post_id: int,
     expected_content_sha256: str,
     *,
+    completed_scopes: list[str] | tuple[str, ...] | None = None,
+    observed_thumbnail_id: int | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Close a saved task only after the caller has completed browser QA."""
@@ -254,10 +274,28 @@ def mark_browser_qa_complete(
     )
     if expected != expected_content_sha256:
         raise ValueError("browser_qa_content_sha_mismatch")
+    from agents.qa_scope import validate_qa_scopes
+    completed_scopes = validate_qa_scopes(completed_scopes)
+    required = set(state.get("qa_requirements", []))
+    if required - set(completed_scopes):
+        raise ValueError("browser_qa_scope_incomplete:" + ",".join(sorted(required - set(completed_scopes))))
+    if "featured-image" in required:
+        expected_thumbnail = (
+            state.get("result", {}).get("attachment_id")
+            or (state.get("result", {}).get("image_phase") or {}).get("attachment_id")
+            or (state.get("checkpoints", {}).get("image_outcome") or {}).get("attachment_id")
+        )
+        if (type(observed_thumbnail_id) is not int or type(expected_thumbnail) is not int
+                or observed_thumbnail_id != expected_thumbnail):
+            raise ValueError("browser_qa_thumbnail_mismatch")
     return update_task_state(
         post_id,
         completed=["browser_qa"],
         status="complete",
+        result={
+            "qa_completed_scopes": completed_scopes,
+            "qa_observed_thumbnail_id": observed_thumbnail_id,
+        },
         root=root,
     )
 

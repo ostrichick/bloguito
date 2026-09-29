@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import datetime
 from bs4 import BeautifulSoup
 
@@ -15,6 +17,7 @@ from agents.wordpress_mutation import (
     backup_json,
     content_sha256,
     get_post,
+    guarded_update_post,
     update_post,
     verify_cas,
     verify_saved_fields,
@@ -83,8 +86,31 @@ def _set_rank_math_meta(base, post_id, values):
             capture_output=True, text=True, check=True)
 
 
+def _update_reviewed_public_manifest(post_id, bundle):
+    """Advance an existing reviewed public manifest without creating provenance."""
+    index_file = ROOT / 'data' / 'published_posts.json'
+    if not index_file.is_file():
+        return False
+    raw = index_file.read_text(encoding='utf-8')
+    try:
+        records = json.loads(raw)
+    except (TypeError, ValueError):
+        return False
+    matches = [item for item in records if int(item.get('id', -1)) == int(post_id)]
+    if len(matches) != 1 or not matches[0].get('fact_manifest', {}).get('editorial_bundle'):
+        return False
+    matches[0]['fact_manifest']['editorial_bundle'] = bundle
+    if index_file.read_text(encoding='utf-8') != raw:
+        raise ValueError('published_index_changed_during_update')
+    temporary = index_file.with_suffix('.public-update-tmp')
+    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(index_file)
+    return True
+
+
 def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False,
-                                confirm_title_change=False):
+                                confirm_title_change=False, checkpoint_callback=None,
+                                tracked_baseline_bundle=None):
     """Change reviewed content after a fresh review and unchanged-content check.
 
     The slug, status, categories, media and publication date are kept. Title
@@ -93,10 +119,26 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
     """
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError('specific_public_post_update_confirmation_required')
-    if bundle.get('brief', {}).get('existing_post_id') != post_id:
-        raise ValueError('reviewed_bundle_target_id_mismatch')
     if not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or ''):
         raise ValueError('original_content_sha256_required')
+    declared_id = bundle.get('brief', {}).get('existing_post_id')
+    if declared_id != post_id:
+        tracked_ok = False
+        if declared_id is None and isinstance(tracked_baseline_bundle, dict):
+            tracked_brief = tracked_baseline_bundle.get('brief', {})
+            candidate_brief = bundle.get('brief', {})
+            same_identity = all(
+                tracked_brief.get(key) == candidate_brief.get(key)
+                for key in ('id', 'category_key', 'entity')
+            )
+            try:
+                tracked_sha = content_sha256(render(
+                    tracked_baseline_bundle['plan'], tracked_baseline_bundle['sources']))
+            except (KeyError, TypeError, ValueError):
+                tracked_sha = None
+            tracked_ok = bool(same_identity and tracked_sha == expected_content_sha256)
+        if not tracked_ok:
+            raise ValueError('reviewed_bundle_target_id_mismatch')
     reviewed_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
     lock = ROOT / 'data' / '.editorial-publish.lock'
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -105,12 +147,27 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
     except FileExistsError:
         raise ValueError('editorial_publication_busy: verify any running process before retrying')
     try:
-        sync_inventory()
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        fields = ['post_status', 'post_title', 'post_name', 'post_content', 'post_excerpt']
+        inventory_context = copy_context()
+        target_context = copy_context()
+        source_context = copy_context()
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            inventory_future = pool.submit(inventory_context.run, sync_inventory)
+            target_future = pool.submit(target_context.run, get_post, base, post_id, fields=fields)
+            source_future = pool.submit(source_context.run, fetch_sources, bundle['brief'])
+            inventory_future.result()
+            current = target_future.result()
+            fresh_sources = source_future.result()
         inventory = load_inventory()
         original = next((row for row in inventory['posts'] if int(row['ID']) == post_id), None)
         if (not original or original['post_status'] != 'publish'
                 or inventory_content_sha(original) != expected_content_sha256):
             raise ValueError('target_missing_changed_or_not_public')
+        if (current.get('post_status') != original.get('post_status')
+                or current.get('post_title') != original.get('post_title')
+                or content_sha256(current.get('post_content', '')) != inventory_content_sha(original)):
+            raise ValueError('inventory_post_detail_changed')
         reviewed_title = bundle.get('plan', {}).get('title') or original['post_title']
         title_changed = reviewed_title != original['post_title']
         if title_changed and not confirm_title_change:
@@ -124,14 +181,21 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         report = validate_bundle(bundle, remaining)
         if report['status'] != 'ready':
             raise ValueError(f'editorial_review_not_current: {report["reasons"]}')
-        fresh_sources = fetch_sources(bundle['brief'])
         before = {source['url']: source['sha256'] for source in bundle['sources']}
         after = {source['url']: source['sha256'] for source in fresh_sources}
         if before != after:
             raise ValueError('official_source_changed_since_review')
+        source_validation = {
+            'all_unchanged': True,
+            'refetched_source_ids': [source.get('id') for source in fresh_sources],
+        }
+        if checkpoint_callback is not None:
+            checkpoint_callback({
+                'inventory_checked_on': inventory.get('checked_on'),
+                'source_validation': source_validation,
+                'review_digest': bundle.get('review', {}).get('digest'),
+            })
         reviewed_content = render(bundle['plan'], bundle['sources'])
-        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
-        current = get_post(base, post_id)
         if not verify_cas(current, status='publish', title=original['post_title'],
                           content_sha=expected_content_sha256):
             raise ValueError('public_post_changed_during_review')
@@ -147,6 +211,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
                               or old_excerpt == _existing_lead_excerpt(current['post_content'])))
         if (current['post_content'] == reviewed_content and not update_excerpt
                 and not title_changed and not update_meta):
+            _update_reviewed_public_manifest(post_id, bundle)
             return post_id
         backup_payload = dict(current)
         if current_meta is not None:
@@ -160,10 +225,20 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             fields['post_title'] = reviewed_title
         if update_excerpt:
             fields['post_excerpt'] = new_excerpt
-        update_post(base, post_id, fields)
+        saved = guarded_update_post(
+            base,
+            post_id,
+            expected={
+                'post_status': 'publish',
+                'post_title': current['post_title'],
+                'post_name': current['post_name'],
+                'post_excerpt': current.get('post_excerpt', ''),
+                'content_sha256': expected_content_sha256,
+            },
+            updates=fields,
+        )
         if update_meta:
             _set_rank_math_meta(base, post_id, reviewed_meta)
-        saved = get_post(base, post_id)
         expected = {
             'post_status': 'publish',
             'post_title': reviewed_title,
@@ -176,6 +251,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
         if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
+        _update_reviewed_public_manifest(post_id, bundle)
         invalidate_inventory()
         return post_id
     finally:

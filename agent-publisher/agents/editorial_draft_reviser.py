@@ -15,7 +15,12 @@ from agents.editorial_writer import load_inventory
 from agents.source_validation_cache import verify_sources_unchanged
 from config import DRAFTS_INDEX_FILE
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
-from agents.wordpress_mutation import backup_json, get_post, update_post, verify_cas, verify_saved_fields
+from agents.wordpress_mutation import (
+    backup_json,
+    get_post,
+    guarded_update_post,
+    verify_saved_fields,
+)
 
 try:
     from agents.related_links import missing_internal_post_ids
@@ -200,13 +205,11 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 ).hexdigest(),
             })
 
-        # This second target read is intentionally retained. It is the final CAS
-        # immediately before the mutation and closes the race window after the
-        # parallel read-only preflight.
-        live = get_post(base, post_id, fields=post_fields)
-        if (not verify_cas(live, status="draft", title=current["post_title"],
-                           content_sha=expected_content_sha256)
-                or DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before):
+        # The guarded mutation below performs the final target CAS and readback
+        # in the same remote WP process. Keep the local manifest CAS immediately
+        # before that operation so neither side can silently drift.
+        live = current
+        if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
             raise ValueError("draft_changed_during_revision")
 
         old_excerpt = excerpt_from_lead(old_bundle["plan"]["lead"])
@@ -229,8 +232,18 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         }
         if title_changed:
             update_fields["post_title"] = new_title
-        update_post(base, post_id, update_fields)
-        saved = get_post(base, post_id)
+        saved = guarded_update_post(
+            base,
+            post_id,
+            expected={
+                "post_status": "draft",
+                "post_title": current["post_title"],
+                "post_name": live.get("post_name", ""),
+                "post_excerpt": live.get("post_excerpt", ""),
+                "content_sha256": expected_content_sha256,
+            },
+            updates=update_fields,
+        )
         if not verify_saved_fields(
                 saved,
                 expected={

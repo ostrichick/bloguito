@@ -5,9 +5,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agents.wordpress_mutation import (
+    GUARDED_POST_MUTATION_SCRIPT,
     backup_json,
     content_sha256,
     get_post,
+    guarded_update_post,
     update_post,
     verify_cas,
     verify_saved_fields,
@@ -48,6 +50,71 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
             path = backup_json(Path(folder), 'test', 9, {'ID': 9})
             self.assertEqual({'ID': 9}, json.loads(path.read_text(encoding='utf-8')))
             self.assertEqual('editorial_runs', path.parent.name)
+
+    def test_guarded_update_sends_fixed_eval_program_and_returns_readback(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        saved = {
+            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+            'post_content': 'new', 'post_excerpt': 'new excerpt',
+        }
+        seen = {}
+
+        def run(args, **kwargs):
+            seen['args'] = args
+            seen['payload'] = json.loads(kwargs['input'])
+            return Mock(stdout=json.dumps({'status': 'ok', 'saved': saved}))
+
+        with patch('agents.wordpress_mutation.subprocess.run', side_effect=run):
+            result = guarded_update_post(
+                base,
+                7,
+                expected={
+                    'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                    'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                },
+                updates={'post_content': 'new', 'post_excerpt': 'new excerpt'},
+            )
+        self.assertEqual(saved, result)
+        self.assertEqual(['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root'], seen['args'][5:])
+        self.assertEqual(7, seen['payload']['post_id'])
+
+    def test_guarded_update_recovers_exact_already_applied_state_after_retry(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        current = {
+            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+            'post_content': 'new', 'post_excerpt': 'new excerpt',
+        }
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
+                stdout='warning\n' + json.dumps({'status': 'cas_mismatch', 'current': current}))):
+            result = guarded_update_post(
+                base,
+                7,
+                expected={
+                    'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                    'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                },
+                updates={'post_content': 'new', 'post_excerpt': 'new excerpt'},
+            )
+        self.assertEqual(current, result)
+
+    def test_guarded_update_rejects_real_cas_conflict(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        current = {
+            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+            'post_content': 'other editor', 'post_excerpt': 'old excerpt',
+        }
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
+                stdout=json.dumps({'status': 'cas_mismatch', 'current': current}))):
+            with self.assertRaisesRegex(ValueError, 'wordpress_guarded_cas_mismatch'):
+                guarded_update_post(
+                    base,
+                    7,
+                    expected={
+                        'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                        'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                    },
+                    updates={'post_content': 'new', 'post_excerpt': 'new excerpt'},
+                )
 
 
 if __name__ == '__main__':

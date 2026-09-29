@@ -27,6 +27,7 @@ from agents.editorial_updater import (  # noqa: E402
 )
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
+from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
 configure_utf8_stdio()
@@ -87,6 +88,48 @@ def make_transport(host, post_id, rendered_content, expected_title=None, wsl_dis
         if args or not isinstance(command, (list, tuple)) or list(command[:5]) != _PREFIX:
             raise ValueError('unexpected_subprocess_command_during_public_post_update')
         wp = list(command[5:])
+        guarded = wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']
+        if guarded:
+            raw = kwargs.get('input')
+            if isinstance(raw, bytes):
+                raw = raw.decode('utf-8')
+            try:
+                payload = json.loads(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError('unexpected_wordpress_write_arguments') from exc
+            expected = payload.get('expected') if isinstance(payload, dict) else None
+            updates = payload.get('updates') if isinstance(payload, dict) else None
+            if (payload.get('protocol') != 1 or payload.get('post_id') != post_id
+                    or not isinstance(expected, dict) or expected.get('post_status') != 'publish'
+                    or not isinstance(updates, dict)
+                    or updates.get('post_content') != rendered_content
+                    or set(updates) - {'post_content', 'post_excerpt', 'post_title'}
+                    or (expected_title is None and 'post_title' in updates)
+                    or (expected_title is not None and updates.get('post_title', expected_title) != expected_title)):
+                raise ValueError('unexpected_wordpress_write_arguments')
+            remote = ('sudo docker exec -i wordpress_app wp eval '
+                      + shlex.quote(GUARDED_POST_MUTATION_SCRIPT) + ' --allow-root')
+            destination = f'{ssh_user}@{host}' if ssh_user else host
+            if tailscale_ssh:
+                if not wsl_distro:
+                    raise ValueError('tailscale_ssh_requires_wsl_distro')
+                ssh = ['wsl.exe', '-d', wsl_distro, '--exec', 'tailscale', 'ssh', destination, remote]
+            else:
+                ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
+                if wsl_distro:
+                    ssh = ['wsl.exe', '-d', wsl_distro, '--', *ssh]
+            options = dict(kwargs)
+            if options.get('text') or options.get('universal_newlines'):
+                options.setdefault('encoding', 'utf-8')
+            options.setdefault('timeout', 120)
+            try:
+                result = _RUN(ssh, **options)
+            except (OSError, subprocess.SubprocessError):
+                diagnose_tailscale_once()
+                raise
+            if getattr(result, 'returncode', 0) == 255:
+                diagnose_tailscale_once()
+            return result
         get = ['post', 'get', str(post_id), '--format=json', '--allow-root']
         expected_update = ['post', 'update', str(post_id), '--post_content=' + rendered_content]
         light_inventory = wp == _LIGHT_INVENTORY_ARGS

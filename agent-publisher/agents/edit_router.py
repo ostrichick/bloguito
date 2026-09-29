@@ -10,8 +10,10 @@ from pathlib import Path
 
 from agents.editorial import render
 from agents.editorial_draft_reviser import revise_reviewed_draft
+from agents.featured_image import reconcile_featured_image_outcome, replace_featured_image
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
+    build_fast_stored_bundle,
     fast_revise_reviewed_draft,
     prepare_fast_delta_review,
     validate_fast_edit,
@@ -24,6 +26,7 @@ from agents.task_state import (
     start_task_state,
     update_task_state,
 )
+from agents.qa_scope import qa_requirements_for_edit
 from agents.validation_reuse import assess_validation_reuse
 from agents.workflow_metrics import increment
 from agents.wordpress_mutation import content_sha256, get_post
@@ -43,6 +46,46 @@ def _load_tracked_bundle(post_id: int) -> dict:
     return bundle
 
 
+def _reconcile_saved_draft_manifest(
+    post_id: int,
+    bundle: dict,
+    expected_old_sha: str,
+    desired_sha: str,
+    *,
+    route: str,
+    fast_edit_review: dict | None,
+    edit_intent: str,
+) -> None:
+    """Repair only the narrow WP-saved/local-index-not-yet-written crash window."""
+    raw = DRAFTS_INDEX_FILE.read_text(encoding="utf-8")
+    records = json.loads(raw)
+    matches = [item for item in records if int(item.get("id", -1)) == int(post_id)]
+    if len(matches) != 1:
+        raise ValueError("resume_manifest_not_updated")
+    item = matches[0]
+    tracked = item.get("fact_manifest", {}).get("editorial_bundle")
+    if not isinstance(tracked, dict):
+        raise ValueError("resume_manifest_not_updated")
+    tracked_sha = content_sha256(render(tracked["plan"], tracked["sources"]))
+    if tracked_sha == desired_sha:
+        return
+    if tracked_sha != expected_old_sha:
+        raise ValueError("resume_manifest_conflict")
+    stored = bundle
+    if route == "fast":
+        report = validate_fast_edit(tracked, bundle)
+        if not validate_prepared_delta_review(
+                tracked, report, fast_edit_review, edit_intent):
+            raise ValueError("resume_manifest_fast_review_mismatch")
+        stored = build_fast_stored_bundle(tracked, bundle, fast_edit_review)
+    item.setdefault("fact_manifest", {})["editorial_bundle"] = stored
+    if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != raw:
+        raise ValueError("resume_manifest_conflict")
+    temporary = DRAFTS_INDEX_FILE.with_suffix(".resume-reconcile-tmp")
+    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(DRAFTS_INDEX_FILE)
+
+
 def classify_edit_route(
     post_id: int,
     bundle: dict,
@@ -56,14 +99,14 @@ def classify_edit_route(
     reasons = list(fast_report.get("reasons", []))
     if confirm_title_change:
         reasons.append("explicit_title_change_requires_standard_revision")
-    if image_path is not None:
-        reasons.append("content_plus_image_revision_requires_standard_revision")
     route = "fast" if fast_report.get("status") == "candidate" and not reasons else "standard"
     return {
         "route": route,
         "reasons": reasons,
         "fast_report": fast_report,
         "reuse": reuse,
+        "qa_requirements": qa_requirements_for_edit(
+            old_bundle, bundle, image_changed=image_path is not None, target_status="draft"),
     }
 
 
@@ -76,6 +119,8 @@ def edit_reviewed_draft(
     edit_intent: str,
     confirm_title_change: bool = False,
     image_path: Path | str | None = None,
+    expected_thumbnail_id: int | None = None,
+    alt_text: str | None = None,
     resume: bool = False,
 ) -> dict:
     """Choose Fast first and fall back to the existing full reviser when needed.
@@ -94,14 +139,24 @@ def edit_reviewed_draft(
         raise ValueError("edit_intent_required")
 
     image_path = Path(image_path).resolve() if image_path else None
+    if image_path is not None:
+        if not isinstance(expected_thumbnail_id, int) or expected_thumbnail_id <= 0:
+            raise ValueError("combined_edit_expected_thumbnail_id_required")
+        alt_text = (alt_text or "").strip()
+        if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
+            raise ValueError("combined_edit_alt_text_required")
     decision = classify_edit_route(
         post_id,
         bundle,
         confirm_title_change=confirm_title_change,
         image_path=image_path,
     )
+    qa_requirements = decision.get("qa_requirements", [])
     desired = render(bundle["plan"], bundle["sources"])
     desired_sha = hashlib.sha256(desired.encode("utf-8")).hexdigest()
+    image_sha = hashlib.sha256(image_path.read_bytes()).hexdigest() if image_path else None
+    alt_text_sha = hashlib.sha256(alt_text.encode("utf-8")).hexdigest() if image_path else None
+    content_already_saved = False
     if resume:
         state = load_task_state(post_id)
         if not state or state.get("action") != "edit-draft":
@@ -118,8 +173,14 @@ def edit_reviewed_draft(
                 or baseline.get("candidate_content_digest")
                     != decision["reuse"]["fingerprint_after"]["content_digest"]
                 or state.get("edit_intent_sha256") != intent_sha256(edit_intent)
-                or state_policy != current_policy):
+                or state_policy != current_policy
+                or baseline.get("expected_thumbnail_id") != expected_thumbnail_id
+                or baseline.get("alt_text_sha256") != alt_text_sha):
             raise ValueError("resume_state_fingerprint_conflict")
+        if image_path is not None:
+            recorded_image = (state.get("artifacts") or {}).get("image_path") or {}
+            if recorded_image.get("sha256") != image_sha:
+                raise ValueError("resume_image_artifact_conflict")
         live = get_post(
             ["sudo", "docker", "exec", "wordpress_app", "wp"],
             post_id,
@@ -132,24 +193,41 @@ def edit_reviewed_draft(
                 render(tracked["plan"], tracked["sources"]).encode("utf-8")
             ).hexdigest()
             if tracked_sha != desired_sha:
-                fail_task_state(post_id, "resume_manifest_not_updated", blocked=True)
-                raise ValueError("resume_manifest_not_updated")
-            update_task_state(
-                post_id,
-                completed=["baseline_read", "wordpress_saved"],
-                status="saved_pending_qa",
-                result={"post_id": post_id, "route": state.get("route"), "desired_content_sha256": desired_sha},
-            )
+                try:
+                    _reconcile_saved_draft_manifest(
+                        post_id,
+                        bundle,
+                        expected_content_sha256,
+                        desired_sha,
+                        route=state.get("route") or decision["route"],
+                        fast_edit_review=(state.get("result") or {}).get("fast_edit_review"),
+                        edit_intent=edit_intent,
+                    )
+                except Exception as exc:
+                    fail_task_state(post_id, exc, blocked=True)
+                    raise
             increment("resume_runs")
-            return {
-                "post_id": post_id,
-                "route": state.get("route") or decision["route"],
-                "reasons": state.get("route_reasons", []),
-                "validation_reuse": state.get("reuse", {}),
-                "resumed": True,
-                "wordpress_saved": True,
-            }
-        if live_sha != expected_content_sha256:
+            content_already_saved = True
+            update_task_state(post_id, completed=["baseline_read", "content_saved"])
+            image_pending = image_path is not None and not state.get("completed", {}).get("image_saved")
+            if not image_pending:
+                update_task_state(
+                    post_id,
+                    completed=["image_saved", "wordpress_saved"],
+                    status="saved_pending_qa",
+                    result={"post_id": post_id, "route": state.get("route"),
+                            "desired_content_sha256": desired_sha},
+                )
+                return {
+                    "post_id": post_id,
+                    "route": state.get("route") or decision["route"],
+                    "reasons": state.get("route_reasons", []),
+                    "validation_reuse": state.get("reuse", {}),
+                    "qa_requirements": state.get("qa_requirements", qa_requirements),
+                    "resumed": True,
+                    "wordpress_saved": True,
+                }
+        elif live_sha != expected_content_sha256:
             fail_task_state(post_id, "resume_state_conflict", blocked=True)
             increment("resume_conflict")
             raise ValueError("resume_state_conflict")
@@ -163,9 +241,12 @@ def edit_reviewed_draft(
                 "expected_content_sha256": expected_content_sha256,
                 "desired_content_sha256": desired_sha,
                 "candidate_content_digest": decision["reuse"]["fingerprint_after"]["content_digest"],
+                "expected_thumbnail_id": expected_thumbnail_id,
+                "alt_text_sha256": alt_text_sha,
             },
             reuse=decision["reuse"],
             artifacts={"image_path": str(image_path)} if image_path else None,
+            qa_requirements=qa_requirements,
         )
         update_task_state(
             post_id,
@@ -182,7 +263,10 @@ def edit_reviewed_draft(
         increment("validation_reuse_delta_review")
 
     try:
-        if decision["route"] == "fast":
+        if content_already_saved:
+            updated = post_id
+            completed = ["baseline_read", "content_saved"]
+        elif decision["route"] == "fast":
             old_bundle = _load_tracked_bundle(post_id)
             prepared_delta_review = None
             if resume:
@@ -213,7 +297,7 @@ def edit_reviewed_draft(
             )
             completed = [
                 "baseline_read",
-                "wordpress_saved",
+                "content_saved",
             ]
         else:
             def checkpoint_standard(preflight):
@@ -229,20 +313,46 @@ def edit_reviewed_draft(
                 expected_content_sha256,
                 confirmed=True,
                 confirm_title_change=confirm_title_change,
-                image_path=image_path,
+                image_path=None,
                 checkpoint_callback=checkpoint_standard,
             )
             completed = [
                 "baseline_read",
                 "source_validation",
                 "content_review",
-                "wordpress_saved",
+                "content_saved",
             ]
-            if image_path is not None:
-                completed.append("image_validated")
         update_task_state(post_id, completed=completed)
+        image_result = None
+        if image_path is not None:
+            update_task_state(post_id, completed=["image_validated"])
+            checkpoint = ((state or {}).get("checkpoints") or {}).get("image_outcome") if resume else None
+            if checkpoint and checkpoint.get("attachment_id"):
+                image_result = reconcile_featured_image_outcome(post_id, checkpoint, alt_text)
+            else:
+                def image_checkpoint(payload):
+                    update_task_state(post_id, checkpoints={"image_outcome": payload})
+
+                image_result = replace_featured_image(
+                    post_id,
+                    image_path,
+                    desired_sha,
+                    expected_thumbnail_id=expected_thumbnail_id,
+                    alt_text=alt_text,
+                    confirmed=True,
+                    manage_task_state=False,
+                    outcome_callback=image_checkpoint,
+                )
+            update_task_state(
+                post_id,
+                completed=["image_saved"],
+                result={"image_phase": image_result},
+            )
+        else:
+            update_task_state(post_id, completed=["image_saved"])
         update_task_state(
             post_id,
+            completed=["wordpress_saved"],
             status="saved_pending_qa",
             result={
                 "post_id": updated,
@@ -255,6 +365,8 @@ def edit_reviewed_draft(
             "route": decision["route"],
             "reasons": decision["reasons"],
             "validation_reuse": decision["reuse"],
+            "qa_requirements": qa_requirements,
+            "image": image_result,
         }
     except Exception as exc:
         message = str(exc).lower()
