@@ -11,5 +11,5 @@ pydantic==2.13.5
 python-dotenv==1.2.3
 requests==2.34.2
 
-# Used by scripts/test_ddg.py and retained for maintenance diagnostics.
+# Used by archived maintenance diagnostics under scripts/archive/.
 duckduckgo-search==8.1.1

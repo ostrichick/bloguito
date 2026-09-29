@@ -366,3 +366,19 @@ P2 기준선은 실사용 `workflow-metrics.jsonl`의 최근 성공 Standard `re
 - public Standard도 draft Standard와 같은 read-only 병렬화 패턴을 사용하고 guarded mutation을 통해 저장한다. Rank Math 업데이트는 기존 reviewed 3개 key/value allowlist를 유지하며 Fast public은 SEO를 변경하지 않는다.
 
 P2 구현 검증에서는 실제 WordPress 글을 테스트 목적으로 수정하지 않았다. mock/temp 기반으로 guarded CAS/replay, draft/public Fast/Standard, public manifest binding, content+image resume, image outcome reconciliation, scope-aware QA와 SSH allowlist를 검증한다. 실운영 절감률은 다음 자연스러운 reviewed 글 수정에서 `workflow-metrics.jsonl`의 `wp_roundtrips`, `wp_guarded_mutations`, `total_ms`를 P2 기준선과 비교해 확인한다.
+
+## 2026-09-29 P3 작업 공간·도구 정리
+
+P0~P2로 편집 실행 자체는 빨라졌지만, 실제 콘텐츠 작업 중 한 글만을 위한 `build_*`, `create_*`, `patch_post_<ID>_*`, `test_*` Python이 `scripts/`, `agent-publisher/tests/`, `scratch/`에 계속 남는 운영 비용이 확인됐다. 이 파일들은 빠른 실험에는 편했지만 작업 종료 뒤에도 Git 상태와 도구 목록을 오염시켜 다음 작업자가 “정식 도구인가, 한 번 쓰고 끝난 파일인가”를 다시 조사하게 만들었다.
+
+P3는 실행 검증을 줄이지 않고 **파일 수명주기와 공식 진입점을 정리**한다.
+
+- `scratch/`, `docs/tasks/`, 새 `scripts/archive/` 산출물을 Git 비추적 작업 공간으로 고정한다. 과거에 이미 추적된 archive 파일은 역사 기록으로 유지한다.
+- `scripts/` 루트는 `maintained_scripts.json`에 등록한 재사용 도구만 허용한다. repository hygiene 테스트가 실제 루트 Python 목록과 manifest를 비교하므로 새 post-specific 스크립트가 정식 도구처럼 조용히 누적되지 않는다.
+- 반복되던 post component 삽입/교체/삭제는 `patch_post_component.py`의 single-match + optional SHA CAS 로컬 도구로 흡수한다. 실제 WordPress mutation은 계속 `edit-post` 등 정규 reviewed 경로만 사용한다.
+- workflow 성능을 확인할 때 임시 분석 Python을 만들지 않도록 `summarize_workflow_metrics.py`를 추가한다.
+- P2 이후 공개 글 원격 adapter가 중복 구현돼 있던 `update_existing_via_ssh.py`는 이전 CLI 인자를 `editorial_cli_via_ssh.py -- update-existing`으로 넘기는 호환 shim으로 축소한다. transport/allowlist 구현은 unified adapter 한 곳만 유지한다.
+- `public-fast`/`public-standard`는 SSH 내부 transport profile로만 유지하고 사용자 CLI action 목록에서는 제거한다. 일반 existing-post 작업은 `edit-post`가 상태와 route를 결정한다.
+- 9월 12일 초기 조사에 사용한 `test_ddg.py`, `test_*`, `verify_stock.py` 같은 네트워크 probe는 `scripts/archive/diagnostics-20260912/`로 이동해 루트 도구 목록에서 제외한다.
+
+P3에서도 실제 WordPress 글, 공개 상태, 운영 서버 설정은 정리 검증을 위해 변경하지 않는다. 완료 기준은 새 hygiene/patch/metrics/shim 테스트, 기존 편집/SSH 표적 회귀, 전체 Python suite 1회, `py_compile`, `git diff --check`, 그리고 기존 main의 콘텐츠 관련 미커밋 변경을 보존한 상태에서 P3 변경만 별도 커밋하는 것이다.

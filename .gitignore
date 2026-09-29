@@ -26,6 +26,9 @@ desktop.ini
 # Logs & Temp
 *.log
 /tmp/
+/scratch/
+/docs/tasks/
+/scripts/archive/
 backups/
 *.metadata.json
 

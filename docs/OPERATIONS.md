@@ -13,6 +13,9 @@
 | `wordpress/docker-compose.yml` | WordPress·MariaDB 선언; 실행 중 서버 설정과 다를 수 있음 |
 | `wordpress/mu-plugins/` | 자체 WP MU 플러그인. 관리자 글 ID 열 구현을 포함하나 운영본 설치 상태는 별도 확인 |
 | `agent-publisher/whatsapp-bridge/` | 원격 상태·초안/공개 명령, `package-lock.json`·명령 정책 포함. 실제 systemd/env 배포와 구분 |
+| `scripts/` | 반복 사용 가능한 운영·진단 도구만 유지. 게시물 한 건을 위한 임시 Python은 두지 않으며 목록은 `scripts/maintained_scripts.json`으로 검증 |
+| `scratch/` | 한 작업에서만 필요한 probe, 변환 코드, 중간 JSON/HTML/이미지. Git 비추적 |
+| `scripts/archive/` | 보존할 가치가 있는 과거 one-off 스크립트. 새 archive 파일은 Git 비추적이며 정규 실행 경로로 사용하지 않음 |
 
 ## 로컬 설치 및 무변경 검사
 
@@ -117,7 +120,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
-3. 일반 신규 draft는 `sources` 뒤 구조화 원고가 완성되면 `prepare-draft`를 사용한다. 단계별 원인 진단이 필요한 Strict 작업만 `review/check/publish`를 분리한다. `publish bundle.json`은 **임시글 등록**이다. 기존 reviewed draft의 일반 수정은 `edit-draft`를 기본으로 사용한다. 이 라우터는 먼저 `fast-revise-draft` 적합성을 결정하고, Fast 조건을 벗어나면 별도 새 파이프라인을 만들지 않고 기존 `revise-draft` Standard 경로를 호출한다. 대표이미지만 바꾸면 `replace-featured-image`를 사용해 본문 revision과 전체 source/review를 열지 않는다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 저수준 Fast 경로를 명시적으로 고정할 때는 `fast-revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. Fast 경로는 `--edit-intent`에 이번 사용자 요청 범위를 명시해야 하며, 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 Standard 전체 검토로 전환한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
+3. 일반 신규 draft는 `sources` 뒤 구조화 원고가 완성되면 `prepare-draft`를 사용한다. 단계별 원인 진단이 필요한 Strict 작업만 `review/check/publish`를 분리한다. `publish bundle.json`은 **임시글 등록**이다. reviewed draft/public의 일반 수정은 `edit-post`를 기본으로 사용하며 이 상위 라우터가 대상 상태와 Fast/Standard를 자동 선택한다. `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `replace-featured-image`는 특정 경로를 진단하거나 레거시 호출을 유지할 때만 쓰는 저수준 호환 진입점이다. reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`를 사용한다. Fast 경로는 `--edit-intent`에 이번 사용자 요청 범위를 명시해야 하며 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 Standard 전체 검토로 전환한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 `scripts/prepare_post_approval.py`는 사용자가 아직 현재 변경안을 적용할지 검토하는 단계에서 변경 전후 비교 패키지를 만들기 위한 도구다. 같은 변경안의 실제 적용이 이미 명시적으로 승인된 뒤에는 이 패키지를 다시 만들지 않는다. 정규 `update-existing`/`revise-draft`/관련 updater가 자체적으로 최신 전체 inventory, 대상 글 CAS, 공식 source 재조회, 원본 백업, 저장 직전·직후 검증을 수행하므로 그 경로를 바로 사용한다. 승인 대상이나 변경안이 달라졌다면 새 승인으로 취급한다.
@@ -135,10 +138,10 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 
 운영 서버의 `editorial.py`, `editorial_cli.py`, 정책 문서를 매 작업마다 복사·교체한 뒤 서버에서 다시 review하는 방식을 기본 경로로 사용하지 않는다. 현재 로컬 checkout을 편집 코드의 정본으로 사용하고, 실제 WordPress 명령만 제한된 SSH transport로 전달한다.
 
-- 기존 공개 글 `update-existing`은 `scripts/update_existing_via_ssh.py`를 사용한다. 이 어댑터는 정규 updater의 inventory/source/CAS/백업/저장 후 검증을 그대로 사용하며 허용된 대상 ID의 WP 명령만 원격 실행한다.
-- 신규 draft 생성과 기존 reviewed draft의 `revise-draft`, `update-draft`, `replace-legacy-draft`, `promote-draft`, `reformat`, `fix-excerpt`는 `scripts/editorial_cli_via_ssh.py`를 사용한다. 일반 작업은 `python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- publish bundle.json`처럼 Direct SSH를 사용한다. Tailscale이 실제로 필요한 비상·복구 작업에서만 `--ssh-mode tailscale --ssh-host <private-host> --ssh-user ubuntu --wsl-distro Ubuntu-24.04`처럼 명시적으로 선택한다.
+- 신규 draft와 reviewed draft/public 수정은 모두 `scripts/editorial_cli_via_ssh.py`를 정규 원격 adapter로 사용한다. 기존 공개 글도 기본은 `-- edit-post ...`이며, 과거 `scripts/update_existing_via_ssh.py`는 예전 명령행 모양을 unified adapter의 `update-existing` 저수준 action으로 전달하는 호환 shim일 뿐 별도 transport를 유지하지 않는다.
+- `revise-draft`, `fast-revise-draft`, `update-existing`, `replace-featured-image`, `update-draft`, `replace-legacy-draft`, `promote-draft`, `reformat`, `fix-excerpt`는 호환·진단용으로 계속 지원하지만 일반 작업에서는 상위 `prepare-draft`/`edit-post`를 우선한다. Direct SSH가 기본이며 Tailscale이 실제로 필요한 비상·복구 작업에서만 `--ssh-mode tailscale --ssh-host <private-host> --ssh-user ubuntu --wsl-distro Ubuntu-24.04`처럼 명시적으로 선택한다.
 - 수동 편집 transport의 기본 모드는 항상 `direct`다. `BLOGUITO_SSH_HOST`, `BLOGUITO_SSH_USER`는 Direct SSH의 기본 접속값으로 사용할 수 있지만, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 환경설정이 일반 작업을 Tailscale로 자동 전환하게 두지 않는다. WSL/Tailscale은 명령행 `--ssh-mode` 또는 기존 일회성 옵션으로만 선택한다.
-- Direct SSH가 실패해도 공개 웹/REST 조회로 목적을 달성할 수 있으면 Tailscale로 전환하지 않는다. 서버 설정·Docker/WP-CLI·비공개 WordPress 상태처럼 SSH가 반드시 필요한 작업에서 Direct SSH가 불가능할 때만 Tailscale을 명시적으로 선택한다. Tailscale 경로를 선택한 뒤에도 `tailscale status/ping`을 선행 반복하지 않고 실제 SSH 실패 시 한 번만 진단한다. 읽기 명령과 `fast-revise-draft`의 동일 본문 update처럼 재실행이 멱등적인 경우에만 1회 재시도하며, `post create`처럼 중복 생성 위험이 있는 mutation은 자동 재시도하지 않는다.
+- Direct SSH가 실패해도 공개 웹/REST 조회로 목적을 달성할 수 있으면 Tailscale로 전환하지 않는다. 서버 설정·Docker/WP-CLI·비공개 WordPress 상태처럼 SSH가 반드시 필요한 작업에서 Direct SSH가 불가능할 때만 Tailscale을 명시적으로 선택한다. Tailscale 경로를 선택한 뒤에도 `tailscale status/ping`을 선행 반복하지 않고 실제 SSH 실패 시 한 번만 진단한다. 읽기 명령은 필요할 때 1회 재시도할 수 있고, P2 guarded mutation은 서버가 전체 desired state를 확인하므로 SSH 255에서 최대 1회 replay한다. raw `post update`, `post create`, media import처럼 결과 유실 시 중복·불명확 상태를 만들 수 있는 mutation은 같은 재시도 의미론을 사용하지 않는다.
 - 과거 서버에서 만든 reviewed draft의 manifest가 로컬 `agent-publisher/data/draft_posts.json`에 아직 없다면 **전환 시 1회만** `scripts/sync_editorial_state_via_ssh.py`로 기존 `draft_posts.json`/`published_posts.json`을 가져온다. 이 도구는 로컬 상태 파일이 하나라도 이미 존재하면 덮어쓰기를 거부한다. 이후 로컬 상태가 정본이므로 서버 파일을 다시 가져와 덮지 않는다.
 
 이 구조에서 운영 서버 checkout의 버전이 로컬보다 오래됐다는 이유만으로 원고 review를 다시 수행할 필요가 없다. 반대로 실제 bundle, source, 정책 fingerprint, review 신선도가 달라졌다면 로컬 정본에서도 정상 검증이 차단되며 해당 review를 새로 해야 한다.
@@ -146,6 +149,16 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, 본문 SHA256, 본문 URL signature만 수집한다. 신규 글의 URL 중복과 제목 중복은 이 경량 정보로 검사하고, 기존 글 수정에서 동일 공식 URL이 단순 출처인지 본문·CTA 중복인지 구분해야 할 때만 해당 후보 글의 본문을 단건 `post get`으로 추가 조회한다. 제한형 SSH transport는 inventory에서 관측된 후보 ID에 읽기 권한만 추가하며 mutation 대상 ID 집합은 확장하지 않는다.
 
 내부 실사용 성능 기록은 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에 JSONL로 쌓인다. unit test는 기본적으로 `workflow-metrics-test.jsonl`로 분리되며 각 행의 `run_context`가 `live`/`test`를 표시한다. `total_ms`, inventory/source/semantic-review 등 단계별 시간과 WordPress/source 요청 횟수, cache hit/fallback 같은 운영 카운터만 저장하고 원고·출처 본문은 기록하지 않는다. 경로를 명시적으로 바꿀 때는 `EDITORIAL_METRICS_FILE`, context를 바꿀 때는 `EDITORIAL_METRICS_CONTEXT`를 사용한다.
+
+반복 성능 분석을 위해 별도 임시 Python을 만들지 않는다. `python scripts/summarize_workflow_metrics.py --context live --status ok`를 사용하면 action별 실행 건수, median/P90 `total_ms`, 평균 WordPress 왕복, 단계별 평균 시간을 JSON으로 확인할 수 있다. 특정 action만 보려면 `--action edit-post`처럼 반복 지정한다.
+
+### 일회성 작업 파일 정리
+
+- 게시물 한 건의 HTML 조각을 넣거나 바꾸기 위해 `patch_post_<ID>_*.py`를 만들지 않고 `scripts/patch_post_component.py`를 사용한다. 이 도구는 로컬 파일 한 곳만 수정하며 target regex가 0건 또는 2건 이상이면 fail closed한다. WordPress 쓰기는 수행하지 않는다.
+- 한 번만 필요한 조사·변환·검증 Python, 다운로드한 원문, 중간 bundle/HTML/이미지는 `scratch/tasks/<작업명>/`에 둔다. `scratch/`는 Git에 포함하지 않는다.
+- 재현·사고 분석을 위해 one-off 코드를 보존해야 하면 작업 종료 후 `scripts/archive/<날짜 또는 작업명>/`로 이동한다. 새 archive 산출물은 Git에 넣지 않고 정규 도구처럼 호출하지 않는다.
+- `scripts/` 루트의 Python 파일은 `scripts/maintained_scripts.json`과 정확히 일치해야 하며 unit test가 이를 검사한다. 두 번째 독립 사용 사례가 생긴 임시 도구만 명시적 인터페이스와 테스트를 갖춘 뒤 루트 도구로 승격한다.
+- 자세한 규칙과 예시는 `scripts/README.md`를 따른다.
 
 상세 인자와 제한은 [편집 규약](EDITORIAL_SYSTEM.md) 및 코드 [`editorial_cli.py`](../agent-publisher/editorial_cli.py)를 우선 확인한다. 과거 작업 기록의 '발행'은 draft 생성과 공개 승격을 혼용했으므로 명시적으로 구분한다.
 

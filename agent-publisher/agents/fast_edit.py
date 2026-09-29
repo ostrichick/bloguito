@@ -29,7 +29,7 @@ from agents.editorial import (
 )
 from agents.editorial_writer import EditorialWriterAgent
 from agents.temporal_validation import KST
-from agents.workflow_metrics import increment, timed
+from agents.workflow_metrics import increment
 from config import DRAFTS_INDEX_FILE
 from agents.wordpress_mutation import (
     backup_json,

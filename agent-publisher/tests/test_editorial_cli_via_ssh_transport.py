@@ -277,6 +277,13 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'edit_draft_requires_preclassified_transport'):
             module.make_transport('edit-draft', {463}, 'bloguito')
 
+    def test_internal_public_transport_profiles_are_not_user_cli_actions(self):
+        module = load_module()
+        self.assertIn('public-fast', module._TRANSPORT_PROFILES)
+        self.assertIn('public-standard', module._TRANSPORT_PROFILES)
+        self.assertNotIn('public-fast', module._CLI_ACTIONS)
+        self.assertNotIn('public-standard', module._CLI_ACTIONS)
+
     def test_edit_draft_wrapper_preclassifies_before_transport_permissions(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as folder:

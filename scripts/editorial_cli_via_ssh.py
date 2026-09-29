@@ -53,12 +53,14 @@ _CREATE_ACTIONS = {'publish', 'prepare-draft'}
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
 _IMAGE_EDIT_ACTIONS = {'revise-draft', 'fast-revise-draft', 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
 _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
-_SUPPORTED_ACTIONS = {
+_CLI_ACTIONS = {
     'publish', 'prepare-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft',
-    'update-existing', 'public-fast', 'public-standard',
+    'update-existing',
     'replace-featured-image', 'update-draft', 'replace-legacy-draft', 'promote-draft',
     'reformat', 'fix-excerpt',
 }
+_TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
+_SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
     'update-draft': {'post_content'},
     'replace-legacy-draft': {'post_content', 'post_excerpt'},
@@ -498,7 +500,7 @@ def main():
     cli_args = list(args.cli_args)
     if cli_args and cli_args[0] == '--':
         cli_args.pop(0)
-    if not cli_args or cli_args[0] not in _SUPPORTED_ACTIONS:
+    if not cli_args or cli_args[0] not in _CLI_ACTIONS:
         parser.error('use -- followed by a supported editorial_cli action')
     action = cli_args[0]
     targets = _target_ids(action, cli_args)

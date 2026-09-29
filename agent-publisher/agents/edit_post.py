@@ -149,6 +149,8 @@ def _edit_reviewed_public_post(
     decision = classify_reviewed_post_route(
         post_id, bundle, expected_content_sha256=expected_content_sha256,
         confirm_title_change=confirm_title_change, image_path=image_path)
+    increment("edit_target_public")
+    increment("edit_route_fast" if decision["route"] == "fast" else "edit_route_standard")
     candidate = decision["candidate"] if decision["route"] == "fast" else bundle
     desired = render(candidate["plan"], candidate["sources"])
     desired_sha = content_sha256(desired)
