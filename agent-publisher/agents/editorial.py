@@ -220,6 +220,9 @@ def fresh(value, now, hours):
 def all_blocks(plan):
     return [plan['lead'],
             *[b for s in plan['sections'] for b in s['paragraphs']],
+            *[{'text': fact['value'], 'evidence': fact['evidence'],
+               'answers': fact.get('answers', []), 'calculations': fact.get('calculations', [])}
+              for s in plan['sections'] for fact in s.get('facts', [])],
             *[{'text': ' '.join(row['cells']), 'evidence': row['evidence'],
                'answers': row.get('answers', []), 'calculations': row.get('calculations', [])}
               for s in plan['sections'] for row in (s.get('table') or {}).get('rows', [])],
@@ -320,6 +323,8 @@ def reader_visible_strings(plan, sources):
     for section in plan.get('sections', []):
         values.append(section.get('heading', ''))
         values.extend((p or {}).get('text', '') for p in section.get('paragraphs', []))
+        for fact in section.get('facts', []):
+            values.extend((fact.get('label', ''), fact.get('value', '')))
         image = section.get('image') or {}
         values.extend((image.get('alt', ''), image.get('caption', '')))
         location = section.get('location') or {}
@@ -747,11 +752,25 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             if section.get('kind') is not None and section['kind'] not in {
                     'overview', 'eligibility', 'comparison', 'procedure', 'exceptions', 'schedule', 'general'}:
                 reasons.append('invalid_section_kind')
+            facts = section.get('facts')
+            if facts is not None and (
+                    not isinstance(facts, list) or not 1 <= len(facts) <= 8
+                    or any(not isinstance(fact, dict)
+                           or set(fact) - {'label', 'value', 'evidence', 'answers', 'calculations'}
+                           or not isinstance(fact.get('label'), str)
+                           or not 1 <= len(fact['label'].strip()) <= 30
+                           or not isinstance(fact.get('value'), str)
+                           or not 1 <= len(fact['value'].strip()) <= 220
+                           or not isinstance(fact.get('evidence'), list)
+                           or not 1 <= len(fact['evidence']) <= 4
+                           for fact in facts)):
+                reasons.append('invalid_section_facts')
             table = section.get('table')
             if table is None:
                 continue
             headers, rows = table.get('headers'), table.get('rows')
             if (not isinstance(table.get('caption'), str) or not table['caption'].strip()
+                    or table.get('mobile_cards', False) not in {True, False}
                     or not isinstance(headers, list) or not 2 <= len(headers) <= 5
                     or not isinstance(rows, list) or not 1 <= len(rows) <= 20
                     or any(not isinstance(h, str) or not 1 <= len(h.strip()) <= 60 for h in headers)
@@ -908,6 +927,10 @@ def supported_official_number_notations(text, quote_text, candidates):
             supported.update({full, month_number} & candidates)
             if day_number and re.search(prefix + r'\s*0?' + day_number + r'일', text):
                 supported.update({day_number} & candidates)
+        if day_number and re.search(
+                r'(?<!\d)0?' + re.escape(month_number) + r'\s*/\s*0?'
+                + re.escape(day_number) + r'(?!\d)', text):
+            supported.update({month_number, day_number} & candidates)
     for quantity in re.findall(r'(?<!\d)(\d+)\s*천\s*원', quote_text):
         amount = str(int(quantity) * 1000)
         if amount in candidates and re.search(r'(?<!\d)' + amount + r'\s*원', text.replace(',', '')):
@@ -1017,6 +1040,16 @@ def render(plan, sources, category_key=None):
                 f'font-weight:700;font-style:normal;letter-spacing:normal;text-align:left;'
                 f'line-height:1.45;margin:32px 0 14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">'
                 f'{badge}{html.escape(clean_heading)}</h2>')
+        facts = section.get('facts') or []
+        if facts:
+            items = ''.join(
+                '<div style="padding:10px 12px;background:#ffffff;border:1px solid #dbe5e1;border-radius:8px">'
+                f'<div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:3px">{html.escape(fact["label"])}</div>'
+                f'<div style="font-size:15px;font-weight:700;color:#1f2937;line-height:1.55">{html.escape(fact["value"])}</div>'
+                '</div>' for fact in facts)
+            body += ('<div class="festival-facts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));'
+                     'gap:8px;margin:0 0 18px;padding:12px;background:#f0f8f5;border:1px solid #d1e7dd;border-radius:10px">'
+                     + items + '</div>')
         image = section.get('image')
         if image:
             source = source_map[image['source_id']]
@@ -1040,9 +1073,13 @@ def render(plan, sources, category_key=None):
                  f'<td style="padding:10px;border-bottom:1px solid #e2e8f0;vertical-align:top">{html.escape(cell)}</td>')
                 for index, cell in enumerate(row['cells'])) + '</tr>' for row in table['rows'])
             scrolling = len(table['headers']) >= 3
-            hint = ('<p class="bloguito-table-hint" style="font-size:13px;color:#475569;margin:0 0 6px">작은 화면에서는 표를 좌우로 밀어 확인할 수 있습니다.</p>'
-                    if scrolling else '')
-            body += (hint + '<div class="bloguito-info-table" role="region" aria-label="'
+            mobile_cards = bool(table.get('mobile_cards'))
+            hint = ('<p class="bloguito-table-hint" style="font-size:13px;color:#475569;margin:0 0 6px">모바일에서는 카드형 비교로 핵심 정보를 한 번에 확인할 수 있습니다.</p>'
+                    if mobile_cards else
+                    ('<p class="bloguito-table-hint" style="font-size:13px;color:#475569;margin:0 0 6px">작은 화면에서는 표를 좌우로 밀어 확인할 수 있습니다.</p>'
+                     if scrolling else ''))
+            desktop_class = ' bloguito-overview-desktop' if mobile_cards else ''
+            body += (hint + f'<div class="bloguito-info-table{desktop_class}" role="region" aria-label="'
                      + html.escape(table['caption'], quote=True)
                      + '" tabindex="0" style="overflow-x:auto;margin:8px 0 24px;max-width:100%">'
                      + '<table style="border-collapse:collapse;width:100%;min-width:'
@@ -1051,6 +1088,22 @@ def render(plan, sources, category_key=None):
                      + '<caption style="text-align:left;font-weight:700;margin-bottom:8px">'
                      + html.escape(table['caption']) + '</caption><thead style="background:#edf7f3"><tr>'
                      + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
+            if mobile_cards:
+                cards = []
+                for row in table['rows']:
+                    pairs = ''.join(
+                        '<div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;padding:4px 0">'
+                        f'<span style="font-size:12px;font-weight:700;color:#64748b">{html.escape(table["headers"][idx])}</span>'
+                        f'<span style="font-size:14px;color:#334155;line-height:1.5">{html.escape(cell)}</span></div>'
+                        for idx, cell in enumerate(row['cells']) if idx != 1)
+                    cards.append(
+                        '<article style="padding:14px 15px;background:#ffffff;border:1px solid #dbe5e1;border-left:4px solid #0d7d59;border-radius:10px">'
+                        f'<div style="font-size:16px;font-weight:800;color:#1f2937;margin-bottom:7px">{html.escape(row["cells"][1])}</div>'
+                        + pairs + '</article>')
+                body += (
+                    '<style>.bloguito-overview-mobile{display:none}@media(max-width:640px){.bloguito-overview-desktop{display:none!important}.bloguito-overview-mobile{display:grid!important}}</style>'
+                    '<div class="bloguito-overview-mobile" style="grid-template-columns:1fr;gap:10px;margin:8px 0 24px">'
+                    + ''.join(cards) + '</div>')
         body += ''.join(paragraph(b) for b in section['paragraphs'])
         location = section.get('location')
         if location:
@@ -1096,8 +1149,9 @@ def render(plan, sources, category_key=None):
                 f'<span aria-hidden="true">↗</span></a>'
             )
         result += ('<div class="bloguito-cta" style="margin:20px 0 26px;padding:16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px">'
+                   '<style>@media(max-width:640px){.bloguito-cta-grid{grid-template-columns:1fr!important}}</style>'
                    '<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:12px">공식 서비스 바로가기</div>'
-                   f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">{"".join(buttons)}</div></div>')
+                   f'<div class="bloguito-cta-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">{"".join(buttons)}</div></div>')
 
     # Navigation is visibly distinct from verified direct-service actions.
     navigation = official_navigation_links(plan, sources)

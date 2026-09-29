@@ -272,7 +272,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             # exact target/field set above, then transport that already-validated
             # content over stdin while leaving the short reviewed fields quoted
             # on the remote command line.
-            if action == 'revise-draft' and wp[:2] == ['post', 'update']:
+            if action in {'revise-draft', 'update-draft'} and wp[:2] == ['post', 'update']:
                 content_args = [item for item in wp[3:-1] if item.startswith('--post_content=')]
                 if len(content_args) == 1:
                     content_arg = content_args[0]

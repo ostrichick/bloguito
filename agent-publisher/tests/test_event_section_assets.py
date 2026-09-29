@@ -72,6 +72,50 @@ class EventSectionAssetsTests(unittest.TestCase):
         candidates = {'2026', '10', '9', '17'}
         self.assertEqual(candidates, supported_official_number_notations(text, quote, candidates))
 
+    def test_official_dates_support_compact_month_day_notation(self):
+        text = '10/9~10/11, 10/17~10/18'
+        quote = '2026-10-09 ~ 2026-10-11 / 2026.10.17.(토) ~ 2026.10.18.(일)'
+        candidates = {'10', '9', '11', '17', '18'}
+        self.assertEqual(candidates, supported_official_number_notations(text, quote, candidates))
+
+    def test_section_facts_render_before_event_image(self):
+        section = self.bundle['plan']['sections'][0]
+        source = self.bundle['sources'][0]
+        section['facts'] = [{
+            'label': '비용',
+            'value': '배출수수료 면제',
+            'evidence': [{'source_id': source['id'], 'quote': source['text']}],
+            'answers': ['q1'],
+        }]
+        report = self.report()
+        self.assertEqual('ready', report['status'], report)
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn('class="festival-facts"', page)
+        self.assertLess(page.index('class="festival-facts"'), page.index('class="bloguito-event-image"'))
+
+    def test_overview_table_can_render_mobile_cards(self):
+        section = self.bundle['plan']['sections'][0]
+        section['table'] = {
+            'caption': '행사 비교',
+            'headers': ['날짜', '행사', '비용'],
+            'mobile_cards': True,
+            'rows': [{
+                'cells': ['9/14', '가을 행사', '무료'],
+                'evidence': [{'source_id': 's0', 'quote': self.bundle['sources'][0]['text']}],
+                'answers': ['q1'],
+            }],
+        }
+        self.bundle['sources'][0]['text'] += ' 9/14 가을 행사 무료.'
+        import hashlib
+        self.bundle['sources'][0]['sha256'] = hashlib.sha256(self.bundle['sources'][0]['text'].encode()).hexdigest()
+        section['table']['rows'][0]['evidence'][0]['quote'] = self.bundle['sources'][0]['text']
+        report = self.report()
+        self.assertEqual('ready', report['status'], report)
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn('bloguito-overview-desktop', page)
+        self.assertIn('bloguito-overview-mobile', page)
+        self.assertIn('가을 행사', page)
+
 
 if __name__ == '__main__':
     unittest.main()
