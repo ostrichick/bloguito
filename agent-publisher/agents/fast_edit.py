@@ -289,8 +289,42 @@ def _review_delta(old_bundle, new_bundle, delta, edit_intent):
     )
 
 
+def validate_prepared_delta_review(old_bundle, report, delta_review, edit_intent):
+    """Validate a previously completed delta review before reusing it.
+
+    This enables interrupted Fast edits to resume without paying for the same
+    semantic review again, while binding the cached result to the exact baseline,
+    policy, delta and user edit intent.
+    """
+    if not isinstance(delta_review, dict):
+        return False
+    if report.get("status") != "candidate":
+        return False
+    if delta_review.get("base_review_digest") != old_bundle.get("review", {}).get("digest"):
+        return False
+    if delta_review.get("base_policy_digest") != old_bundle.get("review", {}).get("policy_digest"):
+        return False
+    if delta_review.get("delta_digest") != digest(report.get("changed_blocks", {})):
+        return False
+    if delta_review.get("edit_intent") != edit_intent:
+        return False
+    if delta_review.get("issues") != []:
+        return False
+    return all(value is True for value in delta_review.get("checks", {}).values())
+
+
+def prepare_fast_delta_review(old_bundle, new_bundle, report, edit_intent):
+    """Run only the Fast-path changed-block semantic review and bind it."""
+    if report.get("status") != "candidate":
+        raise ValueError(FULL_REVIEW_REQUIRED + ":" + json.dumps(report.get("reasons", []), ensure_ascii=False))
+    delta_review = _review_delta(old_bundle, new_bundle, report["changed_blocks"], edit_intent)
+    if not validate_prepared_delta_review(old_bundle, report, delta_review, edit_intent):
+        raise ValueError(FULL_REVIEW_REQUIRED + ":delta_semantic_review_failed")
+    return delta_review
+
+
 def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
-                               edit_intent=None):
+                               edit_intent=None, prepared_delta_review=None):
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError("specific_fast_draft_revision_confirmation_required")
     if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
@@ -320,10 +354,13 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         report = validate_fast_edit(old_bundle, bundle)
         if report["status"] != "candidate":
             raise ValueError(FULL_REVIEW_REQUIRED + ":" + json.dumps(report["reasons"], ensure_ascii=False))
-        delta_review = _review_delta(old_bundle, bundle, report["changed_blocks"], edit_intent)
-        if (delta_review.get("issues") != []
-                or any(value is not True for value in delta_review.get("checks", {}).values())):
-            raise ValueError(FULL_REVIEW_REQUIRED + ":delta_semantic_review_failed")
+        if prepared_delta_review is not None:
+            if not validate_prepared_delta_review(
+                    old_bundle, report, prepared_delta_review, edit_intent):
+                raise ValueError(FULL_REVIEW_REQUIRED + ":prepared_delta_review_mismatch")
+            delta_review = prepared_delta_review
+        else:
+            delta_review = prepare_fast_delta_review(old_bundle, bundle, report, edit_intent)
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]

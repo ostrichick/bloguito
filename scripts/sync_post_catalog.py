@@ -7,10 +7,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+for _stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None)):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
 
 ROOT = Path(__file__).resolve().parents[1]
 SSH_HOST = "bloguito"

@@ -117,6 +117,28 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             '--fields=post_status,post_title,post_name,post_content,post_excerpt',
             '--format=json', '--allow-root'])
 
+    def test_fast_revise_streamed_update_retries_255_once(self):
+        module = load_module()
+        ssh_attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal ssh_attempts
+            if 'ssh' in args:
+                ssh_attempts += 1
+                if ssh_attempts == 1:
+                    return subprocess.CompletedProcess(args, 255, stdout='', stderr='timeout')
+                return subprocess.CompletedProcess(args, 0, stdout='Success', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('fast-revise-draft', {463}, 'bloguito')
+        result = transport(module._WP_PREFIX + [
+            'post', 'update', '463', '--post_content=<p>reviewed</p>',
+            '--post_excerpt=summary', '--allow-root'],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, ssh_attempts)
+
     def test_remote_wordpress_error_does_not_trigger_tailscale_diagnostics(self):
         module = load_module()
         calls = []
@@ -219,6 +241,33 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         module.make_transport(
             'revise-draft', {463}, 'bloguito', allow_title_change=True)(command)
 
+    def test_edit_draft_transport_must_be_preclassified(self):
+        module = load_module()
+        with self.assertRaisesRegex(ValueError, 'edit_draft_requires_preclassified_transport'):
+            module.make_transport('edit-draft', {463}, 'bloguito')
+
+    def test_edit_draft_wrapper_preclassifies_before_transport_permissions(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as folder:
+            bundle = Path(folder) / 'bundle.json'
+            bundle.write_text('{}', encoding='utf-8')
+            argv = [
+                'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
+                'edit-draft', str(bundle), '--post-id', '463',
+                '--expected-content-sha256', '0' * 64, '--confirm-update',
+                '--edit-intent', '표현 정리',
+            ]
+            with patch('sys.argv', argv), \
+                 patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                     mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                 patch('agents.edit_router.classify_edit_route', return_value={
+                     'route': 'fast', 'reasons': [],
+                 }), \
+                 patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
+                 patch.object(module.editorial_cli, 'main'):
+                module.main()
+        self.assertEqual('fast-revise-draft', make.call_args.args[0])
+
     def test_promote_allows_only_publish_status(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
@@ -305,6 +354,61 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 '--featured_image', '--allow-root'], capture_output=True, check=True)
 
         self.assertTrue(any(b'image' == kwargs.get('input') for _, kwargs in calls))
+
+    def test_replace_featured_image_allows_only_targeted_import_and_readback(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            remote = args[-1] if args else ''
+            if ' wp media import ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='777\n', stderr='')
+            if ' wp post get 777 ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'cover.jpg'
+            source.write_bytes(b'image')
+            transport([
+                'sudo', 'docker', 'cp', str(source),
+                'wordpress_app:/tmp/editorial_cover_463.jpg'], capture_output=True, check=True)
+        transport(module._WP_PREFIX + [
+            'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
+            '--featured_image', '--title=검토된 제목', '--alt=검토된 대체텍스트',
+            '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
+        transport(module._WP_PREFIX + [
+            'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
+            '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+        transport(module._WP_PREFIX + [
+            'post', 'meta', 'get', '777', '_wp_attachment_image_alt', '--allow-root'],
+            capture_output=True, text=True, check=False)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            transport(module._WP_PREFIX + [
+                'post', 'update', '463', '--post_content=x', '--allow-root'])
+
+    def test_replace_featured_image_media_import_255_is_not_retried(self):
+        module = load_module()
+        ssh_attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal ssh_attempts
+            if 'ssh' in args:
+                ssh_attempts += 1
+                return subprocess.CompletedProcess(args, 255, stdout='', stderr='lost response')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        result = transport(module._WP_PREFIX + [
+            'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
+            '--featured_image', '--title=검토된 제목', '--alt=대체텍스트',
+            '--porcelain', '--allow-root'], capture_output=True, text=True, check=False)
+        self.assertEqual(255, result.returncode)
+        self.assertEqual(1, ssh_attempts)
 
     def test_prepare_draft_wrapper_syncs_catalog_after_successful_editorial_command(self):
         module = load_module()

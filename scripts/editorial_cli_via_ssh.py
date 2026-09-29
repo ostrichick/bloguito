@@ -31,7 +31,10 @@ sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 import editorial_cli  # noqa: E402
 from agents.remote_transport_config import resolve_transport  # noqa: E402
+from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
+
+configure_utf8_stdio()
 
 
 _RUN = subprocess.run
@@ -45,10 +48,11 @@ _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
 _REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 _CREATE_ACTIONS = {'publish', 'prepare-draft'}
-_FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | {'revise-draft'}
+_FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | {'revise-draft', 'replace-featured-image'}
 _SUPPORTED_ACTIONS = {
-    'publish', 'prepare-draft', 'revise-draft', 'fast-revise-draft', 'update-draft', 'replace-legacy-draft',
-    'promote-draft', 'reformat', 'fix-excerpt',
+    'publish', 'prepare-draft', 'edit-draft', 'revise-draft', 'fast-revise-draft',
+    'replace-featured-image', 'update-draft', 'replace-legacy-draft', 'promote-draft',
+    'reformat', 'fix-excerpt',
 }
 _UPDATE_FIELDS = {
     'revise-draft': {'post_content', 'post_excerpt'},
@@ -116,6 +120,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                    allow_title_change=False, tailscale_ssh=False):
     if action not in _SUPPORTED_ACTIONS:
         raise ValueError('unsupported_editorial_ssh_action')
+    if action == 'edit-draft':
+        raise ValueError('edit_draft_requires_preclassified_transport')
     _safe_identifier(host, 'ssh_host')
     _safe_identifier(ssh_user, 'ssh_user')
     _safe_identifier(wsl_distro, 'wsl_distro')
@@ -223,7 +229,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             if tail not in (["--format=json", "--allow-root"],
                             ['--fields=post_status,post_content', '--format=json', '--allow-root'],
                             ['--fields=post_status,post_title,post_name,post_content,post_excerpt',
-                             '--format=json', '--allow-root']):
+                             '--format=json', '--allow-root'],
+                            ['--fields=ID,guid,post_title,post_mime_type', '--format=json', '--allow-root']):
                 raise ValueError('unexpected_wordpress_get_flags')
             return
         if parse_update(wp) is not None:
@@ -251,10 +258,26 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and int(wp[3].split('=', 1)[1]) in allowed_ids
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
                 and wp[4:] == ['--featured_image', '--porcelain', '--allow-root']):
-            return
+            return 'media_import'
+        if (action == 'replace-featured-image' and len(wp) == 9 and wp[:2] == ['media', 'import']
+                and _REMOTE_IMAGE.fullmatch(wp[2])
+                and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
+                and int(wp[3].split('=', 1)[1]) in allowed_ids
+                and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
+                and wp[4] == '--featured_image'
+                and wp[5].startswith('--title=') and '\x00' not in wp[5]
+                and wp[6].startswith('--alt=') and '\x00' not in wp[6]
+                and wp[7:] == ['--porcelain', '--allow-root']):
+            return 'media_import'
         if (action == 'revise-draft' and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4:] == ['_thumbnail_id', '--allow-root']):
+            return
+        if (action == 'replace-featured-image' and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
+                and wp[3].isdigit() and int(wp[3]) in readable_ids
+                and wp[4] in {'_thumbnail_id', '_wp_attachment_image_alt',
+                              'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
+                and wp[5] == '--allow-root'):
             return
         raise ValueError('unexpected_wordpress_command_during_editorial_ssh')
 
@@ -272,7 +295,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             # exact target/field set above, then transport that already-validated
             # content over stdin while leaving the short reviewed fields quoted
             # on the remote command line.
-            if action in {'revise-draft', 'update-draft'} and wp[:2] == ['post', 'update']:
+            if action in {'revise-draft', 'fast-revise-draft', 'update-draft'} and wp[:2] == ['post', 'update']:
                 content_args = [item for item in wp[3:-1] if item.startswith('--post_content=')]
                 if len(content_args) == 1:
                     content_arg = content_args[0]
@@ -286,7 +309,11 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                         options['input'] = content
                     else:
                         options['input'] = content.encode('utf-8')
-                    return remote_run(remote, **options)
+                    return remote_run(
+                        remote,
+                        retry_255=(action == 'fast-revise-draft'),
+                        **options,
+                    )
             remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
             read_only = (wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS
                          or wp[:2] == ['post', 'get'] or (wp and wp[0] == 'eval'))
@@ -311,6 +338,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                     raise ValueError('invalid_created_wordpress_post_id')
                 allowed_ids.add(int(created))
                 readable_ids.add(int(created))
+            if kind == 'media_import' and getattr(result, 'returncode', 0) == 0:
+                raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
+                attachment_id = raw.strip()
+                if not attachment_id.isdigit() or int(attachment_id) <= 0:
+                    raise ValueError('invalid_imported_media_id')
+                readable_ids.add(int(attachment_id))
             return result
 
         if action in _FEATURED_IMAGE_ACTIONS and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
@@ -381,10 +414,38 @@ def main():
         wsl_distro=args.wsl_distro,
         tailscale_ssh=args.tailscale_ssh,
     )
+    transport_action = action
+    if action == 'edit-draft':
+        if len(cli_args) < 2:
+            parser.error('edit-draft requires a bundle file')
+        bundle_path = Path(cli_args[1])
+        if not bundle_path.is_file():
+            parser.error('edit-draft bundle file not found')
+        post_ids = sorted(targets)
+        if len(post_ids) != 1:
+            parser.error('edit-draft requires exactly one --post-id')
+        from agents.edit_router import classify_edit_route
+        bundle = json.loads(bundle_path.read_text(encoding='utf-8'))
+        image_path = None
+        if '--image-path' in cli_args:
+            image_index = cli_args.index('--image-path') + 1
+            if image_index >= len(cli_args):
+                parser.error('--image-path requires a value')
+            image_path = Path(cli_args[image_index])
+        decision = classify_edit_route(
+            post_ids[0],
+            bundle,
+            confirm_title_change='--confirm-title-change' in cli_args,
+            image_path=image_path,
+        )
+        transport_action = 'fast-revise-draft' if decision['route'] == 'fast' else 'revise-draft'
+        print(f"[Edit Route] {decision['route']}" +
+              (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
+
     transport = make_transport(
-        action, targets, config.host, ssh_user=config.user,
+        transport_action, targets, config.host, ssh_user=config.user,
         wsl_distro=config.wsl_distro if config.mode in {'wsl', 'tailscale'} else None,
-        allow_title_change=(action == 'revise-draft' and '--confirm-title-change' in cli_args),
+        allow_title_change=(transport_action == 'revise-draft' and '--confirm-title-change' in cli_args),
         tailscale_ssh=config.mode == 'tailscale')
     with patch('subprocess.run', side_effect=transport), \
             patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):

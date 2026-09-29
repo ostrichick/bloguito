@@ -26,7 +26,10 @@ from agents.editorial_updater import (  # noqa: E402
     update_existing_public_post,
 )
 from agents.remote_transport_config import resolve_transport  # noqa: E402
+from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
+
+configure_utf8_stdio()
 
 _RUN = subprocess.run
 _PREFIX = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']

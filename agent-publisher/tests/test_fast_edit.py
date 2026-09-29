@@ -14,6 +14,8 @@ from agents.fast_edit import (
     changed_blocks,
     classify_fast_edit,
     fast_revise_reviewed_draft,
+    prepare_fast_delta_review,
+    validate_prepared_delta_review,
     validate_fast_edit,
 )
 from test_editorial_system import NOW, sample
@@ -134,6 +136,53 @@ class FastEditTests(unittest.TestCase):
         scopes = {item.get('scope') for item in [*delta['removed'], *delta['added']]}
         self.assertIn('faq_question:0', scopes)
 
+    def test_prepared_delta_review_is_bound_to_exact_delta_and_intent(self):
+        old, new = self._pair()
+        report = validate_fast_edit(old, new, now=NOW)
+        delta_review = {
+            'mode': 'delta',
+            'base_review_digest': old['review']['digest'],
+            'base_policy_digest': old['review']['policy_digest'],
+            'delta_digest': __import__('agents.editorial', fromlist=['digest']).digest(report['changed_blocks']),
+            'checks': {
+                'meaning_preserved': True,
+                'evidence_still_supports': True,
+                'conditions_preserved': True,
+                'no_new_claims': True,
+                'reader_task_preserved': True,
+            },
+            'issues': [],
+            'edit_intent': '소제목 표현만 간단하게 다듬기',
+        }
+        self.assertTrue(validate_prepared_delta_review(
+            old, report, delta_review, '소제목 표현만 간단하게 다듬기'))
+        self.assertFalse(validate_prepared_delta_review(
+            old, report, delta_review, '다른 요청'))
+
+    def test_prepared_delta_review_skips_second_model_call(self):
+        old, new = self._pair()
+        report = validate_fast_edit(old, new, now=NOW)
+        reviewed = {
+            'mode': 'delta',
+            'base_review_digest': old['review']['digest'],
+            'base_policy_digest': old['review']['policy_digest'],
+            'delta_digest': __import__('agents.editorial', fromlist=['digest']).digest(report['changed_blocks']),
+            'checks': {
+                'meaning_preserved': True,
+                'evidence_still_supports': True,
+                'conditions_preserved': True,
+                'no_new_claims': True,
+                'reader_task_preserved': True,
+            },
+            'issues': [],
+            'edit_intent': '소제목 표현만 간단하게 다듬기',
+        }
+        with patch('agents.fast_edit._review_delta', return_value=reviewed) as review:
+            prepared = prepare_fast_delta_review(
+                old, new, report, '소제목 표현만 간단하게 다듬기')
+        self.assertEqual(reviewed, prepared)
+        review.assert_called_once()
+
     def test_fast_revision_uses_only_target_get_update_get(self):
         old, new = self._pair()
         old_body = render(old['plan'], old['sources'])
@@ -174,11 +223,12 @@ class FastEditTests(unittest.TestCase):
                     return Mock(stdout='Success')
                 raise AssertionError(args)
 
+            changed = {'removed': [], 'added': []}
             delta = {
                 'mode': 'delta',
                 'base_review_digest': old['review']['digest'],
                 'base_policy_digest': old['review']['policy_digest'],
-                'delta_digest': 'x',
+                'delta_digest': __import__('agents.editorial', fromlist=['digest']).digest(changed),
                 'checks': {
                     'meaning_preserved': True,
                     'evidence_still_supports': True,
@@ -187,12 +237,13 @@ class FastEditTests(unittest.TestCase):
                     'reader_task_preserved': True,
                 },
                 'issues': [],
+                'edit_intent': '소제목 표현만 간단하게 다듬기',
                 'checked_at': datetime.now().astimezone().isoformat(),
             }
             with patch('agents.fast_edit.ROOT', root), \
                  patch('agents.fast_edit.DRAFTS_INDEX_FILE', index), \
                  patch('agents.fast_edit.validate_fast_edit', return_value={
-                     'status': 'candidate', 'reasons': [], 'changed_blocks': {'removed': [], 'added': []}}), \
+                     'status': 'candidate', 'reasons': [], 'changed_blocks': changed}), \
                  patch('agents.fast_edit._review_delta', return_value=delta), \
                  patch('agents.fast_edit.subprocess.run', side_effect=run):
                 result = fast_revise_reviewed_draft(

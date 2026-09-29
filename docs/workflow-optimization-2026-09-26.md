@@ -325,3 +325,16 @@ SSH adapter에서 `prepare-draft`가 성공하면 `scripts/sync_post_catalog.py`
 운영 경로는 세 수준으로 정리했다. 일반 신규 draft는 Fast `prepare-draft`, 기존 draft/public 글 수정은 현행 updater/reviser를 사용하는 Standard 경로, 정책 예외·출처 충돌·공통 코드/정책 변경처럼 단계별 원인 진단이 필요한 작업은 기존 `manual-review/review → check → publish`를 분리하는 Strict 경로다. Fast는 검증을 생략하는 모드가 아니라 동일 안전 검사를 한 프로세스 안에서 재사용·병렬화하는 모드다.
 
 검증은 `test_prepare_draft_fast_path.py`, `test_editorial_cli_via_ssh_transport.py`, 기존 `test_publish_flow_efficiency.py`, `test_post_catalog.py`, 대표 이미지 safety/routing, workflow metrics를 묶어 66건 통과한 뒤 전체 `agent-publisher/tests`를 한 번 실행했다. 최종 결과는 **601 tests, OK**였고 변경 Python 파일 `py_compile`과 `git diff --check`도 통과했다. 테스트의 `simulated transfer interruption`, 이미지 API unavailable 폴백, catalog sync 실패 경고는 각각 기존 실패 주입/폴백 및 새 재시도 경계를 검증하는 의도된 출력이다. 이번 최적화 검증에서는 실제 WordPress draft를 만들거나 운영 글을 변경하지 않았다. 실제 신규 글 한 편의 wall-clock 절감률은 다음 실사용 `workflow-metrics.jsonl`에서 `semantic_review`, `cover_generation`, `inventory_sync`, `total_ms`를 비교해 확인한다.
+
+## 2026-09-29 P0 기존 글 수정 지연 개선
+
+대전 행사 draft #641 후속 작업에서 대표이미지 교체와 제한된 내용 수정이 전체 source/review/revision 경로로 여러 번 확대되어 wall-clock이 비정상적으로 길어진 사례를 기준으로 P0를 구현했다. 목표는 안전장치를 제거하는 것이 아니라 **작은 변경이 기본적으로 작은 경로를 타고, 변경되지 않은 검증은 코드가 재사용하도록 만드는 것**이다.
+
+- `edit-draft`를 기존 reviewed draft 수정의 기본 상위 진입점으로 추가했다. 저장된 reviewed bundle과 후보 bundle을 먼저 로컬에서 비교하고, 기존 `fast_edit.validate_fast_edit()`가 허용하면 `fast-revise-draft`의 target-only CAS/delta-review 경로를 사용한다. 새 사실·숫자·날짜·출처·CTA·제목·정책 변화나 검토 만료가 있으면 기존 `revise-draft` Standard 경로로 자동 전환한다.
+- `replace-featured-image`를 추가했다. 본문 bundle이나 전체 inventory를 열지 않고 현재 본문 SHA와 `_thumbnail_id`를 모두 CAS로 확인한 뒤 이미 검수한 1200×675 이미지만 import한다. 저장 후 status/title/slug/content/excerpt와 Rank Math 3개 메타가 그대로인지, 새 attachment URL·MIME·ALT·`_thumbnail_id`가 정상인지 확인한다. 기존 attachment는 자동 삭제하지 않는다.
+- `validation_reuse.py`가 content/source/policy/review fingerprint를 계산해 Fast 후보에서 source/policy/full-review/delta-review 재사용 상태를 명시한다. `workflow-metrics.jsonl`에는 Fast/Standard/image-only route와 validation reuse/skip 카운터가 추가된다.
+- `task_state.py`가 `agent-publisher/data/editorial_runs/task-state/post-<ID>.json`에 작업 단계를 원자적으로 기록한다. WordPress 저장 뒤 화면 검증이 남으면 `saved_pending_qa`로 남아 세션 압축·연결 중단 후 `pending` 단계부터 이어갈 수 있다. 상태 파일에는 원고나 source 원문을 복제하지 않고 ID, SHA, route, 완료 단계와 산출물 경로만 기록한다.
+- Fast 편집의 changed-block 의미 검토 결과는 baseline review digest, policy digest, delta digest, edit intent에 묶어 task-state에 보존한다. 중단 뒤 live 본문이 아직 작업 시작 SHA이면 같은 delta review를 재사용하고, 이미 저장 예정 SHA이면 mutation을 재실행하지 않고 QA 단계로 복귀한다. 둘과 다른 SHA는 `resume_state_conflict`로 차단한다.
+- Windows CLI 진입점은 stdout/stderr를 UTF-8 `errors=replace`로 재구성하고 자식 Python 기본 인코딩도 UTF-8로 고정한다. 진단용 한글·기호 출력 실패가 성공한 편집 작업을 `UnicodeEncodeError`로 뒤집는 문제를 차단한다.
+
+대표이미지 import는 비멱등 media mutation이므로 SSH 255에서 자동 재시도하지 않는다. 반대로 `edit-draft`의 동일 post update는 CAS가 전제된 멱등적 동일값 쓰기이므로 기존 fast-edit와 같은 1회 재시도 범위를 사용할 수 있다. P0 구현 자체에서는 실제 WordPress 글이나 대표이미지를 변경하지 않는다.

@@ -55,8 +55,10 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 | --- | --- | --- |
 | 일반 신규 draft (Fast) | POST_CATALOG 1차 중복 확인 → sources → 구조화 원고 → `prepare-draft` | 로컬 content/source preflight → 의미 검토와 대표 이미지 생성·검수 병렬 → Publisher의 최신 inventory 1회/full validation → draft 저장 → SSH adapter 사용 시 POST_CATALOG 자동 동기화 |
 | 신규 글 진단/예외 (Strict) | POST_CATALOG → sources → 구조화 원고 → manual-review/review → 필요 시 check → publish | 정책 예외·출처 충돌·공연 공식 이미지 수동 검토·공통 코드/정책 변경 등 단계별 결과를 따로 확인해야 하는 경우 |
-| 사실·숫자·날짜·대상·출처·제목·CTA 변경 | 대상 상태와 변경 내용에 맞는 update-draft / revise-draft / replace-legacy-draft / update-existing | 새로운 근거와 전체 검토; legacy 교체는 기존 별도 진입 조건 충족 필요 |
-| 검토된 임시글의 표현·중복 정리·기존 사실 재배치 | fast-revise-draft, 실제 요청 범위를 --edit-intent로 전달 | 기존 검토 유효성·불변 조건·변경 블록 검토·결정론 검사 |
+| 검토된 임시글 수정 (기본) | `edit-draft`, 실제 요청 범위를 `--edit-intent`로 전달 | 기존 bundle과 후보를 먼저 로컬 분류. 표현·중복·기존 사실 재배치는 Fast, 새 사실·숫자·날짜·대상·출처·제목·CTA는 Standard로 자동 전환 |
+| 대표이미지만 교체 | `replace-featured-image` | 본문·slug·상태·excerpt·Rank Math를 바꾸지 않고 현재 본문 SHA와 기존 `_thumbnail_id`를 CAS로 확인한 뒤 검수한 1200×675 이미지 한 장만 교체 |
+| 사실·숫자·날짜·대상·출처·제목·CTA 변경 | `edit-draft`가 Standard로 분기하거나 대상 상태에 맞는 update-draft / revise-draft / replace-legacy-draft / update-existing | 새로운 근거와 전체 검토; legacy 교체는 기존 별도 진입 조건 충족 필요 |
+| 검토된 임시글의 표현·중복 정리·기존 사실 재배치 (저수준 직접 호출) | `fast-revise-draft`, 실제 요청 범위를 --edit-intent로 전달 | 일반 작업에서는 `edit-draft`를 우선하고, 진단·테스트에서 Fast 경로를 명시적으로 고정할 때만 직접 호출 |
 | 공개 글의 표현 정리 | update-existing | 현재 공개 글 갱신의 전체 검토·원본 보존 절차 |
 
 **묶음 처리:** 같은 글·같은 승인 범위의 문구 다듬기, 중복 FAQ 제거, 기존 사실의 표 정리를 한 후보 bundle에 모아 검토한 뒤 한 번 저장한다. 단순 이동·삭제가 아니라 의미가 달라지는지 변경 블록을 검토한다. 저장 전에 추가 요청이 오면 범위와 경로를 다시 분류해 후보에 합치고 최종 후보로 검토한다. 저장 후 추가 요청은 새 원본과 검토 유효성을 기준으로 처리한다. 현재 fast 수정은 기존 full review를 보존하므로 첫 수정 뒤 두 번째 fast 수정은 원고/검토 불일치로 전체 재검토가 필요할 수 있다. 검토 digest나 timestamp를 수동으로 바꿔 통과시키지 않는다. FULL_REVIEW_REQUIRED이면 필요한 전체 검토 경로로 전환하고 사용자에게 이유를 짧게 알린다. 요청 범위 자체를 확대해야 한다면 먼저 필요한 정보를 확인한다.
@@ -67,6 +69,33 @@ MYSQL_ROOT_PASSWORD=ci-placeholder MYSQL_PASSWORD=ci-placeholder \
 - WordPress 목록: 같은 실행에서 확보한 목록은 읽기 전용 review/check에 재사용한다. 실제 신규 등록·일반 갱신의 최신 inventory와 저장 직전 원본 일치 확인은 정규 코드가 수행하도록 유지한다. 쓰기 이후 무효화된 목록이나 다른 작업의 오래된 목록을 재사용하지 않는다. fast 경로는 기존 구현대로 대상 한 글만 조회한다.
 - 의미 검토: 원고·근거·정책의 결합과 검토 기한이 여전히 유효할 때만 재사용한다. 변경된 원고에는 변경 범위에 맞는 새 검토가 필요하다. 등록 코드가 동일 검토를 다시 호출하지 않도록 기존 경로를 그대로 사용한다.
 - 변경안 비교와 화면 확인: 같은 변경안 적용이 이미 승인됐으면 승인 전 비교 패키지를 다시 생성하지 않는다. CTA·레이아웃 등 검증 대상이 그대로이고 이전 확인이 현재 변경에도 유효한 범위만 재사용한다. 표 구조 변경은 전체 표 접근성 QA를 수행한다.
+
+`edit-draft`는 위 재사용 규칙을 코드로 강제한다. 기존 tracked bundle과 새 후보의 source/policy/review fingerprint를 기록하고, Fast 적합성이 확인되면 전체 inventory·전체 source 재수집·전체 semantic review 대신 기존 검증과 changed-block delta review를 사용한다. Fast 조건을 벗어나면 검사를 우회하지 않고 기존 `revise-draft` Standard 경로로 전환한다.
+
+수정 명령은 `agent-publisher/data/editorial_runs/task-state/post-<ID>.json`에 Git 비추적 작업 상태를 원자적으로 기록한다. 세션 압축·연결 중단 뒤에는 이 파일의 `pending` 단계와 WordPress 현재 SHA를 먼저 비교하고 완료된 source/review/image 단계를 반복하지 않는다. WordPress 저장이 끝났지만 화면 확인이 남아 있으면 상태는 `saved_pending_qa`이며, 브라우저 QA 후에만 `browser_qa`를 완료 처리한다.
+
+```powershell
+# reviewed draft 일반 수정: Fast 적합성을 먼저 자동 판정하고 필요할 때만 Standard로 전환
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-draft tmp/article/bundle.json `
+  --post-id 641 --expected-content-sha256 <현재본문SHA> --confirm-update `
+  --edit-intent "표현 정리와 기존 사실의 표 재배치"
+
+# 중단된 같은 작업 재개: task-state fingerprint와 live SHA가 맞아야만 이어감
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-draft tmp/article/bundle.json `
+  --post-id 641 --expected-content-sha256 <작업시작본문SHA> --confirm-update --resume `
+  --edit-intent "표현 정리와 기존 사실의 표 재배치"
+
+# 대표이미지만 교체: 본문/source/review pipeline을 열지 않음
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- replace-featured-image `
+  --post-id 641 --expected-content-sha256 <현재본문SHA> --expected-thumbnail-id <현재이미지ID> `
+  --image-path tmp/article/cover.jpg --alt-text "대전 10월 행사 일정 안내" --confirm-update
+
+# 실제 브라우저 QA가 끝난 뒤 로컬 task-state 종료
+python agent-publisher/editorial_cli.py complete-task-qa `
+  --post-id 641 --expected-content-sha256 <저장후본문SHA>
+```
+
+`replace-featured-image`의 media import는 응답 유실 시 중복 attachment를 만들 수 있어 SSH 255 자동 재시도를 하지 않는다. 이 경우 active task-state를 덮어쓰지 말고 현재 `_thumbnail_id`를 확인해 복구한다. `edit-draft --resume`은 live 본문 SHA가 작업 시작 SHA 또는 저장 예정 SHA 중 하나일 때만 이어가며 제3의 SHA가 관측되면 동시 변경으로 차단한다.
 
 **신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 통과하면 현재 의미 검토가 없는 경우 reviewer와 `DesignerAgent` 대표 이미지 생성·비전 검수를 동시에 실행한다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다.
 
@@ -84,7 +113,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft tmp
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
-3. 일반 신규 draft는 `sources` 뒤 구조화 원고가 완성되면 `prepare-draft`를 사용한다. 단계별 원인 진단이 필요한 Strict 작업만 `review/check/publish`를 분리한다. `publish bundle.json`은 **임시글 등록**이다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 이미 검토된 사실·출처·CTA·제목을 그대로 유지하면서 표 재배치·중복 삭제·표현 다듬기만 할 때는 `fast-revise-draft`, 독립 재검토를 끝낸 본문 전체를 같은 초안에 교체할 때는 원본 SHA와 `--confirm-update`를 요구하는 `revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. `fast-revise-draft`는 `--edit-intent`에 이번 사용자 요청 범위를 명시해야 하며, 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 `FULL_REVIEW_REQUIRED`로 중단한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
+3. 일반 신규 draft는 `sources` 뒤 구조화 원고가 완성되면 `prepare-draft`를 사용한다. 단계별 원인 진단이 필요한 Strict 작업만 `review/check/publish`를 분리한다. `publish bundle.json`은 **임시글 등록**이다. 기존 reviewed draft의 일반 수정은 `edit-draft`를 기본으로 사용한다. 이 라우터는 먼저 `fast-revise-draft` 적합성을 결정하고, Fast 조건을 벗어나면 별도 새 파이프라인을 만들지 않고 기존 `revise-draft` Standard 경로를 호출한다. 대표이미지만 바꾸면 `replace-featured-image`를 사용해 본문 revision과 전체 source/review를 열지 않는다. 검토된 임시글의 행동 링크 등 renderer 소유 요소만 바꿀 때는 `update-draft`, 저수준 Fast 경로를 명시적으로 고정할 때는 `fast-revise-draft`, reviewed manifest가 없는 기존 evergreen legacy 초안을 사용자가 명시적으로 재작성 요청한 경우에는 같은 원본 SHA·현재 source·백업·검토 조건을 요구하는 `replace-legacy-draft`, 명시적 승인된 기존 공개 글은 `update-existing`으로 구분한다. Fast 경로는 `--edit-intent`에 이번 사용자 요청 범위를 명시해야 하며, 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장을 발견하면 Standard 전체 검토로 전환한다. 짧은 기간의 dated legacy 글은 별도 정책 예외 없이는 `replace-legacy-draft`로 30일 기준을 우회할 수 없다.
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 `scripts/prepare_post_approval.py`는 사용자가 아직 현재 변경안을 적용할지 검토하는 단계에서 변경 전후 비교 패키지를 만들기 위한 도구다. 같은 변경안의 실제 적용이 이미 명시적으로 승인된 뒤에는 이 패키지를 다시 만들지 않는다. 정규 `update-existing`/`revise-draft`/관련 updater가 자체적으로 최신 전체 inventory, 대상 글 CAS, 공식 source 재조회, 원본 백업, 저장 직전·직후 검증을 수행하므로 그 경로를 바로 사용한다. 승인 대상이나 변경안이 달라졌다면 새 승인으로 취급한다.
