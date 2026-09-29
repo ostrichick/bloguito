@@ -17,6 +17,7 @@
     "run_validation.py": "Scope-aware regression validation planner and runner",
     "strip_internal_editorial_notes.py": "Internal editorial note cleanup",
     "summarize_workflow_metrics.py": "Workflow metrics aggregation",
+    "task_workspace.py": "Managed scratch task workspace lifecycle",
     "sync_backups.py": "Backup synchronization",
     "sync_backups_tailscale.py": "Explicit Tailscale backup synchronization",
     "sync_editorial_state_via_ssh.py": "One-time reviewed state synchronization",

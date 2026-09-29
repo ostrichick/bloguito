@@ -24,6 +24,8 @@
 4. **게시물 전용 테스트/하네스**: 공통 동작을 검증하는 테스트가 아니면 `agent-publisher/tests/`에 두지 않는다. 작업 중 검증 코드는 `scratch/tasks/`에, 설명 기록은 필요할 때 기존 작업 MD에 남긴다.
 5. **브라우저 QA 프로필**: repo의 `tmp/`/`scratch/`에 Edge/Chrome user-data-dir를 만들지 않는다. 기존 브라우저 세션을 재사용하거나 OS 임시 디렉터리를 사용하고, 성공한 QA 뒤 프로필/cache는 삭제한다. 저장소에는 최종 screenshot/JSON 증거만 남긴다.
 6. **재시도 산출물**: 같은 작업의 retry마다 timestamp 폴더를 추가하지 않고 동일 task workspace의 안정된 파일명(`candidate.json`, `qa.json`, `mobile.png` 등)을 갱신한다. 별도 보존이 필요한 실패본만 명시적으로 `failed/`에 남긴다.
+7. **관리형 task workspace**: 새 disposable 작업은 `python scripts/task_workspace.py open <task>`로 `scratch/tasks/<task>/`를 생성·재사용한다. 완료는 `mark <task> completed`, 실패 후 재개용은 `failed`, 장기 보존은 `preserved --reason ...`로 표시한다. manifest가 없는 기존 scratch 파일은 자동 TTL 정리 대상으로 소급 해석하지 않는다.
+8. **TTL**: 관리형 `completed` workspace는 기본 72시간, `failed` workspace는 기본 168시간 뒤 `cleanup_workspaces.py` 후보가 된다. `active`, `preserved`, manifest가 없거나 손상된 workspace는 자동 삭제하지 않는다. 브라우저 프로필은 가능하면 `agents.workspace_lifecycle.temporary_browser_profile()`로 OS temp에서 한 QA batch 동안만 사용한다.
 
 ## 왜 이 규칙이 필요한가
 

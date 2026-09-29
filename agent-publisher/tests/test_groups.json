@@ -166,6 +166,7 @@
     "test_tax_points_version.py",
     "test_topic_duplicates.py",
     "test_update_existing_via_ssh_shim.py",
+    "test_workspace_lifecycle.py",
     "test_workflow_metrics.py",
     "test_workflow_metrics_summary.py",
     "test_wp_cli_provisioning.py"

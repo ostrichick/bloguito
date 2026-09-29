@@ -151,7 +151,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 
 `scripts/prepare_post_approval.py`는 사용자가 아직 현재 변경안을 적용할지 검토하는 단계에서 변경 전후 비교 패키지를 만들기 위한 도구다. 같은 변경안의 실제 적용이 이미 명시적으로 승인된 뒤에는 이 패키지를 다시 만들지 않는다. 정규 `update-existing`/`revise-draft`/관련 updater가 자체적으로 최신 전체 inventory, 대상 글 CAS, 공식 source 재조회, 원본 백업, 저장 직전·직후 검증을 수행하므로 그 경로를 바로 사용한다. 승인 대상이나 변경안이 달라졌다면 새 승인으로 취급한다.
 
-승인 비교 패키지와 일반 one-off 산출물의 기본 위치는 `scratch/tasks/<작업명>/`이다. 같은 작업의 retry는 새 timestamp 디렉터리를 계속 추가하지 않고 동일 workspace의 안정된 파일명을 재사용한다. 브라우저 QA는 가능한 한 이미 열린 세션을 재사용한다. 독립 user-data-dir가 필요한 경우 repo 밖 OS temp에 만들고 성공 시 즉시 삭제하며, 최종 screenshot/결과 JSON만 task workspace에 남긴다. 과거 `tmp/`에는 문서에서 참조하는 legacy 증거가 있으므로 전체 자동 삭제하지 않고 `scripts/cleanup_workspaces.py`의 보수적 브라우저-profile 정리만 사용한다.
+승인 비교 패키지와 일반 one-off 산출물의 기본 위치는 `scratch/tasks/<작업명>/`이다. 같은 작업의 retry는 새 timestamp 디렉터리를 계속 추가하지 않고 동일 workspace의 안정된 파일명을 재사용한다. 새 disposable 작업은 `scripts/task_workspace.py`로 ownership manifest를 만든다. 관리형 workspace의 기본 TTL은 완료 72시간, 실패/재개 대기 168시간이며 `active`, `preserved`, manifest가 없거나 손상된 기존 workspace는 자동 삭제하지 않는다. 승인 비교 패키지처럼 사람이 검토·승인에 사용할 증거는 필요 기간 동안 `preserved`로 취급한다. 브라우저 QA는 가능한 한 이미 열린 세션을 재사용한다. 독립 user-data-dir가 필요한 경우 repo 밖 OS temp에 만들고 한 QA batch에서 재사용한 뒤 성공 시 즉시 삭제하며, 최종 screenshot/결과 JSON만 task workspace에 남긴다. 과거 `tmp/`에는 문서에서 참조하는 legacy 증거가 있으므로 전체 자동 삭제하지 않고 `scripts/cleanup_workspaces.py`의 보수적 profile/생성물/명시적 관리형 workspace 정리만 사용한다.
 
 ### 작성 모델 경로
 
