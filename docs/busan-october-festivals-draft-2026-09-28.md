@@ -93,3 +93,44 @@ Post #621(전주 10월 축제 일정)의 고품질 표준 및 UX 요소를 충�
 5. **종합 단위 테스트 검증**:
    - `scripts/test_busan_festival_post.py` 및 `scripts/test_busan_remediation.py` 총 13개 단위 테스트 100% 통과 (`Ran 13 tests in 0.005s: OK`).
    - WordPress Post #648 실서버 원자적 업데이트 완료 (`WP Update Output: Success: Updated post 648.`).
+
+---
+
+## 6. EVENT_POST_STANDARD 재검토 및 최종 사용자 피드백 반영 (3차 갱신, 2026-09-29)
+
+기존 2차 기록의 이미지 `#651~#655`는 재사용 권리 근거가 충분히 확인되지 않아 최종 원고에서는 사용하지 않았습니다. 이번 갱신에서는 행사형 글 공통 규칙과 실제 WordPress 초안을 함께 다시 검토해 다음과 같이 교체했습니다.
+
+1. **5개 행사 section 이미지와 위치 카드 확정**
+   - 부산국제록페스티벌: 부산광역시 2019 공식 현장 사진, 공공누리 제1유형, Attachment `#695`.
+   - 부산국제영화제: 부산광역시 2025 제30회 개막식 공식 현장 사진, 공공누리 제1유형, Attachment `#696`.
+   - 부산자갈치축제: 부산광역시 2025 제32회 공식 현장 사진, 공공누리 제1유형, Attachment `#697`.
+   - 동래읍성역사축제: 동래구청, 부산관광공사 2024 공식 행사 장면, 공공누리 제1유형, Attachment `#698`.
+   - 광안리 M 드론라이트쇼: 상업적 재사용이 명확히 허용된 최신 공식 현장 사진을 확보하지 못해 2026 공식 프로그램을 근거로 직접 제작한 `generated_original` 이미지, Attachment `#694`를 사용.
+   - 이전 연도 공식 사진 4개는 모두 캡션에 해당 연도와 `2026 행사 분위기 참고` 성격을 표시.
+   - 5개 section 모두 `festival-location-card`를 1개씩 배치하고 카카오맵, 네이버지도 직접 위치 검색 링크를 제공.
+
+2. **상단 overview와 모바일 줄바꿈 개선**
+   - 의미가 불명확했던 `확인된 실전 조건` 열을 제거하고 `볼거리와 체험`, `티켓과 예약`처럼 독자가 바로 이해할 수 있는 열 이름으로 교체.
+   - 별도 선택 조언 section `2026 부산 10월 축제, 중순 일정이 겹칠 때 고르는 기준`과 해당 목차 항목을 제거.
+   - 모바일 카드에서 `M 드론라이트쇼`처럼 하나의 행사명으로 읽혀야 하는 ASCII+한글 단위를 `bloguito-semantic-unit`으로 묶어 중간에서 부자연스럽게 갈라지지 않도록 renderer를 보완.
+
+3. **대표이미지 재제작 및 교체**
+   - 일반 고딕체 대신 행사형 대표이미지 정책에서 허용한 한글 display font `HYPMokGak-Bold`를 사용해 1200×675 커버를 새로 제작.
+   - 최종 WordPress featured image: Attachment `#703`, `editorial_cover_648.webp`.
+   - 업로드 후 원격 파일과 로컬 검수본 SHA256이 `68a1f4582fa70601a71bae4565e4579e56df26c8b213be6af2f55575a4c59fcb`로 일치함을 확인.
+
+4. **최종 WordPress readback**
+   - Post ID: `648`.
+   - 상태: `draft` 유지.
+   - slug: `busan-october-festivals-2026` 유지.
+   - 카테고리: `생활/건강 정보` 유지.
+   - 최종 본문 SHA256: `ad8a0c51340f8f90fc98ef06d8fd329119546bf9ba202b59f4d8b36bab0b1f6e`.
+   - 본문에서 행사 이미지 5개, 위치 카드 5개를 확인했고 `확인된 실전 조건` 및 제거 대상 선택 조언 section이 없는 것을 확인.
+   - 대표이미지 교체 전후로 Rank Math focus keyword, SEO title, SEO description이 보존됨을 확인.
+
+5. **공통 재발 방지 및 검증**
+   - EVENT_POST_STANDARD와 validator에 행사별 이미지, 위치 카드, 이미지 권리 provenance, 모호한 overview 헤더 금지, 선택 가이드 opt-in, 이전 연도 이미지 표기, 검증된 display font 정책을 반영.
+   - 모바일 의미 단위 줄바꿈, renderer migration, reviewed draft Rank Math SSH readback, 원격 UTF-8 BOM 처리까지 보완.
+   - 공통 변경에 대해 최대 `728 tests PASS, 1 skip` 전체 회귀 검증을 완료했고, 마지막 media-ID 처리 보완 후 관련 표적 테스트 37개도 추가 통과.
+   - 390px 모바일과 1440px 데스크톱 로컬 렌더 QA에서 overview 카드/표, 목차, 첫 행사 이미지 배치를 확인했으며 featured image는 WordPress에서 다시 다운로드한 파일을 별도로 시각 검수.
+   - `python scripts/sync_post_catalog.py` 재실행 후 `docs/POST_CATALOG.md`에서 #648이 `Draft 보존` 상태로 동기화된 것을 확인.
