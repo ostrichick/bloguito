@@ -44,6 +44,7 @@ class EventSectionAssetsTests(unittest.TestCase):
         self.assertIn('행사 현장 모습, ', page)
         self.assertNotIn('행사 현장 모습 · ', page)
         self.assertIn('festival-location-card', page)
+        self.assertIn('<strong>위치</strong>:', page)
         self.assertIn('map.kakao.com/link/search/', page)
         self.assertIn('map.naver.com/v5/search/', page)
         self.assertNotIn('www.google.com/maps/dir/?api=1', page)

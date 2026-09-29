@@ -60,6 +60,8 @@ DEFAULT_FEATURED_IMAGE_POLICY = {
         "max_blocks": 2,
         "primary_max_chars": 22,
         "secondary_max_chars": 28,
+        "display_font_required": True,
+        "avoid_generic_system_font_for_primary": True,
     },
     "generation": {
         "default_model": "gemini-3.1-flash-image",
@@ -138,6 +140,29 @@ def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont:
         except Exception:
             continue
     raise RuntimeError("Hangul-capable font unavailable; refusing to render broken Korean text")
+
+
+def _load_display_font(size: int = 24) -> ImageFont.FreeTypeFont:
+    """Load a conspicuous Hangul display face for featured-image primary copy.
+
+    A generic UI Gothic is intentionally not a fallback here.  When the policy
+    requires display typography, failing closed is preferable to silently
+    recreating the plain-font covers the editorial standard rejects.
+    """
+    candidates = [
+        "C:/Windows/Fonts/H2MKPB.TTF",  # HYPMokGak-Bold
+        "C:/Windows/Fonts/H2HDRM.TTF",  # HYHeadLine-Medium
+        "/usr/share/fonts/truetype/nanum/NanumBrush.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumPen.ttf",
+    ]
+    for path in candidates:
+        try:
+            font = ImageFont.truetype(path, size)
+            if _font_has_hangul(font):
+                return font
+        except Exception:
+            continue
+    raise RuntimeError("Hangul display font unavailable; refusing generic featured-image typography")
 
 
 def split_title(text: str, max_first_line: int = 22) -> list[str]:
@@ -541,7 +566,7 @@ class DesignerAgent:
         font_size = 72 if longest <= 8 else 62 if longest <= 12 else 52
         if len(lines) > 1:
             font_size = min(font_size, 56)
-        title_font = _load_font(font_size, bold=True)
+        title_font = _load_display_font(font_size)
         subtitle_font = _load_font(29, bold=True)
 
         total_title_h = len(lines) * (font_size + 8)

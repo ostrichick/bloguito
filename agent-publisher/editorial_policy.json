@@ -126,7 +126,7 @@
     "rank_math_is_publish_gate": false
   },
   "featured_image_policy": {
-    "version": 2,
+    "version": 3,
     "purpose": "modern_editorial_cover",
     "benchmark": "post-475-movein-cover-2026-09-27",
     "canvas": {
@@ -140,7 +140,16 @@
       "avoid_full_article_title_repetition": true,
       "single_topic_word_may_match_article_title": true,
       "lists_in_image": false,
-      "semantic_line_breaks_required": true
+      "semantic_line_breaks_required": true,
+      "primary_font_role": "hangul_display",
+      "display_font_required": true,
+      "avoid_generic_system_font_for_primary": true,
+      "preferred_hangul_display_families": [
+        "HYPMokGak-Bold",
+        "HYHeadLine-Medium",
+        "NanumBrush",
+        "NanumPen"
+      ]
     },
     "composition": {
       "single_primary_subject": true,

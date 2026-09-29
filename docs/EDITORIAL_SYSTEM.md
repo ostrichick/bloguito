@@ -128,7 +128,7 @@ lead, paragraphs와 FAQ answer는 모두 {text, evidence:[{source_id,quote}], an
 
 ### 행사 일정형 포스트 v1
 
-`event_post_standard_version=1`을 선언한 `multi_event_schedule` 글은 단순히 여러 날짜를 모은 목록이 아니라 **독자가 각 행사에 갈지 말지 판단할 수 있는 일정 가이드**로 작성한다. 첫 section은 날짜·행사·핵심 활동 또는 체험·확인된 비용/신청 조건·장소를 비교하는 `overview` 표를 사용하고 좁은 화면에서는 `mobile_cards=true`로 읽을 수 있어야 한다. 각 `event_entries[].name`은 상세 section 하나의 `event_name`과 정확히 1:1로 연결한다. 행사별 section은 날짜·장소 반복으로 끝내지 않고 공식 프로그램에 근거한 실제 볼거리·체험과 비용·신청·운영시간 같은 판단 정보를 포함한다. 행사 전용 `booking`/`apply`/`purchase` action은 해당 행사 section에서 실제로 사용한 source에 결합하고 `section.actions`로 scope하여 상단 global CTA로 새지 않게 한다.
+`event_post_standard_version=1`을 선언한 `multi_event_schedule` 글은 단순히 여러 날짜를 모은 목록이 아니라 **독자가 각 행사에 갈지 말지 판단할 수 있는 일정 가이드**로 작성한다. 첫 section은 날짜·행사·볼거리와 체험·필요한 티켓/예약·장소처럼 독자가 뜻을 바로 이해하는 열을 사용하는 `overview` 표를 두고 좁은 화면에서는 `mobile_cards=true`로 읽을 수 있어야 한다. `확인된 실전 조건`, `판단 포인트` 같은 추상적인 열 이름은 쓰지 않는다. 각 `event_entries[].name`은 상세 section 하나의 `event_name`과 정확히 1:1로 연결하고, 각 행사 section에는 검증된 대표 이미지와 위치 카드를 모두 둔다. 행사별 section은 날짜·장소 반복으로 끝내지 않고 공식 프로그램에 근거한 실제 볼거리·체험과 비용·신청·운영시간 같은 판단 정보를 포함한다. 안전하게 재사용할 공식 활동 사진이 없으면 공식 프로그램을 근거로 직접 제작한 이미지임을 caption과 provenance에 명시한다. 행사 전용 `booking`/`apply`/`purchase` action은 해당 행사 section에서 실제로 사용한 source에 결합하고 `section.actions`로 scope하여 상단 global CTA로 새지 않게 한다. 별도 선택·추천 comparison section은 사용자가 그런 비교를 요청한 경우에만 명시적으로 opt-in한다.
 
 본문 행사 이미지는 구조화 `image:{url,alt,caption,source_id,year}`로 기록한다. 이전 회차 이미지를 쓰면 `year`를 실제 연도로 기록하고 caption에 그 연도와 `참고`·`분위기` 같은 이전 회차 참고 성격을 명시한다. 사진이 실제 활동을 잘 보여 주는지, 풍경 사진에 불과한지, 화질·crop이 충분한지는 규칙식으로 보증하지 않고 실제 이미지와 desktop/mobile 렌더를 사람이 확인한다. 이미지가 없는 행사 section을 개수 채우기 위해 임의 이미지로 채우지 않는다.
 

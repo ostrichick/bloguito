@@ -7,6 +7,7 @@ from PIL import Image
 from agents.designer import (
     DesignerAgent,
     _cover_profile,
+    _load_display_font,
     _load_font,
     build_editorial_cover_prompt,
     cleanup_generated_cover,
@@ -155,6 +156,18 @@ class DesignerRoutingTests(unittest.TestCase):
         with patch("agents.designer.ImageFont.truetype", side_effect=OSError("font missing")):
             with self.assertRaisesRegex(RuntimeError, "Hangul-capable font unavailable"):
                 _load_font(24, bold=True)
+
+    def test_featured_primary_font_uses_verified_display_face(self):
+        font = _load_display_font(32)
+        self.assertIsNotNone(font)
+        family, style = font.getname()
+        self.assertIn(family, {'HYPMokGak-Bold', 'HYHeadLine-Medium', 'Nanum Brush Script', 'Nanum Pen Script'})
+        self.assertNotIn('Malgun', family)
+
+    def test_display_font_fails_closed_instead_of_using_generic_gothic(self):
+        with patch("agents.designer.ImageFont.truetype", side_effect=OSError("display font missing")):
+            with self.assertRaisesRegex(RuntimeError, "Hangul display font unavailable"):
+                _load_display_font(32)
 
     def test_title_split_keeps_numeric_range_phrase_together(self):
         self.assertEqual(

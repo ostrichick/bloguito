@@ -90,7 +90,7 @@ def event_bundle():
                 'paragraphs': [],
                 'table': {
                     'caption': '2026년 10월 서초 행사 날짜, 체험, 비용, 장소 비교',
-                    'headers': ['날짜', '행사', '추천/핵심', '비용, 신청', '장소'],
+                    'headers': ['날짜', '행사', '볼거리와 체험', '티켓과 예약', '장소'],
                     'mobile_cards': True,
                     'rows': [
                         {
@@ -115,6 +115,20 @@ def event_bundle():
                     'evidence': [{'source_id': 's0', 'quote': source0_text}],
                     'answers': ['q1'],
                 }],
+                'image': {
+                    'url': 'https://lifeinfo24.org/wp-content/uploads/2026/10/seocho-fall-event.webp',
+                    'alt': '가을 체험축제 전통문화 체험과 공연을 표현한 행사 안내 이미지',
+                    'caption': '2026 공식 프로그램을 바탕으로 제작한 행사 안내 이미지',
+                    'source_id': 's0',
+                    'rights': 'generated_original',
+                    'year': 2026,
+                },
+                'location': {
+                    'venue': '서초공원',
+                    'address': '서초공원',
+                    'query': '서울 서초공원',
+                    'evidence': [{'source_id': 's0', 'quote': source0_text}],
+                },
                 'actions': ['https://www.seocho.go.kr/event/fall/apply'],
             },
             {
@@ -126,6 +140,20 @@ def event_bundle():
                     'evidence': [{'source_id': 's1', 'quote': source1_text}],
                     'answers': ['q1'],
                 }],
+                'image': {
+                    'url': 'https://lifeinfo24.org/wp-content/uploads/2026/10/seocho-city-event.webp',
+                    'alt': '도심 문화행사 전시와 버스킹, 체험 부스를 표현한 행사 안내 이미지',
+                    'caption': '2026 공식 프로그램을 바탕으로 제작한 행사 안내 이미지',
+                    'source_id': 's1',
+                    'rights': 'generated_original',
+                    'year': 2026,
+                },
+                'location': {
+                    'venue': '시민광장',
+                    'address': '시민광장',
+                    'query': '서울 시민광장',
+                    'evidence': [{'source_id': 's1', 'quote': source1_text}],
+                },
             },
         ],
         'faq': [],
@@ -208,6 +236,8 @@ class EventPostStandardTests(unittest.TestCase):
             'alt': '가을 체험축제 가족 참여 프로그램 현장',
             'caption': '가을 체험축제 가족 참여 프로그램 현장',
             'source_id': 's0',
+            'rights': 'open_license',
+            'rights_url': 'https://www.seocho.go.kr/copyright',
             'year': 2025,
         }
         self.bundle['sources'][0]['title'] = '2025 가을 체험축제 현장 사진'
@@ -256,6 +286,39 @@ class EventPostStandardTests(unittest.TestCase):
         self.bundle['plan']['sections'][0]['table']['headers'] = ['날짜', '행사', '장소', '지역', '주소']
         self.assertIn('event_standard_overview_missing', validate_event_post_standard(self.bundle))
 
+    def test_overview_rejects_vague_reader_header(self):
+        self.bundle['plan']['sections'][0]['table']['headers'] = [
+            '날짜', '행사', '볼거리와 체험', '확인된 실전 조건', '장소'
+        ]
+        reasons = validate_event_post_standard(self.bundle)
+        self.assertIn('event_standard_overview_header_vague', reasons)
+
+    def test_each_event_section_requires_image_location_and_image_rights(self):
+        section = self.bundle['plan']['sections'][1]
+        image = section.pop('image')
+        self.assertIn('event_standard_section_assets_missing', validate_event_post_standard(self.bundle))
+        section['image'] = image
+        location = section.pop('location')
+        self.assertIn('event_standard_section_assets_missing', validate_event_post_standard(self.bundle))
+        section['location'] = location
+        del section['image']['rights']
+        self.assertIn('event_standard_image_rights_missing', validate_event_post_standard(self.bundle))
+
+    def test_generated_image_caption_must_disclose_that_it_is_created(self):
+        section = self.bundle['plan']['sections'][1]
+        section['image']['caption'] = '2026 가을 체험축제 현장 사진'
+        self.assertIn('event_standard_image_rights_missing', validate_event_post_standard(self.bundle))
+
+    def test_selection_guide_requires_explicit_brief_opt_in(self):
+        self.bundle['plan']['sections'].insert(1, {
+            'heading': '어떤 행사를 고를까',
+            'kind': 'comparison',
+            'paragraphs': [{'text': '체험과 공연을 비교합니다.', 'evidence': [], 'answers': []}],
+        })
+        self.assertIn('event_standard_unrequested_selection_guide', validate_event_post_standard(self.bundle))
+        self.bundle['brief']['allow_selection_guide'] = True
+        self.assertNotIn('event_standard_unrequested_selection_guide', validate_event_post_standard(self.bundle))
+
     def test_writer_schema_and_prompts_include_event_v1_contract(self):
         parsed = Plan.model_validate(copy.deepcopy(self.bundle['plan'])).model_dump()
         self.assertEqual('가을 체험축제', parsed['sections'][1]['event_name'])
@@ -264,6 +327,7 @@ class EventPostStandardTests(unittest.TestCase):
         reviewer = event_review_instruction(self.bundle)
         self.assertIn('event_name', writer)
         self.assertIn('section.actions', writer)
+        self.assertIn('대표 이미지와 위치 카드', writer)
         self.assertIn('방문 목적', reviewer)
 
 

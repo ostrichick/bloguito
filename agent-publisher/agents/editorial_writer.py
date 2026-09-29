@@ -61,6 +61,11 @@ class SectionImage(BaseModel):
     alt: str
     caption: str
     source_id: str
+    rights: str | None = Field(default=None, description=(
+        'Event-post v1 should record generated_original, site_owned, open_license or permission_granted. '
+        'For open-license or permission-based images, rights_url should identify the reuse terms.'
+    ))
+    rights_url: str | None = None
     year: int | None = Field(default=None, description=(
         'Event-post v1 should set the actual photo/poster year so prior-year use can be disclosed deterministically.'
     ))

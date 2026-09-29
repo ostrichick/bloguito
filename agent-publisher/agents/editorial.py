@@ -357,7 +357,7 @@ def validated_section_assets(plan, sources):
         image = section.get('image')
         if image is not None:
             if (not isinstance(image, dict)
-                    or set(image) - {'url', 'alt', 'caption', 'source_id', 'year'}
+                    or set(image) - {'url', 'alt', 'caption', 'source_id', 'year', 'rights', 'rights_url'}
                     or not {'url', 'alt', 'caption', 'source_id'}.issubset(image)):
                 raise ValueError('invalid_section_image')
             url, alt, caption, source_id = (
@@ -371,6 +371,13 @@ def validated_section_assets(plan, sources):
                     or re.search(r'[<>\r\n]', alt)
                     or not isinstance(caption, str) or not 2 <= len(caption.strip()) <= 180
                     or re.search(r'[<>\r\n]', caption)
+                    or (image.get('rights') is not None
+                        and image.get('rights') not in {
+                            'generated_original', 'site_owned', 'open_license', 'permission_granted'})
+                    or (image.get('rights_url') is not None and (
+                        not isinstance(image.get('rights_url'), str)
+                        or not image['rights_url'].startswith('https://')
+                        or re.search(r'[<>\r\n]', image['rights_url'])))
                     or (image.get('year') is not None
                         and (type(image.get('year')) is not int or not 2000 <= image['year'] <= 2100))
                     or not source or source.get('source_type') != 'official'):
@@ -1041,6 +1048,7 @@ def render(plan, sources, category_key=None):
               '.bloguito-article *{box-sizing:border-box}'
               '@media(max-width:640px){'
               '.bloguito-article *{overflow-wrap:anywhere!important;word-break:break-word!important}'
+              '.bloguito-summary p{word-break:keep-all!important;overflow-wrap:anywhere!important}'
               '.festival-facts{grid-template-columns:minmax(0,1fr)!important}'
               '.bloguito-info-table table{table-layout:fixed!important}'
               '.bloguito-info-table th,.bloguito-info-table td{overflow-wrap:anywhere!important;word-break:break-word!important}'
@@ -1178,7 +1186,7 @@ def render(plan, sources, category_key=None):
                 'border:1px solid #e2e8f0;border-left:4px solid #0d7d59;border-radius:8px">'
                 '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 위치</div>'
                 f'<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6"><strong>장소</strong>: {venue}<br/>'
-                f'<strong>주소</strong>: {address}</div>'
+                f'<strong>위치</strong>: {address}</div>'
                 '<div style="display:flex;gap:8px;flex-wrap:wrap">'
                 f'<a href="https://map.kakao.com/link/search/{query}" target="_blank" rel="noopener noreferrer" '
                 'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#fee500;color:#111827 !important;'
