@@ -155,6 +155,18 @@ def event_bundle():
                     'evidence': [{'source_id': 's1', 'quote': source1_text}],
                 },
             },
+            {
+                'heading': '10월 서초 행사, 체험과 도심 문화 프로그램을 함께 비교하세요',
+                'kind': 'general',
+                'paragraphs': [{
+                    'text': '전통문화 체험과 공연이 중심인 행사 뒤에 전시, 버스킹, 체험 부스 중심의 도심 문화행사가 이어져 프로그램 성격이 다릅니다.',
+                    'evidence': [
+                        {'source_id': 's0', 'quote': source0_text},
+                        {'source_id': 's1', 'quote': source1_text},
+                    ],
+                    'answers': ['q1'],
+                }],
+            },
         ],
         'faq': [],
         'related_posts': [],
@@ -211,6 +223,13 @@ class EventPostStandardTests(unittest.TestCase):
         )
         self.assertIn(
             'event_standard_decision_support_missing',
+            validate_event_post_standard(self.bundle),
+        )
+
+    def test_event_roundup_requires_closing_summary_after_event_sections(self):
+        self.bundle['plan']['sections'].pop()
+        self.assertIn(
+            'event_standard_closing_summary_missing',
             validate_event_post_standard(self.bundle),
         )
 
@@ -328,7 +347,16 @@ class EventPostStandardTests(unittest.TestCase):
         self.assertIn('event_name', writer)
         self.assertIn('section.actions', writer)
         self.assertIn('대표 이미지와 위치 카드', writer)
+        self.assertIn('실제 작품명', writer)
+        self.assertIn('출연자', writer)
+        self.assertIn('대표곡', writer)
+        self.assertIn('공식 세트리스트', writer)
+        self.assertIn('강변 풍경', writer)
+        self.assertIn('마무리 section', writer)
         self.assertIn('방문 목적', reviewer)
+        self.assertIn('수량·범주', reviewer)
+        self.assertIn('빈 공연장', reviewer)
+        self.assertIn('마지막 마무리 section', reviewer)
 
 
 if __name__ == '__main__':
