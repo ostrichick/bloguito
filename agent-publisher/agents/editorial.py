@@ -302,7 +302,10 @@ def supported_currency_sums(text, quote_text, calculations):
                 errors.append('invalid_derived_calculation')
                 continue
 
-            derived = {str(item['monthly_result'])}
+            derived = set()
+            monthly_visible = str(item['monthly_result']) in visible_numbers
+            if monthly_visible:
+                derived.add(str(item['monthly_result']))
             horizon_error = False
             for horizon in item['horizons']:
                 if (not isinstance(horizon, dict)
@@ -333,9 +336,10 @@ def supported_currency_sums(text, quote_text, calculations):
             if any(value not in visible_numbers for value in derived):
                 errors.append('invalid_derived_calculation')
                 continue
-            won_values = {str(item['monthly_result']), *[
-                str(horizon['cumulative_result']) for horizon in item['horizons']
-            ]}
+            won_values = {
+                *([str(item['monthly_result'])] if monthly_visible else []),
+                *[str(horizon['cumulative_result']) for horizon in item['horizons']],
+            }
             if any(not re.search(r'(?<!\d)' + re.escape(value) + r'\s*원', plain_text)
                    for value in won_values):
                 errors.append('invalid_derived_calculation')

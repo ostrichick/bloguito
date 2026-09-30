@@ -79,6 +79,15 @@ class PensionProjectionCalculationTests(unittest.TestCase):
         self.block['calculations'][0]['horizons'] = []
         self.assertEqual('ready', self.check()['status'])
 
+    def test_cumulative_row_may_omit_intermediate_monthly_amount(self):
+        self.block['text'] = (
+            '정상 개시연령보다 10년 뒤 누적 수령액은 70,345,800원입니다.'
+        )
+        self.block['calculations'][0]['horizons'] = [
+            {'years_after_normal': 10, 'cumulative_result': 70345800},
+        ]
+        self.assertEqual('ready', self.check()['status'])
+
 
 if __name__ == '__main__':
     unittest.main()
