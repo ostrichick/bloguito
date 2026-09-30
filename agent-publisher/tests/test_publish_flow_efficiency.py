@@ -54,9 +54,10 @@ class PublishFlowEfficiencyTests(unittest.TestCase):
         def fake_subprocess(cmd, **kwargs):
             if 'create' in cmd:
                 return Mock(stdout='901')
-            if '--fields=post_status,post_content' in cmd:
+            if '--fields=post_status,post_name,post_content' in cmd:
                 return Mock(stdout=json.dumps({
                     'post_status': 'draft',
+                    'post_name': 'seocho-fan-disposal',
                     'post_content': expected_content,
                 }))
             return Mock(stdout='')

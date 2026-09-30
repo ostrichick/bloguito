@@ -290,13 +290,19 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             required = {'--post_type=post', '--post_status=draft', '--comment_status=closed',
                         '--allow-root', '--porcelain'}
             categories = [item for item in flags if item.startswith('--post_category=')]
+            slugs = [item.split('=', 1)[1] for item in flags if item.startswith('--post_name=')]
             if (not required.issubset(flags)
                     or sum(item.startswith('--post_title=') for item in flags) != 1
                     or sum(item.startswith('--post_excerpt=') for item in flags) != 1
+                    or len(slugs) != 1
+                    or len(slugs[0]) > 60
+                    or len(slugs[0].split('-')) > 5
+                    or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', slugs[0])
+                    or not re.search(r'[a-z]', slugs[0])
                     or len(categories) != 1 or not categories[0].split('=', 1)[1].isdigit()):
                 raise ValueError('unexpected_wordpress_draft_create')
             allowed = required | set(categories)
-            if any(item not in allowed and not item.startswith(('--post_title=', '--post_excerpt='))
+            if any(item not in allowed and not item.startswith(('--post_title=', '--post_excerpt=', '--post_name='))
                    for item in flags):
                 raise ValueError('unexpected_wordpress_draft_create')
             return 'create'
@@ -307,6 +313,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             tail = wp[3:]
             if tail not in (["--format=json", "--allow-root"],
                             ['--fields=post_status,post_content', '--format=json', '--allow-root'],
+                            ['--fields=post_status,post_name,post_content', '--format=json', '--allow-root'],
                             ['--fields=post_status,post_title,post_name,post_content,post_excerpt',
                              '--format=json', '--allow-root'],
                             ['--fields=ID,guid,post_title,post_mime_type', '--format=json', '--allow-root']):
@@ -329,9 +336,11 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if (action in _CREATE_ACTIONS and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
-                and wp[4] in {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
                 and wp[6] == '--allow-root'):
-            return
+            if wp[4] in {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}:
+                return
+            if wp[4] == '_bloguito_permalink_scheme' and wp[5] == 'id-slug-v1':
+                return
         if (action in _CREATE_ACTIONS and len(wp) == 6 and wp[:2] == ['media', 'import']
                 and _REMOTE_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()

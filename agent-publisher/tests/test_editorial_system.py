@@ -25,7 +25,7 @@ def sample():
         'evidence':[{'source_id':'s0','quote':text}], 'answers':['q1']}
     bundle = {'brief':brief, 'sources':[{'id':'s0','url':brief['official_urls'][0], 'title':'배출 안내',
         'text':text, 'sha256':hashlib.sha256(text.encode()).hexdigest(), 'source_type':'official', 'fetched_at':NOW.isoformat()}],
-        'plan':{'title':'서초구 선풍기 버리는 법', 'lead':block,
+        'plan':{'title':'서초구 선풍기 버리는 법', 'slug':'seocho-fan-disposal', 'lead':block,
         'sections':[{'heading':'배출 방법','paragraphs':[{'text':'아파트 단지 수집 거치대에 배출합니다.', 'evidence':block['evidence'], 'answers':['q1']}]}], 'faq':[]},
         'temporal_source':{}}
     sign(bundle)
@@ -311,8 +311,8 @@ class EditorialTests(unittest.TestCase):
             commands.append(cmd)
             if 'create' in cmd:
                 return Mock(stdout='999')
-            if '--fields=post_status,post_content' in cmd:
-                return Mock(stdout=json.dumps({'post_status':'draft','post_content':article['content']}))
+            if '--fields=post_status,post_name,post_content' in cmd:
+                return Mock(stdout=json.dumps({'post_status':'draft','post_name':'seocho-fan-disposal','post_content':article['content']}))
             return Mock(stdout='')
         with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record, patch('agents.publisher.POST_STATUS','publish'):
             clock.now.return_value=NOW
@@ -322,10 +322,19 @@ class EditorialTests(unittest.TestCase):
             invalidate.assert_called_once_with()
             self.assertTrue(any('--post_status=draft' in c for c in commands))
             self.assertFalse(any('--post_status=publish' in c for c in commands))
+            self.assertTrue(any('--post_name=seocho-fan-disposal' in c for c in commands))
+            self.assertTrue(any('_bloguito_permalink_scheme' in c and 'id-slug-v1' in c for c in commands))
             self.assertEqual(record.call_args.kwargs['status'],'draft')
             self.assertTrue(any('rank_math_focus_keyword' in c for c in commands))
             self.assertTrue(any('rank_math_title' in c for c in commands))
             self.assertTrue(any('rank_math_description' in c for c in commands))
+
+    def test_new_post_slug_validation_rejects_opaque_or_unsafe_values(self):
+        from agents.editorial import validated_new_post_slug
+        self.assertEqual('health-screening-2026', validated_new_post_slug({'slug':'health-screening-2026'}))
+        for slug in ('700', 'Health-Screening', '건강검진', 'a_b', 'one-two-three-four-five-six'):
+            with self.subTest(slug=slug), self.assertRaisesRegex(ValueError, 'invalid_new_post_slug'):
+                validated_new_post_slug({'slug':slug})
 
     def test_evergreen_does_not_require_news_rss(self):
         from agents.radar import RadarAgent

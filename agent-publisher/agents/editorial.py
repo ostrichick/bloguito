@@ -38,6 +38,21 @@ def normalized(text):
     return ' '.join(text.split())
 
 
+def validated_new_post_slug(plan):
+    """Return the reviewed short slug for a new post or fail closed."""
+    rules = policy().get('permalink_policy', {})
+    slug = plan.get('slug') if isinstance(plan, dict) else None
+    pattern = rules.get('slug_pattern', r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+    max_length = int(rules.get('slug_max_length', 60))
+    max_terms = int(rules.get('slug_max_terms', 5))
+    if (not isinstance(slug, str) or not re.fullmatch(pattern, slug)
+            or not 1 <= len(slug.split('-')) <= max_terms
+            or not 3 <= len(slug) <= max_length
+            or not re.search(r'[a-z]', slug)):
+        raise ValueError('invalid_new_post_slug')
+    return slug
+
+
 def supported_counts(text, quote_text, candidates):
     """Only positive integer item counts inside an explicit quoted upper bound.
 
