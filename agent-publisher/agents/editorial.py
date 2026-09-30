@@ -255,6 +255,43 @@ def supported_currency_sums(text, quote_text, calculations):
         if not isinstance(item, dict):
             errors.append('invalid_derived_calculation')
             continue
+        if item.get('operation') == 'illustrative_input':
+            required_keys = {'operation', 'age', 'monthly_salary', 'employment_months'}
+            if (set(item) != required_keys
+                    or type(item.get('age')) is not int or not 15 <= item['age'] <= 100
+                    or type(item.get('monthly_salary')) is not int
+                    or not 100_000 <= item['monthly_salary'] <= 100_000_000
+                    or item['monthly_salary'] % 10_000 != 0
+                    or type(item.get('employment_months')) is not int
+                    or not 1 <= item['employment_months'] <= 600):
+                errors.append('invalid_derived_calculation')
+                continue
+            age = str(item['age'])
+            salary_man = str(item['monthly_salary'] // 10_000)
+            months = str(item['employment_months'])
+            patterns = {
+                age: r'(?<!\d)' + re.escape(age) + r'\s*세(?!\d)',
+                salary_man: r'(?<!\d)' + re.escape(salary_man) + r'\s*만원(?!\d)',
+                months: r'(?<!\d)' + re.escape(months) + r'\s*개월(?!\d)',
+            }
+            if any(value not in visible_numbers or not re.search(pattern, text)
+                   for value, pattern in patterns.items()):
+                errors.append('invalid_derived_calculation')
+                continue
+            supported.update(patterns)
+            continue
+        if item.get('operation') == 'days_to_months':
+            if (set(item) != {'operation', 'days', 'months'}
+                    or type(item.get('days')) is not int or not 30 <= item['days'] <= 365
+                    or type(item.get('months')) is not int or not 1 <= item['months'] <= 12
+                    or item['days'] % 30 != 0 or item['months'] != item['days'] // 30
+                    or str(item['days']) not in quoted_numbers
+                    or not re.search(r'(?<!\d)' + str(item['days']) + r'\s*일(?!\d)', text)
+                    or not re.search(r'(?<!\d)' + str(item['months']) + r'\s*개월(?!\d)', text)):
+                errors.append('invalid_derived_calculation')
+                continue
+            supported.add(str(item['months']))
+            continue
         if item.get('operation') == 'add_duration':
             if (set(item) != {'operation', 'unit', 'start', 'duration', 'result'}
                     or item.get('unit') != '분'

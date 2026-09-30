@@ -45,6 +45,46 @@ class DerivedCurrencyCalculationTests(unittest.TestCase):
         self.block['calculations'][0]['operation'] = 'average'
         self.assertIn('invalid_derived_calculation', self.check()['reasons'])
 
+    def test_illustrative_input_numbers_are_allowed_without_pretending_they_are_official_facts(self):
+        self.block.pop('calculations')
+        self.block['text'] = self.source_text
+        self.bundle['plan']['sections'][0]['table'] = {
+            'caption': '실업급여 예시',
+            'headers': ['나이 / 월급', '근무기간', '결과'],
+            'rows': [{
+                'cells': ['35세 / 200만원', '12개월', '공식 결과'],
+                'evidence': [{'source_id': 's0', 'quote': self.source_text}],
+                'answers': ['q1'],
+                'calculations': [{
+                    'operation': 'illustrative_input',
+                    'age': 35,
+                    'monthly_salary': 2_000_000,
+                    'employment_months': 12,
+                }],
+            }],
+        }
+        self.assertEqual('ready', self.check()['status'])
+
+    def test_illustrative_input_metadata_must_match_visible_numbers(self):
+        self.block.pop('calculations')
+        self.block['text'] = self.source_text
+        self.bundle['plan']['sections'][0]['table'] = {
+            'caption': '실업급여 예시',
+            'headers': ['나이 / 월급', '근무기간', '결과'],
+            'rows': [{
+                'cells': ['35세 / 200만원', '12개월', '공식 결과'],
+                'evidence': [{'source_id': 's0', 'quote': self.source_text}],
+                'answers': ['q1'],
+                'calculations': [{
+                    'operation': 'illustrative_input',
+                    'age': 40,
+                    'monthly_salary': 2_000_000,
+                    'employment_months': 12,
+                }],
+            }],
+        }
+        self.assertIn('invalid_derived_calculation', self.check()['reasons'])
+
     def test_table_row_calculation_is_preserved(self):
         self.block.pop('calculations')
         self.block['text'] = self.source_text
