@@ -16,7 +16,8 @@
       "test_critical_facts.py",
       "test_numeric_evidence_notation.py",
       "test_derived_currency_calculations.py",
-      "test_derived_time_calculations.py"
+      "test_derived_time_calculations.py",
+      "test_pension_projection_calculations.py"
     ],
     "temporal": [
       "test_temporal_validation.py",
