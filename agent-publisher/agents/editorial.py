@@ -272,7 +272,7 @@ def supported_currency_sums(text, quote_text, calculations):
                     or not -5 <= item['start_offset_years'] <= 5
                     or type(item.get('monthly_result')) is not int or item['monthly_result'] <= 0
                     or not isinstance(item.get('horizons'), list)
-                    or not 1 <= len(item['horizons']) <= 4):
+                    or len(item['horizons']) > 4):
                 errors.append('invalid_derived_calculation')
                 continue
 

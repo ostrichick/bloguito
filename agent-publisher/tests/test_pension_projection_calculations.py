@@ -74,6 +74,11 @@ class PensionProjectionCalculationTests(unittest.TestCase):
         }]
         self.assertEqual('ready', self.check()['status'])
 
+    def test_monthly_only_projection_is_allowed(self):
+        self.block['text'] = '5년 조기수령 예시의 월액은 390,810원입니다.'
+        self.block['calculations'][0]['horizons'] = []
+        self.assertEqual('ready', self.check()['status'])
+
 
 if __name__ == '__main__':
     unittest.main()
