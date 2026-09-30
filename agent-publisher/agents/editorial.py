@@ -392,7 +392,7 @@ def validated_section_assets(plan, sources):
                 location.get('venue'), location.get('address'), location.get('query'), location.get('evidence'))
             if (not all(isinstance(value, str) for value in (venue, address, query))
                     or not 2 <= len(venue.strip()) <= 120
-                    or not 4 <= len(address.strip()) <= 180
+                    or (address.strip() and not 4 <= len(address.strip()) <= 180)
                     or not 2 <= len(query.strip()) <= 180
                     or re.search(r'[<>\r\n]', venue + address + query)
                     or not isinstance(evidence, list) or not 1 <= len(evidence) <= 4):
@@ -1195,15 +1195,23 @@ def render(plan, sources, category_key=None):
         location = section.get('location')
         if location:
             query = quote(location['query'].strip(), safe='')
-            venue = html.escape(location['venue'])
-            address = html.escape(location['address'])
+            venue_text = location['venue'].strip()
+            address_text = location['address'].strip()
+            venue = html.escape(venue_text)
+            address_line = ''
+            if address_text and normalized(address_text).casefold() != normalized(venue_text).casefold():
+                address_line = (
+                    '<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+                    f'<strong>주소</strong>: {html.escape(address_text)}</div>'
+                )
+            heading_margin = '4px' if address_line else '10px'
             body += (
                 '<div class="festival-location-card" style="margin:16px 0 24px;padding:14px 18px;background:#f8fafc;'
                 'border:1px solid #e2e8f0;border-left:4px solid #0d7d59;border-radius:8px">'
-                '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 위치</div>'
-                f'<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6"><strong>장소</strong>: {venue}<br/>'
-                f'<strong>위치</strong>: {address}</div>'
-                '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+                f'<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:{heading_margin}">'
+                f'📍 행사장 위치: {venue}</div>'
+                + address_line
+                + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
                 f'<a href="https://map.kakao.com/link/search/{query}" target="_blank" rel="noopener noreferrer" '
                 'style="display:inline-flex;align-items:center;gap:4px;padding:7px 13px;background:#fee500;color:#111827 !important;'
                 'font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">카카오맵 위치 보기 <span aria-hidden="true">↗</span></a>'

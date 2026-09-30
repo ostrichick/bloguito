@@ -265,6 +265,46 @@ class EditorialDraftReviserTests(unittest.TestCase):
             _normalize_renderer_migrations(new),
         )
 
+    def test_location_card_compact_renderer_migration_is_normalized(self):
+        old = (
+            '<div class="festival-location-card">'
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 위치</div>'
+            '<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+            '<strong>장소</strong>: 서초 행사장<br/><strong>위치</strong>: 서울 서초구 안내로 1</div>'
+            '</div>'
+        )
+        new = (
+            '<div class="festival-location-card">'
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:4px">'
+            '📍 행사장 위치: 서초 행사장</div>'
+            '<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+            '<strong>주소</strong>: 서울 서초구 안내로 1</div>'
+            '</div>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
+    def test_location_card_duplicate_address_removal_is_normalized(self):
+        old = (
+            '<div class="festival-location-card">'
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">📍 행사장 위치</div>'
+            '<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+            '<strong>장소</strong>: 삼락생태공원<br/><strong>위치</strong>: 삼락생태공원</div>'
+            '</div>'
+        )
+        new = (
+            '<div class="festival-location-card">'
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:10px">'
+            '📍 행사장 위치: 삼락생태공원</div>'
+            '</div>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
     def test_location_card_migration_does_not_hide_authored_prose_change(self):
         old = '<p>검토된 본문</p><div>📍 행사장 지도 및 길찾기</div>'
         edited = '<p>사람이 바꾼 본문</p><div>📍 행사장 위치</div>'

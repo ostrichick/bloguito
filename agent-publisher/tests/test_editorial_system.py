@@ -243,7 +243,8 @@ class EditorialTests(unittest.TestCase):
             'evidence': self.b['plan']['lead']['evidence'],
         }
         content = render(self.b['plan'], self.b['sources'])
-        self.assertIn('행사장 위치', content)
+        self.assertIn('📍 행사장 위치: 서초구 행사장', content)
+        self.assertIn('<strong>주소</strong>: 서울 서초구 행사장 1', content)
         self.assertIn('map.kakao.com/link/search', content)
         self.assertIn('map.naver.com/v5/search', content)
         self.assertNotIn('google.com/maps/dir', content)

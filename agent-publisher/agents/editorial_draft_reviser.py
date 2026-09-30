@@ -114,6 +114,30 @@ def _normalize_renderer_migrations(content):
         '',
         content,
     )
+
+    old_location = re.compile(
+        r'<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">'
+        r'📍 행사장 위치</div>'
+        r'<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+        r'<strong>장소</strong>: (?P<venue>[^<]*)<br/>'
+        r'<strong>위치</strong>: (?P<address>[^<]*)</div>'
+    )
+    new_location = re.compile(
+        r'<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:(?:4px|10px)">'
+        r'📍 행사장 위치: (?P<venue>[^<]*)</div>'
+        r'(?:<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+        r'<strong>주소</strong>: (?P<address>[^<]*)</div>)?'
+    )
+
+    def canonical_location(match):
+        venue = (match.group('venue') or '').strip()
+        address = (match.groupdict().get('address') or '').strip()
+        if address == venue:
+            address = ''
+        return f'<span data-bloguito-location="{venue}" data-address="{address}"></span>'
+
+    content = old_location.sub(canonical_location, content)
+    content = new_location.sub(canonical_location, content)
     return content
 
 

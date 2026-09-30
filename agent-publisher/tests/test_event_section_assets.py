@@ -44,12 +44,29 @@ class EventSectionAssetsTests(unittest.TestCase):
         self.assertIn('행사 현장 모습, ', page)
         self.assertNotIn('행사 현장 모습 · ', page)
         self.assertIn('festival-location-card', page)
-        self.assertIn('<strong>위치</strong>:', page)
+        self.assertIn('📍 행사장 위치: 서초 행사장', page)
+        self.assertIn('<strong>주소</strong>: 서울 서초구 안내로 1', page)
+        self.assertNotIn('<strong>장소</strong>:', page)
+        self.assertNotIn('<strong>위치</strong>:', page)
         self.assertIn('map.kakao.com/link/search/', page)
         self.assertIn('map.naver.com/v5/search/', page)
         self.assertNotIn('www.google.com/maps/dir/?api=1', page)
         self.assertNotIn('<iframe', page)
         self.assertNotIn('dapi.kakao.com/v2/maps/sdk.js', page)
+
+    def test_duplicate_or_missing_address_is_not_repeated(self):
+        location = self.bundle['plan']['sections'][0]['location']
+        location['address'] = location['venue']
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn('📍 행사장 위치: 서초 행사장', page)
+        self.assertNotIn('<strong>주소</strong>:', page)
+
+        location['address'] = ''
+        report = self.report()
+        self.assertEqual('ready', report['status'], report)
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn('📍 행사장 위치: 서초 행사장', page)
+        self.assertNotIn('<strong>주소</strong>:', page)
 
     def test_unofficial_image_source_is_rejected(self):
         self.bundle['sources'][0]['source_type'] = 'reference'
