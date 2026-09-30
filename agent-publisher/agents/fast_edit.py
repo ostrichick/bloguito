@@ -27,6 +27,7 @@ from agents.editorial import (
     render,
     validate_bundle,
 )
+from agents.editorial_draft_reviser import _normalize_renderer_migrations
 from agents.editorial_writer import EditorialWriterAgent
 from agents.temporal_validation import KST
 from agents.workflow_metrics import increment
@@ -512,10 +513,11 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
         live = get_post(base, post_id, fields=post_fields)
         expected_old = render(old_bundle["plan"], old_bundle["sources"])
+        live_comparable = _normalize_renderer_migrations(live.get("post_content", ""))
+        expected_comparable = _normalize_renderer_migrations(expected_old)
         if (not verify_cas(live, status="draft", title=old_bundle["plan"]["title"],
                            content_sha=expected_content_sha256)
-                or live.get("post_content", "").replace("\r\n", "\n")
-                    != expected_old.replace("\r\n", "\n")
+                or live_comparable != expected_comparable
                 or DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before):
             raise ValueError("draft_changed_before_fast_revision")
 
