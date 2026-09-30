@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Plugin Name: Bloguito Webmaster Verification
  * Description: Persistent webmaster ownership verification tags.
