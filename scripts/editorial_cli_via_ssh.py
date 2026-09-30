@@ -58,7 +58,7 @@ _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
 _CLI_ACTIONS = {
     'publish', 'prepare-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft',
     'update-existing',
-    'replace-featured-image', 'update-draft', 'replace-legacy-draft', 'promote-draft',
+    'replace-featured-image', 'quick-image-replace', 'update-draft', 'replace-legacy-draft', 'promote-draft',
     'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image',
 }
 _TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
@@ -547,6 +547,17 @@ def main():
     )
     transport_action = action
     expected_rank_math_meta = None
+    if action == 'quick-image-replace':
+        if '--image-path' not in cli_args:
+            parser.error('quick-image-replace requires --image-path')
+        image_index = cli_args.index('--image-path') + 1
+        if image_index >= len(cli_args):
+            parser.error('--image-path requires a value')
+        image_path = Path(cli_args[image_index])
+        if not image_path.is_file():
+            parser.error('quick-image-replace image file not found')
+        transport_action = 'replace-featured-image'
+        print('[Edit Route] image-only (quick)')
     if action in {'edit-post', 'edit-draft', 'update-existing'}:
         if len(cli_args) < 2:
             if action != 'edit-post' or '--image-path' not in cli_args:

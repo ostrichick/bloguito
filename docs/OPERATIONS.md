@@ -83,7 +83,7 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 | 일반 신규 draft (Fast) | POST_CATALOG 1차 중복 확인 → sources → 구조화 원고 → `prepare-draft` | 로컬 content/source preflight → 의미 검토와 대표 이미지 생성·검수 병렬 → Publisher의 최신 inventory 1회/full validation → draft 저장 → SSH adapter 사용 시 POST_CATALOG 자동 동기화 |
 | 신규 글 진단/예외 (Strict) | POST_CATALOG → sources → 구조화 원고 → manual-review/review → 필요 시 check → publish | 정책 예외·출처 충돌·공연 공식 이미지 수동 검토·공통 코드/정책 변경 등 단계별 결과를 따로 확인해야 하는 경우 |
 | 검토된 기존 글 수정 (기본) | `edit-post`, 실제 요청 범위를 `--edit-intent`로 전달 | tracked reviewed manifest로 draft/public 상태를 먼저 결정한 뒤 표현·중복·기존 사실 재배치는 Fast, 새 사실·숫자·날짜·대상·출처·제목·CTA는 상태별 Standard로 자동 전환 |
-| 대표이미지만 교체 | `edit-post --image-path ...` 또는 `replace-featured-image` | 본문·slug·상태·excerpt·Rank Math를 바꾸지 않고 현재 본문 SHA와 기존 `_thumbnail_id`를 CAS로 확인한 뒤 검수한 1200×675 이미지 한 장만 교체 |
+| 대표이미지만 교체 | `quick-image-replace` | 현재 본문 SHA와 `_thumbnail_id`를 명령이 직접 읽어 CAS baseline으로 고정한 뒤, 본문·slug·상태·excerpt·Rank Math를 바꾸지 않고 검수한 1200×675 이미지 한 장만 교체. `replace-featured-image`는 진단/저수준 호환용 |
 | 사실·숫자·날짜·대상·출처·제목·CTA 변경 | `edit-post`가 draft/public Standard로 분기하거나 저수준 revise-draft / update-existing / replace-legacy-draft | 새로운 근거와 전체 검토; legacy 교체는 기존 별도 진입 조건 충족 필요 |
 | 검토된 임시글의 표현·중복 정리·기존 사실 재배치 (저수준 직접 호출) | `fast-revise-draft`, 실제 요청 범위를 --edit-intent로 전달 | 일반 작업에서는 `edit-draft`를 우선하고, 진단·테스트에서 Fast 경로를 명시적으로 고정할 때만 직접 호출 |
 | reviewed 공개 글의 표현 정리 | `edit-post` | `published_posts.json`의 reviewed bundle이 실제 현재 본문 SHA에 정확히 결합된 경우에만 public Fast. stale/missing manifest면 Standard 또는 차단 |
@@ -107,7 +107,7 @@ Simple Task는 `baseline 확인 → 요청한 mutation 1회 → scoped readback 
 
 1. 대상 post의 현재 status, 본문 SHA, `_thumbnail_id`를 읽는다.
 2. 새 이미지 파일이 실제 CoS/작업공간 경로에 있고 규격·ALT가 준비됐는지 확인한다.
-3. `edit-post --image-path ...` 또는 `replace-featured-image` image-only 경로를 한 번 실행한다.
+3. 기본은 `quick-image-replace`를 한 번 실행한다. 이 명령이 현재 본문 SHA와 `_thumbnail_id`를 직접 읽고 기존 image-only CAS 경로에 전달한다.
 4. 새 attachment ID를 확보하고 WordPress `_thumbnail_id`가 그 ID인지 readback한다.
 5. image-only 작업이면 본문 SHA와 필요한 SEO/상태가 그대로인지 확인한다.
 6. 필요한 `featured-image` QA를 완료한 뒤 종료한다.
@@ -117,6 +117,8 @@ Simple Task는 `baseline 확인 → 요청한 mutation 1회 → scoped readback 
 **이미지 생성이 포함된 복합 작업:** 사용자가 “이미지를 만들고 업로드”, “대표이미지를 만들고 본문도 수정”, “여러 포스트에 이미지를 적용”처럼 이미지 생성 뒤 후속 작업을 함께 요청한 경우 이미지 생성은 중간 단계다. Prime은 이미지 생성 자체를 완료로 보고 final하지 않는다. 가능하면 이미지 생성은 후속 실행이 가능한 worker/API/provider에 맡기고 Prime은 파일 handoff 뒤 mutation과 검증을 계속한다.
 
 ChatGPT native image generation처럼 도구 특성상 이미지 생성 호출이 현재 turn의 종료점이 되는 경로를 반드시 써야 한다면, 생성 호출 직전에 task-state 또는 `scratch/tasks/<작업명>/`의 안정된 state 파일에 `AFTER_IMAGE` 체크포인트를 남긴다. 최소 필드는 `post_id`, `remaining_steps`, `expected_content_sha256`, `expected_thumbnail_id`, `target_image_path_or_handle`, `completion_requirements`다. 다음 turn에서는 정책·source·본문을 처음부터 다시 조사하지 않고 이 checkpoint와 live WordPress state만 비교해 후속 단계부터 바로 재개한다.
+
+실제 체크포인트는 `checkpoint-after-image`로 기록하고 이미지 생성 뒤 `update-after-image-checkpoint`로 진행 상태를 갱신한다. `complete-task-qa`는 현재 작업의 필수 phase뿐 아니라 같은 본문 SHA에 결합된 `AFTER_IMAGE` 완료 조건도 확인하므로, 업로드·대표이미지 지정·요청된 후속 수정·readback 중 필요한 항목이 남아 있으면 `complete`로 닫히지 않는다.
 
 **Completion Guard:** final 완료 보고 전에 사용자 요청을 단계 목록으로 다시 확인한다. 다음 중 요청에 해당하는 항목이 하나라도 false면 완료가 아니다.
 
@@ -157,10 +159,19 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post scratch
   --post-id 641 --expected-content-sha256 <작업시작본문SHA> --confirm-update --resume `
   --edit-intent "표현 정리와 기존 사실의 표 재배치"
 
-# 대표이미지만 교체: 본문/source/review pipeline을 열지 않음
-python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- replace-featured-image `
+# 대표이미지만 교체: live SHA/thumbnail baseline을 명령이 직접 읽고 image-only CAS 실행
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- quick-image-replace `
+  --post-id 641 --image-path scratch/tasks/article/cover.jpg `
+  --alt-text "대전 10월 행사 일정 안내" --confirm-update
+
+# ChatGPT native 이미지 생성처럼 turn이 끊길 수 있는 복합 작업: 생성 전에 AFTER_IMAGE 기록
+python agent-publisher/editorial_cli.py checkpoint-after-image `
   --post-id 641 --expected-content-sha256 <현재본문SHA> --expected-thumbnail-id <현재이미지ID> `
-  --image-path scratch/tasks/article/cover.jpg --alt-text "대전 10월 행사 일정 안내" --confirm-update
+  --image-handle "chatgpt-native:pending" `
+  --remaining-step "새 이미지 업로드" --remaining-step "대표이미지 지정" --remaining-step "본문 수정" `
+  --completion-requirement image_generated --completion-requirement image_saved_or_handed_off `
+  --completion-requirement uploaded --completion-requirement featured_image_set `
+  --completion-requirement requested_content_or_meta_edits_done --completion-requirement readback_verified
 
 # 실제 브라우저 QA가 끝난 뒤 로컬 task-state 종료
 python agent-publisher/editorial_cli.py complete-task-qa `
@@ -168,7 +179,7 @@ python agent-publisher/editorial_cli.py complete-task-qa `
   --qa-scope content-mobile-desktop
 ```
 
-`replace-featured-image`의 media import는 응답 유실 시 중복 attachment를 만들 수 있어 SSH 255 자동 재시도를 하지 않는다. import 응답으로 attachment ID를 확보한 뒤 중단된 경우에는 state의 `image_outcome` checkpoint로 해당 attachment를 검증만 한다. attachment ID를 확보하지 못한 채 결과가 불명확하면 새 media import를 자동 반복하지 않는다. `edit-post --resume`은 live 본문 SHA가 작업 시작 SHA 또는 저장 예정 SHA 중 하나일 때만 이어가며 제3의 SHA가 관측되면 동시 변경으로 차단한다. featured-image QA를 완료할 때는 `--qa-scope featured-image --observed-thumbnail-id <저장된attachmentID>`를 함께 전달한다.
+`quick-image-replace`와 저수준 `replace-featured-image`의 media import는 응답 유실 시 중복 attachment를 만들 수 있어 SSH 255 자동 재시도를 하지 않는다. import 시작 직후 결과가 불명확해 attachment ID를 확보하지 못한 상태는 `featured_image_import_outcome_ambiguous`로 차단하고 자동 재import하지 않는다. attachment ID가 checkpoint에 남아 있으면 다음 실행은 새 import 대신 해당 attachment를 reconcile한다. 동일 이미지+ALT의 안전한 실패는 최대 2회까지만 허용한다. `edit-post --resume`은 live 본문 SHA가 작업 시작 SHA 또는 저장 예정 SHA 중 하나일 때만 이어가며 제3의 SHA가 관측되면 동시 변경으로 차단한다. featured-image QA를 완료할 때는 `--qa-scope featured-image --observed-thumbnail-id <저장된attachmentID>`를 함께 전달한다.
 
 **Standard P1/P2 preflight와 mutation:** `revise-draft`와 public Standard는 inventory sync, 대상 글의 초기 baseline read, 공식 source 동일성 recheck처럼 서로 독립적인 읽기 작업을 병렬화한다. P2부터 저장 직전 CAS → `wp_update_post()` → 저장 후 readback은 고정된 server-side guarded mutation 한 번으로 합친다. reviewed HTML은 JSON stdin으로 전달하며 임의 PHP/명령은 허용하지 않는다. guarded protocol은 status/title/slug/excerpt/content SHA의 전체 expected state를 확인하고, 저장 후 전체 desired state를 다시 검증한다. 따라서 Fast draft의 기본 target 왕복은 `get + guarded mutation` 2회, Standard draft는 경량 inventory + 초기 target read + guarded mutation의 약 3회 수준이 된다. SSH 255에서 guarded request는 desired-state 일치 검사를 전제로 최대 1회만 replay하며, raw `post update`와 media import는 이 재시도 의미론을 공유하지 않는다.
 

@@ -12,7 +12,15 @@ from PIL import Image
 
 from agents.editorial import ROOT
 from agents.editorial_updater import RANK_MATH_META_KEYS
-from agents.task_state import fail_task_state, start_task_state, update_task_state
+from agents.task_state import (
+    completion_requirements_for_task,
+    fail_task_state,
+    load_after_image_checkpoint,
+    load_task_state,
+    start_task_state,
+    update_after_image_checkpoint,
+    update_task_state,
+)
 from agents.wordpress_mutation import backup_json, content_sha256, get_post, verify_cas
 from agents.designer import FEATURED_IMAGE_POLICY
 from agents.qa_scope import qa_requirements_for_edit
@@ -21,6 +29,7 @@ from agents.workflow_metrics import increment
 
 ALLOWED_POST_STATUSES = {"publish", "draft", "pending", "future", "private"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+SIMPLE_TASK_MAX_ATTEMPTS = 2
 
 
 def validate_featured_image_file(image_path: Path | str) -> dict:
@@ -127,6 +136,8 @@ def replace_featured_image(
     manage_task_state: bool = True,
     outcome_callback=None,
     validation_plan: dict | None = None,
+    task_action: str = "replace-featured-image",
+    task_baseline_extra: dict | None = None,
 ) -> dict:
     """Replace only ``_thumbnail_id`` while preserving post body/SEO/URL/status."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -168,17 +179,22 @@ def replace_featured_image(
                     None, None, image_changed=True,
                     target_status=live.get("post_status", "draft"), route="image-only",
                     post_id=post_id, expected_content_sha256=expected_content_sha256)
+            qa_requirements = qa_requirements_for_edit(
+                None, None, image_changed=True, target_status=live.get("post_status", "draft"))
+            task_baseline = {
+                "expected_content_sha256": expected_content_sha256,
+                "status": live.get("post_status"),
+                "title": live.get("post_title"),
+                "post_name": live.get("post_name"),
+                "thumbnail_id": before_thumb,
+            }
+            if task_baseline_extra:
+                task_baseline.update(task_baseline_extra)
             start_task_state(
                 post_id,
-                action="replace-featured-image",
+                action=task_action,
                 edit_intent="대표이미지만 교체하고 본문, URL, 상태, SEO 메타데이터는 보존",
-                baseline={
-                    "expected_content_sha256": expected_content_sha256,
-                    "status": live.get("post_status"),
-                    "title": live.get("post_title"),
-                    "post_name": live.get("post_name"),
-                    "thumbnail_id": before_thumb,
-                },
+                baseline=task_baseline,
                 reuse={
                     "content_unchanged": True,
                     "source_validation_skipped": True,
@@ -186,9 +202,10 @@ def replace_featured_image(
                     "reason": "image_only_post_content_unchanged",
                 },
                 artifacts={"image_path": str(image_path)},
-                qa_requirements=qa_requirements_for_edit(
-                    None, None, image_changed=True, target_status=live.get("post_status", "draft")),
+                qa_requirements=qa_requirements,
                 validation_plan=validation_plan,
+                completion_requirements=completion_requirements_for_task(
+                    image_changed=True, qa_requirements=qa_requirements),
             )
             state_started = True
             update_task_state(
@@ -230,6 +247,15 @@ def replace_featured_image(
             check=True,
         )
         try:
+            if manage_task_state:
+                update_task_state(
+                    post_id,
+                    checkpoints={"image_import_attempt": {
+                        "image_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                        "expected_thumbnail_id": expected_thumbnail_id,
+                        "started": True,
+                    }},
+                )
             imported = subprocess.run(
                 base + [
                     "media",
@@ -328,3 +354,170 @@ def replace_featured_image(
         raise
     finally:
         lock.rmdir()
+
+
+def _quick_attempt_key(
+    post_id: int,
+    image_path: Path,
+    alt_text: str,
+    expected_content_sha256: str,
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(str(int(post_id)).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(hashlib.sha256(image_path.read_bytes()).digest())
+    digest.update(b"\0")
+    digest.update(alt_text.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(expected_content_sha256.encode("ascii"))
+    return digest.hexdigest()
+
+
+def _advance_matching_after_image_checkpoint(
+    post_id: int,
+    *,
+    expected_content_sha256: str,
+    expected_thumbnail_id: int,
+    image_path: Path,
+    result: dict,
+) -> None:
+    checkpoint = load_after_image_checkpoint(post_id)
+    if not checkpoint:
+        return
+    if (checkpoint.get("expected_content_sha256") != expected_content_sha256
+            or checkpoint.get("expected_thumbnail_id") != expected_thumbnail_id):
+        return
+    update_after_image_checkpoint(
+        post_id,
+        completed_steps=[
+            "image_generated",
+            "image_saved_or_handed_off",
+            "uploaded",
+            "featured_image_set",
+            "readback_verified",
+            "content_sha_preserved",
+        ],
+        target_image_handle=str(image_path),
+        result={
+            "attachment_id": result.get("attachment_id"),
+            "attachment_url": result.get("attachment_url"),
+        },
+    )
+
+
+def quick_replace_featured_image(
+    post_id: int,
+    image_path: Path | str,
+    *,
+    alt_text: str,
+    confirmed: bool = False,
+) -> dict:
+    """One-shot image-only path that reads its own CAS baseline and enforces retry budget."""
+    if not confirmed or not isinstance(post_id, int) or post_id <= 0:
+        raise ValueError("specific_featured_image_confirmation_required")
+    alt_text = (alt_text or "").strip()
+    if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
+        raise ValueError("featured_image_alt_text_required")
+    image_info = validate_featured_image_file(image_path)
+    image_path = Path(image_info["path"])
+
+    base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+    fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+    live = get_post(base, post_id, fields=fields)
+    if live.get("post_status") not in ALLOWED_POST_STATUSES:
+        raise ValueError("target_missing_or_modified")
+    expected_content_sha256 = content_sha256(live.get("post_content", ""))
+    before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
+    if not before_thumb or not before_thumb.isdigit() or int(before_thumb) <= 0:
+        raise ValueError("expected_thumbnail_id_required")
+    expected_thumbnail_id = int(before_thumb)
+    attempt_key = _quick_attempt_key(
+        post_id, image_path, alt_text, expected_content_sha256)
+
+    previous = load_task_state(post_id)
+    attempt_number = 1
+    if previous and previous.get("action") == "quick-image-replace":
+        previous_baseline = previous.get("baseline") or {}
+        same_attempt = previous_baseline.get("attempt_key") == attempt_key
+        if same_attempt and previous.get("status") == "saved_pending_qa":
+            result = dict(previous.get("result") or {})
+            expected_saved_thumb = result.get("attachment_id")
+            if type(expected_saved_thumb) is not int or expected_thumbnail_id != expected_saved_thumb:
+                raise ValueError("quick_image_saved_thumbnail_conflict")
+            result.update({
+                "post_id": post_id,
+                "status": live.get("post_status"),
+                "already_saved_pending_qa": True,
+                "attempt_number": previous_baseline.get("attempt_number", 1),
+            })
+            return result
+        if same_attempt and previous.get("status") == "complete":
+            result = dict(previous.get("result") or {})
+            expected_saved_thumb = result.get("attachment_id")
+            if type(expected_saved_thumb) is not int or expected_thumbnail_id != expected_saved_thumb:
+                raise ValueError("quick_image_saved_thumbnail_conflict")
+            result.update({
+                "post_id": post_id,
+                "status": live.get("post_status"),
+                "already_complete": True,
+                "attempt_number": previous_baseline.get("attempt_number", 1),
+            })
+            return result
+        if same_attempt and previous.get("status") in {"failed", "blocked"}:
+            previous_thumbnail_id = previous_baseline.get("thumbnail_id")
+            checkpoint = (previous.get("checkpoints") or {}).get("image_outcome") or {}
+            if checkpoint.get("attachment_id"):
+                reconciled = reconcile_featured_image_outcome(post_id, checkpoint, alt_text)
+                if reconciled:
+                    update_task_state(
+                        post_id,
+                        completed=["image_saved", "wordpress_saved"],
+                        status="saved_pending_qa",
+                        result={**reconciled, "attempt_number": previous_baseline.get("attempt_number", 1)},
+                    )
+                    _advance_matching_after_image_checkpoint(
+                        post_id,
+                        expected_content_sha256=expected_content_sha256,
+                        expected_thumbnail_id=int(previous_thumbnail_id),
+                        image_path=image_path,
+                        result=reconciled,
+                    )
+                    return {**reconciled, "attempt_number": previous_baseline.get("attempt_number", 1)}
+            import_attempt = (previous.get("checkpoints") or {}).get("image_import_attempt") or {}
+            if import_attempt.get("started"):
+                raise ValueError("featured_image_import_outcome_ambiguous")
+            if type(previous_thumbnail_id) is not str or not previous_thumbnail_id.isdigit():
+                raise ValueError("quick_image_retry_baseline_missing")
+            if expected_thumbnail_id != int(previous_thumbnail_id):
+                raise ValueError("featured_image_changed_since_failed_attempt")
+            attempt_number = int(previous_baseline.get("attempt_number") or 1) + 1
+            if attempt_number > SIMPLE_TASK_MAX_ATTEMPTS:
+                raise ValueError("simple_task_retry_budget_exhausted")
+
+    result = replace_featured_image(
+        post_id,
+        image_path,
+        expected_content_sha256,
+        expected_thumbnail_id=expected_thumbnail_id,
+        alt_text=alt_text,
+        confirmed=True,
+        task_action="quick-image-replace",
+        task_baseline_extra={
+            "attempt_key": attempt_key,
+            "attempt_number": attempt_number,
+        },
+    )
+    result = {
+        **result,
+        "attempt_number": attempt_number,
+        "baseline_content_sha256": expected_content_sha256,
+        "replaced_thumbnail_id": expected_thumbnail_id,
+    }
+    _advance_matching_after_image_checkpoint(
+        post_id,
+        expected_content_sha256=expected_content_sha256,
+        expected_thumbnail_id=expected_thumbnail_id,
+        image_path=image_path,
+        result=result,
+    )
+    return result

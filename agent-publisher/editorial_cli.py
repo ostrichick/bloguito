@@ -16,7 +16,7 @@ configure_utf8_stdio()
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'import-section-image', 'complete-task-qa', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'quick-image-replace', 'import-section-image', 'complete-task-qa', 'checkpoint-after-image', 'update-after-image-checkpoint', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -37,6 +37,18 @@ def _main():
                         help='complete-task-qa: QA scope actually completed; repeat for multiple scopes')
     parser.add_argument('--observed-thumbnail-id', type=int,
                         help='complete-task-qa: thumbnail ID observed during featured-image browser QA')
+    parser.add_argument('--remaining-step', action='append',
+                        help='checkpoint-after-image: user-requested work that must continue after image generation')
+    parser.add_argument('--completion-requirement', action='append', choices=[
+        'image_generated', 'image_saved_or_handed_off', 'uploaded', 'featured_image_set',
+        'requested_content_or_meta_edits_done', 'readback_verified', 'content_sha_preserved',
+    ], help='checkpoint-after-image: condition that must be true before the compound task may finish')
+    parser.add_argument('--completed-step', action='append', choices=[
+        'image_generated', 'image_saved_or_handed_off', 'uploaded', 'featured_image_set',
+        'requested_content_or_meta_edits_done', 'readback_verified', 'content_sha_preserved',
+    ], help='update-after-image-checkpoint: completed continuation condition')
+    parser.add_argument('--image-handle',
+                        help='checkpoint-after-image/update-after-image-checkpoint: expected or observed image file/handle')
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
@@ -100,6 +112,62 @@ def _main():
         print(json.dumps(state, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
+    if args.action == 'checkpoint-after-image':
+        if args.inventory or args.file:
+            parser.error('checkpoint-after-image uses --post-id and checkpoint arguments only')
+        if (not args.post_id or not args.expected_content_sha256 or not args.expected_thumbnail_id
+                or not args.remaining_step or not args.completion_requirement or not args.image_handle):
+            parser.error('checkpoint-after-image requires --post-id, --expected-content-sha256, '
+                         '--expected-thumbnail-id, --remaining-step, --completion-requirement and --image-handle')
+        from agents.task_state import write_after_image_checkpoint
+        state = write_after_image_checkpoint(
+            args.post_id,
+            remaining_steps=args.remaining_step,
+            expected_content_sha256=args.expected_content_sha256,
+            expected_thumbnail_id=args.expected_thumbnail_id,
+            target_image_handle=args.image_handle,
+            completion_requirements=args.completion_requirement,
+        )
+        print(json.dumps(state, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
+    if args.action == 'update-after-image-checkpoint':
+        if args.inventory or args.file:
+            parser.error('update-after-image-checkpoint uses --post-id and checkpoint arguments only')
+        if not args.post_id or (not args.completed_step and not args.image_handle):
+            parser.error('update-after-image-checkpoint requires --post-id and --completed-step and/or --image-handle')
+        from agents.task_state import update_after_image_checkpoint
+        state = update_after_image_checkpoint(
+            args.post_id,
+            completed_steps=args.completed_step,
+            target_image_handle=args.image_handle,
+        )
+        print(json.dumps(state, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
+    if args.action == 'quick-image-replace':
+        if args.inventory or args.file:
+            parser.error('quick-image-replace uses --post-id/--image-path and no bundle file')
+        if not args.post_id or not args.image_path or not args.alt_text or not args.confirm_update:
+            parser.error('quick-image-replace requires --post-id, --image-path, --alt-text and --confirm-update')
+        if args.expected_content_sha256 or args.expected_thumbnail_id:
+            parser.error('quick-image-replace reads its own content SHA and thumbnail baseline')
+        from agents.featured_image import quick_replace_featured_image
+        result = quick_replace_featured_image(
+            args.post_id,
+            args.image_path,
+            alt_text=args.alt_text,
+            confirmed=True,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         return
 
     if args.action == 'replace-featured-image':

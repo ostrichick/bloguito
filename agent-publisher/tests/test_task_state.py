@@ -4,12 +4,16 @@ from pathlib import Path
 
 from agents.task_state import (
     STATE_VERSION,
+    complete_task_state,
     intent_sha256,
+    load_after_image_checkpoint,
     load_task_state,
     mark_browser_qa_complete,
     start_task_state,
     task_state_path,
+    update_after_image_checkpoint,
     update_task_state,
+    write_after_image_checkpoint,
 )
 
 
@@ -122,6 +126,66 @@ class TaskStateTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "browser_qa_content_sha_mismatch"):
                 mark_browser_qa_complete(641, "b" * 64, root=root)
+
+    def test_completion_guard_rejects_missing_required_phase(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sha = "a" * 64
+            start_task_state(
+                641,
+                action="quick-image-replace",
+                edit_intent="이미지 교체",
+                baseline={"expected_content_sha256": sha},
+                completion_requirements=["image_saved", "wordpress_saved", "browser_qa"],
+                root=root,
+            )
+            update_task_state(
+                641,
+                completed=["wordpress_saved"],
+                status="saved_pending_qa",
+                root=root,
+            )
+            with self.assertRaisesRegex(ValueError, "task_completion_guard_incomplete:image_saved"):
+                mark_browser_qa_complete(641, sha, root=root)
+            with self.assertRaisesRegex(ValueError, "task_completion_guard_incomplete"):
+                complete_task_state(641, root=root)
+
+    def test_after_image_checkpoint_survives_turn_and_requires_all_steps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            checkpoint = write_after_image_checkpoint(
+                641,
+                remaining_steps=["새 이미지 업로드", "대표이미지 지정", "본문 수정"],
+                expected_content_sha256="a" * 64,
+                expected_thumbnail_id=70,
+                target_image_handle="chatgpt-native:pending",
+                completion_requirements=[
+                    "image_generated", "image_saved_or_handed_off", "uploaded",
+                    "featured_image_set", "requested_content_or_meta_edits_done",
+                    "readback_verified",
+                ],
+                root=root,
+            )
+            self.assertEqual("in_progress", checkpoint["status"])
+            state = update_after_image_checkpoint(
+                641,
+                completed_steps=[
+                    "image_generated", "image_saved_or_handed_off", "uploaded",
+                    "featured_image_set", "readback_verified",
+                ],
+                target_image_handle="scratch/tasks/641/cover.jpg",
+                root=root,
+            )
+            self.assertEqual("in_progress", state["status"])
+            self.assertFalse(state["completed"]["requested_content_or_meta_edits_done"])
+            final = update_after_image_checkpoint(
+                641,
+                completed_steps=["requested_content_or_meta_edits_done"],
+                root=root,
+            )
+            reread = load_after_image_checkpoint(641, root)
+        self.assertEqual("complete", final["status"])
+        self.assertEqual(final, reread)
 
     def test_terminal_state_is_archived_before_next_task(self):
         with tempfile.TemporaryDirectory() as folder:

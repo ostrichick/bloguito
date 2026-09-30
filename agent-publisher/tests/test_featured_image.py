@@ -9,6 +9,7 @@ from PIL import Image
 
 from agents.featured_image import (
     _read_post_meta,
+    quick_replace_featured_image,
     reconcile_featured_image_outcome,
     replace_featured_image,
     validate_featured_image_file,
@@ -174,6 +175,85 @@ class FeaturedImageReplacementTests(unittest.TestCase):
         with patch("agents.featured_image._read_post_meta", return_value="888"):
             with self.assertRaisesRegex(ValueError, "featured_image_resume_thumbnail_conflict"):
                 reconcile_featured_image_outcome(641, checkpoint, "대체텍스트")
+
+    def test_quick_replace_reads_its_own_baseline_and_uses_image_only_mutator(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = self._image(folder)
+            live = {
+                "post_status": "draft", "post_title": "제목", "post_name": "slug",
+                "post_content": "body", "post_excerpt": "요약",
+            }
+            expected_sha = hashlib.sha256(b"body").hexdigest()
+            replacement = {
+                "post_id": 641,
+                "status": "draft",
+                "attachment_id": 777,
+                "attachment_url": "https://lifeinfo24.org/uploads/cover.jpg",
+                "alt_text": "대체텍스트",
+            }
+            with patch("agents.featured_image.get_post", return_value=live), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.load_task_state", return_value=None), \
+                 patch("agents.featured_image.replace_featured_image", return_value=replacement) as replace, \
+                 patch("agents.featured_image.load_after_image_checkpoint", return_value=None):
+                result = quick_replace_featured_image(
+                    641, image_path, alt_text="대체텍스트", confirmed=True)
+        replace.assert_called_once()
+        args, kwargs = replace.call_args
+        self.assertEqual((641, image_path.resolve(), expected_sha), args[:3])
+        self.assertEqual(70, kwargs["expected_thumbnail_id"])
+        self.assertEqual("quick-image-replace", kwargs["task_action"])
+        self.assertEqual(1, kwargs["task_baseline_extra"]["attempt_number"])
+        self.assertEqual(expected_sha, result["baseline_content_sha256"])
+        self.assertEqual(70, result["replaced_thumbnail_id"])
+
+    def test_quick_replace_blocks_third_identical_attempt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = self._image(folder)
+            live = {
+                "post_status": "draft", "post_title": "제목", "post_name": "slug",
+                "post_content": "body", "post_excerpt": "요약",
+            }
+            from agents.featured_image import _quick_attempt_key
+            attempt_key = _quick_attempt_key(
+                641, image_path.resolve(), "대체텍스트", hashlib.sha256(b"body").hexdigest())
+            failed = {
+                "action": "quick-image-replace",
+                "status": "failed",
+                "baseline": {"attempt_key": attempt_key, "attempt_number": 2, "thumbnail_id": "70"},
+                "checkpoints": {},
+            }
+            with patch("agents.featured_image.get_post", return_value=live), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.load_task_state", return_value=failed):
+                with self.assertRaisesRegex(ValueError, "simple_task_retry_budget_exhausted"):
+                    quick_replace_featured_image(
+                        641, image_path, alt_text="대체텍스트", confirmed=True)
+
+    def test_quick_replace_does_not_reimport_after_ambiguous_media_attempt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = self._image(folder)
+            live = {
+                "post_status": "draft", "post_title": "제목", "post_name": "slug",
+                "post_content": "body", "post_excerpt": "요약",
+            }
+            from agents.featured_image import _quick_attempt_key
+            attempt_key = _quick_attempt_key(
+                641, image_path.resolve(), "대체텍스트", hashlib.sha256(b"body").hexdigest())
+            failed = {
+                "action": "quick-image-replace",
+                "status": "failed",
+                "baseline": {"attempt_key": attempt_key, "attempt_number": 1, "thumbnail_id": "70"},
+                "checkpoints": {"image_import_attempt": {"started": True}},
+            }
+            with patch("agents.featured_image.get_post", return_value=live), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.load_task_state", return_value=failed), \
+                 patch("agents.featured_image.replace_featured_image") as replace:
+                with self.assertRaisesRegex(ValueError, "featured_image_import_outcome_ambiguous"):
+                    quick_replace_featured_image(
+                        641, image_path, alt_text="대체텍스트", confirmed=True)
+        replace.assert_not_called()
 
 
 if __name__ == "__main__":
