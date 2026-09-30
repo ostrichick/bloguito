@@ -88,6 +88,48 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 | 검토된 임시글의 표현·중복 정리·기존 사실 재배치 (저수준 직접 호출) | `fast-revise-draft`, 실제 요청 범위를 --edit-intent로 전달 | 일반 작업에서는 `edit-draft`를 우선하고, 진단·테스트에서 Fast 경로를 명시적으로 고정할 때만 직접 호출 |
 | reviewed 공개 글의 표현 정리 | `edit-post` | `published_posts.json`의 reviewed bundle이 실제 현재 본문 SHA에 정확히 결합된 경우에만 public Fast. stale/missing manifest면 Standard 또는 차단 |
 
+### Simple Task Fast Path와 이미지 연속 실행 규칙
+
+작은 요청이 시스템 개선 작업으로 커지지 않도록 아래 요청은 우선 **Simple Task**로 분류한다.
+
+- 대표이미지 한 장 교체
+- 문구·오탈자·짧은 문단 한정 수정
+- 검증된 링크 목적지 한정 교체
+- 기존 사실을 바꾸지 않는 표/목록 정리
+
+Simple Task는 `baseline 확인 → 요청한 mutation 1회 → scoped readback → 종료`를 기본 흐름으로 사용한다. 실제 충돌이나 실패가 확인되지 않은 상태에서 새 worktree 생성, 저장소 전체 조사, 다른 작업의 dirty 파일 원인 분석, 전체 source/semantic review, full regression, 공통 refactor를 추가하지 않는다. 요청과 직접 관련 없는 문제는 현재 작업을 막는 경우에만 다루고, 그렇지 않으면 별도 TODO로 남긴다.
+
+**실패 예산:** 같은 방법으로 같은 오류가 연속 두 번 발생하면 그 접근은 중단한다. 세 번째 동일 재시도 대신 다른 transport/provider/도구 경로를 선택한다. 새로운 접근에서도 진전이 없으면 이미 확보한 state·attachment ID·본문 SHA·산출물을 보존하고 blocker를 보고한다. 장시간 sleep, 무한 polling, 같은 명령 반복으로 해결을 기대하지 않는다.
+
+**바이너리 전달:** 이미지·PDF·ZIP 같은 파일은 실제 파일 경로, mount, connector, provider output file, 정식 upload API 중 가능한 경로를 사용한다. Base64 문자열을 터미널 stdout으로 수만 자 출력하거나 stdin에 chunk 단위로 밀어 넣는 방식은 일반 경로로 사용하지 않는다. 파일 handoff가 되지 않으면 동일 Base64 방식을 반복하지 말고 다른 전달 수단이나 생성 provider로 전환한다.
+
+대표이미지 전용 교체의 완료 조건은 아래 순서로 고정한다.
+
+1. 대상 post의 현재 status, 본문 SHA, `_thumbnail_id`를 읽는다.
+2. 새 이미지 파일이 실제 CoS/작업공간 경로에 있고 규격·ALT가 준비됐는지 확인한다.
+3. `edit-post --image-path ...` 또는 `replace-featured-image` image-only 경로를 한 번 실행한다.
+4. 새 attachment ID를 확보하고 WordPress `_thumbnail_id`가 그 ID인지 readback한다.
+5. image-only 작업이면 본문 SHA와 필요한 SEO/상태가 그대로인지 확인한다.
+6. 필요한 `featured-image` QA를 완료한 뒤 종료한다.
+
+위 작업에서 본문 source/review pipeline을 다시 열지 않는다. 관련 없는 regression 실패나 다른 파일의 dirty 상태가 image-only mutation을 막지 않는다면 그 문제를 같은 작업에 끼워 넣지 않는다.
+
+**이미지 생성이 포함된 복합 작업:** 사용자가 “이미지를 만들고 업로드”, “대표이미지를 만들고 본문도 수정”, “여러 포스트에 이미지를 적용”처럼 이미지 생성 뒤 후속 작업을 함께 요청한 경우 이미지 생성은 중간 단계다. Prime은 이미지 생성 자체를 완료로 보고 final하지 않는다. 가능하면 이미지 생성은 후속 실행이 가능한 worker/API/provider에 맡기고 Prime은 파일 handoff 뒤 mutation과 검증을 계속한다.
+
+ChatGPT native image generation처럼 도구 특성상 이미지 생성 호출이 현재 turn의 종료점이 되는 경로를 반드시 써야 한다면, 생성 호출 직전에 task-state 또는 `scratch/tasks/<작업명>/`의 안정된 state 파일에 `AFTER_IMAGE` 체크포인트를 남긴다. 최소 필드는 `post_id`, `remaining_steps`, `expected_content_sha256`, `expected_thumbnail_id`, `target_image_path_or_handle`, `completion_requirements`다. 다음 turn에서는 정책·source·본문을 처음부터 다시 조사하지 않고 이 checkpoint와 live WordPress state만 비교해 후속 단계부터 바로 재개한다.
+
+**Completion Guard:** final 완료 보고 전에 사용자 요청을 단계 목록으로 다시 확인한다. 다음 중 요청에 해당하는 항목이 하나라도 false면 완료가 아니다.
+
+- `image_generated`
+- `image_saved_or_handed_off`
+- `uploaded`
+- `featured_image_set`
+- `requested_content_or_meta_edits_done`
+- `readback_verified`
+- `content_sha_preserved` (image-only 등 본문 불변이 필요한 경우)
+
+이미지 생성만을 명시적으로 요청한 경우에만 `image_generated`와 필요한 파일 전달이 완료 조건의 끝이 될 수 있다.
+
 **묶음 처리:** 같은 글·같은 승인 범위의 문구 다듬기, 중복 FAQ 제거, 기존 사실의 표 정리를 한 후보 bundle에 모아 검토한 뒤 한 번 저장한다. 단순 이동·삭제가 아니라 의미가 달라지는지 변경 블록을 검토한다. 저장 전에 추가 요청이 오면 범위와 경로를 다시 분류해 후보에 합치고 최종 후보로 검토한다. 저장 후 추가 요청은 새 원본과 검토 유효성을 기준으로 처리한다. P1부터 Fast 수정은 최초 full review를 trust anchor로 두고 각 delta의 `base_content_digest → result_content_digest`를 연결한 `fast_edit_chain`을 검증한다. 정책과 review 기한이 그대로이고 각 delta 검토가 모두 유효하면 최대 5개 delta까지 연속 Fast 수정이 가능하며, chain이 끊기거나 한도에 도달하면 `FULL_REVIEW_REQUIRED`로 Standard에 승격한다. 검토 digest나 timestamp를 수동으로 바꿔 통과시키지 않는다. FULL_REVIEW_REQUIRED이면 필요한 전체 검토 경로로 전환하고 사용자에게 이유를 짧게 알린다. 요청 범위 자체를 확대해야 한다면 먼저 필요한 정보를 확인한다.
 
 **행사 일정형 글:** 한 도시의 여러 행사·축제를 월간 가이드로 작성하거나 기존 Gemini draft를 개선할 때에는 [EVENT_POST_STANDARD.md](EVENT_POST_STANDARD.md)를 적용한다. Gemini 초안은 행사 후보·레이아웃·공식 URL·미디어 후보를 재사용할 수 있는 scaffold로 취급하고, 현재 연도 날짜·시간·비용·신청·프로그램을 공식 source로 다시 검증한 뒤 필요한 행사 section을 통째로 재작성한다. 새 표준 bundle은 `event_post_standard_version=1`, `multi_event_schedule=true`, 행사별 `event_name` binding을 사용한다. 기존 draft는 다음 Standard revision에서 이관하며, 도시별 고정 행사 수·1,200단어 기준·인터랙티브 지도·`test_<city>_festival_post.py` 같은 one-off 테스트를 새 품질 게이트로 만들지 않는다. 행사 사실·source·CTA·SEO가 바뀌는 수정은 `standard-event` 검증과 full semantic review를 거치고, actual image relevance/quality와 desktop/mobile 배치는 browser/visual QA로 확인한다.
