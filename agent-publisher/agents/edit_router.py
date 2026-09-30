@@ -20,6 +20,7 @@ from agents.fast_edit import (
     validate_prepared_delta_review,
 )
 from agents.task_state import (
+    completion_requirements_for_task,
     fail_task_state,
     intent_sha256,
     load_task_state,
@@ -259,6 +260,10 @@ def edit_reviewed_draft(
             artifacts={"image_path": str(image_path)} if image_path else None,
             qa_requirements=qa_requirements,
             validation_plan=decision.get("validation_plan"),
+            completion_requirements=completion_requirements_for_task(
+                image_changed=image_path is not None,
+                qa_requirements=qa_requirements,
+            ),
         )
         update_task_state(
             post_id,

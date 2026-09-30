@@ -9,7 +9,7 @@
 
 - 신규 reviewed draft: `editorial_cli.py prepare-draft`
 - reviewed draft/public 수정: `editorial_cli.py edit-post`
-- 대표이미지 전용 교체: `edit-post --image-path ...` 또는 저수준 `replace-featured-image`
+- 대표이미지 전용 교체: `quick-image-replace` (현재 SHA/thumbnail baseline 자동 수집), 진단용 저수준 `replace-featured-image`
 - 로컬 HTML의 한 컴포넌트 삽입·교체·삭제: `patch_post_component.py`
 - workflow 병목 확인: `summarize_workflow_metrics.py`
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)

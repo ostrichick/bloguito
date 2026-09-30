@@ -24,6 +24,7 @@ from agents.public_fast_edit import (
 )
 from agents.qa_scope import qa_requirements_for_edit
 from agents.task_state import (
+    completion_requirements_for_task,
     fail_task_state,
     intent_sha256,
     load_task_state,
@@ -242,6 +243,10 @@ def _edit_reviewed_public_post(
             artifacts={"image_path": str(image_path)} if image_path else None,
             qa_requirements=decision["qa_requirements"],
             validation_plan=decision.get("validation_plan"),
+            completion_requirements=completion_requirements_for_task(
+                image_changed=image_path is not None,
+                qa_requirements=decision["qa_requirements"],
+            ),
         )
         update_task_state(
             post_id, completed=["route_selected"], route="public-" + decision["route"],
