@@ -123,7 +123,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             'publish', set(), '100.99.177.119', ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         result = transport(module._WP_PREFIX + [
             'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
-            '--post_status=draft', '--post_title=title', '--post_name=test-slug', '--post_category=4',
+            '--post_status=draft', '--post_title=title', '--post_category=4',
             '--post_excerpt=summary', '--comment_status=closed', '--allow-root', '--porcelain'],
             capture_output=True, text=True, check=False)
         self.assertEqual(255, result.returncode)
@@ -400,14 +400,14 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                        'wordpress_app:/tmp/editorial_candidate.html'], capture_output=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
-            '--post_status=draft', '--post_title=title', '--post_name=test-slug', '--post_category=4',
+            '--post_status=draft', '--post_title=title', '--post_category=4',
             '--post_excerpt=summary', '--comment_status=closed', '--allow-root', '--porcelain'],
             capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'get', '901', '--fields=post_status,post_content', '--format=json', '--allow-root'],
             capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
-            'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'id-slug-v1', '--allow-root'])
+            'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'])
         self.assertEqual(b'<p>reviewed</p>', calls[0][1]['input'])
 
     def test_publish_allows_only_supported_rank_math_meta(self):
@@ -421,7 +421,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '901', 'rank_math_robots', 'noindex', '--allow-root'])
         transport(module._WP_PREFIX + [
-            'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'id-slug-v1', '--allow-root'])
+            'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'])
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'legacy', '--allow-root'])
@@ -498,7 +498,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport = module.make_transport('prepare-draft', set(), 'bloguito')
         transport(module._WP_PREFIX + [
             'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
-            '--post_status=draft', '--post_title=title', '--post_name=test-slug', '--post_category=4',
+            '--post_status=draft', '--post_title=title', '--post_category=4',
             '--post_excerpt=summary', '--comment_status=closed', '--allow-root', '--porcelain'],
             capture_output=True, text=True, check=True)
 
@@ -521,7 +521,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         self.assertTrue(any(b'image' == kwargs.get('input') for _, kwargs in calls))
 
-    def test_create_requires_safe_short_slug(self):
+    def test_create_rejects_manual_post_name(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='901\n', stderr='')
         transport = module.make_transport('prepare-draft', set(), 'bloguito')
@@ -529,12 +529,11 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
             '--post_status=draft', '--post_title=title', '--post_category=4',
             '--post_excerpt=summary', '--comment_status=closed', '--allow-root', '--porcelain']
-        for slug in (None, '한글-slug', 'UPPER-slug', 'one-two-three-four-five-six'):
-            command = list(base)
-            if slug is not None:
-                command.insert(5, '--post_name=' + slug)
-            with self.subTest(slug=slug), self.assertRaisesRegex(ValueError, 'unexpected_wordpress_draft_create'):
-                transport(module._WP_PREFIX + command)
+        transport(module._WP_PREFIX + base)
+        command = list(base)
+        command.insert(5, '--post_name=manual-slug')
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_draft_create'):
+            transport(module._WP_PREFIX + command)
 
     def test_replace_featured_image_allows_only_targeted_import_and_readback(self):
         module = load_module()

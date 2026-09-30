@@ -113,10 +113,6 @@ class RelatedPost(BaseModel):
 
 class Plan(BaseModel):
     title: str
-    slug: str | None = Field(default=None, description=(
-        'Short stable English URL slug for a new post: lowercase ASCII letters/numbers and hyphens, '
-        'normally one to five meaningful terms; include a year only when it identifies dated content.'
-    ))
     lead: Paragraph
     sections: list[Section]
     faq: list[FAQ] = Field(default_factory=list)
@@ -1055,7 +1051,6 @@ class EditorialWriterAgent:
         for attempt in range(policy()['max_revisions']+1):
             plan = self._call(
                 '검색 질문에 직접 답하는 고품질 한국어 원고를 작성하라. '
-                'slug는 URL용 짧은 영문 소문자·숫자 하이픈 문자열로 만들고 핵심 의미어 1~5개만 사용하라. 임의 문자 나열이나 긴 제목 직역을 쓰지 말고, 연도는 시의성 있는 글을 식별할 때만 포함하라. '
                 '첫 문단(lead)은 핵심 질문에 대한 즉각적인 두괄식 답변이다. 독자가 3초 안에 대상, 혜택, 신청 기한을 파악할 수 있도록 핵심 결론을 직격으로 서술하라. '
                 '서론의 불필요한 잡담이나 상투적 클리셰(\'알아보겠습니다\', \'유익한 정보가 되길 바랍니다\')는 일절 배제하라. '
                 '문체는 공문서의 딱딱한 용어를 독자 눈높이로 쉽게 풀어주면서도 신뢰감 있고 정중한 경어체(~합니다, ~할 수 있습니다)를 일관되게 유지하라. '

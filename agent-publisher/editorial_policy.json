@@ -3,11 +3,8 @@
   "default_status": "draft",
   "min_remaining_days": 30,
   "permalink_policy": {
-    "new_post_scheme": "id-slug-v1",
-    "new_post_path": "/{post_id}/{short_slug}/",
-    "slug_pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-    "slug_max_length": 60,
-    "slug_max_terms": 5,
+    "new_post_scheme": "post-id-v1",
+    "new_post_path": "/p/{post_id}/",
     "preserve_existing_public_urls": true
   },
   "dated_post_exceptions": {

@@ -88,7 +88,7 @@ class PublisherAgent:
         raise ValueError('editorial_bundle_required: 기존 표 원고도 공통 편집 검토 후 등록해야 합니다.')
 
     def _publish_editorial(self, article, image_path=None):
-        from agents.editorial import validate_bundle, render, excerpt_from_lead, validated_new_post_slug
+        from agents.editorial import validate_bundle, render, excerpt_from_lead
         from agents.editorial_writer import load_inventory
         from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
         from config import CATEGORIES, resolve_category
@@ -106,7 +106,6 @@ class PublisherAgent:
             raise ValueError(f"편집 검사 보류: {report['reasons']}")
         content = render(bundle['plan'], bundle['sources'])
         title = bundle['plan']['title']
-        slug = validated_new_post_slug(bundle['plan'])
         excerpt = excerpt_from_lead(bundle['plan']['lead'])
         if article.get('content') != content or article.get('title') != title:
             raise ValueError('editorial_content_changed_after_review')
@@ -118,19 +117,18 @@ class PublisherAgent:
         try:
             subprocess.run(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'], check=True, capture_output=True)
             result = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'create', remote,
-                '--post_type=post', '--post_status=draft', f'--post_title={title}', f'--post_name={slug}',
+                '--post_type=post', '--post_status=draft', f'--post_title={title}',
                 f'--post_category={category["id"]}', '--post_excerpt=' + excerpt,
                 '--comment_status=closed', '--allow-root', '--porcelain'],
                 check=True, capture_output=True, text=True)
             post_id = int(result.stdout.strip())
             subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                str(post_id), '_bloguito_permalink_scheme', 'id-slug-v1', '--allow-root'],
+                str(post_id), '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'],
                 check=True, capture_output=True)
             actual = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
-                '--fields=post_status,post_name,post_content', '--format=json', '--allow-root'], check=True, capture_output=True, text=True)
+                '--fields=post_status,post_content', '--format=json', '--allow-root'], check=True, capture_output=True, text=True)
             saved = json.loads(actual.stdout)
-            if (saved['post_status'] != 'draft' or saved['post_name'] != slug
-                    or saved['post_content'] != content):
+            if saved['post_status'] != 'draft' or saved['post_content'] != content:
                 raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
             self._record_post(post_id, title, category['id'], category['name'], status='draft',
                 expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})
