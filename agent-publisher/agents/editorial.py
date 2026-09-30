@@ -238,7 +238,10 @@ def supported_currency_sums(text, quote_text, calculations):
 
     Supported operations are reader-useful KRW sums and a scheduled end time
     derived from an explicit Korean start time plus an official running time.
-    Rates, averages, arbitrary date math and other calculations remain rejected.
+    A pension projection is also allowed when it is bound to a cited official
+    monthly amount and cited official early/delayed percentage, and only shows
+    deterministic cumulative totals at explicitly labelled fixed horizons.
+    Other rates, averages and arbitrary date math remain rejected.
     """
     if calculations in (None, []):
         return set(), []
@@ -254,6 +257,90 @@ def supported_currency_sums(text, quote_text, calculations):
     for item in calculations:
         if not isinstance(item, dict):
             errors.append('invalid_derived_calculation')
+            continue
+        if item.get('operation') == 'pension_projection':
+            required_keys = {
+                'operation', 'unit', 'base_monthly', 'direction', 'change_percent',
+                'start_offset_years', 'monthly_result', 'horizons',
+            }
+            if (set(item) != required_keys or item.get('unit') != '원'
+                    or type(item.get('base_monthly')) is not int or item['base_monthly'] <= 0
+                    or item.get('direction') not in {'decrease', 'none', 'increase'}
+                    or type(item.get('change_percent')) is not int
+                    or not 0 <= item['change_percent'] <= 100
+                    or type(item.get('start_offset_years')) is not int
+                    or not -5 <= item['start_offset_years'] <= 5
+                    or type(item.get('monthly_result')) is not int or item['monthly_result'] <= 0
+                    or not isinstance(item.get('horizons'), list)
+                    or not 1 <= len(item['horizons']) <= 4):
+                errors.append('invalid_derived_calculation')
+                continue
+
+            base = item['base_monthly']
+            direction = item['direction']
+            change = item['change_percent']
+            if direction == 'none':
+                if change != 0 or item['start_offset_years'] != 0:
+                    errors.append('invalid_derived_calculation')
+                    continue
+                expected_monthly = base
+            else:
+                if change <= 0:
+                    errors.append('invalid_derived_calculation')
+                    continue
+                numerator = base * ((100 - change) if direction == 'decrease' else (100 + change))
+                if numerator % 100:
+                    errors.append('invalid_derived_calculation')
+                    continue
+                expected_monthly = numerator // 100
+                if (str(change) not in quoted_numbers
+                        or str(abs(item['start_offset_years'])) not in quoted_numbers):
+                    errors.append('invalid_derived_calculation')
+                    continue
+
+            if str(base) not in quoted_numbers or item['monthly_result'] != expected_monthly:
+                errors.append('invalid_derived_calculation')
+                continue
+
+            derived = {str(item['monthly_result'])}
+            horizon_error = False
+            for horizon in item['horizons']:
+                if (not isinstance(horizon, dict)
+                        or set(horizon) != {'years_after_normal', 'cumulative_result'}
+                        or type(horizon.get('years_after_normal')) is not int
+                        or not 1 <= horizon['years_after_normal'] <= 40
+                        or type(horizon.get('cumulative_result')) is not int
+                        or horizon['cumulative_result'] < 0):
+                    horizon_error = True
+                    break
+                years_receiving = horizon['years_after_normal'] - item['start_offset_years']
+                if years_receiving < 0:
+                    horizon_error = True
+                    break
+                expected_total = item['monthly_result'] * years_receiving * 12
+                if horizon['cumulative_result'] != expected_total:
+                    horizon_error = True
+                    break
+                if not re.search(r'(?<!\d)' + str(horizon['years_after_normal']) + r'\s*년', text):
+                    horizon_error = True
+                    break
+                derived.add(str(horizon['years_after_normal']))
+                derived.add(str(horizon['cumulative_result']))
+            if horizon_error:
+                errors.append('invalid_derived_calculation')
+                continue
+
+            if any(value not in visible_numbers for value in derived):
+                errors.append('invalid_derived_calculation')
+                continue
+            won_values = {str(item['monthly_result']), *[
+                str(horizon['cumulative_result']) for horizon in item['horizons']
+            ]}
+            if any(not re.search(r'(?<!\d)' + re.escape(value) + r'\s*원', plain_text)
+                   for value in won_values):
+                errors.append('invalid_derived_calculation')
+                continue
+            supported.update(derived)
             continue
         if item.get('operation') == 'add_duration':
             if (set(item) != {'operation', 'unit', 'start', 'duration', 'result'}
