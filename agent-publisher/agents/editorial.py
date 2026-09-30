@@ -292,6 +292,21 @@ def supported_currency_sums(text, quote_text, calculations):
                 continue
             supported.add(str(item['months']))
             continue
+        if item.get('operation') == 'monthly_from_total_days':
+            if (set(item) != {'operation', 'total', 'days', 'monthly'}
+                    or type(item.get('total')) is not int or item['total'] <= 0
+                    or type(item.get('days')) is not int or not 30 <= item['days'] <= 365
+                    or type(item.get('monthly')) is not int or item['monthly'] <= 0
+                    or item['total'] % item['days'] != 0
+                    or item['monthly'] != (item['total'] // item['days']) * 30
+                    or str(item['total']) not in quoted_numbers
+                    or str(item['days']) not in quoted_numbers
+                    or str(item['monthly']) not in visible_numbers
+                    or not re.search(r'(?<!\d)' + str(item['monthly']) + r'\s*원(?!\d)', plain_text)):
+                errors.append('invalid_derived_calculation')
+                continue
+            supported.add(str(item['monthly']))
+            continue
         if item.get('operation') == 'add_duration':
             if (set(item) != {'operation', 'unit', 'start', 'duration', 'result'}
                     or item.get('unit') != '분'
