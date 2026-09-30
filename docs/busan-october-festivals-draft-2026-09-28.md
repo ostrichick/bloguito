@@ -134,3 +134,36 @@ Post #621(전주 10월 축제 일정)의 고품질 표준 및 UX 요소를 충�
    - 공통 변경에 대해 최대 `728 tests PASS, 1 skip` 전체 회귀 검증을 완료했고, 마지막 media-ID 처리 보완 후 관련 표적 테스트 37개도 추가 통과.
    - 390px 모바일과 1440px 데스크톱 로컬 렌더 QA에서 overview 카드/표, 목차, 첫 행사 이미지 배치를 확인했으며 featured image는 WordPress에서 다시 다운로드한 파일을 별도로 시각 검수.
    - `python scripts/sync_post_catalog.py` 재실행 후 `docs/POST_CATALOG.md`에서 #648이 `Draft 보존` 상태로 동기화된 것을 확인.
+
+## 2026-09-30 행사장 위치 카드 중복 제거
+
+사용자 피드백에 따라 `장소`와 `위치`가 같은 내용을 반복하던 행사 위치 카드를 공통 renderer와 #648에 함께 수정했다.
+
+1. **공통 위치 카드 표현 변경**
+   - 첫 줄을 `📍 행사장 위치: 행사장명`으로 합쳤다.
+   - 공식 근거에서 별도의 실제 주소가 확인된 경우에만 둘째 줄에 `주소: ...`를 표시한다.
+   - `address`가 행사장명과 같거나 비어 있으면 둘째 줄을 출력하지 않는다. 지도 검색용 `query`는 독자용 정보 줄로 반복하지 않는다.
+   - 기존 renderer가 만든 `장소 / 위치` 2줄 HTML과 새 compact HTML을 같은 의미로 비교하는 migration 정규화를 추가했다.
+   - Fast 편집도 renderer migration을 정규화한 뒤 비교하도록 보완하되, live WordPress 본문 SHA CAS 검사는 그대로 유지했다. 이 보완이 없으면 저장된 구형 renderer HTML과 현재 renderer 출력이 달라 `draft_changed_before_fast_revision`으로 잘못 중단될 수 있었다.
+
+2. **#648 위치 데이터 정리**
+   - 부산국제록페스티벌: `삼락생태공원`.
+   - 부산국제영화제: `영화의전당 등 8개 극장`.
+   - 부산자갈치축제: `자갈치시장, 유라리광장 일원`.
+   - 동래읍성역사축제: 모바일에서 긴 전체 장소 목록이 넘치는 것을 QA에서 확인해 위치 카드에는 대표 기준점 `동래읍성지 북문광장 등`을 표시했다. 전체 개최 구역은 기존 본문 설명에 그대로 유지했다.
+   - 광안리 M 드론라이트쇼: `광안리해수욕장`.
+   - 기존 location 데이터의 두 번째 값들은 도로명주소가 아니라 행사장명 또는 행사 구역의 반복이어서 `주소`로 바꾸지 않고 비웠다.
+
+3. **저장 및 검증 결과**
+   - 최종 WordPress 상태는 `draft` 유지.
+   - 최종 본문 SHA256: `76ba3de0047922f5fd3e5630fee21d69719100c81c4cc8588626a99798c34fd3`.
+   - WordPress readback에서 `festival-location-card` 5개, `📍 행사장 위치:` 5개, 카카오맵 링크 5개, 네이버지도 링크 5개를 확인했다.
+   - 구형 `<strong>장소</strong>`, `<strong>위치</strong>` 라벨과 별도 `주소` 라벨은 모두 0개다.
+   - 최종 수정은 Fast route, `quick-text` profile로 처리했고 저장 전 선택 회귀 38건이 통과했다. 공통 코드 변경 후 전체 Python 회귀는 `733 tests PASS, 1 skip`이었다.
+   - 로그인 브라우저 탭 제어 기능이 현재 Desktop 연결에서 노출되지 않아 관리자 미리보기 탭을 직접 조작하지는 못했다. 대신 WordPress에서 다시 읽은 최종 저장 HTML의 위치 카드 5개를 Edge에서 390px, 1440px로 렌더링해 텍스트 잘림, 카드 폭, 두 지도 버튼 배치를 확인했고 최종 모바일/데스크톱 QA를 통과시켰다.
+   - `complete-task-qa`에서 `content-mobile-desktop` scope를 완료 상태로 기록했다.
+   - `python scripts/sync_post_catalog.py`를 실행해 #648이 계속 Draft임을 확인했다. 같은 동기화에서 다른 작업의 #609 공개 상태도 함께 반영되어 `POST_CATALOG.md`에는 이번 작업과 무관한 diff가 생겼으므로 그 파일은 이번 커밋 범위에 포함하지 않았다.
+
+4. **공통 코드 커밋**
+   - `91f2da5 Refine event location cards`
+   - `0d65851 Allow fast edits across renderer migrations`
