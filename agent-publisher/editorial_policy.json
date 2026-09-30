@@ -126,15 +126,23 @@
     "rank_math_is_publish_gate": false
   },
   "featured_image_policy": {
-    "version": 3,
+    "version": 4,
     "purpose": "modern_editorial_cover",
     "benchmark": "post-475-movein-cover-2026-09-27",
+    "scope": {
+      "applies_to": ["lookup", "application", "calculator", "comparison", "welfare", "pension", "health", "administrative_service"],
+      "exceptions": ["concert_poster", "reviewed_official_poster_preservation"]
+    },
     "canvas": {
       "width": 1200,
-      "height": 675
+      "height": 675,
+      "aspect_ratio": "16:9"
     },
     "text": {
-      "max_blocks": 2,
+      "max_blocks": 3,
+      "chip_max_lines": 1,
+      "primary_max_lines": 2,
+      "secondary_max_lines": 1,
       "primary_max_chars": 22,
       "secondary_max_chars": 28,
       "avoid_full_article_title_repetition": true,
@@ -144,17 +152,25 @@
       "primary_font_role": "hangul_display",
       "display_font_required": true,
       "avoid_generic_system_font_for_primary": true,
-      "preferred_hangul_display_families": [
-        "HYPMokGak-Bold",
-        "HYHeadLine-Medium",
-        "NanumBrush",
-        "NanumPen"
-      ]
+      "brand_primary_font_family": "HYPMokGak-Bold",
+      "brand_primary_font_rotation": false,
+      "secondary_font_role": "clean_hangul_sans",
+      "primary_larger_than_previous_default": true
     },
     "composition": {
       "single_primary_subject": true,
       "safe_margin_percent": 8,
-      "reserved_text_area_percent": 42,
+      "text_side": "left",
+      "scene_side": "right",
+      "text_vertical_alignment": "center",
+      "top_aligned_text_prohibited": true,
+      "text_area_percent": 45,
+      "text_area_percent_range": [44, 46],
+      "scene_area_percent": 55,
+      "scene_area_percent_range": [54, 56],
+      "text_start_px": 96,
+      "text_block_center_y_percent": 50,
+      "reserved_text_area_percent": 45,
       "generous_whitespace": true,
       "mobile_thumbnail_readability_required": true
     },
@@ -180,10 +196,18 @@
       "crowded_checklist",
       "cropped_face_head_hands",
       "malformed_anatomy",
-      "tiny_decorative_text"
+      "tiny_decorative_text",
+      "icon_row_or_icon_grid",
+      "coin_row_or_cash_pile",
+      "excessive_arrows",
+      "boxed_infographic_layout",
+      "ppt_clipart_look"
     ],
     "color": {
       "max_main_colors": 3,
+      "background": "bright",
+      "brand_primary": "navy",
+      "brand_accent": "green",
       "prefer_size_spacing_over_extra_accent_colors": true
     },
     "topic_profiles": {
@@ -208,7 +232,8 @@
       "default_model": "gemini-3.1-flash-image",
       "image_size": "1K",
       "model_env_override": "BLOGUITO_IMAGE_MODEL",
-      "fallback": "minimal_editorial_cover",
+      "fallback": "reject_generation_failure",
+      "publishable_low_quality_fallback": false,
       "max_generation_attempts": 2
     },
     "visual_review": {
@@ -216,7 +241,7 @@
       "required_for_official_poster": true,
       "default_model": "gemini-3.5-flash",
       "model_env_override": "BLOGUITO_IMAGE_REVIEW_MODEL",
-      "on_unavailable": "reject_nondeterministic_image_and_use_safe_fallback"
+      "on_unavailable": "reject_nondeterministic_image"
     },
     "concert_source_priority": [
       "official_ticket_vendor",
@@ -229,6 +254,8 @@
       "text_not_overcrowded",
       "korean_text_exact",
       "semantic_line_breaks",
+      "left_text_block_vertically_centered",
+      "right_single_scene",
       "no_face_or_subject_crop",
       "mobile_readable",
       "desktop_balanced",

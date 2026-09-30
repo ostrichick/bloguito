@@ -57,11 +57,20 @@ def cleanup_generated_cover(path) -> bool:
 DEFAULT_FEATURED_IMAGE_POLICY = {
     "canvas": {"width": 1200, "height": 675},
     "text": {
-        "max_blocks": 2,
+        "max_blocks": 3,
         "primary_max_chars": 22,
         "secondary_max_chars": 28,
         "display_font_required": True,
         "avoid_generic_system_font_for_primary": True,
+        "brand_primary_font_family": "HYPMokGak-Bold",
+        "brand_primary_font_rotation": False,
+    },
+    "composition": {
+        "safe_margin_percent": 8,
+        "text_area_percent": 45,
+        "scene_area_percent": 55,
+        "text_start_px": 96,
+        "text_block_center_y_percent": 50,
     },
     "generation": {
         "default_model": "gemini-3.1-flash-image",
@@ -88,6 +97,7 @@ def _load_featured_image_policy() -> dict:
         **policy,
         "canvas": {**DEFAULT_FEATURED_IMAGE_POLICY["canvas"], **policy.get("canvas", {})},
         "text": {**DEFAULT_FEATURED_IMAGE_POLICY["text"], **policy.get("text", {})},
+        "composition": {**DEFAULT_FEATURED_IMAGE_POLICY["composition"], **policy.get("composition", {})},
         "generation": {**DEFAULT_FEATURED_IMAGE_POLICY["generation"], **policy.get("generation", {})},
     }
     return merged
@@ -143,26 +153,28 @@ def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont:
 
 
 def _load_display_font(size: int = 24) -> ImageFont.FreeTypeFont:
-    """Load a conspicuous Hangul display face for featured-image primary copy.
-
-    A generic UI Gothic is intentionally not a fallback here.  When the policy
-    requires display typography, failing closed is preferable to silently
-    recreating the plain-font covers the editorial standard rejects.
-    """
-    candidates = [
-        "C:/Windows/Fonts/H2MKPB.TTF",  # HYPMokGak-Bold
-        "C:/Windows/Fonts/H2HDRM.TTF",  # HYHeadLine-Medium
-        "/usr/share/fonts/truetype/nanum/NanumBrush.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumPen.ttf",
-    ]
+    """Load the fixed Bloguito Hangul display face for featured-image primary copy."""
+    family = FEATURED_IMAGE_POLICY.get("text", {}).get("brand_primary_font_family", "HYPMokGak-Bold")
+    family_paths = {
+        "HYPMokGak-Bold": ["C:/Windows/Fonts/H2MKPB.TTF"],
+    }
+    candidates = family_paths.get(family, [])
     for path in candidates:
         try:
             font = ImageFont.truetype(path, size)
-            if _font_has_hangul(font):
+            if _font_has_hangul(font) and font.getname()[0] == family:
                 return font
         except Exception:
             continue
-    raise RuntimeError("Hangul display font unavailable; refusing generic featured-image typography")
+    raise RuntimeError(f"Brand Hangul display font unavailable: {family}")
+
+
+def _centered_block_top(canvas_height: int, block_height: int, safe_margin_px: int) -> int:
+    """Vertically center a text block while preserving top and bottom safe margins."""
+    if block_height > canvas_height - (safe_margin_px * 2):
+        raise ValueError("cover_text_block_exceeds_vertical_safe_area")
+    centered = int(round((canvas_height - block_height) / 2))
+    return max(safe_margin_px, min(centered, canvas_height - safe_margin_px - block_height))
 
 
 def split_title(text: str, max_first_line: int = 22) -> list[str]:
@@ -359,7 +371,7 @@ def build_editorial_cover_prompt(
     )
     composition = FEATURED_IMAGE_POLICY.get("composition", {})
     safe_margin = int(composition.get("safe_margin_percent", 8))
-    reserved_text_area = int(composition.get("reserved_text_area_percent", 42))
+    reserved_text_area = int(composition.get("reserved_text_area_percent", 45))
     styles = ", ".join(str(item).replace("_", " ") for item in FEATURED_IMAGE_POLICY.get("style", []))
     prohibited = ", ".join(
         str(item).replace("_", " ") for item in FEATURED_IMAGE_POLICY.get("prohibited", [])
@@ -371,9 +383,9 @@ def build_editorial_cover_prompt(
         "topic": f"Topic: {primary_text}. Article context: {title}.",
         "main_subject": f"Main subject: {subject}",
         "composition": (
-            "Composition: 16:9 horizontal cover, one strong focal subject on the right half, "
+            "Composition: 16:9 horizontal cover with a strict left-text/right-scene split, one strong focal subject entirely on the right, "
             f"at least {safe_margin}% safe margin around faces, heads, hands, documents and products; reserve the left {reserved_text_area}% "
-            "as calm bright negative space for later typography; mobile thumbnail must remain readable."
+            "as calm bright negative space for later typography and keep the scene in the remaining right area; do not let the focal subject drift into the left text zone; mobile thumbnail must remain readable."
         ),
         "text": (
             f"Text overlay plan: primary Korean title '{primary_text}', supporting line '{secondary_plan}'. "
@@ -400,7 +412,7 @@ class DesignerAgent:
     [생활정보 24] 대표 이미지 엔진
     - 기본: 짧은 커버 카피 + 하나의 중심 장면을 사용하는 현대적 에디토리얼 커버
     - 공연 예외: 별도 검토된 공식 포스터/홍보 이미지를 원본 비율 보존형으로 재구성
-    - 생성 장면 실패: 전체 SEO 제목을 반복하지 않는 미니멀 커버로 폴백
+    - 생성 장면 실패: 저품질 도형/클립아트 폴백을 만들지 않고 업로드 가능한 결과 생성을 중단
     """
 
     def __init__(self):
@@ -540,6 +552,7 @@ class DesignerAgent:
         image: Image.Image,
         primary_text: str,
         secondary_text: str | None,
+        chip_text: str | None = None,
     ) -> Image.Image:
         width, height = image.size
         base = image.convert("RGBA")
@@ -548,7 +561,9 @@ class DesignerAgent:
         # Korean typography readable without a banner box.
         scrim = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         sdraw = ImageDraw.Draw(scrim)
-        scrim_end = int(width * 0.58)
+        composition = FEATURED_IMAGE_POLICY.get("composition", {})
+        text_area_percent = float(composition.get("text_area_percent", 45)) / 100.0
+        scrim_end = int(width * min(0.54, text_area_percent + 0.07))
         for x in range(scrim_end):
             ratio = x / max(scrim_end - 1, 1)
             alpha = int(238 * (1 - ratio) ** 1.7)
@@ -556,38 +571,72 @@ class DesignerAgent:
         base = Image.alpha_composite(base, scrim)
         draw = ImageDraw.Draw(base)
 
-        safe_margin = float(
-            FEATURED_IMAGE_POLICY.get("composition", {}).get("safe_margin_percent", 8)
-        ) / 100.0
-        left = int(round(width * safe_margin))
-        text_width_chars = max(10, min(16, int(FEATURED_IMAGE_POLICY["text"].get("primary_max_chars", 22))))
+        safe_margin = float(composition.get("safe_margin_percent", 8)) / 100.0
+        safe_margin_px = int(round(height * safe_margin))
+        left = int(composition.get("text_start_px", round(width * safe_margin)))
+        text_right = int(round(width * text_area_percent)) - 18
+        max_text_width = max(240, text_right - left)
+        text_width_chars = max(8, min(10, int(FEATURED_IMAGE_POLICY["text"].get("primary_max_chars", 22))))
         lines = split_title(primary_text, max_first_line=text_width_chars)
         longest = max(map(len, lines)) if lines else 1
-        font_size = 72 if longest <= 8 else 62 if longest <= 12 else 52
+        font_size = 88 if longest <= 7 else 80 if longest <= 10 else 70
         if len(lines) > 1:
-            font_size = min(font_size, 56)
-        title_font = _load_display_font(font_size)
-        subtitle_font = _load_font(29, bold=True)
+            font_size = min(font_size, 72)
+        while font_size >= 52:
+            title_font = _load_display_font(font_size)
+            if all(draw.textbbox((0, 0), line, font=title_font)[2] <= max_text_width for line in lines):
+                break
+            font_size -= 2
+        else:
+            raise ValueError("cover_primary_text_does_not_fit_left_text_area")
 
-        total_title_h = len(lines) * (font_size + 8)
-        subtitle_h = 48 if secondary_text else 0
-        start_y = max(70, (height - total_title_h - subtitle_h) // 2 - 15)
-        colors = [(13, 70, 145, 255), (0, 132, 96, 255)]
+        chip_text = _clean_cover_text(chip_text or "") or None
+        chip_font = _load_font(20, bold=True)
+        subtitle_font = _load_font(28, bold=True)
+        line_gap = 10
+        title_boxes = [draw.textbbox((0, 0), line, font=title_font) for line in lines]
+        title_heights = [box[3] - box[1] for box in title_boxes]
+        title_height = sum(title_heights) + line_gap * max(0, len(lines) - 1)
+        chip_height = 36 if chip_text else 0
+        chip_gap = 18 if chip_text else 0
+        subtitle_box = draw.textbbox((0, 0), secondary_text, font=subtitle_font) if secondary_text else None
+        subtitle_height = (subtitle_box[3] - subtitle_box[1]) if subtitle_box else 0
+        subtitle_gap = 22 if secondary_text else 0
+        block_height = chip_height + chip_gap + title_height + subtitle_gap + subtitle_height
+        start_y = _centered_block_top(height, block_height, safe_margin_px)
+
+        if chip_text:
+            chip_box = draw.textbbox((0, 0), chip_text, font=chip_font)
+            chip_w = chip_box[2] - chip_box[0]
+            if chip_w + 28 > max_text_width:
+                raise ValueError("cover_chip_text_does_not_fit_left_text_area")
+            draw.rounded_rectangle(
+                [left, start_y, left + chip_w + 28, start_y + chip_height],
+                radius=18,
+                fill=(226, 244, 238, 246),
+            )
+            draw.text((left + 14, start_y + 7), chip_text, font=chip_font, fill=(0, 116, 87, 255))
+
+        title_y = start_y + chip_height + chip_gap
+        title_color = (18, 53, 96, 255)
         for index, line in enumerate(lines):
             draw.text(
-                (left, start_y + index * (font_size + 8)),
+                (left, title_y),
                 line,
                 font=title_font,
-                fill=colors[min(index, len(colors) - 1)],
+                fill=title_color,
             )
+            title_y += title_heights[index] + line_gap
 
         if secondary_text:
-            subtitle_y = start_y + total_title_h + 18
+            subtitle_y = title_y - line_gap + subtitle_gap
+            if subtitle_box and subtitle_box[2] - subtitle_box[0] > max_text_width:
+                raise ValueError("cover_secondary_text_does_not_fit_left_text_area")
             draw.text(
-                (left + 2, subtitle_y),
+                (left, subtitle_y),
                 secondary_text,
                 font=subtitle_font,
-                fill=(30, 72, 110, 255),
+                fill=(0, 126, 96, 255),
             )
         return base.convert("RGB")
 
@@ -598,58 +647,8 @@ class DesignerAgent:
         profile: str,
         output_path: Path,
     ):
-        """Network/API-safe fallback using short cover copy and one abstract focal object."""
-        width, height = self._canvas_size()
-        image = Image.new("RGB", (width, height), (244, 250, 249))
-        draw = ImageDraw.Draw(image)
-
-        # One large contemporary focal object on the right; the shape changes enough
-        # to communicate the broad topic without turning into an icon collage.
-        # Keep the fallback focal scene inside the same 8% critical-content
-        # margin required for generated covers. 0.72 leaves enough room for
-        # even the widest fallback subject on a 1200px canvas.
-        cx, cy = int(width * 0.72), int(height * 0.50)
-        if profile == "concert":
-            draw.rounded_rectangle([cx - 210, cy - 190, cx + 210, cy + 190], radius=44, fill=(24, 31, 58))
-            draw.ellipse([cx - 82, cy - 82, cx + 82, cy + 82], fill=(241, 178, 73))
-        elif profile == "price_compare":
-            draw.rounded_rectangle([cx - 170, cy - 220, cx + 170, cy + 220], radius=32, fill=(255, 255, 255), outline=(204, 220, 220), width=4)
-            for offset in (-90, -20, 50):
-                draw.rounded_rectangle([cx - 105, cy + offset, cx + 90, cy + offset + 18], radius=9, fill=(204, 222, 222))
-            draw.rounded_rectangle([cx + 30, cy + 105, cx + 210, cy + 215], radius=24, fill=(34, 144, 112))
-        elif profile == "life_admin":
-            # A single coherent home + digital-application scene, echoing the
-            # successful move-in cover without copying its artwork.
-            house_x, house_y = cx - 10, cy - 155
-            draw.polygon(
-                [(house_x - 165, house_y + 75), (house_x, house_y - 50), (house_x + 165, house_y + 75)],
-                fill=(204, 225, 233),
-            )
-            draw.rounded_rectangle(
-                [house_x - 135, house_y + 55, house_x + 135, house_y + 235],
-                radius=14,
-                fill=(249, 252, 251),
-                outline=(181, 208, 218),
-                width=4,
-            )
-            draw.rounded_rectangle([cx - 185, cy - 35, cx + 135, cy + 165], radius=22, fill=(224, 237, 244), outline=(144, 181, 201), width=4)
-            draw.rounded_rectangle([cx - 150, cy - 5, cx + 100, cy + 112], radius=14, fill=(255, 255, 255))
-            draw.rounded_rectangle([cx - 82, cy + 18, cx + 38, cy + 88], radius=14, fill=(218, 239, 233))
-            draw.rounded_rectangle([cx + 100, cy + 80, cx + 225, cy + 195], radius=18, fill=(255, 255, 255), outline=(193, 215, 219), width=3)
-            draw.ellipse([cx + 154, cy + 120, cx + 224, cy + 190], fill=(38, 181, 132))
-        elif profile == "welfare":
-            draw.rounded_rectangle([cx - 155, cy - 230, cx + 155, cy + 230], radius=46, fill=(230, 241, 245), outline=(174, 204, 216), width=4)
-            draw.rounded_rectangle([cx - 120, cy - 175, cx + 120, cy + 128], radius=24, fill=(255, 255, 255))
-            draw.ellipse([cx - 48, cy - 92, cx + 48, cy + 4], fill=(216, 235, 230))
-            draw.rounded_rectangle([cx - 78, cy + 32, cx + 78, cy + 67], radius=17, fill=(38, 181, 132))
-        else:
-            draw.rounded_rectangle([cx - 235, cy - 165, cx + 155, cy + 165], radius=28, fill=(233, 242, 248), outline=(176, 204, 220), width=4)
-            draw.rounded_rectangle([cx - 190, cy - 120, cx + 110, cy + 72], radius=18, fill=(255, 255, 255))
-            draw.rounded_rectangle([cx - 120, cy - 58, cx + 42, cy + 42], radius=18, fill=(224, 241, 238))
-            draw.ellipse([cx + 78, cy + 42, cx + 198, cy + 162], fill=(38, 181, 132))
-
-        final = self._overlay_cover_copy(image, primary_text, secondary_text)
-        final.save(output_path, "JPEG", quality=96)
+        """Refuse the former local shape/clipart fallback as a publishable cover."""
+        raise RuntimeError("featured_image_generation_failed_no_publishable_fallback")
 
     def _render_editorial_cover(
         self,
@@ -668,7 +667,6 @@ class DesignerAgent:
             primary_text,
             secondary_text,
         )
-        profile = _cover_profile(title, category_key, category_name)
         max_attempts = max(1, int(FEATURED_IMAGE_POLICY["generation"].get("max_generation_attempts", 2)))
         review_issues: list[str] = []
         for attempt in range(1, max_attempts + 1):
@@ -693,10 +691,12 @@ class DesignerAgent:
                     return
                 print(f"[DesignerAgent] ⚠️ 이미지 품질 검수 실패 {attempt}/{max_attempts}: {review_issues}")
             except Exception as e:
-                print(f"[DesignerAgent] ⚠️ 장면 생성 실패 ({e}) -> 미니멀 에디토리얼 커버로 폴백")
+                review_issues = [f"generation_error:{type(e).__name__}"]
+                print(f"[DesignerAgent] ⚠️ 장면 생성 실패 ({e}); 저품질 로컬 폴백을 사용하지 않습니다")
                 break
 
-        self._render_minimal_fallback(primary_text, secondary_text, profile, output_path)
+        detail = "; ".join(review_issues) if review_issues else "visual_review_failed"
+        raise RuntimeError(f"featured_image_generation_failed_no_publishable_fallback: {detail}")
 
     # =========================================================================
     # 공연 예외: 검토된 공식 포스터 원본 보존형 재구성
