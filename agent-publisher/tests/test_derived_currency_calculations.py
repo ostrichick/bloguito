@@ -1,7 +1,7 @@
 """Derived reference prices may only be exact sums of cited official won amounts."""
 import unittest
 
-from agents.editorial import validate_bundle
+from agents.editorial import supported_currency_sums, validate_bundle
 from tests.test_editorial_system import NOW, sample, sign
 
 
