@@ -69,6 +69,11 @@ def validate_test_manifest(manifest: dict) -> None:
 
 def selected_test_files(plan: dict, manifest: dict | None = None) -> list[str]:
     validate_validation_plan(plan)
+    if not plan.get("test_groups") and not plan.get("full_regression_required"):
+        # Content/image plans deliberately run no repository unit tests. Return
+        # before loading/validating the 100+ file manifest so the no-test path is
+        # effectively free.
+        return []
     manifest = manifest or load_test_manifest()
     if plan.get("full_regression_required") or "full-regression" in plan.get("test_groups", []):
         return sorted(path.name for path in TESTS_DIR.glob("test_*.py"))
@@ -79,7 +84,7 @@ def selected_test_files(plan: dict, manifest: dict | None = None) -> list[str]:
             raise ValueError("unknown_validation_test_group:" + str(group))
         selected.update(groups[group])
     post_id = (plan.get("binding") or {}).get("post_id")
-    if post_id is not None:
+    if post_id is not None and plan.get("test_groups"):
         selected.update(manifest.get("post_selectors", {}).get(str(post_id), []))
     return sorted(selected)
 

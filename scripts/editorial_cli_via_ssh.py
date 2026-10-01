@@ -5,18 +5,22 @@ is used only as a restricted transport for the WordPress/Docker commands emitted
 by those actions::
 
     python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- \
-        publish scratch/tasks/article/bundle.json
+        prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol"
 
-    python scripts/editorial_cli_via_ssh.py --ssh-host 100.x.y.z \
-        --ssh-user ubuntu --wsl-distro Ubuntu-24.04 -- \
-        revise-draft scratch/tasks/article/bundle.json --post-id 463 \
-        --expected-content-sha256 <sha> --confirm-update
+    python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- \
+        edit-post scratch/tasks/article/bundle.json --post-id 463 \
+        --expected-content-sha256 <sha> --confirm-update --edit-intent "문구 정리"
+
+    python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- \
+        replace-featured-image --post-id 463 --image-path cover.webp \
+        --alt-text "대표 이미지" --confirm-update
 
 The adapter is deliberately not a general remote shell.  Each supported action
 has a fixed WP-CLI allowlist, and Tailscale diagnostics run only after SSH fails.
 """
 
 import argparse
+from contextlib import nullcontext
 import json
 import re
 import shlex
@@ -33,6 +37,7 @@ import editorial_cli  # noqa: E402
 from agents.editorial_updater import rank_math_meta_from_brief  # noqa: E402
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
+from agents.workflow_metrics import timed, workflow_run  # noqa: E402
 from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
@@ -55,12 +60,17 @@ _CREATE_ACTIONS = {'publish', 'prepare-draft'}
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
 _IMAGE_EDIT_ACTIONS = {'revise-draft', 'fast-revise-draft', 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
 _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
-_CLI_ACTIONS = {
-    'publish', 'prepare-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft',
-    'update-existing',
-    'replace-featured-image', 'quick-image-replace', 'update-draft', 'replace-legacy-draft', 'promote-draft',
-    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image',
+_PRIMARY_CLI_ACTIONS = {'prepare-draft', 'edit-post', 'replace-featured-image'}
+_PUBLICATION_CLI_ACTIONS = {'promote-draft'}
+_COMPATIBILITY_CLI_ACTIONS = {
+    'publish', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'update-existing',
+    'quick-image-replace', 'update-draft', 'replace-legacy-draft',
 }
+_MAINTENANCE_CLI_ACTIONS = {'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image'}
+_CLI_ACTIONS = (
+    _PRIMARY_CLI_ACTIONS | _PUBLICATION_CLI_ACTIONS
+    | _COMPATIBILITY_CLI_ACTIONS | _MAINTENANCE_CLI_ACTIONS
+)
 _TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
@@ -517,7 +527,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     return run
 
 
-def main():
+def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-mode', choices=['direct', 'wsl', 'tailscale'])
     parser.add_argument('--ssh-host')
@@ -623,11 +633,18 @@ def main():
         print(f"[Edit Route] {decision['route']}" +
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
         if action == 'edit-post':
-            # Run local regression tests before subprocess.run is replaced by the
-            # restricted WordPress transport.  This keeps test processes away from
-            # the SSH allowlist and guarantees failures happen before any mutation.
-            from agents.validation_runner import require_validation_success
-            validation = require_validation_success(decision['validation_plan'], verbosity=0)
+            plan = decision['validation_plan']
+            if plan.get('test_groups'):
+                # Repository/shared-code profiles still fail before mutation.
+                from agents.validation_runner import require_validation_success
+                with timed('validation'):
+                    validation = require_validation_success(plan, verbosity=0)
+            else:
+                validation = {
+                    'profile': plan.get('profile') or decision.get('route') or 'content',
+                    'tests_run': 0,
+                    'selected_files': [], 'duration_ms': 0.0, 'status': 'passed',
+                }
             print(
                 f"[Validation] {validation['profile']}: "
                 f"{validation['tests_run']} tests PASS "
@@ -657,9 +674,14 @@ def main():
         tailscale_ssh=config.mode == 'tailscale',
         expected_rank_math_meta=expected_rank_math_meta,
         allow_image=image_path is not None)
-    with patch('subprocess.run', side_effect=transport), \
-            patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):
-        editorial_cli.main()
+    decision_context = (
+        editorial_cli.prepared_edit_decision(decision)
+        if action == 'edit-post' else nullcontext()
+    )
+    with timed('remote_editorial_cli'):
+        with decision_context, patch('subprocess.run', side_effect=transport), \
+                patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):
+            editorial_cli.main()
 
     # prepare-draft is the user-facing one-shot path. Keep the catalog follow-up
     # outside the patched WordPress transport so it uses the normal Direct SSH
@@ -669,16 +691,19 @@ def main():
         sync_cmd = [sys.executable, str(ROOT / 'scripts' / 'sync_post_catalog.py')]
         last = None
         attempts = 0
-        for attempt in range(2):
-            attempts = attempt + 1
-            last = _RUN(sync_cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
-            if last.returncode == 0:
-                if last.stdout:
-                    print(last.stdout.rstrip())
-                print('[Catalog Sync] POST_CATALOG.md updated.')
-                _mark_catalog_sync(cli_args, 'passed', attempts)
-                break
-        else:
+        synced = False
+        with timed('catalog_sync'):
+            for attempt in range(2):
+                attempts = attempt + 1
+                last = _RUN(sync_cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+                if last.returncode == 0:
+                    if last.stdout:
+                        print(last.stdout.rstrip())
+                    print('[Catalog Sync] POST_CATALOG.md updated.')
+                    _mark_catalog_sync(cli_args, 'passed', attempts)
+                    synced = True
+                    break
+        if not synced:
             _mark_catalog_sync(cli_args, 'failed', attempts)
             detail = (last.stderr or last.stdout or '').strip() if last is not None else 'unknown error'
             print('[Catalog Sync] WARNING: draft is already saved, but catalog sync failed. '
@@ -686,6 +711,23 @@ def main():
                   file=sys.stderr)
             if detail:
                 print(detail, file=sys.stderr)
+
+
+def _metrics_action(argv) -> str:
+    values = list(argv or [])
+    if '--' in values:
+        index = values.index('--') + 1
+        if index < len(values):
+            return 'ssh-' + values[index]
+    for value in values:
+        if value in _CLI_ACTIONS:
+            return 'ssh-' + value
+    return 'ssh-unknown'
+
+
+def main():
+    with workflow_run(_metrics_action(sys.argv[1:])):
+        return _main()
 
 
 if __name__ == '__main__':

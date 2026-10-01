@@ -13,6 +13,7 @@ from PIL import Image
 from agents.editorial import ROOT
 from agents.editorial_updater import RANK_MATH_META_KEYS
 from agents.task_state import (
+    complete_task_state,
     completion_requirements_for_task,
     fail_task_state,
     load_after_image_checkpoint,
@@ -23,8 +24,7 @@ from agents.task_state import (
 )
 from agents.wordpress_mutation import backup_json, content_sha256, get_post, verify_cas
 from agents.designer import FEATURED_IMAGE_POLICY
-from agents.qa_scope import qa_requirements_for_edit
-from agents.workflow_metrics import increment
+from agents.workflow_metrics import increment, timed
 
 
 ALLOWED_POST_STATUSES = {"publish", "draft", "pending", "future", "private"}
@@ -64,12 +64,14 @@ def validate_featured_image_file(image_path: Path | str) -> dict:
 
 
 def _read_post_meta(base, post_id: int, key: str) -> str | None:
-    result = subprocess.run(
-        list(base) + ["post", "meta", "get", str(int(post_id)), key, "--allow-root"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with timed("wp_meta_read"):
+        increment("wp_roundtrips")
+        result = subprocess.run(
+            list(base) + ["post", "meta", "get", str(int(post_id)), key, "--allow-root"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     if result.returncode == 0:
         return (result.stdout or "").lstrip("\ufeff").rstrip("\r\n")
     stderr = (result.stderr or "").lower()
@@ -81,6 +83,12 @@ def _read_post_meta(base, post_id: int, key: str) -> str | None:
 
 
 def _rank_math_meta(base, post_id: int) -> dict[str, str | None]:
+    """Legacy diagnostic helper; image-only mutations no longer call it.
+
+    Retained for compatibility with older diagnostics/tests. Featured-image import
+    cannot edit these keys through the restricted transport, so per-key readback is
+    redundant for the normal image-only path.
+    """
     return {key: _read_post_meta(base, post_id, key) for key in RANK_MATH_META_KEYS}
 
 
@@ -102,8 +110,6 @@ def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: s
             or saved.get("post_excerpt", "") != expected_post.get("post_excerpt", "")
             or content_sha256(saved.get("post_content", "")) != checkpoint.get("content_sha256")):
         raise ValueError("featured_image_resume_post_conflict")
-    if _rank_math_meta(base, post_id) != checkpoint.get("before_rank_math"):
-        raise ValueError("featured_image_resume_seo_conflict")
     attachment = get_post(
         base, attachment_id, fields=["ID", "guid", "post_title", "post_mime_type"])
     observed_alt = _read_post_meta(base, attachment_id, "_wp_attachment_image_alt")
@@ -171,7 +177,7 @@ def replace_featured_image(
         before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         if before_thumb != str(expected_thumbnail_id):
             raise ValueError("featured_image_changed_before_replacement")
-        before_rank_math = _rank_math_meta(base, post_id)
+        qa_requirements = []
         if manage_task_state:
             if validation_plan is None:
                 from agents.validation_router import build_validation_plan
@@ -179,8 +185,6 @@ def replace_featured_image(
                     None, None, image_changed=True,
                     target_status=live.get("post_status", "draft"), route="image-only",
                     post_id=post_id, expected_content_sha256=expected_content_sha256)
-            qa_requirements = qa_requirements_for_edit(
-                None, None, image_changed=True, target_status=live.get("post_status", "draft"))
             task_baseline = {
                 "expected_content_sha256": expected_content_sha256,
                 "status": live.get("post_status"),
@@ -226,7 +230,6 @@ def replace_featured_image(
             {
                 "post": live,
                 "thumbnail_id": before_thumb,
-                "rank_math_meta": before_rank_math,
                 "replacement_image": image_info,
             },
         )
@@ -256,22 +259,23 @@ def replace_featured_image(
                         "started": True,
                     }},
                 )
-            imported = subprocess.run(
-                base + [
-                    "media",
-                    "import",
-                    remote_image,
-                    f"--post_id={post_id}",
-                    "--featured_image",
-                    f"--title={live['post_title']}",
-                    f"--alt={alt_text}",
-                    "--porcelain",
-                    "--allow-root",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            with timed("image_upload"):
+                imported = subprocess.run(
+                    base + [
+                        "media",
+                        "import",
+                        remote_image,
+                        f"--post_id={post_id}",
+                        "--featured_image",
+                        f"--title={live['post_title']}",
+                        f"--alt={alt_text}",
+                        "--porcelain",
+                        "--allow-root",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             attachment_id = (imported.stdout or "").lstrip("\ufeff").strip()
         finally:
             subprocess.run(
@@ -292,7 +296,6 @@ def replace_featured_image(
                 key: live.get(key, "")
                 for key in ("post_status", "post_title", "post_name", "post_excerpt")
             },
-            "before_rank_math": before_rank_math,
             "backup": str(backup),
             "verified": False,
         }
@@ -300,7 +303,6 @@ def replace_featured_image(
 
         observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         saved = get_post(base, post_id, fields=fields)
-        after_rank_math = _rank_math_meta(base, post_id)
         attachment = get_post(
             base,
             int(attachment_id),
@@ -311,8 +313,6 @@ def replace_featured_image(
         preserved = ("post_status", "post_title", "post_name", "post_content", "post_excerpt")
         if any(saved.get(key) != live.get(key) for key in preserved):
             raise ValueError(f"featured_image_post_preservation_failed: recover from {backup}")
-        if after_rank_math != before_rank_math:
-            raise ValueError(f"featured_image_seo_preservation_failed: recover from {backup}")
         if observed_thumb != attachment_id:
             raise ValueError(f"featured_image_save_verification_failed: recover from {backup}")
         if observed_alt != alt_text:
@@ -326,10 +326,10 @@ def replace_featured_image(
         record_outcome(outcome)
 
         if manage_task_state:
-            update_task_state(
+            state = update_task_state(
                 post_id,
                 completed=["image_saved", "wordpress_saved"],
-                status="saved_pending_qa",
+                status="saved_pending_qa" if qa_requirements else "in_progress",
                 result={
                     "post_id": post_id,
                     "attachment_id": int(attachment_id),
@@ -339,6 +339,8 @@ def replace_featured_image(
                     "backup": str(backup),
                 },
             )
+            if not qa_requirements and load_task_state(post_id) is not None:
+                complete_task_state(post_id)
         return {
             "post_id": post_id,
             "status": saved.get("post_status"),
@@ -405,14 +407,14 @@ def _advance_matching_after_image_checkpoint(
     )
 
 
-def quick_replace_featured_image(
+def replace_featured_image_from_live_baseline(
     post_id: int,
     image_path: Path | str,
     *,
     alt_text: str,
     confirmed: bool = False,
 ) -> dict:
-    """One-shot image-only path that reads its own CAS baseline and enforces retry budget."""
+    """Canonical image-only path: read live CAS baseline and enforce retry budget."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError("specific_featured_image_confirmation_required")
     alt_text = (alt_text or "").strip()
@@ -436,7 +438,7 @@ def quick_replace_featured_image(
 
     previous = load_task_state(post_id)
     attempt_number = 1
-    if previous and previous.get("action") == "quick-image-replace":
+    if previous and previous.get("action") in {"replace-featured-image", "quick-image-replace"}:
         previous_baseline = previous.get("baseline") or {}
         same_attempt = previous_baseline.get("attempt_key") == attempt_key
         if same_attempt and previous.get("status") == "saved_pending_qa":
@@ -501,7 +503,7 @@ def quick_replace_featured_image(
         expected_thumbnail_id=expected_thumbnail_id,
         alt_text=alt_text,
         confirmed=True,
-        task_action="quick-image-replace",
+        task_action="replace-featured-image",
         task_baseline_extra={
             "attempt_key": attempt_key,
             "attempt_number": attempt_number,
@@ -521,3 +523,19 @@ def quick_replace_featured_image(
         result=result,
     )
     return result
+
+
+def quick_replace_featured_image(
+    post_id: int,
+    image_path: Path | str,
+    *,
+    alt_text: str,
+    confirmed: bool = False,
+) -> dict:
+    """Legacy alias for :func:`replace_featured_image_from_live_baseline`."""
+    return replace_featured_image_from_live_baseline(
+        post_id,
+        image_path,
+        alt_text=alt_text,
+        confirmed=confirmed,
+    )

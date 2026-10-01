@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from agents.edit_router import edit_reviewed_draft
+from agents.change_classifier import classify_change
 from agents.editorial import policy_fingerprint, render
 from agents.editorial_updater import update_existing_public_post
 from agents.fast_edit import (
@@ -22,8 +23,8 @@ from agents.public_fast_edit import (
     fast_update_public_post,
     load_tracked_public_bundle,
 )
-from agents.qa_scope import qa_requirements_for_edit
 from agents.task_state import (
+    complete_task_state,
     completion_requirements_for_task,
     fail_task_state,
     intent_sha256,
@@ -81,26 +82,39 @@ def classify_reviewed_post_route(
             resume=resume, expected_content_sha256=expected_content_sha256)
         return {**result, "target_status": "draft"}
     decision = classify_public_fast_edit(post_id, bundle)
-    reasons = list(decision["reasons"])
+    candidate = decision["candidate"] if decision["route"] == "fast" else bundle
+    classification = classify_change(
+        decision["tracked_bundle"],
+        candidate,
+        image_changed=image_path is not None,
+        target_status="publish",
+        resume=resume,
+        fast_report=decision["fast_report"],
+        force_standard=confirm_title_change,
+    )
+    reasons = list(classification["reasons"])
     if (expected_content_sha256 is not None
             and decision["tracked_content_sha256"] != expected_content_sha256):
         reasons.append("public_manifest_not_bound_to_expected_content")
     if confirm_title_change:
+        reasons = [reason for reason in reasons if reason != "forced_standard"]
         reasons.append("explicit_title_change_requires_standard_revision")
-    route = "fast" if decision["route"] == "fast" and not reasons else "standard"
+    route = "standard" if reasons else classification["route"]
     candidate = decision["candidate"] if route == "fast" else bundle
+    classification["route"] = route
+    classification["reasons"] = reasons
     validation_plan = build_validation_plan(
         decision["tracked_bundle"], candidate, image_changed=image_path is not None,
         target_status="publish", resume=resume, route=route, post_id=post_id,
-        expected_content_sha256=expected_content_sha256)
+        expected_content_sha256=expected_content_sha256,
+        classification=classification)
     return {
         **decision,
         "route": route,
         "reasons": reasons,
         "target_status": "publish",
-        "qa_requirements": qa_requirements_for_edit(
-            decision["tracked_bundle"], candidate,
-            image_changed=image_path is not None, target_status="publish"),
+        "classification": classification,
+        "qa_requirements": list(classification["qa_scopes"]),
         "validation_plan": validation_plan,
     }
 
@@ -128,6 +142,36 @@ def _replace_public_manifest_if_expected(post_id: int, expected_old_sha: str, ne
     temporary.replace(POSTS_INDEX_FILE)
 
 
+def _validated_prepared_decision(
+    prepared_decision: dict | None,
+    *,
+    post_id: int,
+    bundle: dict,
+    expected_content_sha256: str,
+    image_path: Path | str | None,
+    resume: bool,
+    target_status: str,
+) -> dict | None:
+    if prepared_decision is None:
+        return None
+    if not isinstance(prepared_decision, dict):
+        raise ValueError("invalid_prepared_edit_decision")
+    plan = prepared_decision.get("validation_plan") or {}
+    binding = plan.get("binding") or {}
+    desired_sha = content_sha256(render(bundle["plan"], bundle["sources"]))
+    scope = plan.get("scope") or prepared_decision.get("classification") or {}
+    if (
+        binding.get("post_id") != post_id
+        or binding.get("target_status") != target_status
+        or binding.get("before_content_sha256") != expected_content_sha256
+        or binding.get("after_content_sha256") != desired_sha
+        or bool(scope.get("image_changed")) != bool(image_path)
+        or bool(scope.get("resume")) != bool(resume)
+    ):
+        raise ValueError("prepared_edit_decision_binding_mismatch")
+    return prepared_decision
+
+
 def _edit_reviewed_public_post(
     post_id: int,
     bundle: dict,
@@ -140,6 +184,7 @@ def _edit_reviewed_public_post(
     expected_thumbnail_id: int | None = None,
     alt_text: str | None = None,
     resume: bool = False,
+    prepared_decision: dict | None = None,
 ) -> dict:
     if not confirmed:
         raise ValueError("specific_public_post_update_confirmation_required")
@@ -155,7 +200,15 @@ def _edit_reviewed_public_post(
         if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
             raise ValueError("combined_edit_alt_text_required")
 
-    decision = classify_reviewed_post_route(
+    decision = _validated_prepared_decision(
+        prepared_decision,
+        post_id=post_id,
+        bundle=bundle,
+        expected_content_sha256=expected_content_sha256,
+        image_path=image_path,
+        resume=resume,
+        target_status="publish",
+    ) or classify_reviewed_post_route(
         post_id, bundle, expected_content_sha256=expected_content_sha256,
         confirm_title_change=confirm_title_change, image_path=image_path, resume=resume)
     increment("edit_target_public")
@@ -173,6 +226,38 @@ def _edit_reviewed_public_post(
     alt_sha = hashlib.sha256(alt_text.encode("utf-8")).hexdigest() if image_path else None
     content_already_saved = False
     state = None
+
+    simple_one_shot = (
+        decision["route"] == "fast"
+        and image_path is None
+        and not decision["qa_requirements"]
+        and not resume
+    )
+    if simple_one_shot:
+        increment("simple_one_shot")
+        prepared = prepare_fast_delta_review(
+            old_bundle,
+            candidate,
+            decision["fast_report"],
+            edit_intent,
+        )
+        updated = fast_update_public_post(
+            post_id,
+            candidate,
+            expected_content_sha256,
+            confirmed=True,
+            edit_intent=edit_intent,
+            prepared_delta_review=prepared,
+        )
+        return {
+            "post_id": updated,
+            "target_status": "publish",
+            "route": "public-fast",
+            "reasons": decision["reasons"],
+            "qa_requirements": [],
+            "validation_plan": decision.get("validation_plan", {}),
+            "simple_one_shot": True,
+        }
 
     if resume:
         state = load_task_state(post_id)
@@ -304,6 +389,9 @@ def _edit_reviewed_public_post(
         update_task_state(
             post_id, completed=["wordpress_saved"], status="saved_pending_qa",
             result={"post_id": updated, "desired_content_sha256": desired_sha})
+        if not decision["qa_requirements"] and load_task_state(post_id) is not None:
+            update_task_state(post_id, status="in_progress")
+            complete_task_state(post_id)
         return {
             "post_id": updated,
             "target_status": "publish",
@@ -330,6 +418,7 @@ def edit_reviewed_post(
     expected_thumbnail_id: int | None = None,
     alt_text: str | None = None,
     resume: bool = False,
+    prepared_decision: dict | None = None,
 ) -> dict:
     """One user-facing edit entry point with narrow status-specific internals."""
     if bundle is None:
@@ -350,14 +439,23 @@ def edit_reviewed_post(
         raise ValueError("edit_intent_required")
     kind = reviewed_target_kind(post_id)
     if kind == "draft":
+        prepared = _validated_prepared_decision(
+            prepared_decision,
+            post_id=post_id,
+            bundle=bundle,
+            expected_content_sha256=expected_content_sha256,
+            image_path=image_path,
+            resume=resume,
+            target_status="draft",
+        )
         result = edit_reviewed_draft(
             post_id, bundle, expected_content_sha256, confirmed=confirmed,
             edit_intent=edit_intent, confirm_title_change=confirm_title_change,
             image_path=image_path, expected_thumbnail_id=expected_thumbnail_id,
-            alt_text=alt_text, resume=resume)
+            alt_text=alt_text, resume=resume, prepared_decision=prepared)
         return {**result, "target_status": "draft"}
     return _edit_reviewed_public_post(
         post_id, bundle, expected_content_sha256, confirmed=confirmed,
         edit_intent=edit_intent, confirm_title_change=confirm_title_change,
         image_path=image_path, expected_thumbnail_id=expected_thumbnail_id,
-        alt_text=alt_text, resume=resume)
+        alt_text=alt_text, resume=resume, prepared_decision=prepared_decision)

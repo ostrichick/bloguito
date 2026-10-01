@@ -627,6 +627,26 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual('replace-featured-image', make.call_args.args[0])
         self.assertEqual({724}, make.call_args.args[1])
 
+    def test_primary_replace_featured_image_uses_restricted_image_transport(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / 'cover.jpg'
+            image.write_bytes(b'image')
+            argv = [
+                'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
+                'replace-featured-image', '--post-id', '724', '--image-path', str(image),
+                '--alt-text', '국민연금 수령 시기 안내', '--confirm-update',
+            ]
+            with patch('sys.argv', argv), \
+                    patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                        mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                    patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
+                    patch.object(module.editorial_cli, 'main') as cli_main:
+                module.main()
+        cli_main.assert_called_once()
+        self.assertEqual('replace-featured-image', make.call_args.args[0])
+        self.assertEqual({724}, make.call_args.args[1])
+
     def test_prepare_draft_wrapper_syncs_catalog_after_successful_editorial_command(self):
         module = load_module()
         calls = []

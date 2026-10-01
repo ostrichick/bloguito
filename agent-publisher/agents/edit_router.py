@@ -19,7 +19,9 @@ from agents.fast_edit import (
     validate_fast_edit,
     validate_prepared_delta_review,
 )
+from agents.change_classifier import classify_change
 from agents.task_state import (
+    complete_task_state,
     completion_requirements_for_task,
     fail_task_state,
     intent_sha256,
@@ -27,7 +29,6 @@ from agents.task_state import (
     start_task_state,
     update_task_state,
 )
-from agents.qa_scope import qa_requirements_for_edit
 from agents.validation_reuse import assess_validation_reuse
 from agents.validation_router import build_validation_plan
 from agents.workflow_metrics import increment
@@ -100,21 +101,34 @@ def classify_edit_route(
     old_bundle = _load_tracked_bundle(post_id)
     reuse = assess_validation_reuse(old_bundle, bundle)
     fast_report = validate_fast_edit(old_bundle, bundle)
-    reasons = list(fast_report.get("reasons", []))
+    classification = classify_change(
+        old_bundle,
+        bundle,
+        image_changed=image_path is not None,
+        target_status="draft",
+        resume=resume,
+        fast_report=fast_report,
+        force_standard=confirm_title_change,
+    )
+    reasons = list(classification["reasons"])
     if confirm_title_change:
-        reasons.append("explicit_title_change_requires_standard_revision")
-    route = "fast" if fast_report.get("status") == "candidate" and not reasons else "standard"
+        reasons = [
+            reason for reason in reasons if reason != "forced_standard"
+        ] + ["explicit_title_change_requires_standard_revision"]
+    route = classification["route"]
+    classification["reasons"] = reasons
     validation_plan = build_validation_plan(
         old_bundle, bundle, image_changed=image_path is not None,
         target_status="draft", resume=resume, route=route, post_id=post_id,
-        expected_content_sha256=expected_content_sha256)
+        expected_content_sha256=expected_content_sha256,
+        classification=classification)
     return {
         "route": route,
         "reasons": reasons,
         "fast_report": fast_report,
+        "classification": classification,
         "reuse": reuse,
-        "qa_requirements": qa_requirements_for_edit(
-            old_bundle, bundle, image_changed=image_path is not None, target_status="draft"),
+        "qa_requirements": list(classification["qa_scopes"]),
         "validation_plan": validation_plan,
     }
 
@@ -131,6 +145,7 @@ def edit_reviewed_draft(
     expected_thumbnail_id: int | None = None,
     alt_text: str | None = None,
     resume: bool = False,
+    prepared_decision: dict | None = None,
 ) -> dict:
     """Choose Fast first and fall back to the existing full reviser when needed.
 
@@ -154,7 +169,7 @@ def edit_reviewed_draft(
         alt_text = (alt_text or "").strip()
         if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
             raise ValueError("combined_edit_alt_text_required")
-    decision = classify_edit_route(
+    decision = prepared_decision or classify_edit_route(
         post_id,
         bundle,
         confirm_title_change=confirm_title_change,
@@ -168,6 +183,42 @@ def edit_reviewed_draft(
     image_sha = hashlib.sha256(image_path.read_bytes()).hexdigest() if image_path else None
     alt_text_sha = hashlib.sha256(alt_text.encode("utf-8")).hexdigest() if image_path else None
     content_already_saved = False
+    simple_one_shot = (
+        decision["route"] == "fast"
+        and image_path is None
+        and not qa_requirements
+        and not resume
+    )
+    if simple_one_shot:
+        increment("edit_route_fast")
+        increment("simple_one_shot")
+        if decision["reuse"].get("reuse_sources"):
+            increment("validation_reuse_sources")
+        old_bundle = _load_tracked_bundle(post_id)
+        prepared_delta_review = prepare_fast_delta_review(
+            old_bundle,
+            bundle,
+            decision["fast_report"],
+            edit_intent,
+        )
+        updated = fast_revise_reviewed_draft(
+            post_id,
+            bundle,
+            expected_content_sha256,
+            confirmed=True,
+            edit_intent=edit_intent,
+            prepared_delta_review=prepared_delta_review,
+        )
+        return {
+            "post_id": updated,
+            "route": "fast",
+            "reasons": decision["reasons"],
+            "validation_reuse": decision["reuse"],
+            "qa_requirements": [],
+            "validation_plan": decision.get("validation_plan", {}),
+            "simple_one_shot": True,
+            "wordpress_saved": True,
+        }
     if resume:
         state = load_task_state(post_id)
         if not state or state.get("action") != "edit-draft":
@@ -375,13 +426,15 @@ def edit_reviewed_draft(
         update_task_state(
             post_id,
             completed=["wordpress_saved"],
-            status="saved_pending_qa",
+            status="saved_pending_qa" if qa_requirements else "in_progress",
             result={
                 "post_id": updated,
                 "route": decision["route"],
                 "desired_content_sha256": desired_sha,
             },
         )
+        if not qa_requirements and load_task_state(post_id) is not None:
+            complete_task_state(post_id)
         return {
             "post_id": updated,
             "route": decision["route"],

@@ -1,22 +1,56 @@
 """Shared manual/automation entry point. Review writes reports; publish creates drafts only."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from contextvars import copy_context
+from contextlib import contextmanager
+from contextvars import ContextVar, copy_context
 import json
 import sys
 from pathlib import Path
 from agents.editorial import validate_bundle, render
 from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, load_inventory, fetch_sources
 from agents.runtime_stdio import configure_utf8_stdio
-from agents.workflow_metrics import timed, workflow_run
+from agents.workflow_metrics import increment, timed, workflow_run
 
 
 configure_utf8_stdio()
 
 
+_prepared_edit_decision = ContextVar('prepared_edit_decision', default=None)
+
+
+@contextmanager
+def prepared_edit_decision(decision):
+    """Bind one preclassified edit decision across the SSH adapter boundary."""
+    token = _prepared_edit_decision.set(decision)
+    try:
+        yield
+    finally:
+        _prepared_edit_decision.reset(token)
+
+
+PRIMARY_CONTENT_ACTIONS = {
+    'prepare-draft',
+    'edit-post',
+    'replace-featured-image',
+}
+PUBLICATION_ACTIONS = {'promote-draft'}
+COMPATIBILITY_ACTIONS = {
+    'publish', 'update-existing', 'update-draft', 'edit-draft', 'revise-draft',
+    'fast-revise-draft', 'quick-image-replace', 'replace-legacy-draft',
+}
+MAINTENANCE_ACTIONS = {
+    'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
+    'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
+    'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
+}
+ALL_ACTIONS = sorted(
+    PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | COMPATIBILITY_ACTIONS | MAINTENANCE_ACTIONS
+)
+
+
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'quick-image-replace', 'import-section-image', 'complete-task-qa', 'checkpoint-after-image', 'update-after-image-checkpoint', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
+    parser.add_argument('action', choices=ALL_ACTIONS)
     parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
@@ -55,6 +89,14 @@ def _main():
     parser.add_argument('--image-path', type=Path,
                         help='publish/prepare-draft: already reviewed local representative image; prepare-draft generates one when omitted')
     args = parser.parse_args()
+
+    if args.action in COMPATIBILITY_ACTIONS:
+        increment('compatibility_action_used')
+        print(
+            f"[Compatibility] `{args.action}` is retained for legacy/diagnostic use; "
+            "normal content work should use prepare-draft, edit-post or replace-featured-image.",
+            file=sys.stderr,
+        )
 
     if args.action == 'list-drafts':
         from agents.publisher import PublisherAgent
@@ -151,42 +193,20 @@ def _main():
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
         return
 
-    if args.action == 'quick-image-replace':
+    if args.action in {'replace-featured-image', 'quick-image-replace'}:
+        label = args.action
         if args.inventory or args.file:
-            parser.error('quick-image-replace uses --post-id/--image-path and no bundle file')
+            parser.error(f'{label} uses --post-id/--image-path and no bundle file')
         if not args.post_id or not args.image_path or not args.alt_text or not args.confirm_update:
-            parser.error('quick-image-replace requires --post-id, --image-path, --alt-text and --confirm-update')
+            parser.error(f'{label} requires --post-id, --image-path, --alt-text and --confirm-update')
         if args.expected_content_sha256 or args.expected_thumbnail_id:
-            parser.error('quick-image-replace reads its own content SHA and thumbnail baseline')
-        from agents.featured_image import quick_replace_featured_image
-        result = quick_replace_featured_image(
+            parser.error(f'{label} reads its own current content SHA and thumbnail baseline')
+        from agents.featured_image import replace_featured_image_from_live_baseline
+        result = replace_featured_image_from_live_baseline(
             args.post_id,
             args.image_path,
             alt_text=args.alt_text,
             confirmed=True,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if args.output:
-            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-        return
-
-    if args.action == 'replace-featured-image':
-        if args.inventory or args.file:
-            parser.error('replace-featured-image uses --post-id/--image-path and no bundle file')
-        if not args.image_path:
-            parser.error('replace-featured-image requires --image-path')
-        if not args.alt_text:
-            parser.error('replace-featured-image requires --alt-text')
-        if not args.expected_thumbnail_id:
-            parser.error('replace-featured-image requires --expected-thumbnail-id')
-        from agents.featured_image import replace_featured_image
-        result = replace_featured_image(
-            args.post_id,
-            args.image_path,
-            args.expected_content_sha256,
-            expected_thumbnail_id=args.expected_thumbnail_id,
-            alt_text=args.alt_text,
-            confirmed=args.confirm_update,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
@@ -238,6 +258,7 @@ def _main():
             expected_thumbnail_id=args.expected_thumbnail_id,
             alt_text=args.alt_text,
             resume=args.resume,
+            prepared_decision=_prepared_edit_decision.get(),
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
