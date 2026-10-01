@@ -22,7 +22,6 @@
 | `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher 자동 임시글 생성 |
 | `agent-publisher/editorial_cli.py` | 공식 출처 수집, 검토·검사, 임시글 생성/갱신, 사람 확인 후 공개 전환 |
 | `agent-publisher/agents/` | 주제 후보·원문·검증·썸네일·WP 처리. `copywriter.py`는 레거시이며 활성 파이프라인은 `editorial_writer.py` 사용 |
-| `agent-publisher/whatsapp-bridge/` | WhatsApp 명령 처리. Git에 있는 코드와 운영 서비스의 버전·환경값은 구분 |
 | `wordpress/` | WordPress·MariaDB Compose와 자체 MU 플러그인. 기존 사이트에서 `setup.sh` 재실행 금지 |
 | `scripts/` | 백업 동기화, 감사 및 제한된 운영 작업 도구 |
 | `docs/` | 정본 편집·운영 규약, 제안, 날짜별 검증·배포·콘텐츠 근거 |
@@ -31,7 +30,7 @@ WordPress 사이트: [lifeinfo24.org](https://lifeinfo24.org). 관리자에서 *
 
 ## 로컬 준비
 
-Python 3.12, Git Bash, 프로젝트 작업에 필요한 Docker/Node를 준비한다. 비밀정보는 `.env.example`을 참고해 **추적되지 않는 환경별 파일**에만 넣는다. `agent-publisher/data/`의 운영 상태와 로그인·DB·SSH 자격증명은 Git에 올리지 않는다.
+Python 3.12, Git Bash, 프로젝트 작업에 필요한 Docker를 준비한다. 비밀정보는 `.env.example`을 참고해 **추적되지 않는 환경별 파일**에만 넣는다. `agent-publisher/data/`의 운영 상태와 로그인·DB·SSH 자격증명은 Git에 올리지 않는다.
 
 ```powershell
 # 프로젝트 루트 / Windows PowerShell
@@ -46,7 +45,7 @@ $env:PYTHONIOENCODING='utf-8'
 
 ## 운영과 검증의 경계
 
-- 글 공개, 기존 글 수정, DB 복구, WordPress/WhatsApp 서비스 재시작·배포는 테스트나 문서 정리와 별개의 작업이다. 기본은 draft, 출처/원고/검토가 불일치하면 보류한다.
+- 글 공개, 기존 글 수정, DB 복구, WordPress 서비스 재시작·배포는 테스트나 문서 정리와 별개의 작업이다. 기본은 draft, 출처/원고/검토가 불일치하면 보류한다.
 - `backup_daily.sh`의 v3 코드에는 플러그인·테마까지 포함한 구성요소 검사가 있으나, **독립 환경에서 전체 사이트의 실제 복원과 비밀정보 암호화는 마지막 기록에서 미검증**이다. [백업 기록](docs/backup-recovery-2026-09-20.md)과 실제 서버 상태를 재확인한다.
 - 2026-09-20과 21일의 콘텐츠 목록·테스트 개수·배포 증거는 [문서 목차](docs/INDEX.md)의 해당 날짜별 문서를 참고한다. 예를 들어 9월 20일의 '임시글 11편'은 9월 21일 상태를 뜻하지 않는다.
 - 설정이나 코드 변경 시 기존 미커밋 작업을 보존하고 적절한 테스트를 거친 뒤 의도한 파일만 커밋·푸시한다. 운영 적용 여부는 결과에서 별도로 밝힌다.

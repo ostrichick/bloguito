@@ -8,29 +8,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agents.validation_router import build_validation_plan
-from agents.validation_runner import ROOT, _load_suite, load_test_manifest, selected_test_files
+from agents.validation_runner import ROOT, _load_suite, selected_test_files
 from tests.test_editorial_system import sample
 
 
 class ValidationRunnerTests(unittest.TestCase):
-    def test_manifest_covers_every_active_test_file(self):
-        manifest = load_test_manifest()
-        self.assertIn('core-safe-edit', manifest['groups'])
-        self.assertIn('full_only', manifest)
-
-    def test_quick_profiles_select_small_subsets(self):
+    def test_content_profiles_select_no_repository_tests(self):
         old = sample()
         new = copy.deepcopy(old)
         new['plan']['sections'][0]['heading'] = '더 간단한 소제목'
         quick = build_validation_plan(old, new)
         quick_files = selected_test_files(quick)
-        self.assertLess(len(quick_files), 10)
-        self.assertNotIn('test_backup_recovery_v3.py', quick_files)
-        self.assertNotIn('test_ticket_validation.py', quick_files)
+        self.assertEqual([], quick_files)
 
         image_files = selected_test_files(build_validation_plan(None, None, image_changed=True))
-        self.assertLess(len(image_files), len(quick_files))
-        self.assertIn('test_featured_image.py', image_files)
+        self.assertEqual([], image_files)
 
     def test_full_regression_selects_every_test(self):
         plan = build_validation_plan(changed_files=['agent-publisher/agents/editorial.py'])
@@ -48,14 +40,13 @@ class ValidationRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'validation_plan_digest_mismatch'):
             selected_test_files(plan)
 
-    def test_exact_post_selector_adds_only_matching_legacy_regression(self):
+    def test_post_id_does_not_reenable_tests_for_content_plan(self):
         old = sample()
         new = copy.deepcopy(old)
         new['plan']['sections'][0]['heading'] = '더 간단한 소제목'
         plan = build_validation_plan(old, new, route='fast', post_id=144)
         files = selected_test_files(plan)
-        self.assertIn('test_post144_property_tax_refresh.py', files)
-        self.assertNotIn('test_post145_chuseok_toll_refresh.py', files)
+        self.assertEqual([], files)
 
     def test_standalone_runner_plans_by_default_and_runs_only_with_flag(self):
         root = Path(__file__).resolve().parents[2]
@@ -77,7 +68,7 @@ class ValidationRunnerTests(unittest.TestCase):
             receipt = {
                 'status': 'passed', 'profile': 'quick-text', 'tests_run': 1,
                 'failures': 0, 'errors': 0, 'skipped': 0, 'selected_files': [],
-                'duration_ms': 1.0, 'test_groups': [], 'plan_digest': 'x',
+                'duration_ms': 1.0, 'plan_digest': 'x',
             }
             with patch.object(module, 'run_validation_plan', return_value=receipt) as run, \
                  patch('builtins.print'):

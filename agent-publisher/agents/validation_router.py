@@ -15,8 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from agents.editorial import render
-from agents.fast_edit import FULL_REVIEW_REQUIRED, classify_fast_edit
-from agents.qa_scope import qa_requirements_for_edit
+from agents.change_classifier import classify_change
 
 
 VALIDATION_PROFILES = {
@@ -34,24 +33,11 @@ VALIDATION_PROFILES = {
 
 _ROUTES = {"fast", "standard", "image-only", "repository", "auto", None}
 
-_KNOWN_BUNDLE_KEYS = {
-    "brief",
-    "sources",
-    "plan",
-    "temporal_source",
-    "review",
-    "fast_edit_review",
-    "fast_edit_chain",
-    "authoring",
-    "used_model",
-}
-
 _FULL_REGRESSION_EXACT = {
     "agent-publisher/editorial_cli.py",
     "agent-publisher/editorial_policy.json",
     "scripts/editorial_cli_via_ssh.py",
     "scripts/run_validation.py",
-    "agent-publisher/tests/test_groups.json",
     ".github/workflows/test.yml",
 }
 
@@ -101,36 +87,6 @@ def repository_change_profile(changed_files) -> dict:
     return {"profile": "docs-only", "reasons": ["documentation_only"]}
 
 
-def _event_domain(bundle: dict | None) -> bool:
-    if not isinstance(bundle, dict):
-        return False
-    temporal = bundle.get("temporal_source") or {}
-    if temporal.get("multi_event_schedule") or temporal.get("event_entries"):
-        return True
-    brief = bundle.get("brief") or {}
-    text = " ".join(str(brief.get(key) or "") for key in ("entity", "primary_keyword", "question"))
-    return any(token in text for token in ("행사", "축제", "페어"))
-
-
-def _ticket_domain(bundle: dict | None) -> bool:
-    if not isinstance(bundle, dict):
-        return False
-    return (bundle.get("brief") or {}).get("category_key") == "concert"
-
-
-def _source_evidence_signature(bundle: dict) -> list[dict]:
-    """Source snapshot identity without executable action metadata."""
-    result = []
-    for source in bundle.get("sources", []) or []:
-        if not isinstance(source, dict):
-            result.append(source)
-            continue
-        item = deepcopy(source)
-        item.pop("actions", None)
-        result.append(item)
-    return result
-
-
 def analyze_edit_scope(
     old_bundle: dict | None,
     new_bundle: dict | None,
@@ -139,93 +95,14 @@ def analyze_edit_scope(
     target_status: str = "draft",
     resume: bool = False,
 ) -> dict:
-    """Return deterministic change flags used by validation planning."""
-    if old_bundle is None or new_bundle is None:
-        return {
-            "content_changed": False,
-            "image_changed": bool(image_changed),
-            "title_changed": False,
-            "brief_changed": False,
-            "category_changed": False,
-            "seo_changed": False,
-            "sources_changed": False,
-            "actions_changed": False,
-            "temporal_changed": False,
-            "layout_changed": False,
-            "related_changed": False,
-            "review_metadata_changed": False,
-            "unknown_bundle_change": False,
-            "factual_risk": False,
-            "event_domain": False,
-            "ticket_domain": False,
-            "target_status": target_status,
-            "resume": bool(resume),
-            "fast_candidate": False,
-            "fast_reasons": [],
-            "qa_scopes": qa_requirements_for_edit(
-                old_bundle, new_bundle, image_changed=image_changed, target_status=target_status),
-        }
-
-    old_plan = old_bundle.get("plan") or {}
-    new_plan = new_bundle.get("plan") or {}
-    old_brief = old_bundle.get("brief") or {}
-    new_brief = new_bundle.get("brief") or {}
-    qa_scopes = qa_requirements_for_edit(
-        old_bundle, new_bundle, image_changed=image_changed, target_status=target_status)
-    fast = classify_fast_edit(old_bundle, new_bundle)
-    fast_reasons = list(fast.get("reasons", []))
-
-    changed_unknown = sorted(
-        key for key in (set(old_bundle) | set(new_bundle)) - _KNOWN_BUNDLE_KEYS
-        if old_bundle.get(key) != new_bundle.get(key)
+    """Compatibility name for the single canonical change classifier."""
+    return classify_change(
+        old_bundle,
+        new_bundle,
+        image_changed=image_changed,
+        target_status=target_status,
+        resume=resume,
     )
-    review_metadata_changed = any(
-        old_bundle.get(key) != new_bundle.get(key)
-        for key in ("review", "fast_edit_review", "fast_edit_chain")
-    )
-    source_changed = _source_evidence_signature(old_bundle) != _source_evidence_signature(new_bundle)
-    temporal_changed = old_bundle.get("temporal_source", {}) != new_bundle.get("temporal_source", {})
-    brief_changed = old_brief != new_brief
-    title_changed = old_plan.get("title") != new_plan.get("title")
-    category_changed = old_brief.get("category_key") != new_brief.get("category_key")
-    related_changed = old_plan.get("related_posts", []) != new_plan.get("related_posts", [])
-    seo_changed = (
-        old_brief.get("seo") != new_brief.get("seo")
-        or old_brief.get("primary_keyword") != new_brief.get("primary_keyword")
-    )
-    risky_fast_reasons = tuple(
-        reason for reason in fast_reasons
-        if reason.startswith("new_fact_tokens:")
-        or reason in {
-            "brief_changed",
-            "new_high_risk_claim",
-            "title_changed",
-        }
-    )
-    return {
-        "content_changed": "content-mobile-desktop" in qa_scopes,
-        "image_changed": bool(image_changed),
-        "title_changed": title_changed,
-        "brief_changed": brief_changed,
-        "category_changed": category_changed,
-        "seo_changed": seo_changed,
-        "sources_changed": source_changed,
-        "actions_changed": "cta-destination" in qa_scopes,
-        "temporal_changed": temporal_changed,
-        "layout_changed": "layout-accessibility" in qa_scopes,
-        "related_changed": related_changed,
-        "review_metadata_changed": review_metadata_changed,
-        "unknown_bundle_change": bool(changed_unknown),
-        "unknown_bundle_keys": changed_unknown,
-        "factual_risk": bool(risky_fast_reasons),
-        "event_domain": _event_domain(new_bundle) or _event_domain(old_bundle),
-        "ticket_domain": _ticket_domain(new_bundle) or _ticket_domain(old_bundle),
-        "target_status": target_status,
-        "resume": bool(resume),
-        "fast_candidate": fast.get("status") != FULL_REVIEW_REQUIRED,
-        "fast_reasons": fast_reasons,
-        "qa_scopes": qa_scopes,
-    }
 
 
 def _profile_for_scope(scope: dict, route: str | None) -> tuple[str, list[str]]:
@@ -281,51 +158,6 @@ def _profile_for_scope(scope: dict, route: str | None) -> tuple[str, list[str]]:
     return "full-regression", ["unclassified_edit_scope_requires_full_regression"]
 
 
-def _test_groups_for_scope(profile: str, scope: dict, route: str | None) -> list[str]:
-    if profile == "full-regression":
-        return ["full-regression"]
-    if profile in {"no-op", "docs-only"}:
-        return []
-
-    groups = {"core-safe-edit"}
-    if route == "fast":
-        groups.add("fast-edit")
-    if scope.get("target_status") == "publish" and scope.get("content_changed"):
-        groups.add("public-edit")
-    if scope.get("resume"):
-        groups.add("resume")
-    if profile == "quick-image" or scope.get("image_changed"):
-        groups.add("image")
-    if (scope.get("factual_risk") or scope.get("brief_changed") or scope.get("title_changed")
-            or scope.get("seo_changed")):
-        groups.add("fact")
-    if scope.get("sources_changed"):
-        groups.add("source")
-    if scope.get("temporal_changed"):
-        groups.add("temporal")
-    if scope.get("actions_changed") or scope.get("related_changed"):
-        groups.add("cta")
-    if scope.get("layout_changed"):
-        groups.add("layout")
-    domain_sensitive_change = any(scope.get(key) for key in (
-        "factual_risk", "sources_changed", "temporal_changed", "actions_changed",
-        "brief_changed", "title_changed", "category_changed",
-    ))
-    if (scope.get("event_domain")
-            and (domain_sensitive_change or profile == "standard-event")
-            and profile != "quick-image"):
-        groups.add("event")
-    if scope.get("ticket_domain") and domain_sensitive_change and profile != "quick-image":
-        groups.add("ticket")
-    if (scope.get("title_changed") or scope.get("seo_changed") or scope.get("related_changed")
-            or scope.get("category_changed")):
-        groups.add("catalog")
-    if route == "standard":
-        groups.add("editorial-contract")
-        groups.add("public-standard" if scope.get("target_status") == "publish" else "draft-standard")
-    return sorted(groups)
-
-
 def _content_sha(bundle: dict | None) -> str | None:
     if not isinstance(bundle, dict):
         return None
@@ -347,6 +179,7 @@ def build_validation_plan(
     route: str | None = "auto",
     post_id: int | None = None,
     expected_content_sha256: str | None = None,
+    classification: dict | None = None,
 ) -> dict:
     """Build a fail-closed validation plan without running any mutation."""
     if route not in _ROUTES:
@@ -358,7 +191,7 @@ def build_validation_plan(
     if expected_content_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256):
         raise ValueError("invalid_validation_expected_content_sha256")
     repository = repository_change_profile(changed_files)
-    scope = analyze_edit_scope(
+    scope = deepcopy(classification) if classification is not None else analyze_edit_scope(
         old_bundle, new_bundle, image_changed=image_changed, target_status=target_status,
         resume=resume)
     resolved_route = route
@@ -368,17 +201,11 @@ def build_validation_plan(
         reasons = list(repository["reasons"])
     else:
         if resolved_route in {None, "auto"}:
-            if image_changed and not scope.get("content_changed"):
-                resolved_route = "image-only"
-            elif scope.get("content_changed"):
-                resolved_route = "fast" if scope.get("fast_candidate") else "standard"
-            else:
-                resolved_route = "auto"
+            resolved_route = scope.get("route") or "auto"
         profile, reasons = _profile_for_scope(scope, resolved_route)
 
     if profile not in VALIDATION_PROFILES:
         raise ValueError("unknown_validation_profile:" + str(profile))
-    groups = _test_groups_for_scope(profile, scope, resolved_route)
     source_mode = "reuse"
     if profile in {"no-op", "docs-only", "quick-image"}:
         source_mode = "not-applicable"
@@ -403,7 +230,7 @@ def build_validation_plan(
         "profile": profile,
         "reasons": reasons,
         "scope": deepcopy(scope),
-        "test_groups": groups,
+        "risk_level": scope.get("risk_level", "fact"),
         "source_validation": source_mode,
         "semantic_review": semantic_review,
         "qa_scopes": list(scope.get("qa_scopes", [])),
@@ -428,8 +255,6 @@ def validate_validation_plan(plan: dict) -> dict:
         raise ValueError("invalid_validation_plan")
     if plan.get("profile") not in VALIDATION_PROFILES:
         raise ValueError("invalid_validation_plan_profile")
-    if not isinstance(plan.get("test_groups"), list):
-        raise ValueError("invalid_validation_plan_groups")
     binding = plan.get("binding")
     if not isinstance(binding, dict) or binding.get("target_status") not in {"draft", "publish"}:
         raise ValueError("invalid_validation_plan_binding")

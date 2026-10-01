@@ -67,27 +67,6 @@ jobs:
           php -l wordpress/tests/front-end-polish-test.php
           php wordpress/tests/front-end-polish-test.php
 
-  bridge-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: "agent-publisher/whatsapp-bridge/package-lock.json"
-      - name: Install locked bridge dependencies
-        working-directory: agent-publisher/whatsapp-bridge
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Check bridge syntax and authorization tests
-        working-directory: agent-publisher/whatsapp-bridge
-        run: |
-          node --check index.js
-          node --check command_policy.js
-          npm test
-
   infrastructure-test:
     runs-on: ubuntu-latest
     steps:

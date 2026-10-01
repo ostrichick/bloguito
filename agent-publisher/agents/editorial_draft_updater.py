@@ -8,6 +8,13 @@ from datetime import datetime
 
 from agents.editorial import ROOT, render, save_report, validate_bundle
 from agents.editorial_writer import fetch_sources, load_inventory
+from agents.post_manifest_store import (
+    acquire_editorial_lock,
+    assert_unchanged,
+    load_record,
+    release_editorial_lock,
+    replace_record,
+)
 from config import DRAFTS_INDEX_FILE
 from sync_wordpress_inventory import hydrate_duplicate_candidates, hydrate_post, inventory_content_sha, invalidate_inventory, sync_inventory
 
@@ -30,12 +37,7 @@ def update_draft(post_id, bundle, expected_content_sha256):
     if (not isinstance(post_id, int) or post_id <= 0
             or not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or '')):
         raise ValueError('draft_id_and_original_content_sha256_required')
-    lock = ROOT / 'data' / '.editorial-publish.lock'
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError('editorial_publication_busy: inspect the existing job')
+    lock = acquire_editorial_lock(ROOT)
     try:
         sync_inventory()
         inventory = load_inventory()
@@ -47,9 +49,8 @@ def update_draft(post_id, bundle, expected_content_sha256):
         inventory = hydrate_post(inventory, post_id)
         current = next((p for p in inventory['posts'] if int(p['ID']) == post_id), None)
 
-        original_index = DRAFTS_INDEX_FILE.read_text(encoding='utf-8')
-        records = json.loads(original_index)
-        item = next((p for p in records if int(p.get('id', -1)) == post_id), None)
+        state_snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+        item = state_snapshot.record if state_snapshot is not None else None
         if not item or 'editorial_bundle' not in item.get('fact_manifest', {}):
             raise ValueError('reviewed_draft_manifest_required')
         old_bundle = item['fact_manifest']['editorial_bundle']
@@ -85,6 +86,7 @@ def update_draft(post_id, bundle, expected_content_sha256):
         if (live['post_status'] != 'draft' or live['post_title'] != current['post_title']
                 or _hash(live['post_content']) != expected_content_sha256):
             raise ValueError('draft_changed_during_review')
+        assert_unchanged(state_snapshot)
         backups = ROOT / 'data' / 'editorial_runs'
         backups.mkdir(parents=True, exist_ok=True)
         backup = backups / f'draft-action-{post_id}-{datetime.now().strftime("%Y%m%dT%H%M%S%f")}.json'
@@ -100,13 +102,14 @@ def update_draft(post_id, bundle, expected_content_sha256):
                 or saved['post_name'] != live['post_name'] or saved['post_content'] != desired):
             raise ValueError('draft_save_verification_failed')
 
-        item['fact_manifest']['editorial_bundle'] = bundle
-        if DRAFTS_INDEX_FILE.read_text(encoding='utf-8') != original_index:
-            raise ValueError('draft_index_changed_during_update')
-        temporary = DRAFTS_INDEX_FILE.with_suffix('.action-tmp')
-        temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
-        temporary.replace(DRAFTS_INDEX_FILE)
+        try:
+            assert_unchanged(state_snapshot)
+        except ValueError as exc:
+            raise ValueError('draft_index_changed_during_update') from exc
+        updated = dict(item)
+        updated.setdefault('fact_manifest', dict(item.get('fact_manifest', {})))['editorial_bundle'] = bundle
+        replace_record(state_snapshot, updated)
         invalidate_inventory()
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)

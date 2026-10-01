@@ -29,6 +29,14 @@ from agents.editorial import (
 )
 from agents.editorial_draft_reviser import _normalize_renderer_migrations
 from agents.editorial_writer import EditorialWriterAgent
+from agents.post_manifest_store import (
+    acquire_editorial_lock,
+    assert_unchanged,
+    load_record,
+    release_editorial_lock,
+    replace_record,
+    snapshot_backup_payload,
+)
 from agents.temporal_validation import KST
 from agents.workflow_metrics import increment
 from config import DRAFTS_INDEX_FILE
@@ -480,22 +488,15 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
             or re.search(r'[<>\x00]', edit_intent)):
         raise ValueError("fast_edit_intent_required")
     edit_intent = edit_intent.strip()
-    lock = ROOT / "data" / ".editorial-publish.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError("editorial_publication_busy: inspect the existing job")
+    lock = acquire_editorial_lock(ROOT)
 
     try:
         if not DRAFTS_INDEX_FILE.is_file():
             raise ValueError("reviewed_draft_index_missing")
-        index_before = DRAFTS_INDEX_FILE.read_text(encoding="utf-8")
-        records = json.loads(index_before)
-        matches = [item for item in records if int(item.get("id", -1)) == post_id]
-        if len(matches) != 1 or "editorial_bundle" not in matches[0].get("fact_manifest", {}):
+        state_snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+        if state_snapshot is None or "editorial_bundle" not in state_snapshot.record.get("fact_manifest", {}):
             raise ValueError("reviewed_draft_manifest_required")
-        item = matches[0]
+        item = state_snapshot.record
         old_bundle = item["fact_manifest"]["editorial_bundle"]
 
         report = validate_fast_edit(old_bundle, bundle)
@@ -517,9 +518,9 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         expected_comparable = _normalize_renderer_migrations(expected_old)
         if (not verify_cas(live, status="draft", title=old_bundle["plan"]["title"],
                            content_sha=expected_content_sha256)
-                or live_comparable != expected_comparable
-                or DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before):
+                or live_comparable != expected_comparable):
             raise ValueError("draft_changed_before_fast_revision")
+        assert_unchanged(state_snapshot)
 
         old_excerpt = excerpt_from_lead(old_bundle["plan"]["lead"])
         if live.get("post_excerpt", "") != old_excerpt:
@@ -531,7 +532,9 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         post_backup = backup_json(ROOT, "fast-draft-revision", post_id, live)
         archive = ROOT / "data" / "editorial_runs"
         index_backup = archive / f"fast-draft-revision-index-{post_id}-{stamp}.json"
-        index_backup.write_text(index_before, encoding="utf-8")
+        index_backup.write_text(
+            json.dumps(snapshot_backup_payload(state_snapshot), ensure_ascii=False, indent=2),
+            encoding="utf-8")
         os.chmod(index_backup, 0o600)
 
         saved = guarded_update_post(
@@ -556,14 +559,15 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
                 },
                 preserved={"post_name": live.get("post_name")}):
             raise ValueError(f"fast_draft_revision_save_verification_failed: recover from {post_backup}")
-        if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
-            raise ValueError(f"draft_index_changed: recover from {index_backup}")
+        try:
+            assert_unchanged(state_snapshot)
+        except ValueError as exc:
+            raise ValueError(f"draft_index_changed: recover from {index_backup}") from exc
 
         stored = build_fast_stored_bundle(old_bundle, bundle, delta_review)
-        item["fact_manifest"]["editorial_bundle"] = stored
-        temporary = DRAFTS_INDEX_FILE.with_suffix(".fast-revision-tmp")
-        temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(DRAFTS_INDEX_FILE)
+        updated = dict(item)
+        updated.setdefault("fact_manifest", dict(item.get("fact_manifest", {})))["editorial_bundle"] = stored
+        replace_record(state_snapshot, updated)
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)

@@ -38,6 +38,23 @@ class WorkflowMetricsTests(unittest.TestCase):
             self.assertEqual('error', row['status'])
             self.assertEqual('ValueError', row['error_type'])
 
+    def test_nested_workflow_contributes_to_single_outer_receipt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'metrics.jsonl'
+            with patch.dict(os.environ, {'EDITORIAL_METRICS_FILE': str(target)}):
+                with workflow_run('ssh-edit-post'):
+                    with timed('outer'):
+                        with workflow_run('edit-post'):
+                            with timed('inner'):
+                                increment('wp_roundtrips')
+            rows = [json.loads(line) for line in target.read_text(encoding='utf-8').splitlines()]
+            self.assertEqual(1, len(rows))
+            self.assertEqual('ssh-edit-post', rows[0]['action'])
+            self.assertIn('outer', rows[0]['timings_ms'])
+            self.assertIn('inner', rows[0]['timings_ms'])
+            self.assertEqual(1, rows[0]['counters']['nested_workflow_runs'])
+            self.assertEqual(1, rows[0]['counters']['wp_roundtrips'])
+
 
 if __name__ == '__main__':
     unittest.main()

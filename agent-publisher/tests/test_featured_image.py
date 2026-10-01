@@ -202,7 +202,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
         args, kwargs = replace.call_args
         self.assertEqual((641, image_path.resolve(), expected_sha), args[:3])
         self.assertEqual(70, kwargs["expected_thumbnail_id"])
-        self.assertEqual("quick-image-replace", kwargs["task_action"])
+        self.assertEqual("replace-featured-image", kwargs["task_action"])
         self.assertEqual(1, kwargs["task_baseline_extra"]["attempt_number"])
         self.assertEqual(expected_sha, result["baseline_content_sha256"])
         self.assertEqual(70, result["replaced_thumbnail_id"])

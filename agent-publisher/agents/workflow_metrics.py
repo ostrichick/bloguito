@@ -81,6 +81,14 @@ class WorkflowMetrics:
 
 @contextmanager
 def workflow_run(action: str):
+    parent = _current.get()
+    if parent is not None:
+        # An outer orchestration run (for example the SSH adapter) owns the one
+        # performance receipt. Nested CLI helpers contribute timings/counters to
+        # that receipt instead of writing a second JSONL row for the same work.
+        parent.increment("nested_workflow_runs")
+        yield parent
+        return
     metrics = WorkflowMetrics(action)
     token = _current.set(metrics)
     try:

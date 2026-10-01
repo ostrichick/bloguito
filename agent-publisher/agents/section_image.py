@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -11,12 +12,44 @@ from PIL import Image
 
 from agents.editorial import ROOT
 from agents.editorial_updater import RANK_MATH_META_KEYS
-from agents.featured_image import _read_post_meta, _rank_math_meta
-from agents.wordpress_mutation import backup_json, content_sha256, get_post, verify_cas
+from agents.post_manifest_store import editorial_lock
+from agents.wordpress_mutation import backup_json, content_sha256, verify_cas
 
 
 ALLOWED_POST_STATUSES = {"publish", "draft", "pending", "future", "private"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+SECTION_IMAGE_SNAPSHOT_SCRIPT = r'''$payload=json_decode(file_get_contents("php://stdin"),true);
+if(!is_array($payload)||($payload["protocol"]??null)!==1||!isset($payload["post_id"])||!array_key_exists("attachment_id",$payload)){fwrite(STDERR,"invalid_section_snapshot_payload\n");exit(2);}
+$post_id=(int)$payload["post_id"];$post=get_post($post_id);if(!$post){fwrite(STDERR,"section_snapshot_post_missing\n");exit(3);}
+$meta=function($id,$key){$value=get_post_meta($id,$key,true);return is_scalar($value)?(string)$value:"";};
+$out=array("protocol"=>1,"post"=>array("post_status"=>(string)$post->post_status,"post_title"=>(string)$post->post_title,"post_name"=>(string)$post->post_name,"post_content"=>(string)$post->post_content,"post_excerpt"=>(string)$post->post_excerpt),"thumbnail_id"=>$meta($post_id,"_thumbnail_id"),"rank_math_meta"=>array("rank_math_focus_keyword"=>$meta($post_id,"rank_math_focus_keyword"),"rank_math_title"=>$meta($post_id,"rank_math_title"),"rank_math_description"=>$meta($post_id,"rank_math_description")),"attachment"=>null);
+$attachment_id=$payload["attachment_id"];
+if($attachment_id!==null){$attachment_id=(int)$attachment_id;$attachment=get_post($attachment_id);if(!$attachment){fwrite(STDERR,"section_snapshot_attachment_missing\n");exit(4);}$out["attachment"]=array("ID"=>(int)$attachment->ID,"guid"=>(string)$attachment->guid,"post_title"=>(string)$attachment->post_title,"post_mime_type"=>(string)$attachment->post_mime_type,"alt"=>$meta($attachment_id,"_wp_attachment_image_alt"));}
+echo wp_json_encode($out);'''
+
+
+def _read_section_image_snapshot(base, post_id: int, attachment_id: int | None = None) -> dict:
+    payload = {"protocol": 1, "post_id": int(post_id), "attachment_id": attachment_id}
+    result = subprocess.run(
+        list(base) + ["eval", SECTION_IMAGE_SNAPSHOT_SCRIPT, "--allow-root"],
+        input=json.dumps(payload, separators=(",", ":")),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    try:
+        snapshot = json.loads((result.stdout or "").lstrip("\ufeff").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("section_image_snapshot_invalid") from exc
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get("protocol") != 1
+        or not isinstance(snapshot.get("post"), dict)
+        or set(snapshot.get("rank_math_meta", {})) != set(RANK_MATH_META_KEYS)
+    ):
+        raise ValueError("section_image_snapshot_invalid")
+    return snapshot
 
 
 def validate_section_image_file(image_path: Path | str) -> dict:
@@ -67,22 +100,16 @@ def import_section_image(
     image_info = validate_section_image_file(image_path)
     image_path = Path(image_info["path"])
 
-    lock = ROOT / "data" / ".editorial-publish.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError("editorial_publication_busy: inspect the existing job")
-
     base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
-    try:
+    with editorial_lock(ROOT):
         fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
-        live = get_post(base, post_id, fields=fields)
+        before = _read_section_image_snapshot(base, post_id)
+        live = before["post"]
         if live.get("post_status") not in ALLOWED_POST_STATUSES or not verify_cas(
                 live, content_sha=expected_content_sha256):
             raise ValueError("target_missing_or_modified")
-        before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
-        before_rank = _rank_math_meta(base, post_id)
+        before_thumb = before["thumbnail_id"]
+        before_rank = before["rank_math_meta"]
         backup = backup_json(
             ROOT, "section-image-import", post_id,
             {"post": live, "thumbnail_id": before_thumb,
@@ -111,12 +138,12 @@ def import_section_image(
         if not attachment_id.isdigit():
             raise ValueError("section_image_attachment_id_missing")
 
-        saved = get_post(base, post_id, fields=fields)
-        after_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
-        after_rank = _rank_math_meta(base, post_id)
-        attachment = get_post(
-            base, int(attachment_id), fields=["ID", "guid", "post_title", "post_mime_type"])
-        observed_alt = _read_post_meta(base, int(attachment_id), "_wp_attachment_image_alt")
+        after = _read_section_image_snapshot(base, post_id, int(attachment_id))
+        saved = after["post"]
+        after_thumb = after["thumbnail_id"]
+        after_rank = after["rank_math_meta"]
+        attachment = after.get("attachment") or {}
+        observed_alt = attachment.get("alt", "")
         if any(saved.get(key) != live.get(key) for key in fields):
             raise ValueError(f"section_image_post_preservation_failed: recover from {backup}")
         if after_thumb != before_thumb or after_rank != before_rank:
@@ -139,5 +166,3 @@ def import_section_image(
             "content_sha256": content_sha256(saved.get("post_content", "")),
             "backup": str(backup),
         }
-    finally:
-        lock.rmdir()

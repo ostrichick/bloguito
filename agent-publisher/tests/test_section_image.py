@@ -7,7 +7,11 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from agents.section_image import import_section_image, validate_section_image_file
+from agents.section_image import (
+    SECTION_IMAGE_SNAPSHOT_SCRIPT,
+    import_section_image,
+    validate_section_image_file,
+)
 
 
 class SectionImageImportTests(unittest.TestCase):
@@ -34,21 +38,25 @@ class SectionImageImportTests(unittest.TestCase):
             rank = {k: v for k, v in zip(
                 ('rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'),
                 ('키워드', '제목', '설명'))}
+            wp_calls = []
 
             def run(args, **kwargs):
                 wp = args[5:] if args[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'wp'] else None
-                if wp and wp[:2] == ['post', 'get']:
-                    if wp[2] == '777':
-                        return Mock(stdout=json.dumps({
+                if wp:
+                    wp_calls.append(wp)
+                if wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']:
+                    payload = json.loads(kwargs['input'])
+                    attachment = None
+                    if payload['attachment_id'] == 777:
+                        attachment = {
                             'ID': 777, 'guid': 'https://lifeinfo24.org/uploads/event.webp',
-                            'post_title': '행사 이미지', 'post_mime_type': 'image/webp'}), returncode=0)
-                    return Mock(stdout=json.dumps(live), returncode=0)
-                if wp and wp[:3] == ['post', 'meta', 'get']:
-                    if wp[3] == '777' and wp[4] == '_wp_attachment_image_alt':
-                        return Mock(stdout='행사 장면\n', stderr='', returncode=0)
-                    if wp[4] == '_thumbnail_id':
-                        return Mock(stdout='650\n', stderr='', returncode=0)
-                    return Mock(stdout=rank[wp[4]] + '\n', stderr='', returncode=0)
+                            'post_title': '행사 이미지', 'post_mime_type': 'image/webp',
+                            'alt': '행사 장면',
+                        }
+                    return Mock(stdout=json.dumps({
+                        'protocol': 1, 'post': live, 'thumbnail_id': '650',
+                        'rank_math_meta': rank, 'attachment': attachment,
+                    }), returncode=0)
                 if wp and wp[:2] == ['media', 'import']:
                     self.assertNotIn('--featured_image', wp)
                     return Mock(stdout='777\n', stderr='', returncode=0)
@@ -63,8 +71,12 @@ class SectionImageImportTests(unittest.TestCase):
                 result = import_section_image(
                     648, image, sha, media_title='행사 이미지', alt_text='행사 장면', confirmed=True)
             self.assertEqual(777, result['attachment_id'])
-            self.assertEqual('650', '650')
             self.assertEqual(sha, result['content_sha256'])
+            self.assertEqual(3, len(wp_calls))
+            self.assertEqual('eval', wp_calls[0][0])
+            self.assertEqual(['media', 'import'], wp_calls[1][:2])
+            self.assertEqual('eval', wp_calls[2][0])
+            self.assertFalse(any(wp[:3] == ['post', 'meta', 'get'] for wp in wp_calls))
 
 
 if __name__ == '__main__':

@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import re
-from pathlib import Path
 
 from agents.editorial import ROOT, excerpt_from_lead, render
 from agents.editorial_updater import _existing_lead_excerpt
@@ -17,6 +16,14 @@ from agents.fast_edit import (
     prepare_fast_delta_review,
     validate_fast_edit,
     validate_prepared_delta_review,
+)
+from agents.post_manifest_store import (
+    acquire_editorial_lock,
+    assert_unchanged,
+    load_record,
+    release_editorial_lock,
+    replace_record,
+    snapshot_backup_payload,
 )
 from agents.wordpress_mutation import (
     backup_json,
@@ -30,22 +37,13 @@ from config import POSTS_INDEX_FILE
 from sync_wordpress_inventory import invalidate_inventory
 
 
-def _load_public_records() -> tuple[str, list[dict]]:
+def load_tracked_public_bundle(post_id: int) -> dict:
     if not POSTS_INDEX_FILE.is_file():
         raise ValueError("reviewed_public_index_missing")
-    raw = POSTS_INDEX_FILE.read_text(encoding="utf-8")
-    records = json.loads(raw)
-    if not isinstance(records, list):
-        raise ValueError("reviewed_public_index_invalid")
-    return raw, records
-
-
-def load_tracked_public_bundle(post_id: int) -> dict:
-    _, records = _load_public_records()
-    matches = [item for item in records if int(item.get("id", -1)) == int(post_id)]
-    if len(matches) != 1:
+    snapshot = load_record(POSTS_INDEX_FILE, post_id)
+    if snapshot is None:
         raise ValueError("reviewed_public_manifest_required")
-    bundle = matches[0].get("fact_manifest", {}).get("editorial_bundle")
+    bundle = snapshot.record.get("fact_manifest", {}).get("editorial_bundle")
     if not isinstance(bundle, dict):
         raise ValueError("reviewed_public_manifest_required")
     return bundle
@@ -96,19 +94,15 @@ def fast_update_public_post(
         raise ValueError("fast_edit_intent_required")
     edit_intent = edit_intent.strip()
 
-    lock = ROOT / "data" / ".editorial-publish.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError("editorial_publication_busy: inspect the existing job")
+    lock = acquire_editorial_lock(ROOT)
 
     try:
-        index_before, records = _load_public_records()
-        matches = [item for item in records if int(item.get("id", -1)) == post_id]
-        if len(matches) != 1:
+        if not POSTS_INDEX_FILE.is_file():
+            raise ValueError("reviewed_public_index_missing")
+        state_snapshot = load_record(POSTS_INDEX_FILE, post_id)
+        if state_snapshot is None:
             raise ValueError("reviewed_public_manifest_required")
-        item = matches[0]
+        item = state_snapshot.record
         old_bundle = item.get("fact_manifest", {}).get("editorial_bundle")
         if not isinstance(old_bundle, dict):
             raise ValueError("reviewed_public_manifest_required")
@@ -136,9 +130,9 @@ def fast_update_public_post(
                 status="publish",
                 title=old_bundle["plan"]["title"],
                 content_sha=expected_content_sha256)
-                or live.get("post_content", "") != old_rendered
-                or POSTS_INDEX_FILE.read_text(encoding="utf-8") != index_before):
+                or live.get("post_content", "") != old_rendered):
             raise ValueError("public_post_changed_before_fast_revision")
+        assert_unchanged(state_snapshot)
 
         desired = render(candidate["plan"], candidate["sources"])
         old_excerpt = live.get("post_excerpt", "")
@@ -153,7 +147,9 @@ def fast_update_public_post(
         archive = ROOT / "data" / "editorial_runs"
         stamp = post_backup.stem.rsplit("-", 1)[-1]
         index_backup = archive / f"fast-public-edit-index-{post_id}-{stamp}.json"
-        index_backup.write_text(index_before, encoding="utf-8")
+        index_backup.write_text(
+            json.dumps(snapshot_backup_payload(state_snapshot), ensure_ascii=False, indent=2),
+            encoding="utf-8")
         os.chmod(index_backup, 0o600)
 
         saved = guarded_update_post(
@@ -178,15 +174,16 @@ def fast_update_public_post(
         if not verify_saved_fields(
                 saved, expected=expected_saved, preserved={"post_name": live.get("post_name", "")}):
             raise ValueError(f"fast_public_save_verification_failed: recover from {post_backup}")
-        if POSTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
-            raise ValueError(f"public_index_changed: recover from {index_backup}")
+        try:
+            assert_unchanged(state_snapshot)
+        except ValueError as exc:
+            raise ValueError(f"public_index_changed: recover from {index_backup}") from exc
 
         stored = build_fast_stored_bundle(old_bundle, candidate, delta_review)
-        item.setdefault("fact_manifest", {})["editorial_bundle"] = stored
-        temporary = POSTS_INDEX_FILE.with_suffix(".fast-public-tmp")
-        temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(POSTS_INDEX_FILE)
+        updated = dict(item)
+        updated.setdefault("fact_manifest", dict(item.get("fact_manifest", {})))["editorial_bundle"] = stored
+        replace_record(state_snapshot, updated)
         invalidate_inventory()
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)

@@ -399,3 +399,19 @@ P4 구현 시 측정한 일반 draft regression 선택량은 표현-only **36**,
 P4 자체는 validation/router/SSH orchestration이라는 공유 코드를 변경하므로 구현 완료 시에는 표적 회귀 뒤 전체 Python suite를 한 번 실행한다. 이후 개별 콘텐츠 작업에서는 선택 profile만 사용하고, 공유 코드가 다시 바뀌지 않았다면 같은 full suite를 반복하지 않는다. 이 작업의 검증을 위해 실제 WordPress 글이나 공개 상태는 수정하지 않는다.
 
 구현 최종 검증에서는 P4 router/runner/SSH ordering, Fast/Standard draft/public, task-state, featured-image, script hygiene 표적 테스트가 통과했고, 실제 `run_validation.py --run` smoke에서 `quick-text`가 6개 파일 **36 tests**만 선택해 통과했다. 변경 Python `py_compile`, `git diff --check`, `pip check`, runner `--help`도 통과했다. 공유 코드 변경 완료 뒤 전체 suite를 한 번 실행한 결과는 P4 신규 회귀 20개를 포함해 **666 tests, OK (skipped=1)**였다. 출력의 `simulated transfer interruption`, 이미지 생성 unavailable 폴백, catalog sync 경고는 기존 실패 주입/폴백 테스트의 의도된 메시지이며 실제 운영 WordPress mutation은 수행하지 않았다.
+
+## 2026-10-01 P1~P8 구조·검증 단순화
+
+9월 말 실사용에서 신규 일반 draft는 25~45분 수준으로 끝나는 사례가 있는 반면, 대표이미지 1건이나 행사 글 1편이 검증·이미지·공통 코드 수정의 반복으로 1~4시간 이상 늘어나는 편차가 확인됐다. 이번 변경은 CAS/readback/source/review 같은 핵심 무결성을 없애는 대신 **일반 콘텐츠 작업이 공통 코드 회귀와 긴 상태기계를 매번 통과하던 구조를 분리**하는 데 목적이 있다.
+
+- P1: `workflow_run()`의 중첩 실행은 바깥 orchestration receipt에 timing/counter를 합친다. SSH adapter는 `ssh-<action>` 한 행으로 전체 `total_ms`를 기록하고 내부 source/review/image/WP 단계가 같은 receipt에 들어간다. featured-image meta read와 image upload도 계측한다.
+- P2: 대표이미지 기본 명령을 `replace-featured-image`로 통일하고 live content SHA와 `_thumbnail_id`를 명령이 직접 baseline으로 읽는다. article source/full semantic review는 열지 않고, 제한 transport가 수정할 수 없는 Rank Math meta의 전후 반복 조회를 제거했다. thumbnail, attachment MIME/URL, ALT와 post status/title/slug/content/excerpt 보존 readback은 유지한다.
+- P3/P6: Fast text-only Simple 수정은 full task-state를 만들지 않는 one-shot 경로로 처리한다. 기존 source/full review를 재사용하고 changed-block delta review와 CAS/readback은 유지한다. Standard, 복합 이미지, 재개 가능한 작업만 task-state/checkpoint를 사용한다.
+- P4: `change_classifier.py`를 단일 분류기로 추가했다. route, diff flags, factual risk, domain, browser QA scope를 한 번 계산하고 edit router/validation plan/SSH apply 단계가 같은 결정을 사용한다. SSH adapter가 만든 decision은 post ID, before/after content SHA, target status, image/resume flag에 결합해 inner mutator가 재사용한다.
+- P5/P7: 정상 콘텐츠 mutation 표면은 `prepare-draft`, `edit-post`, `replace-featured-image` 세 개로 고정했다. `quick-image-replace`, `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `replace-legacy-draft`, `publish`는 compatibility/diagnostic action으로 남기고 일반 경로에서 선택하지 않는다. 중복 `qa_scope`/validation diff 분석은 compatibility wrapper로 축소했고 image CLI handler도 하나로 합쳤다.
+- 콘텐츠 한 건에서는 Python unit/regression suite를 실행하지 않는다. `validation_plan` profile은 source/review/QA 범위를 설명하지만 test groups는 비운다. shared code/repository 변경만 repository classifier가 `full-regression`을 선택한다. CTA 변경은 destination browser smoke, layout/accessibility 변경은 화면 QA를 요구하고, text-only/image-only/metadata-only는 deterministic readback으로 종료한다.
+- P8: `AGENTS.md`는 핵심 invariant, 세 정규 mutation 경로, 검증 범위만 남기고 세부 실행 설명은 `OPERATIONS.md`로 모았다. 과거 P1~P4 세부 구현과 당시 테스트 수는 이 이력 문서에 보존하고 현재 실행 규칙으로 사용하지 않는다.
+
+이 변경은 별도 worktree `pipeline-simplify-20261001`에서 수행했으며 실제 운영 WordPress 콘텐츠나 공개 상태는 검증 목적으로 수정하지 않았다. 표적 테스트와 전체 회귀의 최종 결과는 이 절의 후속 기록에 추가한다.
+
+최종 검증에서는 편집/SSH/image/task-state/validation 관련 확장 표적 테스트 **149 tests PASS**를 먼저 확인했다. 첫 전체 suite에서는 새 정책과 불일치하던 `test_validation_runner`의 과거 quick-profile 기대 1건이 실패했다. 콘텐츠 plan의 `test_groups=[]`이면 post selector까지 포함해 repository test manifest를 아예 읽지 않는 동작으로 runner와 테스트를 맞춘 뒤 재검증했고, 관련 validation 표적 **22 tests PASS**, 최종 전체 suite **756 tests PASS, skipped=1**였다. 변경 Python `py_compile`, repository classifier의 `full-regression` 판정, `git diff --check`도 통과했다. 전체 suite 출력의 backup transfer 실패, 이미지 provider unavailable, catalog sync warning은 기존 실패 주입/폴백 테스트의 의도된 메시지다.

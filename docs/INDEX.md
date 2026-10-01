@@ -27,7 +27,7 @@
 | 9월 12일 초기 계획·구현 | [초기 계획 원본](history/implementation_plan-2026-09-12.md), [초기 결과 원본](history/walkthrough-2026-09-20.md), [구 종합 인계 이력](history/PROJECT_HANDOVER-2026-09-20.md) |
 | 편집 시스템 구축·설계 | [검색 의도](search-editorial-policy.md), [공통 시스템 구현](editorial-system-implementation-2026-09-14.md), [벤치마크 반영](benchmark-reflection-2026-09-15.md), [콘텐츠 전략 제안](CONTENT_STRATEGY_2026-09-20.md), [생활정보 본문 UX 비교](article-layout-benchmark-2026-09-21.md) |
 | 정보글 본문 구조 개선 | [기본 구조·코드·운영 적용 기록](article-layout-implementation-2026-09-21.md) |
-| 자동화·안전성 | [운영 감사·수정](audit-remediation-2026-09-20.md), [1~5순위 코드 개선 당시 상태](implementation-execution-2026-09-20.md), [백업·복구 v3 당시 구현과 미검증](backup-recovery-2026-09-20.md), [2026-09-25 애플리케이션/데이터 격리 복구 훈련](backup-restore-drill-2026-09-25.md), [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md), [Site Kit 이관](sitekit-and-editorial-handoff-2026-09-20.md), [중복 목차 전수 조사·LuckyWP 비활성화](toc-duplicate-plugin-deactivation-2026-09-21.md), [2026-09-26 작업 흐름 최적화 10개 항목](workflow-optimization-2026-09-26.md) |
+| 자동화·안전성 | [운영 감사·수정](audit-remediation-2026-09-20.md), [1~5순위 코드 개선 당시 상태](implementation-execution-2026-09-20.md), [백업·복구 v3 당시 구현과 미검증](backup-recovery-2026-09-20.md), [2026-09-25 애플리케이션/데이터 격리 복구 훈련](backup-restore-drill-2026-09-25.md), [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md), [Site Kit 이관](sitekit-and-editorial-handoff-2026-09-20.md), [중복 목차 전수 조사·LuckyWP 비활성화](toc-duplicate-plugin-deactivation-2026-09-21.md), [2026-09-26~10-01 작업 흐름 최적화 P1~P8](workflow-optimization-2026-09-26.md), [2026-10-01 P9~P11·WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md) |
 | Simple Task·이미지 연속 실행 | [2026-09-30 Fast Path·Completion Guard 구현](simple-task-image-continuation-2026-09-30.md) |
 | 태그 거버넌스 | [2026-09-26 운영 태그 258개 분류와 신규 자동 태그 중단](tag-governance-2026-09-26.md) |
 | 공개 콘텐츠 품질 | [2026-09-20 공개 글 점검](published-content-review-2026-09-20.md), [내부 정정 문구 제거](internal-editorial-notes-cleanup-2026-09-21.md), [통신 미환급액 #243](telecom-post-243-revision-2026-09-21.md), [#218 보강·운영 반영](post-218-expansion-2026-09-21.md), [#349 김건모 일정 표·운영 반영](kim-gunmo-schedule-table-2026-09-21.md), [로이킴 #99·무명전설 #70 이미지 교체](concert-cover-update-2026-09-21.md) |
@@ -44,6 +44,8 @@
 - 날짜별 문서에는 당시의 사실 주장과 미검증 항목이 섞여 있다. 새 보고서에서는 확인된 사실 / 추정 / 미확인을 분리하고 **서버 배포와 로컬 변경을 따로 기록**한다.
 
 ## 최근 추가 점검
+
+- [2026-10-01 프로젝트 간소화 P9~P11 및 WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md): validation registry 제거, per-post reviewed manifest 저장 구조, WSL SSH 연결 재사용, section-image 왕복 축소, 운영 WhatsApp service 제거와 전체 회귀 검증 기록.
 
 - [2026-09-29 #598 임플란트 건강보험 대표 이미지 문구 정정](post-598-cover-text-fix-2026-09-29.md): 대표 이미지 좌측 하단 알약 배지의 '팩트' 단어를 제거하고 '안내'로 수정한 WebP를 재생성하여 운영 WordPress의 대표 이미지(_thumbnail_id=679)로 교체 및 실서비스 검증을 완료한 기록.
 - [2026-09-28 로컬 콘텐츠 카탈로그와 주제 백로그 갱신](post-catalog-workflow-2026-09-28.md): 새 글 탐색의 로컬 카탈로그 우선 사용, 저장 후 1회 동기화, 이미 draft/공개 글로 작성된 백로그 주제 자동 제외와 실제 WordPress 카테고리 반영을 정리한 기록.

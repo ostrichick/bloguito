@@ -49,7 +49,7 @@ class EditRouterTests(unittest.TestCase):
         self.assertEqual("standard", decision["route"])
         self.assertTrue(any(reason.startswith("new_fact_tokens:") for reason in decision["reasons"]))
 
-    def test_fast_route_calls_only_fast_mutator_and_records_state(self):
+    def test_fast_route_calls_only_fast_mutator_without_long_task_state(self):
         old = sample()
         new = copy.deepcopy(old)
         new["plan"]["sections"][0]["heading"] = "더 간단한 소제목"
@@ -76,7 +76,7 @@ class EditRouterTests(unittest.TestCase):
                  patch("agents.edit_router.validate_fast_edit", return_value={
                      "status": "candidate", "reasons": [], "changed_blocks": {"removed": [], "added": []}
                  }), \
-                 patch("agents.edit_router.start_task_state"), \
+                 patch("agents.edit_router.start_task_state") as start_state, \
                  patch("agents.edit_router.update_task_state"), \
                  patch("agents.edit_router.prepare_fast_delta_review", return_value=prepared), \
                  patch("agents.edit_router.fast_revise_reviewed_draft", return_value=393) as fast, \
@@ -88,6 +88,7 @@ class EditRouterTests(unittest.TestCase):
         fast.assert_called_once()
         self.assertEqual(prepared, fast.call_args.kwargs["prepared_delta_review"])
         standard.assert_not_called()
+        start_state.assert_not_called()
 
     def test_resume_after_saved_content_skips_mutation_when_manifest_matches(self):
         old = sample()

@@ -1,4 +1,4 @@
-"""Run the regression-test subset selected by :mod:`validation_router`."""
+"""Run repository regression tests only when a validation plan requires them."""
 
 from __future__ import annotations
 
@@ -17,71 +17,14 @@ from agents.workflow_metrics import WorkflowMetrics
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS_DIR = ROOT / "agent-publisher" / "tests"
-MANIFEST_FILE = TESTS_DIR / "test_groups.json"
 _ACTIVE_ENV = "BLOGUITO_VALIDATION_TEST_ACTIVE"
 
 
-def load_test_manifest(path: Path = MANIFEST_FILE) -> dict:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("version") != 1:
-        raise ValueError("invalid_validation_test_manifest")
-    validate_test_manifest(payload)
-    return payload
-
-
-def validate_test_manifest(manifest: dict) -> None:
-    groups = manifest.get("groups")
-    full_only = manifest.get("full_only")
-    post_selectors = manifest.get("post_selectors", {})
-    if not isinstance(groups, dict) or not isinstance(full_only, list) or not isinstance(post_selectors, dict):
-        raise ValueError("invalid_validation_test_manifest")
-
-    existing = {path.name for path in TESTS_DIR.glob("test_*.py")}
-    grouped = set()
-    for name, files in groups.items():
-        if not isinstance(name, str) or not isinstance(files, list) or not files:
-            raise ValueError("invalid_validation_test_group:" + str(name))
-        for filename in files:
-            if not isinstance(filename, str) or filename not in existing:
-                raise ValueError("unknown_validation_test_file:" + str(filename))
-            grouped.add(filename)
-    full_only_set = set(full_only)
-    if not full_only_set.issubset(existing):
-        missing = sorted(full_only_set - existing)
-        raise ValueError("unknown_full_only_test_file:" + ",".join(missing))
-    overlap = grouped & full_only_set
-    if overlap:
-        raise ValueError("validation_test_manifest_overlap:" + ",".join(sorted(overlap)))
-    covered = grouped | full_only_set
-    if covered != existing:
-        missing = sorted(existing - covered)
-        extra = sorted(covered - existing)
-        raise ValueError(
-            "validation_test_manifest_coverage:" + json.dumps(
-                {"missing": missing, "extra": extra}, ensure_ascii=False, sort_keys=True))
-    for post_id, files in post_selectors.items():
-        if not str(post_id).isdigit() or not isinstance(files, list) or not files:
-            raise ValueError("invalid_validation_post_selector:" + str(post_id))
-        unknown = set(files) - existing
-        if unknown:
-            raise ValueError("unknown_validation_post_selector_file:" + ",".join(sorted(unknown)))
-
-
-def selected_test_files(plan: dict, manifest: dict | None = None) -> list[str]:
+def selected_test_files(plan: dict) -> list[str]:
     validate_validation_plan(plan)
-    manifest = manifest or load_test_manifest()
-    if plan.get("full_regression_required") or "full-regression" in plan.get("test_groups", []):
-        return sorted(path.name for path in TESTS_DIR.glob("test_*.py"))
-    groups = manifest["groups"]
-    selected = set()
-    for group in plan.get("test_groups", []):
-        if group not in groups:
-            raise ValueError("unknown_validation_test_group:" + str(group))
-        selected.update(groups[group])
-    post_id = (plan.get("binding") or {}).get("post_id")
-    if post_id is not None:
-        selected.update(manifest.get("post_selectors", {}).get(str(post_id), []))
-    return sorted(selected)
+    if not plan.get("full_regression_required"):
+        return []
+    return sorted(path.name for path in TESTS_DIR.glob("test_*.py"))
 
 
 def _load_suite(files: list[str]) -> unittest.TestSuite:
@@ -112,7 +55,6 @@ def run_validation_plan(plan: dict, *, stream=None, verbosity: int = 1) -> dict:
             "status": "passed",
             "profile": plan.get("profile"),
             "plan_digest": plan.get("plan_digest"),
-            "test_groups": list(plan.get("test_groups", [])),
             "selected_files": [],
             "tests_run": 0,
             "failures": 0,
@@ -125,7 +67,6 @@ def run_validation_plan(plan: dict, *, stream=None, verbosity: int = 1) -> dict:
     started = time.perf_counter()
     metrics = WorkflowMetrics("run-validation")
     metrics.increment("validation_test_files", len(files))
-    metrics.increment("validation_test_groups", len(plan.get("test_groups", [])))
     metrics.increment("validation_profile_" + str(plan.get("profile", "unknown")).replace("-", "_"))
     previous = os.environ.get(_ACTIVE_ENV)
     os.environ[_ACTIVE_ENV] = "1"
@@ -143,7 +84,6 @@ def run_validation_plan(plan: dict, *, stream=None, verbosity: int = 1) -> dict:
         "status": "passed" if result.wasSuccessful() else "failed",
         "profile": plan.get("profile"),
         "plan_digest": plan.get("plan_digest"),
-        "test_groups": list(plan.get("test_groups", [])),
         "selected_files": files,
         "tests_run": result.testsRun,
         "failures": len(result.failures),

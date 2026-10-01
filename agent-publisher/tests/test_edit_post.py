@@ -7,7 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.edit_post import classify_reviewed_post_route, reviewed_target_kind
+from agents.edit_post import (
+    _validated_prepared_decision,
+    classify_reviewed_post_route,
+    reviewed_target_kind,
+)
 from agents.editorial import digest, render
 from agents.temporal_validation import KST
 from test_editorial_system import sample
@@ -61,6 +65,40 @@ class UnifiedEditPostTests(unittest.TestCase):
                  patch('agents.edit_post.POSTS_INDEX_FILE', public):
                 with self.assertRaisesRegex(ValueError, 'both_indexes'):
                     reviewed_target_kind(243)
+
+    def test_prepared_decision_is_bound_to_target_and_content(self):
+        bundle = current_bundle()
+        body_sha = hashlib.sha256(render(bundle['plan'], bundle['sources']).encode()).hexdigest()
+        decision = {
+            'validation_plan': {
+                'binding': {
+                    'post_id': 243,
+                    'target_status': 'publish',
+                    'before_content_sha256': body_sha,
+                    'after_content_sha256': body_sha,
+                },
+                'scope': {'image_changed': False, 'resume': False},
+            },
+        }
+        self.assertIs(decision, _validated_prepared_decision(
+            decision,
+            post_id=243,
+            bundle=bundle,
+            expected_content_sha256=body_sha,
+            image_path=None,
+            resume=False,
+            target_status='publish',
+        ))
+        with self.assertRaisesRegex(ValueError, 'binding_mismatch'):
+            _validated_prepared_decision(
+                decision,
+                post_id=244,
+                bundle=bundle,
+                expected_content_sha256=body_sha,
+                image_path=None,
+                resume=False,
+                target_status='publish',
+            )
 
 
 if __name__ == '__main__':

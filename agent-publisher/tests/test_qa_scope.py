@@ -21,8 +21,16 @@ class QaScopeTests(unittest.TestCase):
             old, new, image_changed=True, target_status='publish')
         self.assertIn('content-mobile-desktop', scopes)
         self.assertIn('layout-accessibility', scopes)
-        self.assertIn('featured-image', scopes)
-        self.assertIn('public-page', scopes)
+        self.assertNotIn('featured-image', scopes)
+        self.assertNotIn('public-page', scopes)
+
+    def test_text_and_image_only_edits_skip_browser_qa(self):
+        old = sample()
+        text = copy.deepcopy(old)
+        text['plan']['sections'][0]['heading'] = '더 짧은 안내'
+        self.assertEqual([], qa_requirements_for_edit(old, text, target_status='publish'))
+        self.assertEqual([], qa_requirements_for_edit(
+            None, None, image_changed=True, target_status='publish'))
 
     def test_qa_completion_requires_all_scopes_and_matching_thumbnail(self):
         with tempfile.TemporaryDirectory() as folder:

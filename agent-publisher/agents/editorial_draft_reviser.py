@@ -12,6 +12,14 @@ from pathlib import Path
 
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import load_inventory
+from agents.post_manifest_store import (
+    acquire_editorial_lock,
+    assert_unchanged,
+    load_record,
+    release_editorial_lock,
+    replace_record,
+    snapshot_backup_payload,
+)
 from agents.source_validation_cache import verify_sources_unchanged
 from agents.editorial_updater import (
     _read_rank_math_meta,
@@ -158,19 +166,13 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             or image_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}):
         raise ValueError("reviewed_featured_image_required")
 
-    lock = ROOT / "data" / ".editorial-publish.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError("editorial_publication_busy: inspect the existing job")
+    lock = acquire_editorial_lock(ROOT)
 
     try:
         if not DRAFTS_INDEX_FILE.is_file():
             raise ValueError("reviewed_draft_index_missing")
-        index_before = DRAFTS_INDEX_FILE.read_text(encoding="utf-8")
-        records = json.loads(index_before)
-        item = next((p for p in records if int(p.get("id", -1)) == post_id), None)
+        state_snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+        item = state_snapshot.record if state_snapshot is not None else None
         if not item or "editorial_bundle" not in item.get("fact_manifest", {}):
             raise ValueError("reviewed_draft_manifest_required")
         old_bundle = item["fact_manifest"]["editorial_bundle"]
@@ -264,8 +266,10 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         # in the same remote WP process. Keep the local manifest CAS immediately
         # before that operation so neither side can silently drift.
         live = current
-        if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
-            raise ValueError("draft_changed_during_revision")
+        try:
+            assert_unchanged(state_snapshot)
+        except ValueError as exc:
+            raise ValueError("draft_changed_during_revision") from exc
 
         old_excerpt = excerpt_from_lead(old_bundle["plan"]["lead"])
         if live.get("post_excerpt", "") != old_excerpt:
@@ -282,7 +286,9 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         post_backup = backup_json(ROOT, "draft-revision", post_id, backup_payload)
         archive = ROOT / "data" / "editorial_runs"
         index_backup = archive / f"draft-revision-index-{post_id}-{stamp}.json"
-        index_backup.write_text(index_before, encoding="utf-8")
+        index_backup.write_text(
+            json.dumps(snapshot_backup_payload(state_snapshot), ensure_ascii=False, indent=2),
+            encoding="utf-8")
         os.chmod(index_backup, 0o600)
         save_report(bundle, report)
 
@@ -341,12 +347,13 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             if observed_thumb != featured_attachment_id:
                 raise ValueError("featured_image_save_verification_failed")
 
-        if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != index_before:
-            raise ValueError(f"draft_index_changed: recover from {index_backup}")
-        item["fact_manifest"]["editorial_bundle"] = bundle
-        temporary = DRAFTS_INDEX_FILE.with_suffix(".revision-tmp")
-        temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(DRAFTS_INDEX_FILE)
+        try:
+            assert_unchanged(state_snapshot)
+        except ValueError as exc:
+            raise ValueError(f"draft_index_changed: recover from {index_backup}") from exc
+        updated = dict(item)
+        updated.setdefault("fact_manifest", dict(item.get("fact_manifest", {})))["editorial_bundle"] = bundle
+        replace_record(state_snapshot, updated)
         invalidate_inventory()
         print(f"Draft revision backup: {post_backup}")
         print(f"Draft index backup: {index_backup}")
@@ -354,4 +361,4 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             print(f"Featured image attachment: {featured_attachment_id}")
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)
