@@ -279,6 +279,39 @@ class RemoteSyncTests(unittest.TestCase):
         with self.assertRaises(sync_module.BackupError):
             sync_module.sync("-untrusted", "/home/ubuntu/backups", self.folder)
 
+    def test_tailscale_transport_reuses_common_verification_pipeline(self):
+        calls = []
+
+        def fake_subprocess(args, **kwargs):
+            calls.append(list(args))
+            if args[:4] == ["tailscale", "ssh", "ubuntu@bloguito-server", "find"]:
+                return subprocess.CompletedProcess(
+                    args, 0,
+                    stdout="/home/ubuntu/backups/" + self.filename + "\n",
+                    stderr="",
+                )
+            if args[:4] == ["tailscale", "ssh", "ubuntu@bloguito-server", "sha256sum"]:
+                return subprocess.CompletedProcess(args, 0, stdout=self.digest + "  snapshot\n", stderr="")
+            if args[:4] == ["tailscale", "ssh", "ubuntu@bloguito-server", "cat"]:
+                kwargs["stdout"].write(self.remote)
+                return subprocess.CompletedProcess(args, 0, stdout=None, stderr=b"")
+            raise AssertionError(args)
+
+        with patch.object(sync_module.subprocess, "run", side_effect=fake_subprocess):
+            self.assertEqual(
+                sync_module.sync_tailscale(
+                    "ubuntu@bloguito-server", "/home/ubuntu/backups", self.folder
+                ),
+                (1, 0),
+            )
+        self.assertEqual(self.remote, (self.folder / self.filename).read_bytes())
+        self.assertTrue(any(command[3] == "find" for command in calls))
+        self.assertTrue(any(command[3] == "cat" for command in calls))
+
+    def test_tailscale_transport_rejects_untrusted_host_syntax(self):
+        with self.assertRaises(sync_module.BackupError):
+            sync_module.sync_tailscale("-unsafe", "/home/ubuntu/backups", self.folder)
+
 
 if __name__ == "__main__":
     unittest.main()

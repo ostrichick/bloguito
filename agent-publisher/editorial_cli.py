@@ -9,7 +9,7 @@ from pathlib import Path
 from agents.editorial import validate_bundle, render
 from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, load_inventory, fetch_sources
 from agents.runtime_stdio import configure_utf8_stdio
-from agents.workflow_metrics import increment, timed, workflow_run
+from agents.workflow_metrics import timed, workflow_run
 
 
 configure_utf8_stdio()
@@ -34,17 +34,14 @@ PRIMARY_CONTENT_ACTIONS = {
     'replace-featured-image',
 }
 PUBLICATION_ACTIONS = {'promote-draft'}
-COMPATIBILITY_ACTIONS = {
-    'publish', 'update-existing', 'update-draft', 'edit-draft', 'revise-draft',
-    'fast-revise-draft', 'quick-image-replace', 'replace-legacy-draft',
-}
 MAINTENANCE_ACTIONS = {
     'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
     'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
     'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
+    'replace-legacy-draft',
 }
 ALL_ACTIONS = sorted(
-    PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | COMPATIBILITY_ACTIONS | MAINTENANCE_ACTIONS
+    PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | MAINTENANCE_ACTIONS
 )
 
 
@@ -60,9 +57,9 @@ def _main():
                         help='replace-featured-image: current _thumbnail_id CAS value')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
     parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post or reviewed draft')
-    parser.add_argument('--edit-intent', help='edit-draft/fast-revise-draft: the user-requested scope of this edit')
+    parser.add_argument('--edit-intent', help='edit-post: the user-requested scope of this edit')
     parser.add_argument('--resume', action='store_true',
-                        help='edit-draft: resume a matching interrupted task-state after live SHA reconciliation')
+                        help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
     parser.add_argument('--media-title', help='import-section-image: reviewed WordPress attachment title')
     parser.add_argument('--qa-scope', action='append',
@@ -87,16 +84,8 @@ def _main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
     parser.add_argument('--image-path', type=Path,
-                        help='publish/prepare-draft: already reviewed local representative image; prepare-draft generates one when omitted')
+                        help='prepare-draft: already reviewed local representative image; prepare-draft generates one when omitted')
     args = parser.parse_args()
-
-    if args.action in COMPATIBILITY_ACTIONS:
-        increment('compatibility_action_used')
-        print(
-            f"[Compatibility] `{args.action}` is retained for legacy/diagnostic use; "
-            "normal content work should use prepare-draft, edit-post or replace-featured-image.",
-            file=sys.stderr,
-        )
 
     if args.action == 'list-drafts':
         from agents.publisher import PublisherAgent
@@ -193,7 +182,7 @@ def _main():
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
         return
 
-    if args.action in {'replace-featured-image', 'quick-image-replace'}:
+    if args.action == 'replace-featured-image':
         label = args.action
         if args.inventory or args.file:
             parser.error(f'{label} uses --post-id/--image-path and no bundle file')
@@ -299,62 +288,6 @@ def _main():
         print('Repaired draft category ID:', repair_reviewed_draft_category(
             args.post_id, args.expected_content_sha256, confirmed=args.confirm_update))
         return
-    if args.action == 'update-draft':
-        if args.inventory:
-            parser.error('update-draft always queries WordPress')
-        from agents.editorial_draft_updater import update_draft
-        print('Updated draft ID:', update_draft(args.post_id, data, args.expected_content_sha256))
-        return
-    if args.action == 'revise-draft':
-        if args.inventory:
-            parser.error('revise-draft always queries WordPress')
-        from agents.editorial_draft_reviser import revise_reviewed_draft
-        print('Revised draft ID:', revise_reviewed_draft(
-            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
-            confirm_title_change=args.confirm_title_change, image_path=args.image_path))
-        return
-    if args.action == 'edit-draft':
-        if args.inventory:
-            parser.error('edit-draft reads only the tracked draft and selected route requirements')
-        if not args.edit_intent:
-            parser.error('edit-draft requires --edit-intent')
-        if args.image_path and (not args.expected_thumbnail_id or not args.alt_text):
-            parser.error('edit-draft with --image-path requires --expected-thumbnail-id and --alt-text')
-        from agents.edit_router import edit_reviewed_draft
-        result = edit_reviewed_draft(
-            args.post_id,
-            data,
-            args.expected_content_sha256,
-            confirmed=args.confirm_update,
-            edit_intent=args.edit_intent,
-            confirm_title_change=args.confirm_title_change,
-            image_path=args.image_path,
-            expected_thumbnail_id=args.expected_thumbnail_id,
-            alt_text=args.alt_text,
-            resume=args.resume,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if args.output:
-            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-        return
-    if args.action == 'fast-revise-draft':
-        if args.inventory:
-            parser.error('fast-revise-draft reads only the target WordPress draft')
-        if not args.edit_intent:
-            parser.error('fast-revise-draft requires --edit-intent')
-        from agents.fast_edit import fast_revise_reviewed_draft
-        print('Fast revised draft ID:', fast_revise_reviewed_draft(
-            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
-            edit_intent=args.edit_intent))
-        return
-    if args.action == 'update-existing':
-        if args.inventory:
-            parser.error('update-existing always queries the live WordPress inventory')
-        from agents.editorial_updater import update_existing_public_post
-        print('Updated public post ID:', update_existing_public_post(
-            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update,
-            confirm_title_change=args.confirm_title_change))
-        return
     if args.action == 'sources':
         from agents.editorial import topic_reasons
         errors = topic_reasons(data)
@@ -364,7 +297,7 @@ def _main():
             parser.error('sources requires --output')
         args.output.write_text(json.dumps({'brief': data, 'sources': fetch_sources(data)}, ensure_ascii=False, indent=2), encoding='utf-8')
         return
-    if args.action in {'prepare-draft', 'publish'} and args.inventory:
+    if args.action == 'prepare-draft' and args.inventory:
         parser.error(f'{args.action} cannot use an inventory override')
     if args.image_path and (not args.image_path.is_file()
                             or args.image_path.suffix.lower() not in {'.jpg', '.jpeg', '.png', '.webp'}):
@@ -472,12 +405,6 @@ def _main():
             if auto_generated_cover and image_path is not None:
                 from agents.designer import cleanup_generated_cover
                 cleanup_generated_cover(image_path)
-    if args.action == 'publish':
-        if not data.get('review'):
-            raise ValueError('publish_requires_existing_semantic_review: run manual-review or review first')
-        from agents.publisher import PublisherAgent
-        print('Draft ID:', PublisherAgent().publish(article_from_bundle(data), image_path=args.image_path))
-        return
     inventory = json.loads(args.inventory.read_text(encoding='utf-8')) if args.inventory else load_inventory()
     if args.action in {'review', 'manual-review'}:
         preflight = validate_bundle(data, inventory, require_review=False)

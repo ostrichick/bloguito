@@ -6,10 +6,17 @@ set -euo pipefail
 # touching production or requiring production secrets.
 
 REPO_ROOT="${REPO_ROOT:-/repo}"
+WITH_WP_CLI=0
+if [[ "${1:-}" == "--with-wp-cli" ]]; then
+  WITH_WP_CLI=1
+elif [[ $# -gt 0 ]]; then
+  echo "ERROR: unsupported argument: $1" >&2
+  exit 2
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq nginx openssh-server fail2ban systemd openssl iptables >/dev/null
+apt-get install -y -qq ca-certificates curl nginx openssh-server fail2ban systemd openssl iptables >/dev/null
 
 install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled
 install -m 0644 "$REPO_ROOT/wordpress/nginx/lifeinfo24.org.conf" /etc/nginx/sites-available/lifeinfo24.org.conf
@@ -57,5 +64,24 @@ grep -q "'maxretry', 5" /tmp/fail2ban-debug.txt || {
 }
 
 systemd-analyze verify "$REPO_ROOT/wordpress/ssh/bloguito-ssh-private-only.service"
+
+if [[ "$WITH_WP_CLI" -eq 1 ]]; then
+  export WP_CLI_DESTINATION=/tmp/wp-cli.phar
+  unset WP_CLI_DOWNLOAD_URL || true
+  bash "$REPO_ROOT/wordpress/provision-wp-cli.sh"
+  bash "$REPO_ROOT/wordpress/provision-wp-cli.sh"
+  test "$(sha256sum /tmp/wp-cli.phar | awk '{print $1}')" = \
+      ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c
+
+  printf 'preserve-me' > /tmp/existing-wp-cli
+  printf 'bad-download' > /tmp/bad-wp-cli
+  if WP_CLI_DESTINATION=/tmp/existing-wp-cli \
+     WP_CLI_DOWNLOAD_URL=file:///tmp/bad-wp-cli \
+     bash "$REPO_ROOT/wordpress/provision-wp-cli.sh" >/tmp/bad-provision.out 2>&1; then
+      echo "ERROR: checksum-mismatched WP-CLI unexpectedly installed." >&2
+      exit 1
+  fi
+  test "$(cat /tmp/existing-wp-cli)" = 'preserve-me'
+fi
 
 echo "HOST_DR_CONFIG_VALIDATION_OK"

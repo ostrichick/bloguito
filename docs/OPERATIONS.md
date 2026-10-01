@@ -88,7 +88,7 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 | 대표이미지만 교체 | `replace-featured-image` | live 본문 SHA와 `_thumbnail_id`를 명령이 직접 읽고 image-only mutation/readback. article source/review는 열지 않음 |
 | 공개 전환 | `promote-draft --confirm-publish` | 글별 사용자 승인, current review/source binding, draft CAS |
 
-`publish`, `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace`, `replace-legacy-draft`는 레거시·진단·복구 호환 action이다. 정상 콘텐츠 작업의 경로 선택에 사용하지 않는다.
+과거 `publish`, `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace` 공개 action은 P12에서 제거했다. `replace-legacy-draft`는 현재 P10 reviewed state가 없는 legacy draft #665처럼 **새 source-bound full review가 필요한 대상에만** 유지보수 전용으로 남긴다. HTML이나 과거 작업 기록만으로 reviewed provenance를 합성하지 않는다.
 
 ### Simple Task Fast Path와 이미지 연속 실행 규칙
 
@@ -172,7 +172,7 @@ python agent-publisher/editorial_cli.py complete-task-qa `
 
 `replace-featured-image`의 media import는 응답 유실 시 중복 attachment를 만들 수 있어 SSH 255 자동 재시도를 하지 않는다. import 시작 직후 결과가 불명확해 attachment ID를 확보하지 못한 상태는 `featured_image_import_outcome_ambiguous`로 차단하고 자동 재import하지 않는다. attachment ID가 checkpoint에 남아 있으면 다음 실행은 새 import 대신 해당 attachment를 reconcile한다. 동일 이미지+ALT의 안전한 실패는 최대 2회까지만 허용한다. `edit-post --resume`은 live 본문 SHA가 작업 시작 SHA 또는 저장 예정 SHA 중 하나일 때만 이어가며 제3의 SHA가 관측되면 동시 변경으로 차단한다.
 
-**Standard P1/P2 preflight와 mutation:** `revise-draft`와 public Standard는 inventory sync, 대상 글의 초기 baseline read, 공식 source 동일성 recheck처럼 서로 독립적인 읽기 작업을 병렬화한다. P2부터 저장 직전 CAS → `wp_update_post()` → 저장 후 readback은 고정된 server-side guarded mutation 한 번으로 합친다. reviewed HTML은 JSON stdin으로 전달하며 임의 PHP/명령은 허용하지 않는다. guarded protocol은 status/title/slug/excerpt/content SHA의 전체 expected state를 확인하고, 저장 후 전체 desired state를 다시 검증한다. 따라서 Fast draft의 기본 target 왕복은 `get + guarded mutation` 2회, Standard draft는 경량 inventory + 초기 target read + guarded mutation의 약 3회 수준이 된다. SSH 255에서 guarded request는 desired-state 일치 검사를 전제로 최대 1회만 replay하며, raw `post update`와 media import는 이 재시도 의미론을 공유하지 않는다.
+**Standard P1/P2 preflight와 mutation:** `edit-post`가 선택한 draft Standard route와 public Standard route는 inventory sync, 대상 글의 초기 baseline read, 공식 source 동일성 recheck처럼 서로 독립적인 읽기 작업을 병렬화한다. P2부터 저장 직전 CAS → `wp_update_post()` → 저장 후 readback은 고정된 server-side guarded mutation 한 번으로 합친다. reviewed HTML은 JSON stdin으로 전달하며 임의 PHP/명령은 허용하지 않는다. guarded protocol은 status/title/slug/excerpt/content SHA의 전체 expected state를 확인하고, 저장 후 전체 desired state를 다시 검증한다. 따라서 Fast draft의 기본 target 왕복은 `get + guarded mutation` 2회, Standard draft는 경량 inventory + 초기 target read + guarded mutation의 약 3회 수준이 된다. SSH 255에서 guarded request는 desired-state 일치 검사를 전제로 최대 1회만 replay하며, raw `post update`와 media import는 이 재시도 의미론을 공유하지 않는다.
 
 **신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 통과하면 현재 의미 검토가 없는 경우 reviewer와 `DesignerAgent` 대표 이미지 생성·비전 검수를 동시에 실행한다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다.
 
@@ -190,7 +190,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.
 2. 공식 근거를 가져와 구조화 `brief`/`sources`/`plan`을 만들고 별도 의미 검토와 코드 검사를 거친다. 행동 버튼은 실제 조회·신청·예약·구매·설치 목적지를 확인한 `sources[].actions`만 사용한다.
-3. 일반 신규 draft는 `prepare-draft`, reviewed 기존 글은 `edit-post`, 대표이미지 전용은 `replace-featured-image`를 사용한다. 단계별 원인 진단이 필요한 경우에만 compatibility action을 직접 호출한다. Fast 경로는 `--edit-intent` 범위 안에서 기존 사실만 다루며 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장은 Standard 전체 검토로 전환한다.
+3. 일반 신규 draft는 `prepare-draft`, reviewed 기존 글은 `edit-post`, 대표이미지 전용은 `replace-featured-image`를 사용한다. Fast 경로는 `--edit-intent` 범위 안에서 기존 사실만 다루며 새 숫자·날짜·지역·근거·CTA·제목·고위험 상태 주장은 Standard 전체 검토로 전환한다.
 4. **공개 전환은 사람의 글별 확인 후** `promote-draft <ID> --confirm-publish`만 사용한다. 명령어가 있어도 현재 공식 원문/원고 해시 및 검토가 불일치하면 차단된다. 보류한 글을 위해 WP-CLI 직접 편집이나 임시 PHP로 검사를 우회하지 않는다.
 
 `scripts/prepare_post_approval.py`는 아직 변경안 자체를 승인받아야 하는 경우에만 사용한다. 이미 승인된 변경안은 `edit-post`의 현재 inventory/source/CAS/backup/readback 경로로 바로 적용한다.
@@ -201,7 +201,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 
 - **서버 예약/자동 실행:** `main.py`가 `EditorialWriterAgent(writing_enabled=True)`를 사용한다. `editorial_policy.json`의 `writer_model` 및 `EDITORIAL_WRITER_MODEL`은 이 자동 작성 경로의 Gemini 모델 선택에 사용한다.
 - **ChatGPT에서 사용자가 직접 집필을 요청한 경우:** 현재 ChatGPT 모델이 `sources` 이후의 구조화 `plan`을 작성한다. 별도 OpenAI API 호출은 필요하지 않는다. 완성한 bundle은 `manual-review`로 넘기며, 이 경로의 모델 어댑터는 `writing_enabled=False`라 Gemini 작성기가 원고를 다시 생성할 수 없다.
-- 직접 작성 예: `python agent-publisher/editorial_cli.py manual-review bundle.json --author-model "GPT-5.6 Sol" --inventory inventory.json --output report.json`. 이후 필요하면 `check`로 결정론 검사를 확인하고 `publish`를 사용한다. `publish`는 **이미 bundle에 결합된 현재 독립 의미 검토가 있어야 하며**, Publisher 잠금 안에서 WordPress 전체 목록을 한 번 새로 동기화하고 현재 policy/content/review 결합을 다시 검사한 뒤 draft를 만든다. 같은 원고와 정책에 대해 AI 의미 검토를 다시 호출하지 않는다. 원고·정책·검토 신선도가 달라졌다면 publish가 차단되며 먼저 `manual-review`/`review`를 다시 수행한다.
+- 직접 작성 예: `python agent-publisher/editorial_cli.py manual-review bundle.json --author-model "GPT-5.6 Sol" --inventory inventory.json --output report.json`. 이후 필요하면 `check`로 결정론 검사를 확인하고 실제 draft 저장은 `scripts/editorial_cli_via_ssh.py ... -- prepare-draft bundle.json`을 사용한다. bundle에 current 독립 의미 검토가 결합돼 있으면 재사용하고, Publisher 잠금 안에서 최신 WordPress inventory와 policy/content/review 결합을 다시 확인한 뒤 draft만 만든다. 원고·정책·검토 신선도가 달라졌다면 저장이 차단되며 먼저 `manual-review`/`review`를 다시 수행한다.
 - `manual-review`의 `--author-model`은 실제 대화에서 사용한 모델명을 기록하기 위한 필수 값이다. 이 값은 게시물의 `used_model` 메타데이터로 이어져 자동 Gemini 작성물과 직접 GPT 작성물을 구분한다.
 
 한 세션에서 `EDITORIAL_SYSTEM.md`와 `editorial_policy.json`을 이미 읽었고 두 파일이 변경되지 않았다면 같은 작업자가 후속 문구·표·링크 수정 때 전체 문서를 다시 읽지 않는다. 새 worker는 자신의 최초 콘텐츠 작업에서 읽는다. 공통 정책 파일을 바꾼 작업과 콘텐츠 적용은 분리하고, 동시 작업이 공통 파일을 수정할 가능성이 있으면 전용 worktree에서 정책/코드를 먼저 안정화한 뒤 그 버전으로 review를 수행한다.
@@ -210,13 +210,13 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 
 운영 서버의 `editorial.py`, `editorial_cli.py`, 정책 문서를 매 작업마다 복사·교체한 뒤 서버에서 다시 review하는 방식을 기본 경로로 사용하지 않는다. 현재 로컬 checkout을 편집 코드의 정본으로 사용하고, 실제 WordPress 명령만 제한된 SSH transport로 전달한다.
 
-- 신규 draft와 reviewed draft/public 수정, 대표이미지 교체는 모두 `scripts/editorial_cli_via_ssh.py`를 정규 원격 adapter로 사용한다. 정상 콘텐츠 mutation은 `prepare-draft` / `edit-post` / `replace-featured-image` 세 경로만 선택한다. 과거 wrapper/action은 호환 shim으로만 유지한다.
+- 신규 draft와 reviewed draft/public 수정, 대표이미지 교체는 모두 `scripts/editorial_cli_via_ssh.py`를 정규 원격 adapter로 사용한다. 정상 콘텐츠 mutation은 `prepare-draft` / `edit-post` / `replace-featured-image` 세 경로만 선택하며 P12 이후 과거 wrapper/action은 공개 CLI 표면에서 제거됐다.
 - 공개 전환 `promote-draft`와 복구·진단 action은 별도 lifecycle/maintenance 명령이다. Direct SSH가 기본이며 Tailscale은 실제 비상·복구 작업에서만 명시적으로 선택한다.
-- 수동 편집 transport의 기본 모드는 항상 `direct`다. `BLOGUITO_SSH_HOST`, `BLOGUITO_SSH_USER`는 Direct SSH의 기본 접속값으로 사용할 수 있지만, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 환경설정이 일반 작업을 Tailscale로 자동 전환하게 두지 않는다. WSL/Tailscale은 명령행 `--ssh-mode` 또는 기존 일회성 옵션으로만 선택한다.
+- 수동 편집 transport의 기본 모드는 항상 `direct`다. `BLOGUITO_SSH_HOST`, `BLOGUITO_SSH_USER`는 Direct SSH의 기본 접속값으로 사용할 수 있지만, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 환경설정이 일반 작업을 Tailscale로 자동 전환하게 두지 않는다. WSL/Tailscale은 명령행 `--ssh-mode wsl|tailscale`로만 명시적으로 선택한다.
 - Direct SSH가 실패해도 공개 웹/REST 조회로 목적을 달성할 수 있으면 Tailscale로 전환하지 않는다. 서버 설정·Docker/WP-CLI·비공개 WordPress 상태처럼 SSH가 반드시 필요한 작업에서 Direct SSH가 불가능할 때만 Tailscale을 명시적으로 선택한다. Tailscale 경로를 선택한 뒤에도 `tailscale status/ping`을 선행 반복하지 않고 실제 SSH 실패 시 한 번만 진단한다. 읽기 명령은 필요할 때 1회 재시도할 수 있고, P2 guarded mutation은 서버가 전체 desired state를 확인하므로 SSH 255에서 최대 1회 replay한다. raw `post update`, `post create`, media import처럼 결과 유실 시 중복·불명확 상태를 만들 수 있는 mutation은 같은 재시도 의미론을 사용하지 않는다.
 - P11부터 WSL 안의 표준 OpenSSH 경로는 한 adapter 실행 동안 `ControlMaster=auto`, `ControlPersist=30`으로 연결을 재사용한다. Windows native OpenSSH와 `tailscale ssh`에는 이 옵션을 적용하지 않는다. 연결 재사용은 transport 비용만 줄이며 action별 allowlist, target ID 제한, CAS/replay 규칙은 바꾸지 않는다.
 - `import-section-image`는 고정된 read-only snapshot script로 대상 글 본문/상태, 대표이미지 ID, Rank Math 3종을 한 번에 읽고, import 뒤 attachment 메타까지 한 번에 재조회한다. 따라서 정상 경로의 WP-CLI 조회/변경은 `pre snapshot → media import → post snapshot` 3회가 기본이다. 두 snapshot은 읽기 전용이라 SSH 255에서 1회 재시도할 수 있지만 **media import는 절대 자동 재시도하지 않는다.**
-- 과거 서버에서 만든 reviewed draft의 manifest가 로컬 `agent-publisher/data/draft_posts.json`에 아직 없다면 **전환 시 1회만** `scripts/sync_editorial_state_via_ssh.py`로 기존 `draft_posts.json`/`published_posts.json`을 가져온다. 이 도구는 로컬 상태 파일이 하나라도 이미 존재하면 덮어쓰기를 거부한다. 이후 로컬 상태가 정본이므로 서버 파일을 다시 가져와 덮지 않는다.
+- 과거 서버 reviewed state의 1회 동기화는 완료됐고 P10 per-post manifest 전환도 2026-10-01에 끝났다. 따라서 `sync_editorial_state_via_ssh.py`는 P12에서 제거했으며 로컬 `agent-publisher/data`가 정본이다. 새 환경 복구는 검증된 백업/restore 절차를 사용하고 오래된 서버 index를 다시 가져와 덮지 않는다.
 
 ### reviewed state 저장 구조
 
@@ -249,7 +249,9 @@ WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, �
 
 - `backup_daily.sh`: v3 **코드**는 DB, uploads, plugins/themes/MU 플러그인, 설정, 별도 비밀 구성요소, manifest를 다룬다. 운영에서 v3가 정기 생성되는지, Nginx/TLS까지 복구 가능한지는 별도 확인한다.
 - `restore_backup.sh <archive> --verify-only`: **데이터를 변경하지 않는** 해시·구조 확인. 구형 v2는 검증만 지원하고 전체 복원을 거부한다.
-- `scripts/sync_backups.py`: 신뢰된 SSH 별칭/호스트키, 전후 해시, 임시 파일 검증 후 로컬 확정. 기존 백업을 건드리지 않는 다운로드라도 저장 경로의 권한과 여유 공간을 확인한다.
+- `scripts/sync_backups.py`: Direct SSH와 명시적 Tailscale SSH가 **같은 검증/atomic sync engine**을 사용한다. 기본은 Direct이며 비상 경로는 `BLOGUITO_BACKUP_TRANSPORT=tailscale`로만 선택한다. 두 transport 모두 전후 SHA, 임시 파일, v2/v3 manifest와 nested archive/path 검증 후 `os.replace`로 확정한다. 기존 백업을 건드리지 않는 다운로드라도 저장 경로의 권한과 여유 공간을 확인한다.
+- WordPress PHP 검증은 `.github/workflows/test.yml`에서 파일을 수동 나열하지 않고 `php wordpress/tests/run.php` 한 진입점으로 실행한다. 이 runner는 모든 MU plugin과 test PHP를 syntax-check하고 standalone `*-test.php`를 자동 실행한다. 실제 WordPress나 보존 fixture가 필요한 `wp-post-id-column-smoke.php`, `legacy-table85-accessibility-test.php`는 syntax-check만 하고 전용 환경에서 별도 실행한다.
+- 호스트 DR의 nginx/TLS/sshd/fail2ban/systemd 검증 정본은 `scripts/host_dr_validate.sh` 하나다. `host_dr_config_drill.sh`는 읽기 전용 repo mount를 만든 disposable Ubuntu container에서 이 validator를 `--with-wp-cli`로 호출해 pinned WP-CLI의 정상/오류 경로까지 추가 검증한다.
 - v3의 `secrets.tar.gz`는 일반 압축이며 **암호화된 금고가 아니다**. 접근권한, 오프사이트 암호화·키 보관·독립 복구 계획 없이 완전 백업이라고 표현하지 않는다. 실제 격리 복원 범위와 호스트 단위 미검증 항목은 [2026-09-25 애플리케이션/데이터 복구 훈련](backup-restore-drill-2026-09-25.md)과 [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md)의 PASS/PARTIAL/NOT TESTED 판정을 따른다.
 - 운영 서버는 로컬 Compose와 `.env` 구성·systemd 설정이 다를 수 있다. **이미지 digest가 같다는 이유만으로 재생성할 필요는 없다.** 사전 해시·백업·비밀값 비노출 설정 확인, 스테이징 테스트, 서비스별 롤백 계획을 마련한 뒤 변경한다.
 

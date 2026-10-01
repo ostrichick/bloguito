@@ -58,25 +58,23 @@ _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
 _REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 _REMOTE_SECTION_IMAGE = re.compile(
     r'/tmp/editorial_section_([1-9][0-9]*)_[0-9a-f]{12}\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
-_CREATE_ACTIONS = {'publish', 'prepare-draft'}
+_CREATE_ACTIONS = {'prepare-draft'}
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
-_IMAGE_EDIT_ACTIONS = {'revise-draft', 'fast-revise-draft', 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
+_DRAFT_EDIT_PROFILES = {'draft-fast', 'draft-standard'}
+_IMAGE_EDIT_ACTIONS = {*_DRAFT_EDIT_PROFILES, 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
 _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
 _PRIMARY_CLI_ACTIONS = {'prepare-draft', 'edit-post', 'replace-featured-image'}
 _PUBLICATION_CLI_ACTIONS = {'promote-draft'}
-_COMPATIBILITY_CLI_ACTIONS = {
-    'publish', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'update-existing',
-    'quick-image-replace', 'update-draft', 'replace-legacy-draft',
+_MAINTENANCE_CLI_ACTIONS = {
+    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image', 'replace-legacy-draft'
 }
-_MAINTENANCE_CLI_ACTIONS = {'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image'}
 _CLI_ACTIONS = (
     _PRIMARY_CLI_ACTIONS | _PUBLICATION_CLI_ACTIONS
-    | _COMPATIBILITY_CLI_ACTIONS | _MAINTENANCE_CLI_ACTIONS
+    | _MAINTENANCE_CLI_ACTIONS
 )
-_TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
+_TRANSPORT_PROFILES = {*_DRAFT_EDIT_PROFILES, 'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
-    'update-draft': {'post_content'},
     'replace-legacy-draft': {'post_content', 'post_excerpt'},
     'repair-draft-category': {'post_category'},
     'promote-draft': {'post_status'},
@@ -84,7 +82,7 @@ _UPDATE_FIELDS = {
     'fix-excerpt': {'post_excerpt'},
 }
 _PERMALINK_ACTIONS = {
-    'publish', 'prepare-draft', 'replace-legacy-draft', 'promote-draft', 'reformat',
+    'prepare-draft', 'replace-legacy-draft', 'promote-draft', 'reformat',
     'repair-draft-category',
 }
 
@@ -140,12 +138,12 @@ def _mark_catalog_sync(cli_args, status, attempts):
 
 
 def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
-                   allow_title_change=False, tailscale_ssh=False,
+                   allow_title_change=False, use_tailscale=False,
                    expected_rank_math_meta=None, allow_image=False):
     if action not in _SUPPORTED_ACTIONS:
         raise ValueError('unsupported_editorial_ssh_action')
-    if action in {'edit-post', 'edit-draft', 'update-existing'}:
-        raise ValueError('edit_draft_requires_preclassified_transport')
+    if action == 'edit-post':
+        raise ValueError('edit_post_requires_preclassified_transport')
     _safe_identifier(host, 'ssh_host')
     _safe_identifier(ssh_user, 'ssh_user')
     _safe_identifier(wsl_distro, 'wsl_distro')
@@ -166,9 +164,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
 
     def ssh_argv(remote):
         destination = f'{ssh_user}@{host}' if ssh_user else host
-        if tailscale_ssh:
+        if use_tailscale:
             if not wsl_distro:
-                raise ValueError('tailscale_ssh_requires_wsl_distro')
+                raise ValueError('tailscale_requires_wsl_distro')
             return ['wsl.exe', '-d', wsl_distro, '--exec', 'tailscale', 'ssh', destination, remote]
         command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
         if wsl_distro:
@@ -233,7 +231,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             fields[key] = value
         expected = _UPDATE_FIELDS.get(action, set())
         allowed_field_sets = {frozenset(expected)}
-        if action == 'revise-draft' and allow_title_change:
+        if action == 'draft-standard' and allow_title_change:
             allowed_field_sets.add(frozenset(expected | {'post_title'}))
         if frozenset(fields) not in allowed_field_sets:
             raise ValueError('unexpected_wordpress_update_flags')
@@ -244,7 +242,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         return post_id
 
     def validate_guarded_payload(raw):
-        if action not in {'revise-draft', 'fast-revise-draft', 'public-fast', 'public-standard'}:
+        if action not in {'draft-standard', 'draft-fast', 'public-fast', 'public-standard'}:
             raise ValueError('guarded_wordpress_mutation_not_allowed')
         if isinstance(raw, bytes):
             raw = raw.decode('utf-8')
@@ -273,9 +271,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if not isinstance(updates, dict) or any(
                 not isinstance(value, str) or '\x00' in value for value in updates.values()):
             raise ValueError('invalid_guarded_wordpress_update')
-        if action == 'fast-revise-draft':
+        if action == 'draft-fast':
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
-        elif action == 'revise-draft':
+        elif action == 'draft-standard':
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
             if allow_title_change:
                 allowed_field_sets.add(frozenset({'post_content', 'post_excerpt', 'post_title'}))
@@ -388,7 +386,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
                 and wp[4:] == ['--featured_image', '--allow-root']):
             return
-        if (allow_image and action == 'revise-draft' and len(wp) == 7 and wp[:2] == ['media', 'import']
+        if (allow_image and action == 'draft-standard' and len(wp) == 7 and wp[:2] == ['media', 'import']
                 and _REMOTE_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
                 and int(wp[3].split('=', 1)[1]) in allowed_ids
@@ -415,7 +413,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and wp[5].startswith('--alt=') and '\x00' not in wp[5]
                 and wp[6:] == ['--porcelain', '--allow-root']):
             return 'media_import'
-        if (allow_image and action == 'revise-draft' and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
+        if (allow_image and action == 'draft-standard' and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4:] == ['_thumbnail_id', '--allow-root']):
             return
@@ -426,13 +424,13 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                               'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
                 and wp[5] == '--allow-root'):
             return
-        if (action in {'public-standard', 'revise-draft', 'replace-legacy-draft'}
+        if (action in {'public-standard', 'draft-standard', 'replace-legacy-draft'}
                 and expected_rank_math_meta is not None
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4] in expected_rank_math_meta and wp[5] == '--allow-root'):
             return
-        if (action in {'public-standard', 'revise-draft', 'replace-legacy-draft'}
+        if (action in {'public-standard', 'draft-standard', 'replace-legacy-draft'}
                 and expected_rank_math_meta is not None
                 and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
@@ -474,32 +472,6 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 else:
                     options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
                 return remote_run(remote, retry_255=True, **options)
-            # A full reviewed draft can easily exceed Windows' CreateProcess
-            # command-line limit when `--post_content=<html>` is embedded in the
-            # SSH argv. WP-CLI supports `wp post update <id> -`, which reads only
-            # post_content from STDIN. Keep validating the caller's original
-            # exact target/field set above, then transport that already-validated
-            # content over stdin while leaving the short reviewed fields quoted
-            # on the remote command line.
-            if action == 'update-draft' and wp[:2] == ['post', 'update']:
-                content_args = [item for item in wp[3:-1] if item.startswith('--post_content=')]
-                if len(content_args) == 1:
-                    content_arg = content_args[0]
-                    content = content_arg.split('=', 1)[1]
-                    forwarded = [item for item in wp[3:-1] if item != content_arg]
-                    remote_wp = [*wp[:3], '-', *forwarded, '--allow-root']
-                    remote = ('sudo docker exec -i wordpress_app wp '
-                              + ' '.join(shlex.quote(item) for item in remote_wp))
-                    options = dict(kwargs)
-                    if options.get('text') or options.get('universal_newlines'):
-                        options['input'] = content
-                    else:
-                        options['input'] = content.encode('utf-8')
-                    return remote_run(
-                        remote,
-                        retry_255=False,
-                        **options,
-                    )
             remote = 'sudo docker exec wordpress_app wp ' + ' '.join(shlex.quote(item) for item in wp)
             read_only = (wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS
                          or wp[:2] == ['post', 'get'] or (wp and wp[0] == 'eval'))
@@ -582,8 +554,6 @@ def _main():
     parser.add_argument('--ssh-host')
     parser.add_argument('--ssh-user')
     parser.add_argument('--wsl-distro')
-    parser.add_argument('--tailscale-ssh', action='store_true',
-                        help='legacy override: use `tailscale ssh` inside the selected WSL distro')
     parser.add_argument('cli_args', nargs=argparse.REMAINDER,
                         help='Pass -- followed by editorial_cli.py arguments')
     args = parser.parse_args()
@@ -602,25 +572,13 @@ def _main():
         ssh_host=args.ssh_host,
         ssh_user=args.ssh_user,
         wsl_distro=args.wsl_distro,
-        tailscale_ssh=args.tailscale_ssh,
     )
     transport_action = action
     expected_rank_math_meta = None
-    if action == 'quick-image-replace':
-        if '--image-path' not in cli_args:
-            parser.error('quick-image-replace requires --image-path')
-        image_index = cli_args.index('--image-path') + 1
-        if image_index >= len(cli_args):
-            parser.error('--image-path requires a value')
-        image_path = Path(cli_args[image_index])
-        if not image_path.is_file():
-            parser.error('quick-image-replace image file not found')
-        transport_action = 'replace-featured-image'
-        print('[Edit Route] image-only (quick)')
-    if action in {'edit-post', 'edit-draft', 'update-existing'}:
+    if action == 'edit-post':
         if len(cli_args) < 2:
-            if action != 'edit-post' or '--image-path' not in cli_args:
-                parser.error(f'{action} requires a bundle file')
+            if '--image-path' not in cli_args:
+                parser.error('edit-post requires a bundle file or --image-path')
         bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None
         bundle = None
         if bundle_path is not None:
@@ -635,70 +593,57 @@ def _main():
             if image_index >= len(cli_args):
                 parser.error('--image-path requires a value')
             image_path = Path(cli_args[image_index])
-        if action == 'edit-post':
-            if bundle is None:
-                from agents.edit_post import reviewed_target_kind
-                from agents.validation_router import build_validation_plan
-                target_status = reviewed_target_kind(post_ids[0])
-                expected_sha = (cli_args[cli_args.index('--expected-content-sha256') + 1]
-                                if '--expected-content-sha256' in cli_args else None)
-                transport_action = 'replace-featured-image'
-                decision = {
-                    'route': 'image-only',
-                    'reasons': [],
-                    'validation_plan': build_validation_plan(
-                        None, None, image_changed=True, target_status=target_status,
-                        resume='--resume' in cli_args, route='image-only', post_id=post_ids[0],
-                        expected_content_sha256=expected_sha),
-                }
-            else:
-                from agents.edit_post import classify_reviewed_post_route
-                decision = classify_reviewed_post_route(
-                    post_ids[0], bundle,
-                    expected_content_sha256=(cli_args[cli_args.index('--expected-content-sha256') + 1]
-                                             if '--expected-content-sha256' in cli_args else None),
-                    confirm_title_change='--confirm-title-change' in cli_args,
-                    image_path=image_path,
-                    resume='--resume' in cli_args)
-                if decision['target_status'] == 'draft':
-                    transport_action = 'fast-revise-draft' if decision['route'] == 'fast' else 'revise-draft'
-                else:
-                    transport_action = 'public-fast' if decision['route'] == 'fast' else 'public-standard'
-                    if transport_action == 'public-standard':
-                        expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
-        elif action == 'edit-draft':
-            from agents.edit_router import classify_edit_route
-            decision = classify_edit_route(
-                post_ids[0], bundle,
-                confirm_title_change='--confirm-title-change' in cli_args,
-                image_path=image_path)
-            transport_action = 'fast-revise-draft' if decision['route'] == 'fast' else 'revise-draft'
+        if bundle is None:
+            from agents.edit_post import reviewed_target_kind
+            from agents.validation_router import build_validation_plan
+            target_status = reviewed_target_kind(post_ids[0])
+            expected_sha = (cli_args[cli_args.index('--expected-content-sha256') + 1]
+                            if '--expected-content-sha256' in cli_args else None)
+            transport_action = 'replace-featured-image'
+            decision = {
+                'route': 'image-only',
+                'reasons': [],
+                'validation_plan': build_validation_plan(
+                    None, None, image_changed=True, target_status=target_status,
+                    resume='--resume' in cli_args, route='image-only', post_id=post_ids[0],
+                    expected_content_sha256=expected_sha),
+            }
         else:
-            transport_action = 'public-standard'
-            decision = {'route': 'standard', 'reasons': []}
-            expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
-        if transport_action == 'revise-draft' and bundle is not None:
+            from agents.edit_post import classify_reviewed_post_route
+            decision = classify_reviewed_post_route(
+                post_ids[0], bundle,
+                expected_content_sha256=(cli_args[cli_args.index('--expected-content-sha256') + 1]
+                                         if '--expected-content-sha256' in cli_args else None),
+                confirm_title_change='--confirm-title-change' in cli_args,
+                image_path=image_path,
+                resume='--resume' in cli_args)
+            if decision['target_status'] == 'draft':
+                transport_action = 'draft-fast' if decision['route'] == 'fast' else 'draft-standard'
+            else:
+                transport_action = 'public-fast' if decision['route'] == 'fast' else 'public-standard'
+                if transport_action == 'public-standard':
+                    expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
+        if transport_action == 'draft-standard' and bundle is not None:
             expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
         print(f"[Edit Route] {decision['route']}" +
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
-        if action == 'edit-post':
-            plan = decision['validation_plan']
-            if plan.get('full_regression_required'):
-                # Repository/shared-code profiles still fail before mutation.
-                from agents.validation_runner import require_validation_success
-                with timed('validation'):
-                    validation = require_validation_success(plan, verbosity=0)
-            else:
-                validation = {
-                    'profile': plan.get('profile') or decision.get('route') or 'content',
-                    'tests_run': 0,
-                    'selected_files': [], 'duration_ms': 0.0, 'status': 'passed',
-                }
-            print(
-                f"[Validation] {validation['profile']}: "
-                f"{validation['tests_run']} tests PASS "
-                f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
-            )
+        plan = decision['validation_plan']
+        if plan.get('full_regression_required'):
+            # Repository/shared-code profiles still fail before mutation.
+            from agents.validation_runner import require_validation_success
+            with timed('validation'):
+                validation = require_validation_success(plan, verbosity=0)
+        else:
+            validation = {
+                'profile': plan.get('profile') or decision.get('route') or 'content',
+                'tests_run': 0,
+                'selected_files': [], 'duration_ms': 0.0, 'status': 'passed',
+            }
+        print(
+            f"[Validation] {validation['profile']}: "
+            f"{validation['tests_run']} tests PASS "
+            f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
+        )
 
     if action == 'import-section-image':
         if '--image-path' not in cli_args:
@@ -708,7 +653,7 @@ def _main():
             parser.error('--image-path requires a value')
         image_path = Path(cli_args[image_index])
 
-    if action in {'revise-draft', 'replace-legacy-draft'}:
+    if action == 'replace-legacy-draft':
         bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None
         if bundle_path is None or not bundle_path.is_file():
             parser.error(f'{action} bundle file not found')
@@ -718,9 +663,9 @@ def _main():
     transport = make_transport(
         transport_action, targets, config.host, ssh_user=config.user,
         wsl_distro=config.wsl_distro if config.mode in {'wsl', 'tailscale'} else None,
-        allow_title_change=(transport_action in {'revise-draft', 'public-standard'}
+        allow_title_change=(transport_action in {'draft-standard', 'public-standard'}
                             and '--confirm-title-change' in cli_args),
-        tailscale_ssh=config.mode == 'tailscale',
+        use_tailscale=config.mode == 'tailscale',
         expected_rank_math_meta=expected_rank_math_meta,
         allow_image=image_path is not None)
     decision_context = (

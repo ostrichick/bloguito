@@ -219,7 +219,7 @@ def edit_reviewed_draft(
         }
     if resume:
         state = load_task_state(post_id)
-        if not state or state.get("action") != "edit-draft":
+        if not state or state.get("action") not in {"edit-post", "edit-draft"}:
             raise ValueError("resumable_edit_task_state_required")
         if state.get("status") not in {"in_progress", "saved_pending_qa", "failed"}:
             raise ValueError("task_state_not_resumable")
@@ -296,7 +296,7 @@ def edit_reviewed_draft(
     else:
         start_task_state(
             post_id,
-            action="edit-draft",
+            action="edit-post",
             edit_intent=edit_intent,
             baseline={
                 "expected_content_sha256": expected_content_sha256,

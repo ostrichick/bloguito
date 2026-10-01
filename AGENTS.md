@@ -10,7 +10,7 @@
 - 기존 reviewed 글 수정: `edit-post`
 - 대표이미지만 교체: `replace-featured-image`
 
-`edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace`, `replace-legacy-draft`, `publish`는 레거시·진단·복구 호환 경로다. 새 일반 작업에서 직접 선택하지 않는다. 공개 전환은 별도 생명주기 작업이며, 사용자가 글별로 승인한 뒤 `promote-draft --confirm-publish`를 사용한다.
+과거 `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace`, `publish` 공개 CLI는 제거됐다. `replace-legacy-draft`는 현재 P10 reviewed state가 없는 legacy draft #665처럼 source-bound full review를 새로 만들어야 하는 대상에만 유지보수 전용으로 허용한다. 과거 HTML이나 작업 기록만으로 reviewed provenance를 합성하지 않는다. 공개 전환은 별도 생명주기 작업이며, 사용자가 글별로 승인한 뒤 `promote-draft --confirm-publish`를 사용한다.
 
 `edit-post`는 코드의 단일 change classifier가 변경을 분류한다. 표현·중복 제거·기존 사실 재배치 같은 Simple 변경은 기존 source를 재수집하거나 full semantic review를 다시 하지 않는다. 새 사실·숫자·날짜·제목·출처·CTA·카테고리·현재 판매/신청/예매 상태 등은 Standard로 올려 필요한 source freshness와 full semantic review를 수행한다. 에이전트가 Fast/Standard, QA scope, regression profile을 각각 따로 추론하지 않는다.
 

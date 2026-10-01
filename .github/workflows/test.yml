@@ -24,7 +24,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-nanum php-cli
+          sudo apt-get install -y fonts-nanum
 
       - name: Install Python dependencies
         run: |
@@ -38,34 +38,17 @@ jobs:
         run: |
           python -m unittest discover -s agent-publisher/tests
 
-      - name: Check WordPress admin post ID column
+  wordpress-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install PHP
         run: |
-          php -l wordpress/mu-plugins/bloguito-post-id-column.php
-          php -l wordpress/tests/post-id-column-test.php
-          php wordpress/tests/post-id-column-test.php
-
-      - name: Check legacy table-of-contents renderer
-        run: |
-          php -l wordpress/mu-plugins/bloguito-legacy-toc.php
-          php -l wordpress/tests/legacy-toc-contract-test.php
-          php wordpress/tests/legacy-toc-contract-test.php
-
-      - name: Syntax-check legacy layout plugins
-        run: |
-          php -l wordpress/mu-plugins/bloguito-legacy-callout-spacing.php
-          php -l wordpress/mu-plugins/bloguito-legacy-table-accessibility.php
-          # This fixture-based harness is run locally against preserved public
-          # HTML, which is intentionally excluded from the public repository.
-          php -l wordpress/tests/legacy-table85-accessibility-test.php
-
-      - name: Check current reader and header polish plugins
-        run: |
-          php -l wordpress/mu-plugins/bloguito-reader-flow.php
-          php -l wordpress/tests/reader-flow-test.php
-          php wordpress/tests/reader-flow-test.php
-          php -l wordpress/mu-plugins/bloguito-front-end-polish.php
-          php -l wordpress/tests/front-end-polish-test.php
-          php wordpress/tests/front-end-polish-test.php
+          sudo apt-get update
+          sudo apt-get install -y php-cli
+      - name: Check WordPress MU plugins and contracts
+        run: php wordpress/tests/run.php
 
   infrastructure-test:
     runs-on: ubuntu-latest

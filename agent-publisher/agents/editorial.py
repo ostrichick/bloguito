@@ -9,7 +9,6 @@ from urllib.parse import urlparse, parse_qs, quote
 
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
-                                        extract_nol_product_schedule,
                                         validate_multi_event_schedule,
                                         validate_legacy_followup,
                                         validate_legacy_reference_period,
@@ -769,7 +768,6 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                             or schedule_rows < 22):
                         reasons.append('specific_holiday_branch_details_missing')
             listing_only = temporal.get('schedule_listing_only') is True
-            legacy_nol_mode = temporal.get('legacy_nol_product_listing') is True
             multi_event = temporal.get('multi_event_schedule') is True
             if temporal.get('reference_period') is None and temporal.get('evidence') != available:
                 reasons.append('temporal_source_not_bound')
@@ -777,62 +775,25 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                 reasons.extend(validate_multi_event_schedule(
                     brief, sources, temporal, plan, now,
                     minimum_days=rules['min_remaining_days']))
-            elif listing_only or legacy_nol_mode:
+            elif listing_only:
                 # For an event schedule and booking *destinations*, evidence of an
                 # actual sale deadline is not available from the public listing.
                 # This mode cannot certify ticket availability or sale periods.
                 listing_url = temporal.get('listing_source_url')
                 listing_source = next((s for s in sources if s['url'] == listing_url), None)
                 host = urlparse(listing_url).hostname if listing_url else None
-                legacy_nol_products = {
-                    70: {
-                        'url': 'https://nol.yanolja.com/ticket/products/26013136',
-                        'region': '수원',
-                        'title_terms': ['무명전설', '수원앵콜'],
-                        'venue': '수원컨벤션센터',
-                    },
-                    99: {
-                        'url': 'https://nol.yanolja.com/ticket/products/26013078',
-                        'region': '서울',
-                        'title_terms': ['로이킴', 'R:O:Y'],
-                        'venue': 'KSPO DOME',
-                    },
-                }
-                legacy_nol = legacy_nol_products.get(brief.get('existing_post_id'))
-                nol_product = (
-                    legacy_nol_mode and not listing_only
-                    and listing_source is not None
-                    and host == 'nol.yanolja.com' and listing_url and legacy_nol
-                    and listing_url == legacy_nol['url']
-                    and temporal.get('region_hint') == legacy_nol['region']
-                    and brief.get('content_type') == 'dated'
-                    and brief.get('official_urls') == [listing_url]
-                    and brief.get('required_title_terms') == legacy_nol['title_terms']
-                    and all(term in listing_source.get('text', '') for term in legacy_nol['title_terms'])
-                    and legacy_nol['venue'] in listing_source.get('text', '')
-                    and listing_source.get('source_type') == 'official'
-                    and not available
-                    and len(listing_source.get('actions') or []) == 1
-                    and listing_source['actions'][0].get('kind') == 'booking'
-                    and listing_source['actions'][0].get('url') == listing_url
-                )
                 generic_listing = (
-                    listing_only and not legacy_nol_mode
-                    and host in {'m.ticket.yes24.com', 'www.ticketlink.co.kr'}
+                    host in {'m.ticket.yes24.com', 'www.ticketlink.co.kr'}
                 )
                 if (brief.get('category_key') != 'concert' or temporal.get('requires_sale') is not False
                         or not listing_source
-                        or (not generic_listing and not nol_product)):
+                        or not generic_listing):
                     reasons.append('schedule_listing_provenance_missing')
                 else:
                     if host == 'm.ticket.yes24.com':
                         rows = extract_yes24_schedule(listing_source['text'], brief['entity'].split()[0])
                     elif host == 'www.ticketlink.co.kr':
                         rows = extract_ticketlink_bridge_schedule(listing_source['text'], brief['entity'].split()[0])
-                    else:
-                        rows = extract_nol_product_schedule(
-                            listing_source['text'], legacy_nol['title_terms'][0],
-                            legacy_nol['region'])
                     schedule_tables = [
                         (table.get('headers', []), row.get('cells', []))
                         for section in plan['sections']
@@ -873,12 +834,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                             any(matches_schedule_row(headers, cells, item)
                                 for headers, cells in schedule_tables)
                             for item in rows)
-                    if (not rows or rows != temporal.get('listing_entries')
-                            or (nol_product and any(item['venue'] != legacy_nol['venue'] for item in rows))
-                            or not listing_rows_in_table):
-                        reasons.append('schedule_listing_not_bound')
-                    elif nol_product and brief.get('useful_until') != max(
-                            date.fromisoformat(item['date'].replace('.', '-')) for item in rows).isoformat():
+                    if (not rows or rows != temporal.get('listing_entries') or not listing_rows_in_table):
                         reasons.append('schedule_listing_not_bound')
                     elif max(date.fromisoformat(item['date'].replace('.', '-')) for item in rows) < now.date():
                         reasons.append('availability_not_verified')
