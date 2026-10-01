@@ -25,7 +25,7 @@
 
 ## P15 — CI·backup·DR 중복 통합
 
-- `wordpress/tests/run.php`를 추가해 MU plugin/test PHP syntax와 standalone `*-test.php` contract를 자동 발견한다. GitHub Actions의 수동 PHP 파일 나열을 이 runner 하나로 교체했다. live WordPress가 필요한 smoke test는 syntax-only로 분리했다.
+- `wordpress/tests/run.php`를 추가해 MU plugin/test PHP syntax와 standalone `*-test.php` contract를 자동 발견한다. GitHub Actions의 수동 PHP 파일 나열을 이 runner 하나로 교체하고 WordPress 검증을 독립 job으로 분리해 Python suite 실패와 무관하게 실행되게 했다. live WordPress가 필요한 smoke test는 syntax-only로 분리했다.
 - `sync_backups.py`에 공통 `sync_transport()`와 Direct/Tailscale transport를 두고 별도 `sync_backups_tailscale.py`를 제거했다. Tailscale은 `BLOGUITO_BACKUP_TRANSPORT=tailscale`일 때만 명시적으로 사용한다.
 - 두 transport 모두 remote SHA → 임시 다운로드 → local SHA → remote 재확인 → v2/v3 manifest·nested archive·path 검증 → atomic replace 순서를 공유한다.
 - `host_dr_validate.sh`를 nginx/TLS/sshd/fail2ban/systemd 검증 정본으로 만들고, `host_dr_config_drill.sh`은 disposable container에서 이를 `--with-wp-cli`로 호출하도록 중복을 제거했다.

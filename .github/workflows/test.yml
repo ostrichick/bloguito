@@ -24,7 +24,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-nanum php-cli
+          sudo apt-get install -y fonts-nanum
 
       - name: Install Python dependencies
         run: |
@@ -38,6 +38,15 @@ jobs:
         run: |
           python -m unittest discover -s agent-publisher/tests
 
+  wordpress-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install PHP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-cli
       - name: Check WordPress MU plugins and contracts
         run: php wordpress/tests/run.php
 
