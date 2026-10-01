@@ -11,13 +11,17 @@ from bs4 import BeautifulSoup
 
 from agents.editorial import ROOT, render, save_report, validate_bundle, excerpt_from_lead
 from agents.related_links import missing_internal_post_ids
-from agents.editorial_writer import fetch_sources, load_inventory
+from agents.editorial_writer import load_inventory
+from agents.source_validation_cache import verify_sources_unchanged
+from agents.temporal_validation import KST
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
     backup_json,
     content_sha256,
     get_post,
     guarded_update_post,
+    read_post_meta_batch,
+    set_post_meta_batch,
     update_post,
     verify_cas,
     verify_saved_fields,
@@ -62,28 +66,13 @@ def rank_math_meta_from_brief(brief):
     }
 
 
-def _read_post_meta(base, post_id, key):
-    result = subprocess.run(
-        list(base) + ['post', 'meta', 'get', str(post_id), key, '--allow-root'],
-        capture_output=True, text=True, check=False)
-    if result.returncode == 0:
-        return (result.stdout or '').rstrip('\r\n')
-    stderr = (result.stderr or '').lower()
-    if result.returncode == 1 and 'could not find the specified post meta field' in stderr:
-        return None
-    raise subprocess.CalledProcessError(
-        result.returncode, result.args, output=result.stdout, stderr=result.stderr)
-
-
 def _read_rank_math_meta(base, post_id):
-    return {key: _read_post_meta(base, post_id, key) for key in RANK_MATH_META_KEYS}
+    return read_post_meta_batch(base, int(post_id), RANK_MATH_META_KEYS)
 
 
 def _set_rank_math_meta(base, post_id, values):
-    for key in RANK_MATH_META_KEYS:
-        subprocess.run(
-            list(base) + ['post', 'meta', 'set', str(post_id), key, values[key], '--allow-root'],
-            capture_output=True, text=True, check=True)
+    expected = {key: values[key] for key in RANK_MATH_META_KEYS}
+    return set_post_meta_batch(base, int(post_id), expected)
 
 
 def _update_reviewed_public_manifest(post_id, bundle):
@@ -110,7 +99,7 @@ def _update_reviewed_public_manifest(post_id, bundle):
 
 def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False,
                                 confirm_title_change=False, checkpoint_callback=None,
-                                tracked_baseline_bundle=None):
+                                tracked_baseline_bundle=None, validation_plan=None):
     """Change reviewed content after a fresh review and unchanged-content check.
 
     The slug, status, categories, media and publication date are kept. Title
@@ -149,54 +138,70 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
     try:
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         fields = ['post_status', 'post_title', 'post_name', 'post_content', 'post_excerpt']
-        inventory_context = copy_context()
+        site_context_required = True if not isinstance(validation_plan, dict) else bool(
+            validation_plan.get('site_context_required', True))
         target_context = copy_context()
         source_context = copy_context()
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            inventory_future = pool.submit(inventory_context.run, sync_inventory)
+        inventory = None
+        with ThreadPoolExecutor(max_workers=3 if site_context_required else 2) as pool:
+            inventory_future = None
+            if site_context_required:
+                inventory_context = copy_context()
+                inventory_future = pool.submit(inventory_context.run, sync_inventory)
             target_future = pool.submit(target_context.run, get_post, base, post_id, fields=fields)
-            source_future = pool.submit(source_context.run, fetch_sources, bundle['brief'])
-            inventory_future.result()
+            source_future = pool.submit(
+                source_context.run,
+                verify_sources_unchanged,
+                bundle['brief'],
+                bundle['sources'],
+                force_refresh_ids=set((validation_plan or {}).get('affected_source_ids', [])),
+            )
+            if inventory_future is not None:
+                inventory_future.result()
             current = target_future.result()
-            fresh_sources = source_future.result()
-        inventory = load_inventory()
-        original = next((row for row in inventory['posts'] if int(row['ID']) == post_id), None)
-        if (not original or original['post_status'] != 'publish'
-                or inventory_content_sha(original) != expected_content_sha256):
+            source_validation = source_future.result()
+        if site_context_required:
+            inventory = load_inventory()
+            original = next((row for row in inventory['posts'] if int(row['ID']) == post_id), None)
+            if (not original or original['post_status'] != 'publish'
+                    or inventory_content_sha(original) != expected_content_sha256):
+                raise ValueError('target_missing_changed_or_not_public')
+            if (current.get('post_status') != original.get('post_status')
+                    or current.get('post_title') != original.get('post_title')
+                    or content_sha256(current.get('post_content', '')) != inventory_content_sha(original)):
+                raise ValueError('inventory_post_detail_changed')
+        elif (current.get('post_status') != 'publish'
+              or content_sha256(current.get('post_content', '')) != expected_content_sha256):
             raise ValueError('target_missing_changed_or_not_public')
-        if (current.get('post_status') != original.get('post_status')
-                or current.get('post_title') != original.get('post_title')
-                or content_sha256(current.get('post_content', '')) != inventory_content_sha(original)):
-            raise ValueError('inventory_post_detail_changed')
-        reviewed_title = bundle.get('plan', {}).get('title') or original['post_title']
-        title_changed = reviewed_title != original['post_title']
+        reviewed_title = bundle.get('plan', {}).get('title') or current['post_title']
+        title_changed = reviewed_title != current['post_title']
         if title_changed and not confirm_title_change:
             raise ValueError('public_title_change_confirmation_required')
-        remaining = dict(inventory, posts=[row for row in inventory['posts'] if int(row['ID']) != post_id])
-        remaining = hydrate_duplicate_candidates(
-            bundle['brief'], remaining,
-            related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
-                              if isinstance(item, dict) and type(item.get('post_id')) is int},
-        )
-        report = validate_bundle(bundle, remaining)
+        if site_context_required:
+            remaining = dict(inventory, posts=[row for row in inventory['posts'] if int(row['ID']) != post_id])
+            remaining = hydrate_duplicate_candidates(
+                bundle['brief'], remaining,
+                related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
+                                  if isinstance(item, dict) and type(item.get('post_id')) is int},
+            )
+            report = validate_bundle(bundle, remaining)
+        else:
+            report = validate_bundle(
+                bundle,
+                {'checked_on': datetime.now(KST).date().isoformat(), 'posts': []},
+                scopes={'content', 'source', 'review'},
+            )
         if report['status'] != 'ready':
             raise ValueError(f'editorial_review_not_current: {report["reasons"]}')
-        before = {source['url']: source['sha256'] for source in bundle['sources']}
-        after = {source['url']: source['sha256'] for source in fresh_sources}
-        if before != after:
-            raise ValueError('official_source_changed_since_review')
-        source_validation = {
-            'all_unchanged': True,
-            'refetched_source_ids': [source.get('id') for source in fresh_sources],
-        }
         if checkpoint_callback is not None:
             checkpoint_callback({
-                'inventory_checked_on': inventory.get('checked_on'),
+                'inventory_checked_on': inventory.get('checked_on') if inventory else None,
+                'site_context_reused': not site_context_required,
                 'source_validation': source_validation,
                 'review_digest': bundle.get('review', {}).get('digest'),
             })
         reviewed_content = render(bundle['plan'], bundle['sources'])
-        if not verify_cas(current, status='publish', title=original['post_title'],
+        if not verify_cas(current, status='publish', title=current['post_title'],
                           content_sha=expected_content_sha256):
             raise ValueError('public_post_changed_during_review')
         if missing_internal_post_ids(current['post_content'], reviewed_content):
@@ -237,8 +242,9 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             },
             updates=fields,
         )
+        observed_meta = current_meta
         if update_meta:
-            _set_rank_math_meta(base, post_id, reviewed_meta)
+            observed_meta = _set_rank_math_meta(base, post_id, reviewed_meta)
         expected = {
             'post_status': 'publish',
             'post_title': reviewed_title,
@@ -249,7 +255,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if not verify_saved_fields(saved, expected=expected,
                                    preserved={'post_name': current['post_name']}):
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
-        if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
+        if reviewed_meta is not None and observed_meta != reviewed_meta:
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
         _update_reviewed_public_manifest(post_id, bundle)
         invalidate_inventory()

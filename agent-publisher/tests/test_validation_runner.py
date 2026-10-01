@@ -8,7 +8,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agents.validation_router import build_validation_plan
-from agents.validation_runner import ROOT, _load_suite, load_test_manifest, selected_test_files
+from agents.validation_runner import (
+    ROOT,
+    _load_suite,
+    load_test_manifest,
+    planned_validation_summary,
+    selected_test_files,
+)
 from tests.test_editorial_system import sample
 
 
@@ -47,6 +53,21 @@ class ValidationRunnerTests(unittest.TestCase):
         plan['profile'] = 'full-regression'
         with self.assertRaisesRegex(ValueError, 'validation_plan_digest_mismatch'):
             selected_test_files(plan)
+
+    def test_planned_summary_is_concise_and_shows_safety_promotion(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        new['plan']['lead']['text'] += ' 999원'
+        plan = build_validation_plan(old, new, route='fast')
+
+        summary = planned_validation_summary(plan, ['test_fact_validation.py'])
+
+        self.assertIn('Planned validation: profile=standard-fact', summary)
+        self.assertIn('route=fast', summary)
+        self.assertIn('promoted=quick-text->standard-fact', summary)
+        self.assertIn('source=', summary)
+        self.assertIn('review=', summary)
+        self.assertLess(len(summary), 500)
 
     def test_exact_post_selector_adds_only_matching_legacy_regression(self):
         old = sample()

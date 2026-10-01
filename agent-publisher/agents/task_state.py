@@ -20,8 +20,9 @@ from agents.editorial import ROOT
 from agents.temporal_validation import KST
 
 
-STATE_VERSION = 4
-LEGACY_STATE_VERSIONS = {1, 2, 3}
+STATE_VERSION = 5
+LEGACY_STATE_VERSIONS = {1, 2, 3, 4}
+MAX_SAME_FAILURE_ATTEMPTS = 2
 _PHASES = (
     "baseline_read",
     "route_selected",
@@ -123,8 +124,80 @@ def _migrate_state(payload: dict[str, Any]) -> dict[str, Any]:
     migrated.setdefault("qa_requirements", [])
     migrated.setdefault("validation_plan", {})
     migrated.setdefault("completion_requirements", [])
+    migrated.setdefault("failure_budget", {
+        "max_same_failure": MAX_SAME_FAILURE_ATTEMPTS,
+        "counts": {},
+        "history": [],
+    })
     migrated["pending"] = [phase for phase in _PHASES if not completed[phase]]
     return migrated
+
+
+def _failure_category(error: BaseException | str) -> str:
+    """Map repeated failures to the next safe operational route.
+
+    Categories are intentionally coarse.  They are used only to stop identical
+    retries from spinning and to preserve a small fallback hint in task-state;
+    they are not reader-visible diagnostics.
+    """
+    message = str(error).lower()
+    if (isinstance(error, (TimeoutError, ConnectionError))
+            or "timeout" in message or "timed out" in message
+            or "transport" in message or "ssh" in message):
+        return "transport"
+    if "source" in message or "official_" in message or "http_5" in message:
+        return "source"
+    if "image" in message or "attachment" in message or "thumbnail" in message or "media" in message:
+        return "image"
+    if "review" in message or "semantic" in message or "model" in message:
+        return "review"
+    if "cas" in message or "conflict" in message or "modified" in message or "changed" in message:
+        return "integrity"
+    return "other"
+
+
+def _failure_fallback(category: str) -> str:
+    return {
+        "transport": "alternate_transport_or_reconcile",
+        "source": "alternate_official_source_or_manual_review",
+        "image": "reuse_verified_media_or_no_image",
+        "review": "full_review_or_fallback_model",
+        "integrity": "manual_reconcile_live_state",
+        "other": "inspect_and_change_route",
+    }.get(category, "inspect_and_change_route")
+
+
+def _failure_code(error: BaseException | str) -> tuple[str, str, str]:
+    error_type = type(error).__name__ if isinstance(error, BaseException) else "TaskError"
+    message = str(error)
+    code = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", message.strip())[:160] or "unknown_error"
+    category = _failure_category(error)
+    signature = hashlib.sha256(
+        f"{category}\0{error_type}\0{code}".encode("utf-8")
+    ).hexdigest()[:24]
+    return error_type, code, signature
+
+
+def assert_task_retry_allowed(state: dict[str, Any] | None) -> None:
+    """Reject a third identical failure before repeating the same work."""
+    if not isinstance(state, dict):
+        return
+    budget = state.get("failure_budget") or {}
+    counts = budget.get("counts") or {}
+    last = (budget.get("history") or [])[-1:] or []
+    if not last:
+        return
+    item = last[0]
+    signature = item.get("signature")
+    attempts = int(counts.get(signature, 0) or 0) if signature else 0
+    maximum = int(budget.get("max_same_failure", MAX_SAME_FAILURE_ATTEMPTS) or MAX_SAME_FAILURE_ATTEMPTS)
+    if attempts >= maximum:
+        raise ValueError(
+            "task_retry_budget_exhausted:"
+            + str(item.get("category") or "other")
+            + ":"
+            + str(item.get("fallback") or "inspect_and_change_route")
+        )
 
 
 def completion_requirements_for_task(
@@ -353,6 +426,11 @@ def start_task_state(
         "qa_requirements": sorted(set(qa_requirements or [])),
         "validation_plan": deepcopy(validation_plan or {}),
         "completion_requirements": _validate_completion_requirements(completion_requirements),
+        "failure_budget": {
+            "max_same_failure": MAX_SAME_FAILURE_ATTEMPTS,
+            "counts": {},
+            "history": [],
+        },
         "checkpoints": {},
         "result": {},
         "error": None,
@@ -372,6 +450,7 @@ def update_task_state(
     qa_requirements: list[str] | tuple[str, ...] | None = None,
     validation_plan: dict[str, Any] | None = None,
     completion_requirements: list[str] | tuple[str, ...] | None = None,
+    failure_budget: dict[str, Any] | None = None,
     checkpoints: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
     status: str | None = None,
@@ -402,6 +481,8 @@ def update_task_state(
         payload["validation_plan"] = deepcopy(validation_plan)
     if completion_requirements is not None:
         payload["completion_requirements"] = _validate_completion_requirements(completion_requirements)
+    if failure_budget is not None:
+        payload["failure_budget"] = deepcopy(failure_budget)
     if checkpoints:
         payload.setdefault("checkpoints", {}).update(deepcopy(checkpoints))
     if result:
@@ -442,6 +523,7 @@ def mark_browser_qa_complete(
     expected_content_sha256: str,
     *,
     completed_scopes: list[str] | tuple[str, ...] | None = None,
+    completed_event_names: list[str] | tuple[str, ...] | None = None,
     observed_thumbnail_id: int | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
@@ -464,6 +546,21 @@ def mark_browser_qa_complete(
     required = set(state.get("qa_requirements", []))
     if required - set(completed_scopes):
         raise ValueError("browser_qa_scope_incomplete:" + ",".join(sorted(required - set(completed_scopes))))
+    required_event_names = {
+        item.get("event_name")
+        for item in (state.get("validation_plan", {}).get("qa_targets", []) or [])
+        if isinstance(item, dict) and item.get("kind") == "event-section"
+        and isinstance(item.get("event_name"), str) and item.get("event_name").strip()
+    }
+    completed_event_names = {
+        name.strip() for name in (completed_event_names or [])
+        if isinstance(name, str) and name.strip()
+    }
+    if required_event_names - completed_event_names:
+        raise ValueError(
+            "browser_qa_target_incomplete:"
+            + ",".join(sorted(required_event_names - completed_event_names))
+        )
     if "featured-image" in required:
         expected_thumbnail = (
             state.get("result", {}).get("attachment_id")
@@ -484,6 +581,7 @@ def mark_browser_qa_complete(
         status="complete",
         result={
             "qa_completed_scopes": completed_scopes,
+            "qa_completed_event_names": sorted(completed_event_names),
             "qa_observed_thumbnail_id": observed_thumbnail_id,
         },
         root=root,
@@ -497,12 +595,46 @@ def fail_task_state(
     blocked: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    error_type = type(error).__name__ if isinstance(error, BaseException) else "TaskError"
-    message = str(error)
-    code = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", message.strip())[:160] or "unknown_error"
+    state = load_task_state(post_id, root)
+    if state is None:
+        raise ValueError("task_state_missing")
+    error_type, code, signature = _failure_code(error)
+    category = _failure_category(error)
+    fallback = _failure_fallback(category)
+    budget = deepcopy(state.get("failure_budget") or {})
+    maximum = int(budget.get("max_same_failure", MAX_SAME_FAILURE_ATTEMPTS) or MAX_SAME_FAILURE_ATTEMPTS)
+    counts = dict(budget.get("counts") or {})
+    attempts = int(counts.get(signature, 0) or 0) + 1
+    counts[signature] = attempts
+    history = list(budget.get("history") or [])
+    history.append({
+        "at": _now(),
+        "signature": signature,
+        "category": category,
+        "fallback": fallback,
+        "attempt": attempts,
+        "code": code,
+    })
+    # Keep state compact while preserving enough history to diagnose loops.
+    budget = {
+        "max_same_failure": maximum,
+        "counts": counts,
+        "history": history[-12:],
+    }
+    exhausted = attempts >= maximum
     return update_task_state(
         post_id,
-        status="blocked" if blocked else "failed",
-        error={"type": error_type, "code": code},
+        status="blocked" if blocked or exhausted else "failed",
+        failure_budget=budget,
+        result={"retry_fallback": fallback, "retry_budget_exhausted": exhausted},
+        error={
+            "type": error_type,
+            "code": code,
+            "signature": signature,
+            "category": category,
+            "attempt": attempts,
+            "fallback": fallback,
+            "retry_budget_exhausted": exhausted,
+        },
         root=root,
     )

@@ -29,9 +29,16 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def policy_fingerprint():
+def policy_fingerprint(bundle=None):
     instructions = (ROOT.parent / 'docs' / 'EDITORIAL_SYSTEM.md').read_text(encoding='utf-8')
-    return digest({'rules': policy(), 'instructions': instructions, 'contract_version': 1})
+    payload = {'rules': policy(), 'instructions': instructions, 'contract_version': 1}
+    brief = (bundle or {}).get('brief', {}) if isinstance(bundle, dict) else {}
+    if brief.get('event_post_standard_version') is not None:
+        event_policy = ROOT.parent / 'docs' / 'EVENT_POST_STANDARD.md'
+        payload['event_post_standard'] = event_policy.read_text(encoding='utf-8')
+        event_contract = ROOT / 'agents' / 'event_post_standard.py'
+        payload['event_post_contract_sha256'] = hashlib.sha256(event_contract.read_bytes()).hexdigest()
+    return digest(payload)
 
 
 def normalized(text):
@@ -238,10 +245,7 @@ def supported_currency_sums(text, quote_text, calculations):
 
     Supported operations are reader-useful KRW sums and a scheduled end time
     derived from an explicit Korean start time plus an official running time.
-    A pension projection is also allowed when it is bound to a cited official
-    monthly amount and cited official early/delayed percentage, and only shows
-    deterministic cumulative totals at explicitly labelled fixed horizons.
-    Other rates, averages and arbitrary date math remain rejected.
+    Rates, averages, arbitrary date math and other calculations remain rejected.
     """
     if calculations in (None, []):
         return set(), []
@@ -295,93 +299,20 @@ def supported_currency_sums(text, quote_text, calculations):
                 continue
             supported.add(str(item['months']))
             continue
-        if item.get('operation') == 'pension_projection':
-            required_keys = {
-                'operation', 'unit', 'base_monthly', 'direction', 'change_percent',
-                'start_offset_years', 'monthly_result', 'horizons',
-            }
-            if (set(item) != required_keys or item.get('unit') != '원'
-                    or type(item.get('base_monthly')) is not int or item['base_monthly'] <= 0
-                    or item.get('direction') not in {'decrease', 'none', 'increase'}
-                    or type(item.get('change_percent')) is not int
-                    or not 0 <= item['change_percent'] <= 100
-                    or type(item.get('start_offset_years')) is not int
-                    or not -5 <= item['start_offset_years'] <= 5
-                    or type(item.get('monthly_result')) is not int or item['monthly_result'] <= 0
-                    or not isinstance(item.get('horizons'), list)
-                    or len(item['horizons']) > 4):
+        if item.get('operation') == 'monthly_from_total_days':
+            if (set(item) != {'operation', 'total', 'days', 'monthly'}
+                    or type(item.get('total')) is not int or item['total'] <= 0
+                    or type(item.get('days')) is not int or not 30 <= item['days'] <= 365
+                    or type(item.get('monthly')) is not int or item['monthly'] <= 0
+                    or item['total'] % item['days'] != 0
+                    or item['monthly'] != (item['total'] // item['days']) * 30
+                    or str(item['total']) not in quoted_numbers
+                    or str(item['days']) not in quoted_numbers
+                    or str(item['monthly']) not in visible_numbers
+                    or not re.search(r'(?<!\d)' + str(item['monthly']) + r'\s*원(?!\d)', plain_text)):
                 errors.append('invalid_derived_calculation')
                 continue
-
-            base = item['base_monthly']
-            direction = item['direction']
-            change = item['change_percent']
-            if direction == 'none':
-                if change != 0 or item['start_offset_years'] != 0:
-                    errors.append('invalid_derived_calculation')
-                    continue
-                expected_monthly = base
-            else:
-                if change <= 0:
-                    errors.append('invalid_derived_calculation')
-                    continue
-                numerator = base * ((100 - change) if direction == 'decrease' else (100 + change))
-                if numerator % 100:
-                    errors.append('invalid_derived_calculation')
-                    continue
-                expected_monthly = numerator // 100
-                if (str(change) not in quoted_numbers
-                        or str(abs(item['start_offset_years'])) not in quoted_numbers):
-                    errors.append('invalid_derived_calculation')
-                    continue
-
-            if str(base) not in quoted_numbers or item['monthly_result'] != expected_monthly:
-                errors.append('invalid_derived_calculation')
-                continue
-
-            derived = set()
-            monthly_visible = str(item['monthly_result']) in visible_numbers
-            if monthly_visible:
-                derived.add(str(item['monthly_result']))
-            horizon_error = False
-            for horizon in item['horizons']:
-                if (not isinstance(horizon, dict)
-                        or set(horizon) != {'years_after_normal', 'cumulative_result'}
-                        or type(horizon.get('years_after_normal')) is not int
-                        or not 1 <= horizon['years_after_normal'] <= 40
-                        or type(horizon.get('cumulative_result')) is not int
-                        or horizon['cumulative_result'] < 0):
-                    horizon_error = True
-                    break
-                years_receiving = horizon['years_after_normal'] - item['start_offset_years']
-                if years_receiving < 0:
-                    horizon_error = True
-                    break
-                expected_total = item['monthly_result'] * years_receiving * 12
-                if horizon['cumulative_result'] != expected_total:
-                    horizon_error = True
-                    break
-                if not re.search(r'(?<!\d)' + str(horizon['years_after_normal']) + r'\s*년', text):
-                    horizon_error = True
-                    break
-                derived.add(str(horizon['years_after_normal']))
-                derived.add(str(horizon['cumulative_result']))
-            if horizon_error:
-                errors.append('invalid_derived_calculation')
-                continue
-
-            if any(value not in visible_numbers for value in derived):
-                errors.append('invalid_derived_calculation')
-                continue
-            won_values = {
-                *([str(item['monthly_result'])] if monthly_visible else []),
-                *[str(horizon['cumulative_result']) for horizon in item['horizons']],
-            }
-            if any(not re.search(r'(?<!\d)' + re.escape(value) + r'\s*원', plain_text)
-                   for value in won_values):
-                errors.append('invalid_derived_calculation')
-                continue
-            supported.update(derived)
+            supported.add(str(item['monthly']))
             continue
         if item.get('operation') == 'add_duration':
             if (set(item) != {'operation', 'unit', 'start', 'duration', 'result'}
@@ -485,7 +416,7 @@ def validated_section_assets(plan, sources):
         image = section.get('image')
         if image is not None:
             if (not isinstance(image, dict)
-                    or set(image) - {'url', 'alt', 'caption', 'source_id', 'year', 'rights', 'rights_url'}
+                    or set(image) - {'url', 'alt', 'caption', 'source_id', 'year', 'rights', 'rights_url', 'rights_label'}
                     or not {'url', 'alt', 'caption', 'source_id'}.issubset(image)):
                 raise ValueError('invalid_section_image')
             url, alt, caption, source_id = (
@@ -506,6 +437,10 @@ def validated_section_assets(plan, sources):
                         not isinstance(image.get('rights_url'), str)
                         or not image['rights_url'].startswith('https://')
                         or re.search(r'[<>\r\n]', image['rights_url'])))
+                    or (image.get('rights_label') is not None and (
+                        not isinstance(image.get('rights_label'), str)
+                        or not 2 <= len(image['rights_label'].strip()) <= 80
+                        or re.search(r'[<>\r\n]', image['rights_label'])))
                     or (image.get('year') is not None
                         and (type(image.get('year')) is not int or not 2000 <= image['year'] <= 2100))
                     or not source or source.get('source_type') != 'official'):
@@ -676,6 +611,18 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                             or not parsed_citation.hostname
                             or re.search(r'[<>\r\n]', citation_url)):
                         reasons.append('invalid_source_citation_url')
+                public_citation = s.get('public_citation')
+                if public_citation is not None and type(public_citation) is not bool:
+                    reasons.append('invalid_source_public_citation')
+                citation_group = s.get('citation_group')
+                if citation_group is not None and (
+                        not isinstance(citation_group, str)
+                        or not 2 <= len(citation_group.strip()) <= 80
+                        or re.search(r'[<>\r\n]', citation_group)):
+                    reasons.append('invalid_source_citation_group')
+                volatility = s.get('volatility')
+                if volatility is not None and volatility not in {'static', 'live'}:
+                    reasons.append('invalid_source_volatility')
                 if s['sha256'] != hashlib.sha256(s['text'].encode()).hexdigest():
                     reasons.append('source_hash_mismatch')
                 if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
@@ -999,7 +946,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
         if 'review' in scopes:
             review = bundle.get('review', {})
             body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
-            if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint():
+            if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint(bundle):
                 reasons.append('review_not_bound_to_current_content')
             if not fresh(review.get('checked_at'), now, rules['review_max_age_hours']):
                 reasons.append('review_stale')
@@ -1259,15 +1206,31 @@ def render(plan, sources, category_key=None):
         image = section.get('image')
         if image:
             source = source_map[image['source_id']]
+            rights = image.get('rights')
+            rights_note = ''
+            if rights in {'open_license', 'permission_granted'} and image.get('rights_url'):
+                label = image.get('rights_label') or (
+                    '재사용 조건' if rights == 'open_license' else '사용 허가 확인')
+                rights_note = (
+                    ', <a href="' + html.escape(image['rights_url'], quote=True)
+                    + '" target="_blank" rel="noopener noreferrer" '
+                    + 'style="color:#0d7d59;text-decoration:underline">'
+                    + html.escape(label) + '</a>'
+                )
+            elif rights == 'generated_original':
+                rights_note = ', Bloguito 제작 이미지'
+            elif rights == 'site_owned':
+                rights_note = ', Bloguito 보유 이미지'
             body += (
                 '<figure class="bloguito-event-image" style="margin:4px 0 18px">'
                 f'<img src="{html.escape(image["url"], quote=True)}" '
                 f'alt="{html.escape(image["alt"], quote=True)}" loading="lazy" decoding="async" '
-                'style="display:block;width:100%;max-width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:10px" />'
+                'style="display:block;width:100%;max-width:100%;height:auto;object-fit:contain;border-radius:10px" />'
                 '<figcaption style="margin-top:7px;font-size:13px;line-height:1.55;color:#64748b">'
                 f'{html.escape(image["caption"])}, '
                 f'<a href="{html.escape(source["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
-                'style="color:#0d7d59;text-decoration:underline">공식 자료</a></figcaption></figure>'
+                'style="color:#0d7d59;text-decoration:underline">공식 자료</a>'
+                + rights_note + '</figcaption></figure>'
             )
         table = section.get('table')
         if table:
@@ -1553,6 +1516,28 @@ def render(plan, sources, category_key=None):
     citation_ids = [i for i in ids if source_map[i]['url'] not in action_urls]
     if not citation_ids:
         citation_ids = ids
+
+    # Internal evidence may be more granular than the reader-facing footer.
+    # When editors explicitly select public citations, render only those while
+    # retaining every evidence source in the reviewed bundle.  Otherwise keep
+    # the legacy behavior, except for sources explicitly marked internal-only.
+    explicit_public = [i for i in citation_ids if source_map[i].get('public_citation') is True]
+    if explicit_public:
+        citation_ids = explicit_public
+    else:
+        citation_ids = [i for i in citation_ids if source_map[i].get('public_citation') is not False]
+
+    grouped_ids = []
+    seen_groups = set()
+    for source_id in citation_ids:
+        group = source_map[source_id].get('citation_group')
+        if group:
+            normalized_group = group.strip().casefold()
+            if normalized_group in seen_groups:
+                continue
+            seen_groups.add(normalized_group)
+        grouped_ids.append(source_id)
+    citation_ids = grouped_ids
     links = ''.join(
         '<li style="margin:8px 0"><a href="'
         + html.escape(source_map[i].get('citation_url') or source_map[i]['url'], quote=True)

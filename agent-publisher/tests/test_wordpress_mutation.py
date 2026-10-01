@@ -6,10 +6,13 @@ from unittest.mock import Mock, patch
 
 from agents.wordpress_mutation import (
     GUARDED_POST_MUTATION_SCRIPT,
+    META_BATCH_SCRIPT,
     backup_json,
     content_sha256,
     get_post,
     guarded_update_post,
+    read_post_meta_batch,
+    set_post_meta_batch,
     update_post,
     verify_cas,
     verify_saved_fields,
@@ -123,6 +126,38 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
                     },
                     updates={'post_content': 'new', 'post_excerpt': 'new excerpt'},
                 )
+
+    def test_meta_batch_reads_multiple_keys_in_one_wp_process(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        seen = {}
+
+        def run(args, **kwargs):
+            seen['args'] = args
+            seen['payload'] = json.loads(kwargs['input'])
+            return Mock(stdout='\ufeff' + json.dumps({
+                'status': 'ok',
+                'meta': {'a': 'one', 'b': None},
+            }))
+
+        with patch('agents.wordpress_mutation.subprocess.run', side_effect=run):
+            result = read_post_meta_batch(base, 7, ['a', 'b'])
+        self.assertEqual({'a': 'one', 'b': None}, result)
+        self.assertEqual(['eval', META_BATCH_SCRIPT, '--allow-root'], seen['args'][5:])
+        self.assertEqual(['a', 'b'], seen['payload']['keys'])
+
+    def test_meta_batch_write_returns_verified_readback_in_one_process(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+            payload = json.loads(kwargs['input'])
+            return Mock(stdout=json.dumps({'status': 'ok', 'meta': payload['updates']}))
+
+        with patch('agents.wordpress_mutation.subprocess.run', side_effect=run):
+            result = set_post_meta_batch(base, 7, {'rank_math_title': 'title', 'rank_math_description': 'desc'})
+        self.assertEqual({'rank_math_title': 'title', 'rank_math_description': 'desc'}, result)
+        self.assertEqual(1, len(calls))
 
 
 if __name__ == '__main__':

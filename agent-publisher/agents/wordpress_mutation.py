@@ -13,6 +13,7 @@ from agents.workflow_metrics import increment, timed
 
 
 GUARDED_POST_MUTATION_PROTOCOL = 1
+META_BATCH_PROTOCOL = 1
 GUARDED_POST_MUTATION_SCRIPT = (
     '$raw=file_get_contents("php://stdin");'
     '$p=json_decode($raw,true);'
@@ -55,6 +56,27 @@ GUARDED_POST_MUTATION_SCRIPT = (
     '$emit(["status"=>$verified?"ok":"verification_failed","saved"=>$saved]);'
 )
 
+META_BATCH_SCRIPT = (
+    '$raw=file_get_contents("php://stdin");'
+    '$p=json_decode($raw,true);'
+    '$emit=function($v){echo wp_json_encode($v,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);};'
+    'if(!is_array($p)||($p["protocol"]??null)!==1||empty($p["post_id"])'
+    '||!is_array($p["keys"]??null)||count($p["keys"])<1||count($p["keys"])>20)'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$id=(int)$p["post_id"];$post=get_post($id);'
+    'if(!$post){$emit(["status"=>"missing"]);return;}'
+    '$updates=$p["updates"]??[];'
+    'if(!is_array($updates)){$emit(["status"=>"invalid_payload"]);return;}'
+    '$out=[];foreach($p["keys"] as $k){'
+    'if(!is_string($k)||!preg_match("/^[A-Za-z0-9_:-]{1,100}$/",$k))'
+    '{$emit(["status"=>"invalid_key"]);return;}'
+    'if(array_key_exists($k,$updates)){'
+    'if(!is_string($updates[$k])){$emit(["status"=>"invalid_update"]);return;}'
+    'update_post_meta($id,$k,$updates[$k]);}'
+    '$out[$k]=metadata_exists("post",$id,$k)?(string)get_post_meta($id,$k,true):null;}'
+    '$emit(["status"=>"ok","meta"=>$out]);'
+)
+
 
 def content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -85,6 +107,78 @@ def update_post(base, post_id, fields: dict[str, str]):
         return subprocess.run(list(base) + args, capture_output=True, text=True, check=True)
 
 
+def _meta_batch_payload(post_id: int, keys, updates: dict[str, str] | None = None) -> dict:
+    if not isinstance(post_id, int) or post_id <= 0:
+        raise ValueError("valid_post_id_required")
+    keys = list(dict.fromkeys(keys or []))
+    if (not keys or len(keys) > 20
+            or any(not isinstance(key, str) or not key or len(key) > 100
+                   or not all(ch.isalnum() or ch in "_:-" for ch in key)
+                   for key in keys)):
+        raise ValueError("invalid_wordpress_meta_keys")
+    updates = dict(updates or {})
+    if set(updates) - set(keys) or any(not isinstance(value, str) for value in updates.values()):
+        raise ValueError("invalid_wordpress_meta_update")
+    return {
+        "protocol": META_BATCH_PROTOCOL,
+        "post_id": post_id,
+        "keys": keys,
+        "updates": updates,
+    }
+
+
+def _meta_batch_result(stdout: str) -> dict:
+    observed = _guarded_result(stdout)
+    status = observed.get("status")
+    if status == "ok" and isinstance(observed.get("meta"), dict):
+        return observed["meta"]
+    if status == "missing":
+        raise ValueError("wordpress_meta_target_missing")
+    if status in {"invalid_payload", "invalid_key", "invalid_update"}:
+        raise ValueError("wordpress_meta_protocol_rejected")
+    raise ValueError("wordpress_meta_batch_failed:" + str(status or "unknown"))
+
+
+def read_post_meta_batch(base, post_id: int, keys) -> dict[str, str | None]:
+    """Read several post-meta keys in one WP-CLI process."""
+    payload = _meta_batch_payload(post_id, keys)
+    command = list(base) + ["eval", META_BATCH_SCRIPT, "--allow-root"]
+    with timed("wp_meta_batch_read"):
+        increment("wp_roundtrips")
+        increment("wp_meta_batch_reads")
+        result = subprocess.run(
+            command,
+            input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    meta = _meta_batch_result(result.stdout)
+    return {key: meta.get(key) for key in payload["keys"]}
+
+
+def set_post_meta_batch(base, post_id: int, values: dict[str, str]) -> dict[str, str | None]:
+    """Write and read back several post-meta keys in one WP-CLI process."""
+    if not isinstance(values, dict) or not values:
+        raise ValueError("wordpress_meta_update_required")
+    payload = _meta_batch_payload(post_id, values.keys(), values)
+    command = list(base) + ["eval", META_BATCH_SCRIPT, "--allow-root"]
+    with timed("wp_meta_batch_write"):
+        increment("wp_roundtrips")
+        increment("wp_meta_batch_writes")
+        result = subprocess.run(
+            command,
+            input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    meta = _meta_batch_result(result.stdout)
+    if any(meta.get(key) != value for key, value in values.items()):
+        raise ValueError("wordpress_meta_readback_failed")
+    return {key: meta.get(key) for key in payload["keys"]}
+
+
 def _guarded_payload(post_id: int, expected: dict[str, str], updates: dict[str, str]) -> dict:
     if not isinstance(post_id, int) or post_id <= 0:
         raise ValueError("valid_post_id_required")
@@ -113,7 +207,7 @@ def _guarded_payload(post_id: int, expected: dict[str, str], updates: dict[str, 
 
 def _guarded_result(stdout: str) -> dict:
     for line in reversed((stdout or "").splitlines()):
-        line = line.strip()
+        line = line.strip().lstrip("\ufeff")
         if not line:
             continue
         try:

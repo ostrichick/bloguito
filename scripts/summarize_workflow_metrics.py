@@ -6,11 +6,18 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+AGENT_ROOT = ROOT / "agent-publisher"
+if str(AGENT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AGENT_ROOT))
+
+from agents.workflow_metrics import summarize_timing_categories
+
 DEFAULT_METRICS = ROOT / "agent-publisher" / "data" / "editorial_runs" / "workflow-metrics.jsonl"
 
 
@@ -72,6 +79,7 @@ def summarize(rows: list[dict], *, run_context: str = "live", status: str = "ok"
                 key: round(timing_totals[key] / timing_counts[key], 2)
                 for key in sorted(timing_totals)
             },
+            "timing_categories": summarize_timing_categories(action_rows),
         }
     return {
         "run_context": run_context,

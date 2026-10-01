@@ -32,7 +32,11 @@ class FeaturedImageReplacementTests(unittest.TestCase):
     def test_post_meta_read_accepts_utf8_bom(self):
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         with patch("agents.featured_image.subprocess.run", return_value=Mock(
-                returncode=0, stdout="\ufeff650\r\n", stderr="")):
+                returncode=0,
+                stdout='\ufeff' + json.dumps({
+                    'status': 'ok', 'meta': {'_thumbnail_id': '650'},
+                }) + '\r\n',
+                stderr="")):
             self.assertEqual("650", _read_post_meta(base, 648, "_thumbnail_id"))
 
     def test_replace_preserves_post_and_rank_math_and_verifies_alt(self):
@@ -57,6 +61,18 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             def run(args, **kwargs):
                 nonlocal thumbnail
                 wp = args[5:] if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "wp"] else None
+                if wp and wp[0] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    if "keys" in payload:
+                        values = {}
+                        for key in payload["keys"]:
+                            if payload["post_id"] == 777 and key == "_wp_attachment_image_alt":
+                                values[key] = "대체텍스트"
+                            elif key == "_thumbnail_id":
+                                values[key] = thumbnail
+                            else:
+                                values[key] = rank[key]
+                        return Mock(stdout=json.dumps({"status": "ok", "meta": values}), returncode=0)
                 if wp and wp[:2] == ["post", "get"]:
                     if wp[2] == "777":
                         return Mock(stdout=json.dumps({
@@ -117,6 +133,14 @@ class FeaturedImageReplacementTests(unittest.TestCase):
 
             def run(args, **kwargs):
                 wp = args[5:] if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "wp"] else None
+                if wp and wp[0] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    if "keys" in payload:
+                        return Mock(stdout=json.dumps({
+                            "status": "ok",
+                            "meta": {key: "999" if key == "_thumbnail_id" else None
+                                     for key in payload["keys"]},
+                        }), returncode=0)
                 if wp and wp[:2] == ["post", "get"]:
                     return Mock(stdout=json.dumps(live), returncode=0)
                 if wp and wp[:3] == ["post", "meta", "get"] and wp[4] == "_thumbnail_id":

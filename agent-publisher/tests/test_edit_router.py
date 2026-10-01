@@ -11,6 +11,7 @@ from agents.editorial import render
 from agents.task_state import intent_sha256
 from agents.validation_reuse import assess_validation_reuse
 from test_editorial_system import sample
+from test_event_post_standard import event_bundle
 
 
 class EditRouterTests(unittest.TestCase):
@@ -217,6 +218,49 @@ class EditRouterTests(unittest.TestCase):
             == {"all_unchanged": True}
             for call in update.call_args_list
         ))
+
+    def test_event_delta_standard_route_composes_scoped_review_before_reviser(self):
+        old = event_bundle()
+        new = copy.deepcopy(old)
+        new["plan"]["sections"][1]["paragraphs"][0]["text"] += " 변경된 행사 안내입니다."
+        body_sha = hashlib.sha256(render(old["plan"], old["sources"]).encode()).hexdigest()
+        validation_plan = {
+            "semantic_review": "event-delta",
+            "affected_event_names": ["가을 체험축제"],
+            "site_context_required": False,
+        }
+        decision = {
+            "route": "standard",
+            "reasons": ["localized_event_v1_change"],
+            "tracked_bundle": old,
+            "fast_report": {"status": "FULL_REVIEW_REQUIRED", "reasons": ["new_fact_tokens"]},
+            "reuse": assess_validation_reuse(old, new),
+            "qa_requirements": ["content-mobile-desktop"],
+            "validation_plan": validation_plan,
+        }
+        composite = {
+            "mode": "event_delta_composite",
+            "digest": "b" * 64,
+            "policy_digest": "c" * 64,
+            "checked_at": "2026-10-01T13:00:00+09:00",
+            "checks": {},
+            "issues": [],
+        }
+
+        with patch("agents.edit_router.classify_edit_route", return_value=decision), \
+             patch("agents.edit_router.start_task_state"), \
+             patch("agents.edit_router.update_task_state"), \
+             patch("agents.edit_router.EditorialWriterAgent.review_event_delta_or_full",
+                   return_value=(composite, "event-delta")) as review_delta, \
+             patch("agents.edit_router.revise_reviewed_draft", return_value=393) as standard:
+            result = edit_reviewed_draft(
+                393, new, body_sha, confirmed=True, edit_intent="행사 한 곳의 세부 정보 수정"
+            )
+
+        review_delta.assert_called_once_with(old, unittest.mock.ANY, ["가을 체험축제"])
+        self.assertEqual(composite, standard.call_args.args[1]["review"])
+        self.assertEqual(validation_plan, standard.call_args.kwargs["validation_plan"])
+        self.assertEqual("standard", result["route"])
 
     def test_content_save_is_checkpointed_before_image_failure(self):
         old = sample()

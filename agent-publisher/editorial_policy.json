@@ -131,7 +131,7 @@
     "rank_math_is_publish_gate": false
   },
   "featured_image_policy": {
-    "version": 3,
+    "version": 4,
     "purpose": "modern_editorial_cover",
     "benchmark": "post-475-movein-cover-2026-09-27",
     "canvas": {
@@ -140,8 +140,20 @@
     },
     "text": {
       "max_blocks": 2,
-      "primary_max_chars": 22,
+      "primary_max_chars": 18,
       "secondary_max_chars": 28,
+      "primary_max_lines": 2,
+      "primary_line_break_chars": 12,
+      "primary_short_line_max_chars": 8,
+      "primary_medium_line_max_chars": 12,
+      "primary_short_font_size_px": 84,
+      "primary_medium_font_size_px": 74,
+      "primary_long_font_size_px": 64,
+      "primary_multiline_max_font_size_px": 70,
+      "primary_min_font_size_px": 64,
+      "secondary_font_size_px": 31,
+      "prefer_copy_shortening_over_font_reduction": true,
+      "headline_must_be_visually_dominant": true,
       "avoid_full_article_title_repetition": true,
       "single_topic_word_may_match_article_title": true,
       "lists_in_image": false,
@@ -149,17 +161,45 @@
       "primary_font_role": "hangul_display",
       "display_font_required": true,
       "avoid_generic_system_font_for_primary": true,
-      "preferred_hangul_display_families": [
+      "prohibit_generic_gothic_for_headline": true,
+      "font_rotation_required": true,
+      "rotation_strategy": "diverse_distinctive_pool_round_robin",
+      "single_font_monopoly_prohibited": true,
+      "prohibited_headline_fonts": [
+        "Malgun Gothic",
+        "맑은 고딕",
+        "NanumGothic",
+        "나눔고딕",
+        "Noto Sans",
+        "본고딕",
+        "Dotum",
+        "돋움",
+        "Gulim",
+        "굴림",
+        "Arial"
+      ],
+      "distinctive_display_font_families": [
+        "BlackHanSans",
+        "DoHyeon",
+        "Jua",
         "HYPMokGak-Bold",
-        "HYHeadLine-Medium",
-        "NanumBrush",
-        "NanumPen"
-      ]
+        "HYHeadLine-Medium"
+      ],
+      "preferred_hangul_display_families": [
+        "BlackHanSans",
+        "DoHyeon",
+        "Jua",
+        "HYPMokGak-Bold",
+        "HYHeadLine-Medium"
+      ],
+      "prohibit_middle_dot_for_enumeration": true,
+      "mandate_comma_for_enumeration": true,
+      "prohibit_bullet_characters": true
     },
     "composition": {
       "single_primary_subject": true,
       "safe_margin_percent": 8,
-      "reserved_text_area_percent": 42,
+      "reserved_text_area_percent": 48,
       "generous_whitespace": true,
       "mobile_thumbnail_readability_required": true
     },
@@ -232,6 +272,8 @@
       "topic_recognizable_at_a_glance",
       "single_clear_focal_subject",
       "text_not_overcrowded",
+      "headline_visually_dominant",
+      "headline_large_and_immediately_readable_on_mobile_thumbnail",
       "korean_text_exact",
       "semantic_line_breaks",
       "no_face_or_subject_crop",
@@ -243,6 +285,7 @@
     "regenerate_on": [
       "face_crop",
       "text_error",
+      "headline_too_small",
       "malformed_person_or_hands",
       "text_overcrowding",
       "low_quality_clipart",

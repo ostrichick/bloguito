@@ -135,6 +135,13 @@ class EditorialDraftReviserTests(unittest.TestCase):
                     return Mock(returncode=0, stdout="Success\n", stderr="")
                 if args[5] == "eval":
                     payload = json.loads(kwargs["input"])
+                    if "keys" in payload:
+                        for key, value in payload.get("updates", {}).items():
+                            meta[key] = value
+                        return Mock(stdout=json.dumps({
+                            "status": "ok",
+                            "meta": {key: meta.get(key) for key in payload["keys"]},
+                        }))
                     live.update(payload["updates"])
                     return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
                 raise AssertionError(args)

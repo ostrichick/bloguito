@@ -16,8 +16,8 @@ configure_utf8_stdio()
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'quick-image-replace', 'import-section-image', 'complete-task-qa', 'checkpoint-after-image', 'update-after-image-checkpoint', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
-    parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; brief JSON for sources; editorial bundle JSON otherwise')
+    parser.add_argument('action', choices=['sources', 'check', 'review', 'manual-review', 'prepare-draft', 'publish', 'reformat', 'list-drafts', 'promote-draft', 'update-existing', 'update-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft', 'replace-featured-image', 'quick-image-replace', 'import-section-image', 'import-section-images', 'complete-task-qa', 'checkpoint-after-image', 'update-after-image-checkpoint', 'replace-legacy-draft', 'repair-draft-category', 'fix-excerpt'])
+    parser.add_argument('file', nargs='?', help='post ID for reformat/promote-draft; import-section-images manifest JSON; brief JSON for sources; editorial bundle JSON otherwise')
     parser.add_argument('--ids', nargs='+', type=int, help='one or more post IDs to promote')
     parser.add_argument('--confirm-publish', action='store_true', help='explicit authorization to publish reviewed, unchanged WordPress drafts')
     parser.add_argument('--post-id', type=int, help='specific existing public post to update')
@@ -35,6 +35,8 @@ def _main():
                         choices=['content-mobile-desktop', 'cta-destination', 'layout-accessibility',
                                  'featured-image', 'public-page'],
                         help='complete-task-qa: QA scope actually completed; repeat for multiple scopes')
+    parser.add_argument('--qa-event-name', action='append',
+                        help='complete-task-qa: event_name actually checked when validation_plan has scoped event QA targets')
     parser.add_argument('--observed-thumbnail-id', type=int,
                         help='complete-task-qa: thumbnail ID observed during featured-image browser QA')
     parser.add_argument('--remaining-step', action='append',
@@ -108,7 +110,8 @@ def _main():
         from agents.task_state import mark_browser_qa_complete
         state = mark_browser_qa_complete(
             args.post_id, args.expected_content_sha256, completed_scopes=args.qa_scope,
-            observed_thumbnail_id=args.observed_thumbnail_id)
+            observed_thumbnail_id=args.observed_thumbnail_id,
+            completed_event_names=args.qa_event_name)
         print(json.dumps(state, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -202,6 +205,48 @@ def _main():
         result = import_section_image(
             args.post_id, args.image_path, args.expected_content_sha256,
             media_title=args.media_title, alt_text=args.alt_text,
+            confirmed=args.confirm_update,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
+    if args.action == 'import-section-images':
+        if args.inventory or args.image_path or args.alt_text or args.media_title:
+            parser.error('import-section-images uses a manifest plus --post-id/--expected-content-sha256')
+        if not args.file:
+            parser.error('import-section-images requires a manifest JSON file')
+        manifest_path = Path(args.file)
+        if not manifest_path.is_file():
+            parser.error('import-section-images manifest file not found')
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        images = manifest.get('images') if isinstance(manifest, dict) else None
+        if not isinstance(images, list) or not images:
+            parser.error('import-section-images manifest must be {"images": [{"image_path": "...", "media_title": "...", "alt_text": "..."}]}')
+        normalized_images = []
+        for item in images:
+            if not isinstance(item, dict):
+                parser.error('import-section-images manifest image entries must be objects')
+            image_path = item.get('image_path')
+            if image_path:
+                image_path = Path(str(image_path))
+                if not image_path.is_absolute():
+                    image_path = manifest_path.parent / image_path
+            normalized = {
+                'media_title': item.get('media_title'),
+                'alt_text': item.get('alt_text'),
+            }
+            if image_path:
+                normalized['image_path'] = image_path
+            if item.get('review') is not None:
+                normalized['review'] = item.get('review')
+            if item.get('reviewed_attachment') is not None:
+                normalized['reviewed_attachment'] = item.get('reviewed_attachment')
+            normalized_images.append(normalized)
+        from agents.section_image import import_section_images
+        result = import_section_images(
+            args.post_id, normalized_images, args.expected_content_sha256,
             confirmed=args.confirm_update,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))

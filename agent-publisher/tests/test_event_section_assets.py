@@ -54,6 +54,36 @@ class EventSectionAssetsTests(unittest.TestCase):
         self.assertNotIn('<iframe', page)
         self.assertNotIn('dapi.kakao.com/v2/maps/sdk.js', page)
 
+    def test_event_image_renders_rights_provenance_next_to_caption(self):
+        image = self.bundle['plan']['sections'][0]['image']
+        image.update({
+            'rights': 'open_license',
+            'rights_url': 'https://www.seocho.go.kr/copyright',
+            'rights_label': '공공누리 제1유형',
+        })
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn('공공누리 제1유형', page)
+        self.assertIn('https://www.seocho.go.kr/copyright', page)
+
+    def test_public_citation_selection_keeps_internal_evidence_out_of_footer(self):
+        source0 = self.bundle['sources'][0]
+        source0['public_citation'] = True
+        source0['citation_group'] = '행사 핵심 안내'
+        source1 = copy.deepcopy(source0)
+        source1.update({
+            'id': 's1',
+            'url': 'https://www.seocho.go.kr/event/detail-evidence',
+            'title': '행사 세부 검증 자료',
+            'public_citation': False,
+            'citation_group': '행사 세부 근거',
+        })
+        self.bundle['sources'].append(source1)
+        paragraph = self.bundle['plan']['sections'][0]['paragraphs'][0]
+        paragraph['evidence'].append({'source_id': 's1', 'quote': source1['text']})
+        page = render(self.bundle['plan'], self.bundle['sources'])
+        self.assertIn(source0['url'], page)
+        self.assertNotIn(source1['url'], page)
+
     def test_duplicate_or_missing_address_is_not_repeated(self):
         location = self.bundle['plan']['sections'][0]['location']
         location['address'] = location['venue']

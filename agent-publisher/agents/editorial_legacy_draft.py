@@ -4,11 +4,9 @@ This uses the same editorial review, current-source and compare-and-swap guards
 as existing-post edits, then registers the reviewed bundle for normal promotion.
 """
 
-import hashlib
 import json
 import os
 import re
-import subprocess
 from datetime import datetime
 
 from agents.editorial import (ROOT, excerpt_from_lead, render, save_report,
@@ -21,6 +19,7 @@ from agents.editorial_updater import (
 from agents.editorial_writer import fetch_sources, load_inventory
 from agents.publisher import PublisherAgent
 from agents.temporal_validation import KST
+from agents.wordpress_mutation import content_sha256, get_post, guarded_update_post, verify_saved_fields
 from config import DRAFTS_INDEX_FILE, resolve_category
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 
@@ -87,12 +86,10 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         reviewed_meta = rank_math_meta_from_brief(brief)
         category = resolve_category(bundle['brief']['category_key'])
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
-        current = json.loads(subprocess.run(
-            base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
-            check=True, capture_output=True, text=True).stdout)
+        current = get_post(base, post_id)
         if (current['post_status'] != 'draft'
                 or current['post_title'] != matching[0]['post_title']
-                or hashlib.sha256(current['post_content'].encode()).hexdigest() != expected_content_sha256
+                or content_sha256(current['post_content']) != expected_content_sha256
                 or DRAFTS_INDEX_FILE.read_text(encoding='utf-8') != index_before):
             raise ValueError('legacy_draft_changed_during_review')
 
@@ -113,20 +110,35 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         os.chmod(index_backup, 0o600)
         save_report(bundle, report)
 
-        subprocess.run(base + ['post', 'update', str(post_id),
-                               '--post_content=' + target_html,
-                               '--post_excerpt=' + excerpt, '--allow-root'],
-                       check=True, capture_output=True, text=True)
+        saved = guarded_update_post(
+            base,
+            post_id,
+            expected={
+                'post_status': 'draft',
+                'post_title': current['post_title'],
+                'post_name': current['post_name'],
+                'post_excerpt': current.get('post_excerpt', ''),
+                'content_sha256': expected_content_sha256,
+            },
+            updates={
+                'post_content': target_html,
+                'post_excerpt': excerpt,
+            },
+        )
+        observed_meta = current_meta
         if update_meta:
-            _set_rank_math_meta(base, post_id, reviewed_meta)
-        saved = json.loads(subprocess.run(
-            base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
-            check=True, capture_output=True, text=True).stdout)
-        if (saved['post_status'] != 'draft' or saved['post_title'] != current['post_title']
-                or saved['post_name'] != current['post_name']
-                or saved['post_content'] != target_html or saved['post_excerpt'] != excerpt):
+            observed_meta = _set_rank_math_meta(base, post_id, reviewed_meta)
+        if not verify_saved_fields(
+                saved,
+                expected={
+                    'post_status': 'draft',
+                    'post_title': current['post_title'],
+                    'post_content': target_html,
+                    'post_excerpt': excerpt,
+                },
+                preserved={'post_name': current['post_name']}):
             raise ValueError(f'legacy_draft_saved_mismatch: recover from {backup}')
-        if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
+        if reviewed_meta is not None and observed_meta != reviewed_meta:
             raise ValueError(f'legacy_draft_saved_mismatch: recover from {backup}')
 
         if DRAFTS_INDEX_FILE.read_text(encoding='utf-8') != index_before:

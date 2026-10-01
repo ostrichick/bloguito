@@ -84,6 +84,35 @@ def selected_test_files(plan: dict, manifest: dict | None = None) -> list[str]:
     return sorted(selected)
 
 
+def planned_validation_summary(plan: dict, selected_files: list[str] | None = None) -> str:
+    """Render one concise, human-readable summary before validation execution."""
+    validate_validation_plan(plan)
+    files = selected_test_files(plan) if selected_files is None else list(selected_files)
+    binding = plan.get("binding") or {}
+    selection = plan.get("profile_selection") or {}
+    parts = [
+        f"profile={plan.get('profile')}",
+        f"route={binding.get('route')}",
+        f"tests={len(files)} files",
+        f"source={plan.get('source_validation')}",
+        f"review={plan.get('semantic_review')}",
+    ]
+    groups = plan.get("test_groups") or []
+    if groups:
+        parts.append("groups=" + ",".join(groups))
+    names = plan.get("affected_event_names") or []
+    if names:
+        parts.append("events=" + ",".join(names))
+    qa_scopes = plan.get("qa_scopes") or []
+    if qa_scopes:
+        parts.append("qa=" + ",".join(qa_scopes))
+    if selection.get("promoted"):
+        parts.append(
+            "promoted=" + str(selection.get("candidate_profile")) + "->" + str(plan.get("profile"))
+        )
+    return "Planned validation: " + "; ".join(parts)
+
+
 def _load_suite(files: list[str]) -> unittest.TestSuite:
     repo_root = str(ROOT)
     agent_root = str(ROOT / "agent-publisher")
@@ -107,6 +136,7 @@ def run_validation_plan(plan: dict, *, stream=None, verbosity: int = 1) -> dict:
     """
     validate_validation_plan(plan)
     files = selected_test_files(plan)
+    planned_summary = planned_validation_summary(plan, files)
     if not files:
         return {
             "status": "passed",
@@ -119,6 +149,7 @@ def run_validation_plan(plan: dict, *, stream=None, verbosity: int = 1) -> dict:
             "errors": 0,
             "skipped": 0,
             "duration_ms": 0.0,
+            "planned_summary": planned_summary,
         }
 
     suite = _load_suite(files)
@@ -151,7 +182,8 @@ def run_validation_plan(plan: dict, *, stream=None, verbosity: int = 1) -> dict:
         "skipped": len(getattr(result, "skipped", [])),
         "duration_ms": round((time.perf_counter() - started) * 1000, 2),
     }
-    metrics.add_timing("validation_tests", receipt["duration_ms"] / 1000)
+    receipt["planned_summary"] = planned_summary
+    metrics.add_timing("validation_tests", receipt["duration_ms"] / 1000, category="validation")
     metrics.increment("validation_tests", result.testsRun)
     metrics.increment("validation_failures", len(result.failures) + len(result.errors))
     metrics.finish(

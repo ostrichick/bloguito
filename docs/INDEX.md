@@ -45,6 +45,7 @@
 
 ## 최근 추가 점검
 
+- [2026-10-01 행사 포스트 정책 보강](event-post-policy-update-2026-10-01.md): 부산 #648·대구 #657 작업에서 확인된 이미지 탐색 종료 조건, 공공누리 유형별 재사용 판단, live 행사명 재결합, 이미지 실패 예산, 독자용 하단 출처 압축 규칙을 `EVENT_POST_STANDARD.md`와 `OPERATIONS.md`에 반영한 기록.
 - [2026-09-29 #598 임플란트 건강보험 대표 이미지 문구 정정](post-598-cover-text-fix-2026-09-29.md): 대표 이미지 좌측 하단 알약 배지의 '팩트' 단어를 제거하고 '안내'로 수정한 WebP를 재생성하여 운영 WordPress의 대표 이미지(_thumbnail_id=679)로 교체 및 실서비스 검증을 완료한 기록.
 - [2026-09-28 로컬 콘텐츠 카탈로그와 주제 백로그 갱신](post-catalog-workflow-2026-09-28.md): 새 글 탐색의 로컬 카탈로그 우선 사용, 저장 후 1회 동기화, 이미 draft/공개 글로 작성된 백로그 주제 자동 제외와 실제 WordPress 카테고리 반영을 정리한 기록.
 - [2026-09-27 Rank Math 편집정책 개편](rank-math-editorial-policy-2026-09-27.md): 짧은 단일 포커스 키워드, SEO title/description, 자연스러운 본문 배치, 기존 slug 보존, 75/80점 가이드와 신규 draft의 Rank Math title 저장을 정리한 기록.

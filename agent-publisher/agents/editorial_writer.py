@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 from config import GEMINI_API_KEY, CATEGORIES, resolve_category
-from agents.editorial import policy, policy_fingerprint, digest, validate_bundle, render, topic_reasons, ROOT, save_report
+from agents.editorial import policy, policy_fingerprint, digest, fresh, validate_bundle, render, topic_reasons, ROOT, save_report
 from agents.event_post_standard import event_review_instruction, event_writer_instruction
 from agents.fact_validation import snapshot
 from agents.review_cache import load_cached_review, store_cached_review
@@ -66,6 +66,10 @@ class SectionImage(BaseModel):
         'For open-license or permission-based images, rights_url should identify the reuse terms.'
     ))
     rights_url: str | None = None
+    rights_label: str | None = Field(default=None, description=(
+        'Optional reader-facing reuse label such as 공공누리 제1유형. '
+        'Use only when the linked rights page actually supports that label.'
+    ))
     year: int | None = Field(default=None, description=(
         'Event-post v1 should set the actual photo/poster year so prior-year use can be disclosed deterministically.'
     ))
@@ -146,6 +150,19 @@ class DeltaChecks(BaseModel):
 
 class DeltaReview(BaseModel):
     checks: DeltaChecks
+    issues: list[str]
+
+
+class EventDeltaChecks(BaseModel):
+    source_support: bool
+    conditions_preserved: bool
+    question_answered: bool
+    no_unsupported_claims: bool
+    event_scope_preserved: bool
+
+
+class EventDeltaReview(BaseModel):
+    checks: EventDeltaChecks
     issues: list[str]
 
 
@@ -992,11 +1009,130 @@ class EditorialWriterAgent:
             + event_rules +
             ' 각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
                 body, Review, 'reviewer')
-        review = {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
+        review = {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(bundle),
                   'checked_at': datetime.now(KST).isoformat()}
         if self.review_cache_enabled:
             store_cached_review(bundle, review)
         return review
+
+    def review_event_delta(self, old_bundle, new_bundle, affected_event_names):
+        """Review only localized event changes and compose them onto a current base review.
+
+        Deterministic routing has already proved that global article structure,
+        event membership and unrelated sections did not change.  This model call
+        therefore focuses on the affected event sections, their overview rows,
+        temporal entries and evidence instead of re-reading the whole article.
+        """
+        names = sorted({name for name in (affected_event_names or [])
+                        if isinstance(name, str) and name.strip()})
+        if not names:
+            raise ValueError('event_delta_affected_event_required')
+        old_review = old_bundle.get('review') if isinstance(old_bundle.get('review'), dict) else {}
+        old_body = {k: old_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in old_bundle}
+        current_policy = policy_fingerprint(old_bundle)
+        if (old_review.get('digest') != digest(old_body)
+                or old_review.get('policy_digest') != current_policy
+                or not fresh(old_review.get('checked_at'), datetime.now(KST), policy()['review_max_age_hours'])
+                or old_review.get('issues') != []
+                or any(old_review.get('checks', {}).get(key) is not True
+                       for key in policy()['review_checks'])):
+            raise ValueError('event_delta_base_review_not_current')
+        chain_length = int(old_review.get('event_delta_chain_length') or 0)
+        if chain_length >= 5:
+            raise ValueError('event_delta_review_chain_limit')
+
+        def sections_for(bundle):
+            return {
+                section.get('event_name'): section
+                for section in bundle.get('plan', {}).get('sections', [])
+                if isinstance(section, dict) and section.get('event_name') in names
+            }
+
+        def overview_rows(bundle):
+            sections = bundle.get('plan', {}).get('sections', [])
+            if not sections:
+                return []
+            table = (sections[0].get('table') or {}) if isinstance(sections[0], dict) else {}
+            rows = table.get('rows', []) if isinstance(table, dict) else []
+            return [row for row in rows if isinstance(row, dict)
+                    and any(name in ' '.join(str(cell) for cell in row.get('cells', [])) for name in names)]
+
+        def temporal_entries(bundle):
+            return [entry for entry in (bundle.get('temporal_source', {}).get('event_entries') or [])
+                    if isinstance(entry, dict) and entry.get('name') in names]
+
+        source_ids = set()
+        for container in (
+                sections_for(new_bundle).values(),
+                overview_rows(new_bundle),
+                temporal_entries(new_bundle)):
+            stack = list(container)
+            while stack:
+                value = stack.pop()
+                if isinstance(value, dict):
+                    source_id = value.get('source_id')
+                    if isinstance(source_id, str):
+                        source_ids.add(source_id)
+                    stack.extend(value.values())
+                elif isinstance(value, list):
+                    stack.extend(value)
+        sources = [source for source in new_bundle.get('sources', [])
+                   if isinstance(source, dict) and source.get('id') in source_ids]
+        payload = {
+            'reader_questions': new_bundle.get('brief', {}).get('reader_questions', []),
+            'affected_event_names': names,
+            'before_sections': sections_for(old_bundle),
+            'after_sections': sections_for(new_bundle),
+            'before_overview_rows': overview_rows(old_bundle),
+            'after_overview_rows': overview_rows(new_bundle),
+            'before_temporal_entries': temporal_entries(old_bundle),
+            'after_temporal_entries': temporal_entries(new_bundle),
+            'sources': sources,
+        }
+        with timed('event_delta_semantic_review'):
+            result = self._call(
+                '이미 전체 독립 검토를 통과한 행사 일정형 글에서 제한된 행사 section만 바뀌었다. '
+                'affected_event_names에 해당하는 변경 전후 section, overview 행, 일정 entry와 연결 source만 검토하라. '
+                '새 문장과 수치가 source에 실제로 근거하는지, 이전 회차 정보를 현재 회차처럼 쓰지 않았는지, 비용·시간·신청 조건과 예외가 보존되는지, '
+                '독자가 해당 행사에 갈지 판단하는 데 필요한 핵심 설명이 유지되는지만 판단하라. 변경 범위 밖의 제목, 다른 행사, 전체 SEO를 다시 평가하지 마라. '
+                '구조적 필드 존재·CTA scope·이미지 rights URL 같은 결정론적 검사는 반복하지 마라. 모든 checks는 완전히 충족할 때만 true로 하고 issues에는 변경 범위의 문제만 적어라.',
+                payload,
+                EventDeltaReview,
+                'reviewer',
+            )
+        if result.get('issues') or any(value is not True for value in result.get('checks', {}).values()):
+            raise ValueError('event_delta_semantic_review_failed:' + json.dumps(result, ensure_ascii=False))
+
+        new_body = {k: new_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in new_bundle}
+        return {
+            'checks': {key: True for key in policy()['review_checks']},
+            'issues': [],
+            'digest': digest(new_body),
+            'policy_digest': policy_fingerprint(new_bundle),
+            'checked_at': datetime.now(KST).isoformat(),
+            'mode': 'event_delta_composite',
+            'base_review_digest': old_review.get('digest'),
+            'event_delta_chain_length': chain_length + 1,
+            'affected_event_names': names,
+            'event_delta_digest': digest(payload),
+            'event_delta_checks': result.get('checks', {}),
+        }
+
+    def review_event_delta_or_full(self, old_bundle, new_bundle, affected_event_names):
+        """Prefer scoped event review, but safely fall back when its trust anchor expired.
+
+        A policy change, stale/missing base full review, or exhausted event-delta
+        chain should not strand an otherwise valid Standard edit.  Those cases
+        receive the stronger full semantic review instead; semantic failures in
+        the scoped review itself are never hidden by a fallback.
+        """
+        try:
+            return self.review_event_delta(old_bundle, new_bundle, affected_event_names), 'event-delta'
+        except ValueError as exc:
+            reason = str(exc)
+            if reason not in {'event_delta_base_review_not_current', 'event_delta_review_chain_limit'}:
+                raise
+            return self.review(new_bundle), 'full-fallback:' + reason
 
     def review_delta(self, old_bundle, new_bundle, delta, edit_intent):
         old_sources = {source['id']: source for source in old_bundle['sources']}

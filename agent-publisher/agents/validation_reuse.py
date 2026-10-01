@@ -20,7 +20,7 @@ def validation_fingerprint(bundle: dict) -> dict[str, str | None]:
     return {
         "content_digest": digest(_review_body(bundle)),
         "source_digest": digest(bundle.get("sources", [])),
-        "policy_digest": policy_fingerprint(),
+        "policy_digest": policy_fingerprint(bundle),
         "review_digest": review.get("digest"),
         "review_policy_digest": review.get("policy_digest"),
         "review_checked_at": review.get("checked_at"),

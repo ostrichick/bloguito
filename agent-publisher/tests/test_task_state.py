@@ -4,7 +4,9 @@ from pathlib import Path
 
 from agents.task_state import (
     STATE_VERSION,
+    assert_task_retry_allowed,
     complete_task_state,
+    fail_task_state,
     intent_sha256,
     load_after_image_checkpoint,
     load_task_state,
@@ -214,6 +216,24 @@ class TaskStateTests(unittest.TestCase):
         self.assertEqual(STATE_VERSION, state["version"])
         self.assertNotIn("edit_intent", state)
         self.assertEqual(intent_sha256("문구 정리"), state["edit_intent_sha256"])
+
+    def test_repeated_failure_is_bounded_and_records_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            start_task_state(641, action="edit-draft", edit_intent="출처 갱신", root=root)
+            first = fail_task_state(641, "official_source_http_503", root=root)
+            self.assertEqual("failed", first["status"])
+            self.assertFalse(first["result"]["retry_budget_exhausted"])
+            assert_task_retry_allowed(first)
+            second = fail_task_state(641, "official_source_http_503", root=root)
+            self.assertEqual("blocked", second["status"])
+            self.assertTrue(second["result"]["retry_budget_exhausted"])
+            self.assertEqual(
+                "alternate_official_source_or_manual_review",
+                second["result"]["retry_fallback"],
+            )
+            with self.assertRaisesRegex(ValueError, "task_retry_budget_exhausted:source"):
+                assert_task_retry_allowed(second)
 
 
 if __name__ == "__main__":

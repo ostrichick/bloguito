@@ -58,8 +58,20 @@ DEFAULT_FEATURED_IMAGE_POLICY = {
     "canvas": {"width": 1200, "height": 675},
     "text": {
         "max_blocks": 2,
-        "primary_max_chars": 22,
+        "primary_max_chars": 18,
         "secondary_max_chars": 28,
+        "primary_max_lines": 2,
+        "primary_line_break_chars": 12,
+        "primary_short_line_max_chars": 8,
+        "primary_medium_line_max_chars": 12,
+        "primary_short_font_size_px": 84,
+        "primary_medium_font_size_px": 74,
+        "primary_long_font_size_px": 64,
+        "primary_multiline_max_font_size_px": 70,
+        "primary_min_font_size_px": 64,
+        "secondary_font_size_px": 31,
+        "prefer_copy_shortening_over_font_reduction": True,
+        "headline_must_be_visually_dominant": True,
         "display_font_required": True,
         "avoid_generic_system_font_for_primary": True,
     },
@@ -142,27 +154,81 @@ def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont:
     raise RuntimeError("Hangul-capable font unavailable; refusing to render broken Korean text")
 
 
-def _load_display_font(size: int = 24) -> ImageFont.FreeTypeFont:
-    """Load a conspicuous Hangul display face for featured-image primary copy.
+def get_available_display_font_paths() -> list[Path]:
+    """Return verified distinct Hangul display fonts, strictly excluding generic gothic faces.
 
-    A generic UI Gothic is intentionally not a fallback here.  When the policy
-    requires display typography, failing closed is preferable to silently
-    recreating the plain-font covers the editorial standard rejects.
+    Includes bundled OFL fonts (BlackHanSans, DoHyeon, Jua) and recognized system display faces.
     """
-    candidates = [
-        "C:/Windows/Fonts/H2MKPB.TTF",  # HYPMokGak-Bold
-        "C:/Windows/Fonts/H2HDRM.TTF",  # HYHeadLine-Medium
-        "/usr/share/fonts/truetype/nanum/NanumBrush.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumPen.ttf",
+    bundled_dir = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+    candidate_paths: list[Path] = [
+        bundled_dir / "BlackHanSans.ttf",
+        bundled_dir / "DoHyeon.ttf",
+        bundled_dir / "Jua.ttf",
+        Path("C:/Windows/Fonts/H2MKPB.TTF"),  # HYPMokGak-Bold
+        Path("C:/Windows/Fonts/H2HDRM.TTF"),  # HYHeadLine-Medium
+        Path("/usr/share/fonts/truetype/nanum/NanumBrush.ttf"),
+        Path("/usr/share/fonts/truetype/nanum/NanumPen.ttf"),
     ]
-    for path in candidates:
+
+    prohibited_keywords = [
+        "malgun",
+        "nanumgothic",
+        "notosans",
+        "dotum",
+        "gulim",
+        "arial",
+    ]
+
+    verified: list[Path] = []
+    seen: set[Path] = set()
+
+    for p in candidate_paths:
         try:
-            font = ImageFont.truetype(path, size)
-            if _font_has_hangul(font):
-                return font
+            resolved = p.resolve()
+        except Exception:
+            resolved = p
+        if resolved in seen:
+            continue
+        if not p.exists():
+            continue
+
+        filename_lower = p.name.lower()
+        if any(kw in filename_lower for kw in prohibited_keywords):
+            continue
+
+        try:
+            test_font = ImageFont.truetype(str(p), 24)
+            family, _ = test_font.getname()
+            family_lower = family.lower()
+            if any(kw in family_lower for kw in prohibited_keywords):
+                continue
+            if _font_has_hangul(test_font):
+                verified.append(p)
+                seen.add(resolved)
         except Exception:
             continue
-    raise RuntimeError("Hangul display font unavailable; refusing generic featured-image typography")
+
+    return verified
+
+
+def _load_display_font(size: int = 24, seed_key: str | None = None) -> ImageFont.FreeTypeFont:
+    """Load a conspicuous Hangul display face for featured-image primary copy.
+
+    Rotates deterministically across the available diverse display font pool
+    using a hash of seed_key (post title or seed). Generic UI Gothic is strictly
+    prohibited by editorial policy.
+    """
+    fonts = get_available_display_font_paths()
+    if not fonts:
+        raise RuntimeError("Hangul display font unavailable; refusing generic featured-image typography")
+
+    if seed_key:
+        digest = int(hashlib.sha256(seed_key.encode("utf-8")).hexdigest(), 16)
+        chosen_path = fonts[digest % len(fonts)]
+    else:
+        chosen_path = fonts[0]
+
+    return ImageFont.truetype(str(chosen_path), size)
 
 
 def split_title(text: str, max_first_line: int = 22) -> list[str]:
@@ -540,6 +606,7 @@ class DesignerAgent:
         image: Image.Image,
         primary_text: str,
         secondary_text: str | None,
+        seed_key: str | None = None,
     ) -> Image.Image:
         width, height = image.size
         base = image.convert("RGBA")
@@ -560,14 +627,25 @@ class DesignerAgent:
             FEATURED_IMAGE_POLICY.get("composition", {}).get("safe_margin_percent", 8)
         ) / 100.0
         left = int(round(width * safe_margin))
-        text_width_chars = max(10, min(16, int(FEATURED_IMAGE_POLICY["text"].get("primary_max_chars", 22))))
+        text_policy = FEATURED_IMAGE_POLICY["text"]
+        text_width_chars = max(8, min(16, int(text_policy.get("primary_line_break_chars", 12))))
         lines = split_title(primary_text, max_first_line=text_width_chars)
+        max_lines = max(1, int(text_policy.get("primary_max_lines", 2)))
+        if len(lines) > max_lines:
+            raise ValueError(f"cover_copy_exceeds_max_lines:{len(lines)}>{max_lines}")
         longest = max(map(len, lines)) if lines else 1
-        font_size = 72 if longest <= 8 else 62 if longest <= 12 else 52
+        short_max = int(text_policy.get("primary_short_line_max_chars", 8))
+        medium_max = int(text_policy.get("primary_medium_line_max_chars", 12))
+        short_size = int(text_policy.get("primary_short_font_size_px", 84))
+        medium_size = int(text_policy.get("primary_medium_font_size_px", 74))
+        long_size = int(text_policy.get("primary_long_font_size_px", 64))
+        min_size = int(text_policy.get("primary_min_font_size_px", 64))
+        font_size = short_size if longest <= short_max else medium_size if longest <= medium_max else long_size
         if len(lines) > 1:
-            font_size = min(font_size, 56)
-        title_font = _load_display_font(font_size)
-        subtitle_font = _load_font(29, bold=True)
+            font_size = min(font_size, int(text_policy.get("primary_multiline_max_font_size_px", 70)))
+        font_size = max(min_size, font_size)
+        title_font = _load_display_font(font_size, seed_key=seed_key or primary_text)
+        subtitle_font = _load_font(int(text_policy.get("secondary_font_size_px", 31)), bold=True)
 
         total_title_h = len(lines) * (font_size + 8)
         subtitle_h = 48 if secondary_text else 0
@@ -648,7 +726,7 @@ class DesignerAgent:
             draw.rounded_rectangle([cx - 120, cy - 58, cx + 42, cy + 42], radius=18, fill=(224, 241, 238))
             draw.ellipse([cx + 78, cy + 42, cx + 198, cy + 162], fill=(38, 181, 132))
 
-        final = self._overlay_cover_copy(image, primary_text, secondary_text)
+        final = self._overlay_cover_copy(image, primary_text, secondary_text, seed_key=primary_text)
         final.save(output_path, "JPEG", quality=96)
 
     def _render_editorial_cover(
@@ -679,7 +757,7 @@ class DesignerAgent:
                 generated = self._generated_scene(attempt_prompt)
                 width, height = self._canvas_size()
                 generated = self._fit_without_subject_crop(generated, width, height)
-                final = self._overlay_cover_copy(generated, primary_text, secondary_text)
+                final = self._overlay_cover_copy(generated, primary_text, secondary_text, seed_key=title)
                 passed, review_issues = self._vision_review_cover(
                     final,
                     title=title,

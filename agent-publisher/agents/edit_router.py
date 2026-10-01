@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from agents.editorial import render
 from agents.editorial_draft_reviser import revise_reviewed_draft
+from agents.editorial_writer import EditorialWriterAgent
 from agents.featured_image import reconcile_featured_image_outcome, replace_featured_image
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
@@ -20,6 +22,7 @@ from agents.fast_edit import (
     validate_prepared_delta_review,
 )
 from agents.task_state import (
+    assert_task_retry_allowed,
     completion_requirements_for_task,
     fail_task_state,
     intent_sha256,
@@ -111,6 +114,7 @@ def classify_edit_route(
     return {
         "route": route,
         "reasons": reasons,
+        "tracked_bundle": old_bundle,
         "fast_report": fast_report,
         "reuse": reuse,
         "qa_requirements": qa_requirements_for_edit(
@@ -172,6 +176,7 @@ def edit_reviewed_draft(
         state = load_task_state(post_id)
         if not state or state.get("action") != "edit-draft":
             raise ValueError("resumable_edit_task_state_required")
+        assert_task_retry_allowed(state)
         if state.get("status") not in {"in_progress", "saved_pending_qa", "failed"}:
             raise ValueError("task_state_not_resumable")
         baseline = state.get("baseline", {})
@@ -322,6 +327,27 @@ def edit_reviewed_draft(
                 "content_saved",
             ]
         else:
+            standard_bundle = bundle
+            validation_plan = decision.get("validation_plan") or {}
+            if validation_plan.get("semantic_review") == "event-delta":
+                standard_bundle = copy.deepcopy(bundle)
+                event_review, event_review_mode = EditorialWriterAgent(
+                    writing_enabled=False
+                ).review_event_delta_or_full(
+                    decision["tracked_bundle"],
+                    standard_bundle,
+                    validation_plan.get("affected_event_names", []),
+                )
+                standard_bundle["review"] = event_review
+                update_task_state(
+                    post_id,
+                    completed=["content_review"],
+                    result={
+                        "event_delta_review": standard_bundle["review"],
+                        "event_delta_review_mode": event_review_mode,
+                    },
+                )
+
             def checkpoint_standard(preflight):
                 update_task_state(
                     post_id,
@@ -331,12 +357,13 @@ def edit_reviewed_draft(
 
             updated = revise_reviewed_draft(
                 post_id,
-                bundle,
+                standard_bundle,
                 expected_content_sha256,
                 confirmed=True,
                 confirm_title_change=confirm_title_change,
                 image_path=None,
                 checkpoint_callback=checkpoint_standard,
+                validation_plan=validation_plan,
             )
             completed = [
                 "baseline_read",

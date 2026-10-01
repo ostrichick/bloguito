@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from agents.edit_router import edit_reviewed_draft
 from agents.editorial import policy_fingerprint, render
+from agents.editorial_writer import EditorialWriterAgent
 from agents.editorial_updater import update_existing_public_post
 from agents.fast_edit import (
     build_fast_stored_bundle,
@@ -24,6 +26,7 @@ from agents.public_fast_edit import (
 )
 from agents.qa_scope import qa_requirements_for_edit
 from agents.task_state import (
+    assert_task_retry_allowed,
     completion_requirements_for_task,
     fail_task_state,
     intent_sha256,
@@ -176,15 +179,17 @@ def _edit_reviewed_public_post(
 
     if resume:
         state = load_task_state(post_id)
-        if not state or state.get("action") != "edit-post" or state.get("status") not in {
-                "in_progress", "failed", "saved_pending_qa"}:
+        if not state or state.get("action") != "edit-post":
+            raise ValueError("resumable_edit_task_state_required")
+        assert_task_retry_allowed(state)
+        if state.get("status") not in {"in_progress", "failed", "saved_pending_qa"}:
             raise ValueError("resumable_edit_task_state_required")
         baseline = state.get("baseline", {})
         state_policy = (state.get("reuse") or {}).get("fingerprint_after", {}).get("policy_digest")
         if (baseline.get("expected_content_sha256") != expected_content_sha256
                 or baseline.get("desired_content_sha256") != desired_sha
                 or state.get("edit_intent_sha256") != intent_sha256(edit_intent)
-                or state_policy != policy_fingerprint()
+                or state_policy != policy_fingerprint(candidate)
                 or baseline.get("expected_thumbnail_id") != expected_thumbnail_id
                 or baseline.get("alt_text_sha256") != alt_sha):
             raise ValueError("resume_state_fingerprint_conflict")
@@ -272,15 +277,37 @@ def _edit_reviewed_public_post(
                 post_id, candidate, expected_content_sha256, confirmed=True,
                 edit_intent=edit_intent, prepared_delta_review=prepared)
         else:
+            standard_bundle = bundle
+            validation_plan = decision.get("validation_plan") or {}
+            if validation_plan.get("semantic_review") == "event-delta":
+                standard_bundle = copy.deepcopy(bundle)
+                event_review, event_review_mode = EditorialWriterAgent(
+                    writing_enabled=False
+                ).review_event_delta_or_full(
+                    old_bundle,
+                    standard_bundle,
+                    validation_plan.get("affected_event_names", []),
+                )
+                standard_bundle["review"] = event_review
+                update_task_state(
+                    post_id,
+                    completed=["content_review"],
+                    result={
+                        "event_delta_review": standard_bundle["review"],
+                        "event_delta_review_mode": event_review_mode,
+                    },
+                )
+
             def checkpoint(preflight):
                 update_task_state(
                     post_id, completed=["source_validation", "content_review"],
                     checkpoints={"standard_preflight": preflight})
 
             updated = update_existing_public_post(
-                post_id, bundle, expected_content_sha256, confirmed=True,
+                post_id, standard_bundle, expected_content_sha256, confirmed=True,
                 confirm_title_change=confirm_title_change, checkpoint_callback=checkpoint,
-                tracked_baseline_bundle=old_bundle)
+                tracked_baseline_bundle=old_bundle,
+                validation_plan=validation_plan)
         update_task_state(post_id, completed=["baseline_read", "content_saved"])
 
         image_result = None

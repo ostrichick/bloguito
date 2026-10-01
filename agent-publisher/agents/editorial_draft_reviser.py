@@ -13,6 +13,7 @@ from pathlib import Path
 from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import load_inventory
 from agents.source_validation_cache import verify_sources_unchanged
+from agents.temporal_validation import KST
 from agents.editorial_updater import (
     _read_rank_math_meta,
     _set_rank_math_meta,
@@ -24,6 +25,7 @@ from agents.wordpress_mutation import (
     backup_json,
     get_post,
     guarded_update_post,
+    read_post_meta_batch,
     verify_saved_fields,
 )
 
@@ -94,6 +96,28 @@ def _normalize_renderer_migrations(content):
         r'\1',
         content,
     )
+    # Event-image presentation changed from a forced 16:9 cover crop to
+    # original-ratio containment.  Treat only these exact renderer-owned style
+    # strings as equivalent during the pre-save baseline comparison.
+    content = content.replace(
+        'style="display:block;width:100%;max-width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:10px"',
+        'style="data-bloguito-event-image-style"',
+    )
+    content = content.replace(
+        'style="display:block;width:100%;max-width:100%;height:auto;object-fit:contain;border-radius:10px"',
+        'style="data-bloguito-event-image-style"',
+    )
+    # Rights provenance is now rendered next to the existing official-source
+    # link.  Older stored HTML did not contain this renderer-owned suffix, so
+    # strip it only for CAS compatibility; the subsequent saved render adds the
+    # reviewed provenance back to the article.
+    content = re.sub(
+        r'(>공식 자료</a>)(?:, Bloguito (?:제작|보유) 이미지|, <a href="https://[^\"]+" '
+        r'target="_blank" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline">'
+        r'[^<]{2,80}</a>)(</figcaption></figure>)',
+        r'\1\2',
+        content,
+    )
     content = re.sub(
         r'(<figcaption\b[^>]*>[^<]*) · '
         r'(<a href="[^"]+"[^>]*>공식 자료</a></figcaption>)',
@@ -143,7 +167,7 @@ def _normalize_renderer_migrations(content):
 
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
                            confirm_title_change=False, image_path=None,
-                           checkpoint_callback=None):
+                           checkpoint_callback=None, validation_plan=None):
     """Replace one unchanged reviewed draft with another fully reviewed version.
 
     This is intentionally separate from update_draft(), which only permits
@@ -186,14 +210,19 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
-        # Inventory, the target baseline and official-source recheck are independent
-        # read-only prerequisites. Run them together, then reconcile their snapshots
-        # before any validation can lead to a write.
-        inventory_context = copy_context()
+        # Site-wide inventory is only needed when the edit can change duplicate
+        # detection or related-post validity. Localized event/fact edits reuse the
+        # already-reviewed site context and still perform target CAS + source checks.
+        site_context_required = True if not isinstance(validation_plan, dict) else bool(
+            validation_plan.get("site_context_required", True))
         target_context = copy_context()
         source_context = copy_context()
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            inventory_future = pool.submit(inventory_context.run, sync_inventory)
+        inventory = None
+        with ThreadPoolExecutor(max_workers=3 if site_context_required else 2) as pool:
+            inventory_future = None
+            if site_context_required:
+                inventory_context = copy_context()
+                inventory_future = pool.submit(inventory_context.run, sync_inventory)
             target_future = pool.submit(
                 target_context.run, get_post, base, post_id, fields=post_fields)
             source_future = pool.submit(
@@ -201,21 +230,28 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 verify_sources_unchanged,
                 bundle["brief"],
                 bundle["sources"],
+                force_refresh_ids=set((validation_plan or {}).get("affected_source_ids", [])),
             )
-            inventory_future.result()
+            if inventory_future is not None:
+                inventory_future.result()
             initial_live = target_future.result()
             source_validation = source_future.result()
 
-        inventory = load_inventory()
-        current_row = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
-        if (not current_row or current_row["post_status"] != "draft"
-                or inventory_content_sha(current_row) != expected_content_sha256):
+        if site_context_required:
+            inventory = load_inventory()
+            current_row = next((p for p in inventory["posts"] if int(p["ID"]) == post_id), None)
+            if (not current_row or current_row["post_status"] != "draft"
+                    or inventory_content_sha(current_row) != expected_content_sha256):
+                raise ValueError("draft_missing_or_modified")
+            if (initial_live.get("post_status") != current_row.get("post_status")
+                    or initial_live.get("post_title") != current_row.get("post_title")
+                    or hashlib.sha256(initial_live.get("post_content", "").encode("utf-8")).hexdigest()
+                        != inventory_content_sha(current_row)):
+                raise ValueError("inventory_post_detail_changed")
+        elif (initial_live.get("post_status") != "draft"
+              or hashlib.sha256(initial_live.get("post_content", "").encode("utf-8")).hexdigest()
+                  != expected_content_sha256):
             raise ValueError("draft_missing_or_modified")
-        if (initial_live.get("post_status") != current_row.get("post_status")
-                or initial_live.get("post_title") != current_row.get("post_title")
-                or hashlib.sha256(initial_live.get("post_content", "").encode("utf-8")).hexdigest()
-                    != inventory_content_sha(current_row)):
-            raise ValueError("inventory_post_detail_changed")
         current = initial_live
         title_changed = new_title != current["post_title"]
         if (current["post_title"] != old_bundle.get("plan", {}).get("title")
@@ -238,21 +274,29 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         if missing_internal_post_ids(old_rendered, render(bundle["plan"], bundle["sources"])):
             raise ValueError("original_internal_post_navigation_missing")
 
-        remaining = dict(
-            inventory,
-            posts=[p for p in inventory["posts"] if int(p["ID"]) != post_id],
-        )
-        remaining = hydrate_duplicate_candidates(
-            bundle['brief'], remaining,
-            related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
-                              if isinstance(item, dict) and type(item.get('post_id')) is int},
-        )
-        report = validate_bundle(bundle, remaining)
+        if site_context_required:
+            remaining = dict(
+                inventory,
+                posts=[p for p in inventory["posts"] if int(p["ID"]) != post_id],
+            )
+            remaining = hydrate_duplicate_candidates(
+                bundle['brief'], remaining,
+                related_post_ids={item.get('post_id') for item in bundle.get('plan', {}).get('related_posts', [])
+                                  if isinstance(item, dict) and type(item.get('post_id')) is int},
+            )
+            report = validate_bundle(bundle, remaining)
+        else:
+            report = validate_bundle(
+                bundle,
+                {'checked_on': datetime.now(KST).date().isoformat(), 'posts': []},
+                scopes={'content', 'source', 'review'},
+            )
         if report["status"] != "ready":
             raise ValueError(f'draft_editorial_review_failed: {report["reasons"]}')
         if checkpoint_callback is not None:
             checkpoint_callback({
-                "inventory_checked_on": inventory.get("checked_on"),
+                "inventory_checked_on": inventory.get("checked_on") if inventory else None,
+                "site_context_reused": not site_context_required,
                 "source_validation": source_validation,
                 "review_digest": bundle.get("review", {}).get("digest"),
                 "candidate_content_sha256": hashlib.sha256(
@@ -304,8 +348,9 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             },
             updates=update_fields,
         )
+        observed_meta = current_meta
         if update_meta:
-            _set_rank_math_meta(base, post_id, reviewed_meta)
+            observed_meta = _set_rank_math_meta(base, post_id, reviewed_meta)
         if not verify_saved_fields(
                 saved,
                 expected={
@@ -316,7 +361,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 },
                 preserved={"post_name": live["post_name"]}):
             raise ValueError(f"draft_revision_save_verification_failed: recover from {post_backup}")
-        if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
+        if reviewed_meta is not None and observed_meta != reviewed_meta:
             raise ValueError(f"draft_revision_save_verification_failed: recover from {post_backup}")
 
         featured_attachment_id = None
@@ -335,9 +380,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                                capture_output=True, check=False)
             if not featured_attachment_id.isdigit():
                 raise ValueError("featured_image_attachment_id_missing")
-            observed_thumb = subprocess.run(
-                base + ["post", "meta", "get", str(post_id), "_thumbnail_id", "--allow-root"],
-                capture_output=True, text=True, check=True).stdout.strip()
+            observed_thumb = read_post_meta_batch(base, post_id, ["_thumbnail_id"])["_thumbnail_id"]
             if observed_thumb != featured_attachment_id:
                 raise ValueError("featured_image_save_verification_failed")
 

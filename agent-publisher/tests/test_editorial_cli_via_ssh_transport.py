@@ -42,6 +42,29 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'media', 'import', remote, '--post_id=649', '--title=행사 이미지', '--alt=행사 장면',
                 '--porcelain', '--allow-root'])
 
+    def test_section_image_batch_transport_allows_repeated_imports_for_same_target(self):
+        module = load_module()
+        next_attachment = iter(('777\n', '778\n'))
+
+        def fake_run(args, **kwargs):
+            remote = args[-1] if args else ''
+            if ' wp media import ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout=next(next_attachment), stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('import-section-images', {648}, 'bloguito')
+        for token in ('0123456789ab', 'fedcba987654'):
+            remote = f'/tmp/editorial_section_648_{token}.webp'
+            result = transport(module._WP_PREFIX + [
+                'media', 'import', remote, '--post_id=648', '--title=행사 이미지', '--alt=행사 장면',
+                '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
+            self.assertEqual(0, result.returncode)
+        for attachment_id in ('777', '778'):
+            transport(module._WP_PREFIX + [
+                'post', 'get', attachment_id, '--fields=ID,guid,post_title,post_mime_type',
+                '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+
     def test_successful_inventory_uses_direct_ssh_without_tailscale_probe(self):
         module = load_module()
         calls = []
@@ -359,6 +382,8 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                      'profile': 'standard-event', 'tests_run': 1, 'selected_files': ['test.py'],
                      'duration_ms': 1.0,
                  }), \
+                 patch('agents.validation_runner.planned_validation_summary',
+                       return_value='Planned validation: profile=standard-event'), \
                  patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
                  patch.object(module.editorial_cli, 'main'):
                 module.main()
@@ -444,6 +469,87 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '641', 'rank_math_title', 'unreviewed title', '--allow-root'])
+
+    def test_revise_draft_meta_batch_allows_only_reviewed_values(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            payload = json.loads(kwargs.get('input') or '{}')
+            return subprocess.CompletedProcess(
+                args, 0, stdout=json.dumps({'status': 'ok', 'meta': payload.get('updates') or {
+                    key: 'old' for key in payload.get('keys', [])
+                }}), stderr='')
+
+        module._RUN = fake_run
+        expected = {
+            'rank_math_focus_keyword': '10월 대전 행사',
+            'rank_math_title': '10월 대전 행사 2026',
+            'rank_math_description': '10월 대전 행사 설명',
+        }
+        transport = module.make_transport(
+            'revise-draft', {641}, 'bloguito', expected_rank_math_meta=expected)
+        command = module._WP_PREFIX + ['eval', module.META_BATCH_SCRIPT, '--allow-root']
+        transport(command, input=json.dumps({
+            'protocol': 1, 'post_id': 641, 'keys': list(expected), 'updates': {},
+        }), capture_output=True, text=True, check=True)
+        transport(command, input=json.dumps({
+            'protocol': 1, 'post_id': 641, 'keys': list(expected), 'updates': expected,
+        }), capture_output=True, text=True, check=True)
+        self.assertEqual(2, len(calls))
+        self.assertTrue(all('docker exec -i wordpress_app wp eval' in call[0][-1] for call in calls))
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_meta_update'):
+            transport(command, input=json.dumps({
+                'protocol': 1, 'post_id': 641, 'keys': list(expected),
+                'updates': {**expected, 'rank_math_title': 'unreviewed'},
+            }), text=True)
+
+    def test_section_image_transport_can_read_explicit_reviewed_attachment(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps({'status': 'ok', 'meta': {
+                '_wp_attachment_image_alt': '행사 장면',
+            }}), stderr='')
+        transport = module.make_transport(
+            'import-section-images', {648}, 'bloguito', readable_ids_extra={777})
+        transport(module._WP_PREFIX + [
+            'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
+            '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+        transport(module._WP_PREFIX + ['eval', module.META_BATCH_SCRIPT, '--allow-root'],
+                  input=json.dumps({
+                      'protocol': 1, 'post_id': 777,
+                      'keys': ['_wp_attachment_image_alt'], 'updates': {},
+                  }), capture_output=True, text=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_get_target'):
+            transport(module._WP_PREFIX + [
+                'post', 'get', '778', '--fields=ID,guid,post_title,post_mime_type',
+                '--format=json', '--allow-root'])
+
+    def test_replace_legacy_draft_uses_guarded_mutation_contract(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+        expected_meta = {
+            'rank_math_focus_keyword': '부산 행사',
+            'rank_math_title': '부산 행사 일정',
+            'rank_math_description': '부산 행사 일정 설명',
+        }
+        transport = module.make_transport(
+            'replace-legacy-draft', {648}, 'bloguito', expected_rank_math_meta=expected_meta)
+        transport(module._WP_PREFIX + [
+            'eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1, 'post_id': 648,
+                'expected': {
+                    'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                    'post_excerpt': 'old', 'content_sha256': '0' * 64,
+                },
+                'updates': {'post_content': 'reviewed', 'post_excerpt': 'summary'},
+            }), text=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            transport(module._WP_PREFIX + [
+                'post', 'update', '648', '--post_content=reviewed',
+                '--post_excerpt=summary', '--allow-root'])
 
     def test_replace_legacy_draft_allows_only_reviewed_rank_math_meta(self):
         module = load_module()

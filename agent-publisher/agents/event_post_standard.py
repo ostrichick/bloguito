@@ -212,10 +212,13 @@ def validate_event_post_standard(bundle: dict) -> list[str]:
         reasons.append("event_standard_seo_missing")
     else:
         keyword = keyword.strip()
+        # Keep exact-match SEO requirements narrow.  The search title and meta
+        # description carry the canonical phrase; reader copy only needs one
+        # natural exact occurrence in either the lead or a relevant heading.
         if (keyword not in seo["title"]
                 or keyword not in seo["description"]
-                or keyword not in lead_text
-                or not any(keyword in heading for heading in headings if isinstance(heading, str))):
+                or (keyword not in lead_text
+                    and not any(keyword in heading for heading in headings if isinstance(heading, str)))):
             reasons.append("event_standard_keyword_alignment_missing")
 
     sections = plan.get("sections", []) or []
@@ -267,7 +270,11 @@ def validate_event_post_standard(bundle: dict) -> list[str]:
             decision_missing = True
         image = section.get("image")
         location = section.get("location")
-        if not isinstance(image, dict) or not isinstance(location, dict):
+        # A location card is part of the event-section contract because it is a
+        # low-cost decision aid backed by the same factual evidence.  A body
+        # image is optional: rights-safe, useful photography should improve the
+        # article, not hold an otherwise complete event guide hostage.
+        if not isinstance(location, dict):
             section_assets_missing = True
         if isinstance(image, dict):
             rights = image.get("rights")
@@ -341,8 +348,9 @@ def event_writer_instruction(brief: dict, temporal_source: dict | None = None) -
         "'확인된 실전 조건', '판단 포인트', '추천/핵심'처럼 추상적인 열 이름은 쓰지 마라. "
         "temporal_source.event_entries의 각 name마다 상세 section 하나를 만들고 section.event_name에 그 name을 정확히 넣어라. "
         "각 상세 section은 날짜·장소 반복으로 끝내지 말고 공식 프로그램에 근거해 무엇을 보고·해볼 수 있는지와 어떤 방문 목적에 맞는지, "
-        "비용·신청·운영시간 등 확인된 조건을 설명하라. 각 event section에는 검증된 대표 이미지와 위치 카드를 모두 넣고, "
-        "이미지는 재사용 권리 상태를 기록하라. 안전한 공식 활동 사진을 확보하지 못하면 공식 프로그램을 근거로 직접 제작한 이미지를 사용하고 실제 현장 사진처럼 표현하지 마라. "
+        "비용·신청·운영시간 등 확인된 조건을 설명하라. 각 event section에는 검증된 위치 카드를 넣어라. "
+        "본문 이미지는 안전한 재사용 권리와 충분한 화질이 확인된 경우에만 사용하고, 사용한다면 재사용 권리 상태를 기록하라. "
+        "적합한 공식 활동 사진을 정해진 탐색 범위에서 확보하지 못했다는 이유만으로 저품질 생성 이미지를 억지로 채우지 마라. 직접 제작 이미지를 선택했다면 실제 현장 사진처럼 표현하지 마라. "
         "booking/apply/purchase action은 해당 event section.actions에만 배치하라. 독자가 행사별 설명만으로 선택할 수 있으면 별도의 선택·추천 비교 section을 만들지 마라. "
         "이전 회차 프로그램이나 사진은 현재 확정 내용처럼 쓰지 말고 연도와 참고 성격을 명시하라. "
         "primary_keyword는 SEO title, meta description, lead와 관련 소제목 하나에 자연스럽게 exact match로 사용하되 반복하지 마라."
@@ -354,10 +362,10 @@ def event_review_instruction(bundle: dict) -> str:
     if not event_post_standard_enabled(bundle):
         return ""
     return (
-        " 행사 일정형 v1 추가 검토: 각 event_name section만 읽어도 독자가 실제로 무엇을 보고·체험할지와 방문 목적, "
-        "비용·신청·운영시간 중 확인된 실전 조건을 판단할 수 있는지 확인하라. 프로그램에서 추론할 수 없는 연령·가족·커플 선호를 "
-        "임의로 일반화하지 마라. 이전 연도 프로그램·사진을 현재 회차로 오인하게 만들면 실패시켜라. 행사 전용 신청·예약·구매 CTA가 "
-        "그 행사 section에 붙어 있는지, 소개/홍보 페이지가 행동 버튼으로 둔갑하지 않았는지 확인하라. 각 행사에 대표 이미지와 위치 카드가 있고, "
-        "이미지의 재사용 권리 또는 직접 제작 provenance가 기록됐는지 확인하라. 독자가 이미 행사별 정보로 판단할 수 있는데 별도 추천·선택 조언 section을 덧붙이지 않았는지도 확인하라. 이미지가 활동 장면인지·화질이 충분한지는 "
+        " 행사 일정형 v1 추가 의미 검토: 각 event_name section만 읽어도 독자가 실제로 무엇을 보고·체험할지와 방문 목적, "
+        "비용·신청·운영시간 중 확인된 실전 조건을 판단할 수 있는지 원문과 대조하라. 프로그램에서 추론할 수 없는 연령·가족·커플 선호를 "
+        "임의로 일반화하지 말고, 이전 연도 프로그램·사진을 현재 회차로 오인하게 만드는 표현을 실패시켜라. 독자가 이미 행사별 정보로 판단할 수 있는데 "
+        "근거 없는 선택 조언을 덧붙이거나 공식 자료가 말하지 않는 프로그램·운영상태를 확대 해석하면 실패시켜라. CTA scope, 이미지 필드 존재, 권리 URL, "
+        "연도 표기 같은 구조적 조건은 결정론적 validator가 검사하므로 여기서는 같은 체크를 반복하지 마라. 이미지가 실제 활동 장면인지·화질이 충분한지는 "
         "최종 browser/visual QA 대상이므로 텍스트 메타데이터만으로 검증했다고 추정하지 마라."
     )

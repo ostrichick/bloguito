@@ -2,7 +2,7 @@ import copy
 import hashlib
 import unittest
 
-from agents.editorial import validate_bundle
+from agents.editorial import policy_fingerprint, validate_bundle
 from agents.editorial_writer import Plan
 from agents.event_post_standard import (
     event_review_instruction,
@@ -194,6 +194,12 @@ class EventPostStandardTests(unittest.TestCase):
         )
         self.assertEqual('ready', report['status'], report)
 
+    def test_event_policy_fingerprint_is_scoped_to_event_bundles(self):
+        generic = copy.deepcopy(self.bundle)
+        generic['brief'].pop('event_post_standard_version')
+        generic['temporal_source'].pop('multi_event_schedule')
+        self.assertNotEqual(policy_fingerprint(generic), policy_fingerprint(self.bundle))
+
     def test_legacy_multi_event_bundle_is_not_silently_migrated(self):
         del self.bundle['brief']['event_post_standard_version']
         self.assertEqual([], validate_event_post_standard(self.bundle))
@@ -277,6 +283,18 @@ class EventPostStandardTests(unittest.TestCase):
             validate_event_post_standard(self.bundle),
         )
 
+    def test_seo_keyword_needs_reader_exact_match_in_lead_or_heading_not_both(self):
+        self.bundle['plan']['lead']['text'] = '2026년 10월 서초에서는 두 지역 행사를 비교할 수 있습니다.'
+        self.assertNotIn(
+            'event_standard_keyword_alignment_missing',
+            validate_event_post_standard(self.bundle),
+        )
+        self.bundle['plan']['sections'][0]['heading'] = '10월 지역 행사 일정 한눈에 보기'
+        self.assertIn(
+            'event_standard_keyword_alignment_missing',
+            validate_event_post_standard(self.bundle),
+        )
+
     def test_overview_requires_mobile_cards_and_decision_column(self):
         table = self.bundle['plan']['sections'][0]['table']
         table['mobile_cards'] = False
@@ -293,10 +311,11 @@ class EventPostStandardTests(unittest.TestCase):
         reasons = validate_event_post_standard(self.bundle)
         self.assertIn('event_standard_overview_header_vague', reasons)
 
-    def test_each_event_section_requires_image_location_and_image_rights(self):
+    def test_each_event_section_requires_location_but_image_is_optional(self):
         section = self.bundle['plan']['sections'][1]
         image = section.pop('image')
-        self.assertIn('event_standard_section_assets_missing', validate_event_post_standard(self.bundle))
+        self.assertNotIn('event_standard_section_assets_missing', validate_event_post_standard(self.bundle))
+        self.assertNotIn('event_standard_image_rights_missing', validate_event_post_standard(self.bundle))
         section['image'] = image
         location = section.pop('location')
         self.assertIn('event_standard_section_assets_missing', validate_event_post_standard(self.bundle))
@@ -327,8 +346,9 @@ class EventPostStandardTests(unittest.TestCase):
         reviewer = event_review_instruction(self.bundle)
         self.assertIn('event_name', writer)
         self.assertIn('section.actions', writer)
-        self.assertIn('대표 이미지와 위치 카드', writer)
+        self.assertIn('검증된 위치 카드', writer)
         self.assertIn('방문 목적', reviewer)
+        self.assertIn('결정론적 validator', reviewer)
 
 
 if __name__ == '__main__':

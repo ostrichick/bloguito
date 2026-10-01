@@ -21,7 +21,13 @@ from agents.task_state import (
     update_after_image_checkpoint,
     update_task_state,
 )
-from agents.wordpress_mutation import backup_json, content_sha256, get_post, verify_cas
+from agents.wordpress_mutation import (
+    backup_json,
+    content_sha256,
+    get_post,
+    read_post_meta_batch,
+    verify_cas,
+)
 from agents.designer import FEATURED_IMAGE_POLICY
 from agents.qa_scope import qa_requirements_for_edit
 from agents.workflow_metrics import increment
@@ -64,24 +70,11 @@ def validate_featured_image_file(image_path: Path | str) -> dict:
 
 
 def _read_post_meta(base, post_id: int, key: str) -> str | None:
-    result = subprocess.run(
-        list(base) + ["post", "meta", "get", str(int(post_id)), key, "--allow-root"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode == 0:
-        return (result.stdout or "").lstrip("\ufeff").rstrip("\r\n")
-    stderr = (result.stderr or "").lower()
-    if result.returncode == 1 and "could not find the specified post meta field" in stderr:
-        return None
-    raise subprocess.CalledProcessError(
-        result.returncode, result.args, output=result.stdout, stderr=result.stderr
-    )
+    return read_post_meta_batch(base, int(post_id), [key]).get(key)
 
 
 def _rank_math_meta(base, post_id: int) -> dict[str, str | None]:
-    return {key: _read_post_meta(base, post_id, key) for key in RANK_MATH_META_KEYS}
+    return read_post_meta_batch(base, int(post_id), RANK_MATH_META_KEYS)
 
 
 def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: str) -> dict | None:

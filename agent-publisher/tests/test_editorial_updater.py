@@ -40,7 +40,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory') as invalidate, \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -56,7 +56,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater, 'sync_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [changed]}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}), \
              patch.object(updater.subprocess, 'run', return_value=Mock(stdout=json.dumps(changed))) as command:
             with self.assertRaisesRegex(ValueError, 'target_missing_changed_or_not_public'):
                 updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True)
@@ -89,7 +89,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                   patch.object(updater, 'invalidate_inventory'),
                   patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}),
                   patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}),
-                  patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']),
+                  patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}),
                   patch.object(updater, 'render', return_value='Reviewed HTML'),
                   patch.object(updater, 'save_report')]
         with common[0], common[1], common[2], common[3], common[4], common[5], common[6], \
@@ -102,7 +102,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -131,7 +131,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Original body'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -165,6 +165,13 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                 return Mock(returncode=0, stdout=json.dumps(self.post), stderr='', args=args)
             if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
+                if 'keys' in payload:
+                    for key, value in payload.get('updates', {}).items():
+                        meta[key] = value
+                    return Mock(returncode=0, stdout=json.dumps({
+                        'status': 'ok',
+                        'meta': {key: meta.get(key) for key in payload['keys']},
+                    }), stderr='', args=args)
                 return Mock(returncode=0, stdout=json.dumps({
                     'status': 'ok', 'saved': {**self.post, **payload['updates']},
                 }), stderr='', args=args)
@@ -183,7 +190,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory') as invalidate, \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -195,11 +202,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             'rank_math_description': '정부24 전입신고와 세대주 확인이 필요한 경우, 8일 확인 기한과 처리 순서를 정리합니다.',
         }
         self.assertEqual(expected, meta)
-        set_calls = [c for c in calls if c[5:8] == ['post', 'meta', 'set']]
-        self.assertEqual(3, len(set_calls))
-        for command in set_calls:
-            self.assertEqual('243', command[8])
-            self.assertEqual(expected[command[9]], command[10])
+        meta_eval_calls = [c for c in calls if c[5] == 'eval']
+        self.assertEqual(3, len(meta_eval_calls))  # baseline meta, guarded post write, meta write/readback
         backup = next((Path(self.temp.name) / 'data/editorial_runs').glob('public-edit-*.json'))
         backed_up = json.loads(backup.read_text(encoding='utf-8'))
         self.assertEqual({
@@ -232,6 +236,13 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             wp = args[5:]
             if wp[:2] == ['post', 'get']:
                 return Mock(returncode=0, stdout=json.dumps(post), stderr='', args=args)
+            if wp and wp[0] == 'eval':
+                payload = json.loads(kwargs['input'])
+                if 'keys' in payload:
+                    return Mock(returncode=0, stdout=json.dumps({
+                        'status': 'ok',
+                        'meta': {key: meta.get(key) for key in payload['keys']},
+                    }), stderr='', args=args)
             if wp[:3] == ['post', 'meta', 'get']:
                 return Mock(returncode=0, stdout=meta[wp[4]] + '\n', stderr='', args=args)
             return Mock(returncode=0, stdout='Success', stderr='', args=args)
@@ -240,7 +251,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'sync_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_sources_unchanged', return_value={'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report') as save_report, \
              patch.object(updater.subprocess, 'run', side_effect=execute):

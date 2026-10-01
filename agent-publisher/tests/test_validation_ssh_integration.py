@@ -50,6 +50,8 @@ class ValidationSshIntegrationTests(unittest.TestCase):
                  patch.object(ssh_adapter, 'resolve_transport', return_value=SimpleNamespace(
                      mode='direct', host='bloguito', user=None, wsl_distro=None)), \
                  patch('agents.edit_post.classify_reviewed_post_route', return_value=decision), \
+                 patch('agents.validation_runner.planned_validation_summary',
+                       return_value='Planned validation: profile=quick-text'), \
                  patch('agents.validation_runner.require_validation_success', side_effect=validate), \
                  patch.object(ssh_adapter, 'make_transport', side_effect=make_transport), \
                  patch.object(ssh_adapter.editorial_cli, 'main', side_effect=lambda: events.append('cli')):

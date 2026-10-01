@@ -15,7 +15,7 @@ if str(AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(AGENT_ROOT))
 
 from agents.validation_router import build_validation_plan
-from agents.validation_runner import run_validation_plan, selected_test_files
+from agents.validation_runner import planned_validation_summary, run_validation_plan, selected_test_files
 
 
 def _load(path: Path | None):
@@ -60,11 +60,23 @@ def main(argv=None) -> int:
         expected_content_sha256=args.expected_content_sha256,
     )
     selected = selected_test_files(plan)
+    summary = planned_validation_summary(plan, selected)
+    print(summary, file=sys.stderr)
     if not args.run:
-        payload = {"plan": plan, "selected_test_files": selected, "validation": None}
+        payload = {
+            "planned_validation_summary": summary,
+            "plan": plan,
+            "selected_test_files": selected,
+            "validation": None,
+        }
     else:
         receipt = run_validation_plan(plan)
-        payload = {"plan": plan, "selected_test_files": selected, "validation": receipt}
+        payload = {
+            "planned_validation_summary": summary,
+            "plan": plan,
+            "selected_test_files": selected,
+            "validation": receipt,
+        }
         if receipt["status"] != "passed":
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             if args.output:

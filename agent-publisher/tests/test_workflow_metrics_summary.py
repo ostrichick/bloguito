@@ -27,6 +27,8 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
         self.assertEqual(200.0, action["total_ms_median"])
         self.assertEqual(2.0, action["wp_roundtrips_mean"])
         self.assertEqual(50.0, action["timings_ms_mean"]["wp_target_read"])
+        self.assertEqual(100.0, action["timing_categories"]["category_totals_ms"]["wp"])
+        self.assertEqual(50.0, action["timing_categories"]["category_mean_per_run_ms"]["wp"])
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ from agents.workflow_metrics import increment, timed
 SOURCE_RECEIPT_SCHEMA = 1
 DEFAULT_RECEIPT_TTL_MINUTES = 15
 MAX_RECEIPT_TTL_MINUTES = 30
+DEFAULT_STATIC_RECEIPT_TTL_MINUTES = 120
+MAX_STATIC_RECEIPT_TTL_MINUTES = 240
 
 
 def _receipt_ttl_minutes() -> int:
@@ -33,6 +35,18 @@ def _receipt_ttl_minutes() -> int:
     except (TypeError, ValueError):
         value = DEFAULT_RECEIPT_TTL_MINUTES
     return max(1, min(value, MAX_RECEIPT_TTL_MINUTES))
+
+
+def _static_receipt_ttl_minutes() -> int:
+    raw = os.getenv(
+        "EDITORIAL_STATIC_SOURCE_RECEIPT_TTL_MINUTES",
+        str(DEFAULT_STATIC_RECEIPT_TTL_MINUTES),
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_STATIC_RECEIPT_TTL_MINUTES
+    return max(1, min(value, MAX_STATIC_RECEIPT_TTL_MINUTES))
 
 
 def _fetcher_fingerprint(root: Path | None = None) -> str:
@@ -49,13 +63,24 @@ def _receipt_path(url: str, root: Path | None = None) -> Path:
 
 def source_requires_live_refresh(source: dict) -> bool:
     """Current-state evidence is never satisfied by a short-lived receipt."""
+    if isinstance(source, dict) and source.get("volatility") == "live":
+        return True
     text = source.get("text", "") if isinstance(source, dict) else ""
     patterns = (
-        r"(?:예매|판매|신청|접수)\s*상태\s*:\s*(?:예매중|판매중|신청중|접수중|가능)",
-        r"(?:현재\s*)?(?:예매|판매|신청|접수)\s*(?:중|가능)",
+        r"(?:예매|판매|신청|접수)\s*상태\s*:\s*(?:예매중|판매중|신청중|접수중|가능|마감|종료)",
+        r"(?:현재\s*)?(?:예매|판매|신청|접수)\s*(?:중|가능|마감|종료)",
         r"(?:잔여\s*좌석|남은\s*좌석|재고\s*(?:있음|없음)|매진|품절)",
     )
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def source_receipt_ttl_minutes(source: dict) -> int:
+    """Return task-local receipt TTL based on evidence volatility."""
+    if source_requires_live_refresh(source):
+        return 0
+    if isinstance(source, dict) and source.get("volatility") == "static":
+        return _static_receipt_ttl_minutes()
+    return _receipt_ttl_minutes()
 
 
 def _load_reusable_receipt(source: dict, *, root: Path | None = None,
@@ -72,13 +97,16 @@ def _load_reusable_receipt(source: dict, *, root: Path | None = None,
         return None
     now = (now or datetime.now(KST)).astimezone(KST)
     age = now - checked.astimezone(KST)
+    ttl_minutes = source_receipt_ttl_minutes(source)
     return payload if (
         payload.get("schema") == SOURCE_RECEIPT_SCHEMA
         and payload.get("url") == source.get("url")
         and payload.get("source_id") == source.get("id")
         and payload.get("observed_sha256") == source.get("sha256")
+        and payload.get("volatility") == source.get("volatility")
         and payload.get("fetcher_digest") == _fetcher_fingerprint(root)
-        and timedelta(0) <= age <= timedelta(minutes=_receipt_ttl_minutes())
+        and ttl_minutes > 0
+        and timedelta(0) <= age <= timedelta(minutes=ttl_minutes)
     ) else None
 
 
@@ -91,6 +119,7 @@ def _store_receipt(source: dict, *, root: Path | None = None,
         "url": source["url"],
         "source_id": source.get("id"),
         "observed_sha256": source["sha256"],
+        "volatility": source.get("volatility"),
         "fetcher_digest": _fetcher_fingerprint(root),
         "checked_at": (now or datetime.now(KST)).astimezone(KST).isoformat(),
     }

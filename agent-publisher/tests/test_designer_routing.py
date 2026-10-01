@@ -139,7 +139,7 @@ class DesignerRoutingTests(unittest.TestCase):
         markers = ["1) Purpose", "2) Topic", "3) Main subject", "4) Composition", "5) Text", "6) Style", "7) Prohibited"]
         positions = [prompt.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("left 42%", prompt)
+        self.assertIn("left 48%", prompt)
         self.assertIn("Render NO text", prompt)
         self.assertIn("cropped face head hands", prompt)
 
@@ -161,7 +161,18 @@ class DesignerRoutingTests(unittest.TestCase):
         font = _load_display_font(32)
         self.assertIsNotNone(font)
         family, style = font.getname()
-        self.assertIn(family, {'HYPMokGak-Bold', 'HYHeadLine-Medium', 'Nanum Brush Script', 'Nanum Pen Script'})
+        self.assertIn(
+            family,
+            {
+                'Black Han Sans',
+                'Do Hyeon',
+                'Jua',
+                'HYPMokGak-Bold',
+                'HYHeadLine-Medium',
+                'Nanum Brush Script',
+                'Nanum Pen Script',
+            },
+        )
         self.assertNotIn('Malgun', family)
 
     def test_display_font_fails_closed_instead_of_using_generic_gothic(self):

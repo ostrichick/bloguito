@@ -33,7 +33,7 @@ import editorial_cli  # noqa: E402
 from agents.editorial_updater import rank_math_meta_from_brief  # noqa: E402
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
-from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT  # noqa: E402
+from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT, META_BATCH_SCRIPT  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
 configure_utf8_stdio()
@@ -59,13 +59,12 @@ _CLI_ACTIONS = {
     'publish', 'prepare-draft', 'edit-post', 'edit-draft', 'revise-draft', 'fast-revise-draft',
     'update-existing',
     'replace-featured-image', 'quick-image-replace', 'update-draft', 'replace-legacy-draft', 'promote-draft',
-    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image',
+    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image', 'import-section-images',
 }
 _TRANSPORT_PROFILES = {'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
     'update-draft': {'post_content'},
-    'replace-legacy-draft': {'post_content', 'post_excerpt'},
     'repair-draft-category': {'post_category'},
     'promote-draft': {'post_status'},
     'reformat': {'post_content'},
@@ -129,7 +128,8 @@ def _mark_catalog_sync(cli_args, status, attempts):
 
 def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                    allow_title_change=False, tailscale_ssh=False,
-                   expected_rank_math_meta=None, allow_image=False):
+                   expected_rank_math_meta=None, allow_image=False,
+                   readable_ids_extra=None):
     if action not in _SUPPORTED_ACTIONS:
         raise ValueError('unsupported_editorial_ssh_action')
     if action in {'edit-post', 'edit-draft', 'update-existing'}:
@@ -139,9 +139,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     _safe_identifier(wsl_distro, 'wsl_distro')
     allowed_ids = set(int(value) for value in target_ids)
     readable_ids = set(allowed_ids)
+    readable_ids.update(int(value) for value in (readable_ids_extra or set()))
     diagnosed = False
     image_mutation_allowed = bool(
-        action in _CREATE_ACTIONS or action in {'replace-featured-image', 'import-section-image'} or allow_image
+        action in _CREATE_ACTIONS
+        or action in {'replace-featured-image', 'import-section-image', 'import-section-images'}
+        or allow_image
     )
     if expected_rank_math_meta is not None:
         allowed_rank_keys = {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
@@ -224,7 +227,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         return post_id
 
     def validate_guarded_payload(raw):
-        if action not in {'revise-draft', 'fast-revise-draft', 'public-fast', 'public-standard'}:
+        if action not in {'revise-draft', 'fast-revise-draft', 'public-fast', 'public-standard',
+                          'replace-legacy-draft'}:
             raise ValueError('guarded_wordpress_mutation_not_allowed')
         if isinstance(raw, bytes):
             raw = raw.decode('utf-8')
@@ -253,7 +257,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if not isinstance(updates, dict) or any(
                 not isinstance(value, str) or '\x00' in value for value in updates.values()):
             raise ValueError('invalid_guarded_wordpress_update')
-        if action == 'fast-revise-draft':
+        if action in {'fast-revise-draft', 'replace-legacy-draft'}:
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
         elif action == 'revise-draft':
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
@@ -277,6 +281,44 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if frozenset(updates) not in allowed_field_sets:
             raise ValueError('unexpected_wordpress_update_flags')
         return payload
+
+    def validate_meta_batch_payload(raw):
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        if not isinstance(raw, str):
+            raise ValueError('wordpress_meta_payload_required')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_wordpress_meta_payload') from exc
+        if not isinstance(payload, dict) or payload.get('protocol') != 1:
+            raise ValueError('invalid_wordpress_meta_payload')
+        post_id = payload.get('post_id')
+        keys = payload.get('keys')
+        updates = payload.get('updates', {})
+        if (type(post_id) is not int or post_id not in readable_ids
+                or not isinstance(keys, list) or not keys or len(keys) > 20
+                or len(set(keys)) != len(keys)
+                or any(not isinstance(key, str) for key in keys)
+                or not isinstance(updates, dict)):
+            raise ValueError('invalid_wordpress_meta_payload')
+        rank_keys = {'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
+        read_keys = set()
+        if expected_rank_math_meta is not None:
+            read_keys.update(rank_keys)
+        if image_mutation_allowed:
+            read_keys.update(rank_keys | {'_thumbnail_id', '_wp_attachment_image_alt'})
+        if not set(keys).issubset(read_keys):
+            raise ValueError('unexpected_wordpress_meta_keys')
+        if updates:
+            if (post_id not in allowed_ids
+                    or action not in {'revise-draft', 'public-standard', 'replace-legacy-draft'}
+                    or expected_rank_math_meta is None
+                    or set(keys) != rank_keys
+                    or updates != expected_rank_math_meta):
+                raise ValueError('unexpected_wordpress_meta_update')
+            return payload, 'meta_batch_write'
+        return payload, 'meta_batch_read'
 
     def validate_wp(wp):
         if wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS:
@@ -320,6 +362,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']:
             return 'guarded_mutation'
+        if wp == ['eval', META_BATCH_SCRIPT, '--allow-root']:
+            return 'meta_batch'
         if parse_update(wp) is not None:
             return
         if (action in _PERMALINK_ACTIONS and len(wp) == 3 and wp[0] == 'eval'
@@ -359,7 +403,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and wp[6].startswith('--alt=') and '\x00' not in wp[6]
                 and wp[7:] == ['--porcelain', '--allow-root']):
             return 'media_import'
-        if (action == 'import-section-image' and len(wp) == 8 and wp[:2] == ['media', 'import']
+        if (action in {'import-section-image', 'import-section-images'}
+                and len(wp) == 8 and wp[:2] == ['media', 'import']
                 and _REMOTE_SECTION_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
                 and int(wp[3].split('=', 1)[1]) in allowed_ids
@@ -372,7 +417,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4:] == ['_thumbnail_id', '--allow-root']):
             return
-        if (image_mutation_allowed and action in {*_IMAGE_EDIT_ACTIONS, 'import-section-image'}
+        if (image_mutation_allowed
+                and action in {*_IMAGE_EDIT_ACTIONS, 'import-section-image', 'import-section-images'}
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in readable_ids
                 and wp[4] in {'_thumbnail_id', '_wp_attachment_image_alt',
@@ -415,6 +461,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 # committed but SSH lost its response, the replay sees the exact
                 # desired state and the local guarded helper reconciles it.
                 return remote_run(remote, retry_255=True, **options)
+            if kind == 'meta_batch':
+                payload, meta_kind = validate_meta_batch_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(META_BATCH_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
+                return remote_run(remote, retry_255=(meta_kind == 'meta_batch_read'), **options)
             # A full reviewed draft can easily exceed Windows' CreateProcess
             # command-line limit when `--post_content=<html>` is embedded in the
             # SSH argv. WP-CLI supports `wp post update <id> -`, which reads only
@@ -547,6 +604,7 @@ def main():
     )
     transport_action = action
     expected_rank_math_meta = None
+    readable_ids_extra = set()
     if action == 'quick-image-replace':
         if '--image-path' not in cli_args:
             parser.error('quick-image-replace requires --image-path')
@@ -626,7 +684,8 @@ def main():
             # Run local regression tests before subprocess.run is replaced by the
             # restricted WordPress transport.  This keeps test processes away from
             # the SSH allowlist and guarantees failures happen before any mutation.
-            from agents.validation_runner import require_validation_success
+            from agents.validation_runner import planned_validation_summary, require_validation_success
+            print(planned_validation_summary(decision['validation_plan']))
             validation = require_validation_success(decision['validation_plan'], verbosity=0)
             print(
                 f"[Validation] {validation['profile']}: "
@@ -642,6 +701,22 @@ def main():
             parser.error('--image-path requires a value')
         image_path = Path(cli_args[image_index])
 
+    if action == 'import-section-images' and len(cli_args) > 1:
+        manifest_path = Path(cli_args[1])
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+            for item in manifest.get('images', []) if isinstance(manifest, dict) else []:
+                if not isinstance(item, dict):
+                    continue
+                attachment = item.get('reviewed_attachment')
+                review = item.get('review')
+                if attachment is None and isinstance(review, dict):
+                    attachment = review.get('attachment')
+                if (isinstance(attachment, dict) and attachment.get('reviewed') is True
+                        and type(attachment.get('attachment_id')) is int
+                        and attachment['attachment_id'] > 0):
+                    readable_ids_extra.add(attachment['attachment_id'])
+
     if action in {'revise-draft', 'replace-legacy-draft'}:
         bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None
         if bundle_path is None or not bundle_path.is_file():
@@ -656,7 +731,8 @@ def main():
                             and '--confirm-title-change' in cli_args),
         tailscale_ssh=config.mode == 'tailscale',
         expected_rank_math_meta=expected_rank_math_meta,
-        allow_image=image_path is not None)
+        allow_image=image_path is not None,
+        readable_ids_extra=readable_ids_extra)
     with patch('subprocess.run', side_effect=transport), \
             patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):
         editorial_cli.main()

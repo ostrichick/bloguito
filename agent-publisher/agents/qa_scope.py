@@ -12,6 +12,33 @@ QA_SCOPES = {
 }
 
 
+def qa_targets_for_events(bundle: dict | None, event_names) -> list[dict]:
+    """Return stable browser-QA targets for localized event-section changes.
+
+    Targets are intentionally keyed by ``event_name`` rather than section index so
+    later orchestration can locate the rendered block without depending on nearby
+    global sections. Unknown names are omitted; validation routing only emits an
+    event-delta profile after proving the named event sections exist.
+    """
+    if not isinstance(bundle, dict):
+        return []
+    requested = {
+        name for name in (event_names or [])
+        if isinstance(name, str) and name.strip()
+    }
+    if not requested:
+        return []
+    present = {
+        section.get("event_name")
+        for section in bundle.get("plan", {}).get("sections", []) or []
+        if isinstance(section, dict) and section.get("event_name") in requested
+    }
+    return [
+        {"kind": "event-section", "event_name": name}
+        for name in sorted(present)
+    ]
+
+
 def _actions(bundle: dict) -> list:
     rows = []
     for source in bundle.get("sources", []):

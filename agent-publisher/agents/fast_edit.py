@@ -79,7 +79,7 @@ def validate_fast_review_lineage(bundle, now=None):
     """
     now = now or datetime.now(KST)
     review = bundle.get("review") if isinstance(bundle.get("review"), dict) else {}
-    current_policy = policy_fingerprint()
+    current_policy = policy_fingerprint(bundle)
     body_digest = digest(_review_body(bundle))
     reasons = []
     if review.get("policy_digest") != current_policy:
