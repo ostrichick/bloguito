@@ -1,10 +1,8 @@
 """Regression guards for the explicitly authorized short-lived legacy draft."""
 import unittest
 from datetime import date
-from unittest.mock import patch
 
 from agents.editorial import dated_post_exception, topic_reasons
-from agents.editorial_legacy_draft import upgrade_legacy_draft
 
 
 class Post225PublicationTests(unittest.TestCase):
@@ -36,15 +34,6 @@ class Post225PublicationTests(unittest.TestCase):
         self.assertNotIn('insufficient_useful_lifetime', topic_reasons(self.brief, date(2026, 9, 22)))
         other = {**self.brief, 'id': 'other-dated-post', 'existing_post_id': 226}
         self.assertIn('insufficient_useful_lifetime', topic_reasons(other, date(2026, 9, 22)))
-
-    def test_upgrade_rejects_missing_authorization_or_wrong_target_before_any_io(self):
-        with patch('agents.editorial_legacy_draft.sync_inventory') as sync:
-            with self.assertRaisesRegex(ValueError, 'specific_legacy_draft'):
-                upgrade_legacy_draft(225, {'brief': self.brief}, '0' * 64, confirmed=False)
-            with self.assertRaisesRegex(ValueError, 'specific_legacy_draft'):
-                upgrade_legacy_draft(226, {'brief': self.brief}, '0' * 64, confirmed=True)
-            sync.assert_not_called()
-
 
 if __name__ == '__main__':
     unittest.main()

@@ -66,7 +66,7 @@ _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
 _PRIMARY_CLI_ACTIONS = {'prepare-draft', 'edit-post', 'replace-featured-image'}
 _PUBLICATION_CLI_ACTIONS = {'promote-draft'}
 _MAINTENANCE_CLI_ACTIONS = {
-    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image', 'replace-legacy-draft'
+    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image'
 }
 _CLI_ACTIONS = (
     _PRIMARY_CLI_ACTIONS | _PUBLICATION_CLI_ACTIONS
@@ -75,14 +75,13 @@ _CLI_ACTIONS = (
 _TRANSPORT_PROFILES = {*_DRAFT_EDIT_PROFILES, 'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
-    'replace-legacy-draft': {'post_content', 'post_excerpt'},
     'repair-draft-category': {'post_category'},
     'promote-draft': {'post_status'},
     'reformat': {'post_content'},
     'fix-excerpt': {'post_excerpt'},
 }
 _PERMALINK_ACTIONS = {
-    'prepare-draft', 'replace-legacy-draft', 'promote-draft', 'reformat',
+    'prepare-draft', 'promote-draft', 'reformat',
     'repair-draft-category',
 }
 
@@ -424,13 +423,13 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                               'rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'}
                 and wp[5] == '--allow-root'):
             return
-        if (action in {'public-standard', 'draft-standard', 'replace-legacy-draft'}
+        if (action in {'public-standard', 'draft-standard'}
                 and expected_rank_math_meta is not None
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4] in expected_rank_math_meta and wp[5] == '--allow-root'):
             return
-        if (action in {'public-standard', 'draft-standard', 'replace-legacy-draft'}
+        if (action in {'public-standard', 'draft-standard'}
                 and expected_rank_math_meta is not None
                 and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
@@ -652,13 +651,6 @@ def _main():
         if image_index >= len(cli_args):
             parser.error('--image-path requires a value')
         image_path = Path(cli_args[image_index])
-
-    if action == 'replace-legacy-draft':
-        bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None
-        if bundle_path is None or not bundle_path.is_file():
-            parser.error(f'{action} bundle file not found')
-        bundle = json.loads(bundle_path.read_text(encoding='utf-8'))
-        expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
 
     transport = make_transport(
         transport_action, targets, config.host, ssh_user=config.user,

@@ -13,7 +13,7 @@
 - draft Fast/Standard는 사용자 action이 아니라 SSH adapter 내부 profile `draft-fast` / `draft-standard`로만 남겼다.
 - legacy `--tailscale-ssh` boolean override를 제거하고 `--ssh-mode tailscale`만 명시적 비상 경로로 유지했다.
 - P10 전환 완료로 역할이 끝난 `sync_editorial_state_via_ssh.py`와 `update_existing_via_ssh.py` forwarding shim 및 전용 테스트를 제거했다.
-- `replace-legacy-draft`는 P10 reviewed state가 없는 #665 한 건 때문에 maintenance-only holdout으로 남겼다. source-bound reviewed bundle이 없으므로 과거 HTML·작업 기록에서 provenance를 임의 생성하지 않았다.
+- P12 시점에는 `replace-legacy-draft`를 P10 reviewed state가 없는 #665 한 건 때문에 maintenance-only holdout으로 남겼다. source-bound reviewed bundle이 없으므로 과거 HTML·작업 기록에서 provenance를 임의 생성하지 않았다. 이후 P13 마무리에서 사용자가 #665는 추후 새 편집 지침에 맞춰 별도로 수정하기로 하고 호환 경로 제거를 승인했다.
 
 ## P14 — 저장소 운영 정리
 
@@ -39,7 +39,7 @@
 - 운영 제거 전 세 파일 SHA가 과거 배포 기록과 일치함을 확인했고 rollback 사본을 `/home/ubuntu/bloguito-retired-mu-20261001/`에 보존했다.
 - #55/#85의 `the_content` render SHA는 제거 전후 각각 `1dca39d63621cf4dbb992f4c1cdb1ed1ff7c9c05145e37880b2bba9a41bf4f7b`, `260047bf97ff67961f337340ed422c23582bff10a046e623fb95b0302c39af1a`로 동일했다.
 - 현행 P10 reviewed state에서 사용 0건인 #70/#99 전용 `legacy_nol_product_listing`과 NOL product schedule parser/test를 제거했다. 일반 NOL 공식 판매 상태 검증과 Yes24/Ticketlink 일정 경로는 유지했다.
-- live draft #665는 WordPress에 존재하지만 P10 reviewed index에 없고, 남은 자료는 HTML/이미지/작업 기록뿐이라 source-bound reviewed bundle을 복구하지 못했다. 안전을 위해 provenance를 합성하지 않고 `replace-legacy-draft` 한 경로만 holdout으로 유지했다.
+- live draft #665는 WordPress에 존재하지만 P10 reviewed index에 없다. #665 본문이나 metadata를 이 작업에서 수정하지 않고 그대로 두었으며, 사용자가 추후 새 편집 지침으로 수정하기로 했다. 이에 따라 마지막 호환 mutation 경로 `replace-legacy-draft`, 전용 helper와 전용 tests를 제거했다. 새 작업은 현행 `prepare-draft` / `edit-post` 중심 정책을 따르며, legacy provenance를 임의 합성하지 않는다.
 
 ## 검증
 

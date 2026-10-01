@@ -38,7 +38,6 @@ MAINTENANCE_ACTIONS = {
     'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
     'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
     'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
-    'replace-legacy-draft',
 }
 ALL_ACTIONS = sorted(
     PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | MAINTENANCE_ACTIONS
@@ -274,13 +273,6 @@ def _main():
     if args.action == 'manual-review':
         if not args.author_model:
             parser.error('manual-review requires --author-model so the interactive GPT author is recorded explicitly')
-    if args.action == 'replace-legacy-draft':
-        if args.inventory:
-            parser.error('replace-legacy-draft always queries the live WordPress inventory')
-        from agents.editorial_legacy_draft import upgrade_legacy_draft
-        print('Upgraded legacy draft ID:', upgrade_legacy_draft(
-            args.post_id, data, args.expected_content_sha256, confirmed=args.confirm_update))
-        return
     if args.action == 'repair-draft-category':
         if args.inventory:
             parser.error('repair-draft-category always queries WordPress')

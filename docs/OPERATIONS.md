@@ -88,7 +88,7 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 | 대표이미지만 교체 | `replace-featured-image` | live 본문 SHA와 `_thumbnail_id`를 명령이 직접 읽고 image-only mutation/readback. article source/review는 열지 않음 |
 | 공개 전환 | `promote-draft --confirm-publish` | 글별 사용자 승인, current review/source binding, draft CAS |
 
-과거 `publish`, `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace` 공개 action은 P12에서 제거했다. `replace-legacy-draft`는 현재 P10 reviewed state가 없는 legacy draft #665처럼 **새 source-bound full review가 필요한 대상에만** 유지보수 전용으로 남긴다. HTML이나 과거 작업 기록만으로 reviewed provenance를 합성하지 않는다.
+과거 `publish`, `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace`, `replace-legacy-draft` 공개 action은 제거했다. P10 reviewed state가 없는 legacy draft도 별도 호환 mutation 경로로 즉시 이관하지 않는다. 사용자가 해당 글을 수정할 때 현행 편집 지침과 source/review 절차를 적용하며, HTML이나 과거 작업 기록만으로 reviewed provenance를 합성하지 않는다.
 
 ### Simple Task Fast Path와 이미지 연속 실행 규칙
 

@@ -401,6 +401,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         for action in {
             'publish', 'edit-draft', 'revise-draft', 'fast-revise-draft',
             'update-existing', 'update-draft', 'quick-image-replace',
+            'replace-legacy-draft',
         }:
             self.assertNotIn(action, module._CLI_ACTIONS)
 
@@ -519,25 +520,6 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '641', 'rank_math_title', 'unreviewed title', '--allow-root'])
-
-    def test_replace_legacy_draft_allows_only_reviewed_rank_math_meta(self):
-        module = load_module()
-        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='reviewed value\n', stderr='')
-        expected = {
-            'rank_math_focus_keyword': '2026 부산 10월 축제',
-            'rank_math_title': '2026 부산 10월 축제 일정',
-            'rank_math_description': '2026 부산 10월 축제 일정과 주요 프로그램을 비교합니다.',
-        }
-        transport = module.make_transport(
-            'replace-legacy-draft', {648}, 'bloguito', expected_rank_math_meta=expected)
-        for key, value in expected.items():
-            transport(module._WP_PREFIX + [
-                'post', 'meta', 'get', '648', key, '--allow-root'])
-            transport(module._WP_PREFIX + [
-                'post', 'meta', 'set', '648', key, value, '--allow-root'])
-        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
-            transport(module._WP_PREFIX + [
-                'post', 'meta', 'set', '648', 'rank_math_description', 'unreviewed', '--allow-root'])
 
     def test_repair_draft_category_allows_only_target_category_update(self):
         module = load_module()
