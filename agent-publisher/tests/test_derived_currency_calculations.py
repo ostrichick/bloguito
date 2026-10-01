@@ -85,6 +85,26 @@ class DerivedCurrencyCalculationTests(unittest.TestCase):
         }
         self.assertIn('invalid_derived_calculation', self.check()['reasons'])
 
+    def test_monthly_amount_from_official_total_and_days_is_allowed(self):
+        supported, errors = supported_currency_sums(
+            '월 예상액 1,981,440원',
+            '예상 지급일수 150일, 총 예상 지급액 9,907,200원',
+            [{'operation': 'monthly_from_total_days', 'total': 9_907_200,
+              'days': 150, 'monthly': 1_981_440}],
+        )
+        self.assertEqual({'1981440'}, supported)
+        self.assertEqual([], errors)
+
+    def test_wrong_monthly_amount_is_rejected(self):
+        supported, errors = supported_currency_sums(
+            '월 예상액 2,000,000원',
+            '예상 지급일수 150일, 총 예상 지급액 9,907,200원',
+            [{'operation': 'monthly_from_total_days', 'total': 9_907_200,
+              'days': 150, 'monthly': 2_000_000}],
+        )
+        self.assertEqual(set(), supported)
+        self.assertIn('invalid_derived_calculation', errors)
+
     def test_table_row_calculation_is_preserved(self):
         self.block.pop('calculations')
         self.block['text'] = self.source_text

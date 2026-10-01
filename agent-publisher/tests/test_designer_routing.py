@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 from agents.designer import (
     DesignerAgent,
+    _centered_block_top,
     _cover_profile,
     _load_display_font,
     _load_font,
@@ -139,7 +140,8 @@ class DesignerRoutingTests(unittest.TestCase):
         markers = ["1) Purpose", "2) Topic", "3) Main subject", "4) Composition", "5) Text", "6) Style", "7) Prohibited"]
         positions = [prompt.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("left 42%", prompt)
+        self.assertIn("left 45%", prompt)
+        self.assertIn("strict left-text/right-scene split", prompt)
         self.assertIn("Render NO text", prompt)
         self.assertIn("cropped face head hands", prompt)
 
@@ -161,13 +163,18 @@ class DesignerRoutingTests(unittest.TestCase):
         font = _load_display_font(32)
         self.assertIsNotNone(font)
         family, style = font.getname()
-        self.assertIn(family, {'HYPMokGak-Bold', 'HYHeadLine-Medium', 'Nanum Brush Script', 'Nanum Pen Script'})
+        self.assertEqual(family, 'HYPMokGak-Bold')
         self.assertNotIn('Malgun', family)
 
     def test_display_font_fails_closed_instead_of_using_generic_gothic(self):
         with patch("agents.designer.ImageFont.truetype", side_effect=OSError("display font missing")):
-            with self.assertRaisesRegex(RuntimeError, "Hangul display font unavailable"):
+            with self.assertRaisesRegex(RuntimeError, "Brand Hangul display font unavailable"):
                 _load_display_font(32)
+
+    def test_text_block_is_centered_vertically_with_safe_margin(self):
+        self.assertEqual(_centered_block_top(675, 275, 54), 200)
+        with self.assertRaisesRegex(ValueError, "vertical_safe_area"):
+            _centered_block_top(675, 620, 54)
 
     def test_title_split_keeps_numeric_range_phrase_together(self):
         self.assertEqual(
@@ -182,18 +189,16 @@ class DesignerRoutingTests(unittest.TestCase):
             rendered = "\n".join(split_title(title))
             self.assertNotRegex(rendered, r"(?:10만원|3개월|2시간)\n(?:미만|이하|이내)")
 
-    def test_render_editorial_fallback_outputs_valid_image(self):
+    def test_low_quality_local_fallback_is_not_publishable(self):
         out_path = Path(self.temp_dir.name) / "test_editorial_fallback_output.jpg"
-        self.designer._render_minimal_fallback(
-            primary_text="기초연금 신청",
-            secondary_text="자격 확인",
-            profile="welfare",
-            output_path=out_path,
-        )
-        self.assertTrue(out_path.exists())
-        with Image.open(out_path) as img:
-            self.assertEqual(img.size, (1200, 675))
-            self.assertEqual(img.format, "JPEG")
+        with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
+            self.designer._render_minimal_fallback(
+                primary_text="기초연금 신청",
+                secondary_text="자격 확인",
+                profile="welfare",
+                output_path=out_path,
+            )
+        self.assertFalse(out_path.exists())
 
     def test_generated_editorial_scene_is_used_when_image_client_is_available(self):
         generated = MagicMock()
@@ -273,33 +278,26 @@ class DesignerRoutingTests(unittest.TestCase):
         with Image.open(out_path) as img:
             self.assertEqual(img.size, (1200, 675))
 
-    def test_render_hybrid_poster_network_failure_falls_back_to_editorial_cover(self):
-        out_path = Path(self.temp_dir.name) / "test_fallback_output.jpg"
+    def test_render_hybrid_poster_network_failure_does_not_make_low_quality_fallback(self):
         with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
-            # generate_image should catch exception and fallback to Mode 2
-            res_path = self.designer.generate_image(
-                title="2026 단독 콘서트 예매",
-                category_name="공연/콘서트 예매",
-                keyword="콘서트",
-                curated={"poster_url": "https://example.com/unreviewed.jpg"},
-                category_key="concert",
-                reviewed_poster_url="https://example.com/broken_poster.jpg",
-            )
-
-        self.assertTrue(res_path.exists())
-        with Image.open(res_path) as img:
-            self.assertEqual(img.size, (1200, 675))
+            with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
+                self.designer.generate_image(
+                    title="2026 단독 콘서트 예매",
+                    category_name="공연/콘서트 예매",
+                    keyword="콘서트",
+                    curated={"poster_url": "https://example.com/unreviewed.jpg"},
+                    category_key="concert",
+                    reviewed_poster_url="https://example.com/broken_poster.jpg",
+                )
 
     def test_backward_compatible_call(self):
-        # Call without curated or category_key
-        res_path = self.designer.generate_image(
-            title="기초연금 신청 자격 안내",
-            category_name="정부 복지/지원금",
-            keyword="기초연금",
-        )
-        self.assertTrue(res_path.exists())
-        with Image.open(res_path) as img:
-            self.assertEqual(img.size, (1200, 675))
+        # Call shape remains valid, but without an image client it fails closed.
+        with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
+            self.designer.generate_image(
+                title="기초연금 신청 자격 안내",
+                category_name="정부 복지/지원금",
+                keyword="기초연금",
+            )
 
 
 if __name__ == "__main__":
