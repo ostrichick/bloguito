@@ -46,3 +46,14 @@
 
 - WhatsApp 서비스 제거는 운영 서버에 실제 적용 완료했다.
 - P9~P11 코드와 문서는 feature worktree/branch에 구현했으며, dirty/diverged `main`을 강제로 덮어쓰거나 기존 미커밋 작업을 재배치하지 않았다.
+
+## main 통합 및 실제 P10 runtime 전환
+
+- 2026-10-01 14시대 통합 전에 기존 `main`의 미커밋 64개 파일을 `stash@{0}`과 `C:\Dev\Bloguito-preservation-20261001-1434`에 이중 보존하고, 기준 HEAD는 `backup/main-pre-p1-p11-20261001`로 고정했다.
+- 해당 WIP는 `preserve/main-wip-20261001` 로컬 branch/worktree에 그대로 재적용한 뒤 commit `fa748fa`로 보존했다. 내용은 파이프라인/검증 WIP, 행사·이미지 WIP, 콘텐츠 문서, 일회성 실험 도구로 분류했다. 이 branch는 정규 `main`에 자동 병합하지 않는다.
+- `origin/main`의 원격 전용 변경을 먼저 병합했고, 국민연금 계산 예시와 실업급여 월 예상액 계산 검증 충돌은 두 기능을 모두 유지하도록 합쳤다. 이후 P1~P11 연속 branch를 `main`에 병합했다.
+- 통합 전체 suite는 767 tests 중 `test_designer_safety` 계열 8건만 오류였고 1건 skip이었다. 같은 8건을 현재 `origin/main` 기준 worktree에서도 그대로 재현해 P1~P11 통합 회귀가 아니라 원격 main의 기존 대표이미지 정책/테스트 불일치임을 확인했다.
+- 실제 runtime 전환 전 `draft_posts.json`/`published_posts.json`을 `C:\Dev\Bloguito-p10-state-backup-20261001-144052`에 복사하고 SHA-256을 기록했다. 당시 editorial lock과 기존 schema marker는 없었다.
+- `migrate_data_dir()`로 실제 canonical data를 전환했다. 결과는 draft reviewed 15건, published reviewed 2건, 총 per-post manifest 17개다.
+- 전환 전후 전체 record canonical SHA-256은 draft `3c9899149a60f261a8fc23a911fa57ca2285eae490bcadea51166cfac003331c`, published `ed1a128122655d87b414b4a9047ecf0e584586d6e7db4c4012f37a4d9110193e`로 각각 완전히 동일했다.
+- index 크기는 `draft_posts.json` 2,314,471 bytes → 6,368 bytes, `published_posts.json` 121,979 bytes → 2,671 bytes로 줄었다. schema marker와 17개 content-addressed manifest를 `load_records()`로 다시 읽어 ID 목록과 reviewed record 내용을 검증했다.
