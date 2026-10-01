@@ -16,7 +16,7 @@ class ValidationSshIntegrationTests(unittest.TestCase):
             'version': 1,
             'profile': 'full-regression',
             'plan_digest': 'a' * 64,
-            'test_groups': ['full-regression'],
+            'full_regression_required': True,
         }
         decision = {
             'route': 'fast',
@@ -70,7 +70,7 @@ class ValidationSshIntegrationTests(unittest.TestCase):
                 'version': 1,
                 'profile': 'quick-text',
                 'plan_digest': 'b' * 64,
-                'test_groups': [],
+                'full_regression_required': False,
             },
         }
         with tempfile.TemporaryDirectory() as folder:

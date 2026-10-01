@@ -20,6 +20,7 @@ from agents.editorial_updater import (
 )
 from agents.editorial_writer import fetch_sources, load_inventory
 from agents.publisher import PublisherAgent
+from agents.post_manifest_store import acquire_editorial_lock, load_record, release_editorial_lock
 from agents.temporal_validation import KST
 from config import DRAFTS_INDEX_FILE, resolve_category
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
@@ -43,12 +44,7 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
             or brief.get('existing_post_id') != post_id):
         raise ValueError('specific_legacy_draft_upgrade_confirmation_required')
 
-    lock = ROOT / 'data' / '.editorial-publish.lock'
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError('editorial_publication_busy: inspect the running process')
+    lock = acquire_editorial_lock(ROOT)
 
     try:
         sync_inventory()
@@ -64,6 +60,9 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         index_before = DRAFTS_INDEX_FILE.read_text(encoding='utf-8')
         index_rows = json.loads(index_before)
         old_record = next((row for row in index_rows if int(row.get('id', -1)) == post_id), None)
+        if old_record and 'manifest_sha256' in old_record:
+            snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+            old_record = snapshot.record if snapshot is not None else old_record
         if old_record and old_record.get('fact_manifest', {}).get('editorial_bundle'):
             raise ValueError('draft_already_has_reviewed_manifest')
 
@@ -140,4 +139,4 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         print(f'Legacy draft index backup: {index_backup}')
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)

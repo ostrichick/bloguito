@@ -42,6 +42,77 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'media', 'import', remote, '--post_id=649', '--title=행사 이미지', '--alt=행사 장면',
                 '--porcelain', '--allow-root'])
 
+    def test_section_image_snapshot_allows_target_and_learned_attachment_only(self):
+        module = load_module()
+
+        def fake_run(args, **kwargs):
+            remote = args[-1] if args else ''
+            if ' wp media import ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='777\n', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('import-section-image', {648}, 'bloguito')
+        snapshot = module._WP_PREFIX + [
+            'eval', module.SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']
+        transport(snapshot, input=json.dumps({
+            'protocol': 1, 'post_id': 648, 'attachment_id': None,
+        }), capture_output=True, text=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_get_target'):
+            transport(snapshot, input=json.dumps({
+                'protocol': 1, 'post_id': 649, 'attachment_id': None,
+            }), text=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_get_target'):
+            transport(snapshot, input=json.dumps({
+                'protocol': 1, 'post_id': 648, 'attachment_id': 777,
+            }), text=True)
+
+        remote = '/tmp/editorial_section_648_0123456789ab.webp'
+        transport(module._WP_PREFIX + [
+            'media', 'import', remote, '--post_id=648', '--title=title', '--alt=alt',
+            '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
+        transport(snapshot, input=json.dumps({
+            'protocol': 1, 'post_id': 648, 'attachment_id': 777,
+        }), capture_output=True, text=True, check=True)
+
+    def test_section_image_snapshot_255_retries_but_media_import_does_not(self):
+        module = load_module()
+        snapshot_attempts = 0
+
+        def snapshot_run(args, **kwargs):
+            nonlocal snapshot_attempts
+            if 'ssh' in args:
+                snapshot_attempts += 1
+                if snapshot_attempts == 1:
+                    return subprocess.CompletedProcess(args, 255, stdout='', stderr='lost')
+                return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = snapshot_run
+        transport = module.make_transport('import-section-image', {648}, 'bloguito')
+        result = transport(module._WP_PREFIX + [
+            'eval', module.SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root'],
+            input=json.dumps({'protocol': 1, 'post_id': 648, 'attachment_id': None}),
+            capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, snapshot_attempts)
+
+        media_attempts = 0
+        def media_run(args, **kwargs):
+            nonlocal media_attempts
+            if 'ssh' in args:
+                media_attempts += 1
+                return subprocess.CompletedProcess(args, 255, stdout='', stderr='lost')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+        module._RUN = media_run
+        transport = module.make_transport('import-section-image', {648}, 'bloguito')
+        media_result = transport(module._WP_PREFIX + [
+            'media', 'import', '/tmp/editorial_section_648_0123456789ab.webp',
+            '--post_id=648', '--title=title', '--alt=alt', '--porcelain', '--allow-root'],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(255, media_result.returncode)
+        self.assertEqual(1, media_attempts)
+
     def test_successful_inventory_uses_direct_ssh_without_tailscale_probe(self):
         module = load_module()
         calls = []
@@ -222,6 +293,20 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                   capture_output=True, text=True, check=True)
         self.assertEqual('--exec', calls[0][3])
         self.assertNotIn('--', calls[0][:4])
+        self.assertIn('ControlMaster=auto', calls[0])
+        self.assertIn('ControlPersist=30', calls[0])
+        self.assertTrue(any(item.startswith('ControlPath=/tmp/bloguito-editorial-') for item in calls[0]))
+
+    def test_native_direct_ssh_does_not_use_controlmaster(self):
+        module = load_module()
+        calls = []
+        module._RUN = lambda args, **kwargs: (
+            calls.append(list(args)) or subprocess.CompletedProcess(args, 0, stdout='[]', stderr=''))
+        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport(module._WP_PREFIX + module._LIST_ARGS,
+                  capture_output=True, text=True, check=True)
+        self.assertNotIn('ControlMaster=auto', calls[0])
+        self.assertFalse(any(item.startswith('ControlPath=') for item in calls[0]))
 
     def test_revise_draft_allows_only_exact_guarded_target_and_fields(self):
         module = load_module()

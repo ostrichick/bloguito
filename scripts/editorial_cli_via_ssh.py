@@ -22,6 +22,7 @@ has a fixed WP-CLI allowlist, and Tailscale diagnostics run only after SSH fails
 import argparse
 from contextlib import nullcontext
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -37,6 +38,7 @@ import editorial_cli  # noqa: E402
 from agents.editorial_updater import rank_math_meta_from_brief  # noqa: E402
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
+from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
 from agents.workflow_metrics import timed, workflow_run  # noqa: E402
 from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
@@ -150,6 +152,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     allowed_ids = set(int(value) for value in target_ids)
     readable_ids = set(allowed_ids)
     diagnosed = False
+    control_path = f'/tmp/bloguito-editorial-{os.getpid()}-%C'
     image_mutation_allowed = bool(
         action in _CREATE_ACTIONS or action in {'replace-featured-image', 'import-section-image'} or allow_image
     )
@@ -167,7 +170,14 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             if not wsl_distro:
                 raise ValueError('tailscale_ssh_requires_wsl_distro')
             return ['wsl.exe', '-d', wsl_distro, '--exec', 'tailscale', 'ssh', destination, remote]
-        command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', destination, remote]
+        command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
+        if wsl_distro:
+            command += [
+                '-o', 'ControlMaster=auto',
+                '-o', 'ControlPersist=30',
+                '-o', f'ControlPath={control_path}',
+            ]
+        command += [destination, remote]
         return ['wsl.exe', '-d', wsl_distro, '--exec', *command] if wsl_distro else command
 
     def diagnose_once():
@@ -288,6 +298,30 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             raise ValueError('unexpected_wordpress_update_flags')
         return payload
 
+    def validate_section_snapshot_payload(raw):
+        if action != 'import-section-image':
+            raise ValueError('section_snapshot_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        if not isinstance(raw, str):
+            raise ValueError('section_snapshot_payload_required')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_section_snapshot_payload') from exc
+        if not isinstance(payload, dict) or set(payload) != {'protocol', 'post_id', 'attachment_id'}:
+            raise ValueError('invalid_section_snapshot_payload')
+        if payload.get('protocol') != 1:
+            raise ValueError('invalid_section_snapshot_payload')
+        post_id = payload.get('post_id')
+        attachment_id = payload.get('attachment_id')
+        if type(post_id) is not int or post_id not in allowed_ids:
+            raise ValueError('unexpected_wordpress_get_target')
+        if attachment_id is not None and (
+                type(attachment_id) is not int or attachment_id not in readable_ids):
+            raise ValueError('unexpected_wordpress_get_target')
+        return payload
+
     def validate_wp(wp):
         if wp == _LIST_ARGS or wp == _LIGHT_INVENTORY_ARGS:
             return
@@ -330,6 +364,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']:
             return 'guarded_mutation'
+        if (action == 'import-section-image'
+                and wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']):
+            return 'section_snapshot'
         if parse_update(wp) is not None:
             return
         if (action in _PERMALINK_ACTIONS and len(wp) == 3 and wp[0] == 'eval'
@@ -424,6 +461,18 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 # The server-side CAS makes one replay safe. If the first write
                 # committed but SSH lost its response, the replay sees the exact
                 # desired state and the local guarded helper reconciles it.
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'section_snapshot':
+                raw_payload = kwargs.get('input')
+                validate_section_snapshot_payload(raw_payload)
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(SECTION_IMAGE_SNAPSHOT_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
                 return remote_run(remote, retry_255=True, **options)
             # A full reviewed draft can easily exceed Windows' CreateProcess
             # command-line limit when `--post_content=<html>` is embedded in the
@@ -634,7 +683,7 @@ def _main():
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
         if action == 'edit-post':
             plan = decision['validation_plan']
-            if plan.get('test_groups'):
+            if plan.get('full_regression_required'):
                 # Repository/shared-code profiles still fail before mutation.
                 from agents.validation_runner import require_validation_success
                 with timed('validation'):

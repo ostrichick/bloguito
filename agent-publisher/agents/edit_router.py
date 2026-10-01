@@ -20,6 +20,7 @@ from agents.fast_edit import (
     validate_prepared_delta_review,
 )
 from agents.change_classifier import classify_change
+from agents.post_manifest_store import load_record, replace_record
 from agents.task_state import (
     complete_task_state,
     completion_requirements_for_task,
@@ -39,11 +40,10 @@ from config import DRAFTS_INDEX_FILE
 def _load_tracked_bundle(post_id: int) -> dict:
     if not DRAFTS_INDEX_FILE.is_file():
         raise ValueError("reviewed_draft_index_missing")
-    records = json.loads(DRAFTS_INDEX_FILE.read_text(encoding="utf-8"))
-    matches = [item for item in records if int(item.get("id", -1)) == int(post_id)]
-    if len(matches) != 1:
+    snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+    if snapshot is None:
         raise ValueError("reviewed_draft_manifest_required")
-    bundle = matches[0].get("fact_manifest", {}).get("editorial_bundle")
+    bundle = snapshot.record.get("fact_manifest", {}).get("editorial_bundle")
     if not isinstance(bundle, dict):
         raise ValueError("reviewed_draft_manifest_required")
     return bundle
@@ -60,12 +60,10 @@ def _reconcile_saved_draft_manifest(
     edit_intent: str,
 ) -> None:
     """Repair only the narrow WP-saved/local-index-not-yet-written crash window."""
-    raw = DRAFTS_INDEX_FILE.read_text(encoding="utf-8")
-    records = json.loads(raw)
-    matches = [item for item in records if int(item.get("id", -1)) == int(post_id)]
-    if len(matches) != 1:
+    snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+    if snapshot is None:
         raise ValueError("resume_manifest_not_updated")
-    item = matches[0]
+    item = snapshot.record
     tracked = item.get("fact_manifest", {}).get("editorial_bundle")
     if not isinstance(tracked, dict):
         raise ValueError("resume_manifest_not_updated")
@@ -81,12 +79,12 @@ def _reconcile_saved_draft_manifest(
                 tracked, report, fast_edit_review, edit_intent):
             raise ValueError("resume_manifest_fast_review_mismatch")
         stored = build_fast_stored_bundle(tracked, bundle, fast_edit_review)
-    item.setdefault("fact_manifest", {})["editorial_bundle"] = stored
-    if DRAFTS_INDEX_FILE.read_text(encoding="utf-8") != raw:
-        raise ValueError("resume_manifest_conflict")
-    temporary = DRAFTS_INDEX_FILE.with_suffix(".resume-reconcile-tmp")
-    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(DRAFTS_INDEX_FILE)
+    updated = dict(item)
+    updated.setdefault("fact_manifest", dict(item.get("fact_manifest", {})))["editorial_bundle"] = stored
+    try:
+        replace_record(snapshot, updated)
+    except ValueError as exc:
+        raise ValueError("resume_manifest_conflict") from exc
 
 
 def classify_edit_route(
@@ -327,7 +325,6 @@ def edit_reviewed_draft(
     profile = (decision.get("validation_plan") or {}).get("profile")
     if profile:
         increment("validation_profile_" + profile.replace("-", "_"))
-        increment("validation_test_groups_planned", len(decision["validation_plan"].get("test_groups", [])))
     if decision["reuse"].get("reuse_sources"):
         increment("validation_reuse_sources")
     if decision["reuse"].get("reuse_full_semantic_review"):

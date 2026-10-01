@@ -52,7 +52,7 @@ class TaskStateTests(unittest.TestCase):
             "version": 1,
             "profile": "quick-text",
             "plan_digest": "a" * 64,
-            "test_groups": ["core-safe-edit"],
+            "full_regression_required": False,
         }
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

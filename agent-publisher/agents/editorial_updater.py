@@ -10,8 +10,15 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 from agents.editorial import ROOT, render, save_report, validate_bundle, excerpt_from_lead
+from agents.post_manifest_store import (
+    acquire_editorial_lock,
+    load_record,
+    release_editorial_lock,
+    replace_record,
+)
 from agents.related_links import missing_internal_post_ids
 from agents.editorial_writer import fetch_sources, load_inventory
+from config import POSTS_INDEX_FILE
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
     backup_json,
@@ -88,23 +95,18 @@ def _set_rank_math_meta(base, post_id, values):
 
 def _update_reviewed_public_manifest(post_id, bundle):
     """Advance an existing reviewed public manifest without creating provenance."""
-    index_file = ROOT / 'data' / 'published_posts.json'
+    index_file = POSTS_INDEX_FILE
     if not index_file.is_file():
         return False
-    raw = index_file.read_text(encoding='utf-8')
+    snapshot = load_record(index_file, post_id)
+    if snapshot is None or not snapshot.record.get('fact_manifest', {}).get('editorial_bundle'):
+        return False
+    updated = dict(snapshot.record)
+    updated.setdefault('fact_manifest', dict(snapshot.record.get('fact_manifest', {})))['editorial_bundle'] = bundle
     try:
-        records = json.loads(raw)
-    except (TypeError, ValueError):
-        return False
-    matches = [item for item in records if int(item.get('id', -1)) == int(post_id)]
-    if len(matches) != 1 or not matches[0].get('fact_manifest', {}).get('editorial_bundle'):
-        return False
-    matches[0]['fact_manifest']['editorial_bundle'] = bundle
-    if index_file.read_text(encoding='utf-8') != raw:
-        raise ValueError('published_index_changed_during_update')
-    temporary = index_file.with_suffix('.public-update-tmp')
-    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
-    temporary.replace(index_file)
+        replace_record(snapshot, updated)
+    except ValueError as exc:
+        raise ValueError('published_index_changed_during_update') from exc
     return True
 
 
@@ -140,12 +142,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if not tracked_ok:
             raise ValueError('reviewed_bundle_target_id_mismatch')
     reviewed_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
-    lock = ROOT / 'data' / '.editorial-publish.lock'
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError('editorial_publication_busy: verify any running process before retrying')
+    lock = acquire_editorial_lock(ROOT)
     try:
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         fields = ['post_status', 'post_title', 'post_name', 'post_content', 'post_excerpt']
@@ -255,7 +252,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         invalidate_inventory()
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)
 
 
 def repair_missing_excerpt(post_id, expected_content_sha256, *, confirmed=False):
@@ -264,12 +261,7 @@ def repair_missing_excerpt(post_id, expected_content_sha256, *, confirmed=False)
         raise ValueError('specific_public_post_update_confirmation_required')
     if not re.fullmatch(r'[0-9a-f]{64}', expected_content_sha256 or ''):
         raise ValueError('original_content_sha256_required')
-    lock = ROOT / 'data' / '.editorial-publish.lock'
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError('editorial_publication_busy: verify any running process before retrying')
+    lock = acquire_editorial_lock(ROOT)
     try:
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         current = get_post(base, post_id)
@@ -290,4 +282,4 @@ def repair_missing_excerpt(post_id, expected_content_sha256, *, confirmed=False)
             raise ValueError('excerpt_verification_failed: inspect WordPress before retrying')
         return post_id
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)

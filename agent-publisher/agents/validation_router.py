@@ -38,7 +38,6 @@ _FULL_REGRESSION_EXACT = {
     "agent-publisher/editorial_policy.json",
     "scripts/editorial_cli_via_ssh.py",
     "scripts/run_validation.py",
-    "agent-publisher/tests/test_groups.json",
     ".github/workflows/test.yml",
 }
 
@@ -159,16 +158,6 @@ def _profile_for_scope(scope: dict, route: str | None) -> tuple[str, list[str]]:
     return "full-regression", ["unclassified_edit_scope_requires_full_regression"]
 
 
-def _test_groups_for_scope(profile: str, scope: dict, route: str | None) -> list[str]:
-    if profile == "full-regression":
-        return ["full-regression"]
-    # Unit/regression tests validate shared code, not individual article data. The
-    # edit path already performs deterministic bundle checks, source/review gates,
-    # CAS and readback. Content/image mutations therefore do not launch Python test
-    # suites; repository code changes still select full-regression above.
-    return []
-
-
 def _content_sha(bundle: dict | None) -> str | None:
     if not isinstance(bundle, dict):
         return None
@@ -217,7 +206,6 @@ def build_validation_plan(
 
     if profile not in VALIDATION_PROFILES:
         raise ValueError("unknown_validation_profile:" + str(profile))
-    groups = _test_groups_for_scope(profile, scope, resolved_route)
     source_mode = "reuse"
     if profile in {"no-op", "docs-only", "quick-image"}:
         source_mode = "not-applicable"
@@ -243,7 +231,6 @@ def build_validation_plan(
         "reasons": reasons,
         "scope": deepcopy(scope),
         "risk_level": scope.get("risk_level", "fact"),
-        "test_groups": groups,
         "source_validation": source_mode,
         "semantic_review": semantic_review,
         "qa_scopes": list(scope.get("qa_scopes", [])),
@@ -268,8 +255,6 @@ def validate_validation_plan(plan: dict) -> dict:
         raise ValueError("invalid_validation_plan")
     if plan.get("profile") not in VALIDATION_PROFILES:
         raise ValueError("invalid_validation_plan_profile")
-    if not isinstance(plan.get("test_groups"), list):
-        raise ValueError("invalid_validation_plan_groups")
     binding = plan.get("binding")
     if not isinstance(binding, dict) or binding.get("target_status") not in {"draft", "publish"}:
         raise ValueError("invalid_validation_plan_binding")

@@ -8,16 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agents.validation_router import build_validation_plan
-from agents.validation_runner import ROOT, _load_suite, load_test_manifest, selected_test_files
+from agents.validation_runner import ROOT, _load_suite, selected_test_files
 from tests.test_editorial_system import sample
 
 
 class ValidationRunnerTests(unittest.TestCase):
-    def test_manifest_covers_every_active_test_file(self):
-        manifest = load_test_manifest()
-        self.assertIn('core-safe-edit', manifest['groups'])
-        self.assertIn('full_only', manifest)
-
     def test_content_profiles_select_no_repository_tests(self):
         old = sample()
         new = copy.deepcopy(old)
@@ -45,7 +40,7 @@ class ValidationRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'validation_plan_digest_mismatch'):
             selected_test_files(plan)
 
-    def test_post_selector_does_not_reenable_tests_for_content_plan(self):
+    def test_post_id_does_not_reenable_tests_for_content_plan(self):
         old = sample()
         new = copy.deepcopy(old)
         new['plan']['sections'][0]['heading'] = '더 간단한 소제목'
@@ -73,7 +68,7 @@ class ValidationRunnerTests(unittest.TestCase):
             receipt = {
                 'status': 'passed', 'profile': 'quick-text', 'tests_run': 1,
                 'failures': 0, 'errors': 0, 'skipped': 0, 'selected_files': [],
-                'duration_ms': 1.0, 'test_groups': [], 'plan_digest': 'x',
+                'duration_ms': 1.0, 'plan_digest': 'x',
             }
             with patch.object(module, 'run_validation_plan', return_value=receipt) as run, \
                  patch('builtins.print'):

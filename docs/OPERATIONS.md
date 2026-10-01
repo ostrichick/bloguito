@@ -12,7 +12,6 @@
 | `agent-publisher/data/` | 환경별 런타임 상태. 민감·운영 JSON 및 `.env`를 Git에 추가하지 않음 |
 | `wordpress/docker-compose.yml` | WordPress·MariaDB 선언; 실행 중 서버 설정과 다를 수 있음 |
 | `wordpress/mu-plugins/` | 자체 WP MU 플러그인. 관리자 글 ID 열 구현을 포함하나 운영본 설치 상태는 별도 확인 |
-| `agent-publisher/whatsapp-bridge/` | 원격 상태·초안/공개 명령, `package-lock.json`·명령 정책 포함. 실제 systemd/env 배포와 구분 |
 | `scripts/` | 반복 사용 가능한 운영·진단 도구만 유지. 게시물 한 건을 위한 임시 Python은 두지 않으며 목록은 `scripts/maintained_scripts.json`으로 검증 |
 | `scratch/` | 한 작업에서만 필요한 probe, 변환 코드, 중간 JSON/HTML/이미지. Git 비추적 |
 | `tmp/` | 과거 작업 증거가 연결된 legacy 임시 영역. 새 일반 작업·브라우저 프로필의 출력 위치로 사용하지 않음 |
@@ -20,7 +19,7 @@
 
 ## 로컬 설치 및 무변경 검사
 
-Python 3.12와 Docker/Git Bash·Node는 작업 종류에 맞춰 준비한다. Python 환경은 **로컬** `agent-publisher/.venv`, **Linux 운영 예시** `agent-publisher/venv`로 다르다. `.env.example`에는 실제 비밀번호를 쓰지 않는다.
+Python 3.12와 Docker/Git Bash를 작업 종류에 맞춰 준비한다. Python 환경은 **로컬** `agent-publisher/.venv`, **Linux 운영 예시** `agent-publisher/venv`로 다르다. `.env.example`에는 실제 비밀번호를 쓰지 않는다.
 
 ```powershell
 # 프로젝트 루트의 Windows PowerShell: 실제 게시물/서비스는 수정하지 않는 테스트
@@ -58,6 +57,8 @@ reviewed post 수정은 원고 diff와 실제 Fast/Standard route를 단일 clas
 | `full-regression` | `agents/`, policy, renderer, SSH transport, test infrastructure 같은 공유 코드 변경 | 전체 `agent-publisher/tests` 1회 | 코드 변경에 맞는 기존 editorial 검증 유지 |
 
 unit/regression tests는 **공유 코드가 바뀐 작업**을 검증하는 도구다. 콘텐츠 데이터 변경과 코드 회귀 검증을 연결하지 않는다. `full-regression`은 repository change classifier가 공통 코드 변경을 감지했을 때만 선택한다.
+
+P9부터 별도의 test-group registry나 게시물별 test selector를 유지하지 않는다. `validation_plan.full_regression_required=false`인 콘텐츠·이미지 작업은 repository unit test를 실행하지 않고, `true`인 공유 코드 변경은 `agent-publisher/tests/test_*.py` 전체를 한 번 실행한다. dirty 공유 작업트리에 임시 `test_*.py`가 생겼다는 이유만으로 unrelated 콘텐츠 mutation을 차단하지 않는다.
 
 문서만 수정한 경우에는 `git diff --check`와 링크/문서 구조 확인으로 충분하다. 공통 renderer, validator, publisher, 정책·transport 로직을 바꾼 경우에만 표적 테스트 뒤 전체 suite를 1회 실행하고, 이후 공통 코드가 바뀌지 않았다면 콘텐츠/문서 수정 때문에 같은 full suite를 반복하지 않는다. 화면 검증도 CSS/renderer/표·목차 구조가 바뀌면 360/390px, 데스크톱, 200% 확대와 키보드 접근까지 수행하고, 구조가 그대로인 본문 데이터 수정은 대표 모바일+데스크톱의 변경 영역, CTA-only는 실제 도착 화면과 버튼 smoke test를 우선한다.
 
@@ -213,7 +214,17 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 - 공개 전환 `promote-draft`와 복구·진단 action은 별도 lifecycle/maintenance 명령이다. Direct SSH가 기본이며 Tailscale은 실제 비상·복구 작업에서만 명시적으로 선택한다.
 - 수동 편집 transport의 기본 모드는 항상 `direct`다. `BLOGUITO_SSH_HOST`, `BLOGUITO_SSH_USER`는 Direct SSH의 기본 접속값으로 사용할 수 있지만, `BLOGUITO_SSH_MODE=tailscale` 같은 지속 환경설정이 일반 작업을 Tailscale로 자동 전환하게 두지 않는다. WSL/Tailscale은 명령행 `--ssh-mode` 또는 기존 일회성 옵션으로만 선택한다.
 - Direct SSH가 실패해도 공개 웹/REST 조회로 목적을 달성할 수 있으면 Tailscale로 전환하지 않는다. 서버 설정·Docker/WP-CLI·비공개 WordPress 상태처럼 SSH가 반드시 필요한 작업에서 Direct SSH가 불가능할 때만 Tailscale을 명시적으로 선택한다. Tailscale 경로를 선택한 뒤에도 `tailscale status/ping`을 선행 반복하지 않고 실제 SSH 실패 시 한 번만 진단한다. 읽기 명령은 필요할 때 1회 재시도할 수 있고, P2 guarded mutation은 서버가 전체 desired state를 확인하므로 SSH 255에서 최대 1회 replay한다. raw `post update`, `post create`, media import처럼 결과 유실 시 중복·불명확 상태를 만들 수 있는 mutation은 같은 재시도 의미론을 사용하지 않는다.
+- P11부터 WSL 안의 표준 OpenSSH 경로는 한 adapter 실행 동안 `ControlMaster=auto`, `ControlPersist=30`으로 연결을 재사용한다. Windows native OpenSSH와 `tailscale ssh`에는 이 옵션을 적용하지 않는다. 연결 재사용은 transport 비용만 줄이며 action별 allowlist, target ID 제한, CAS/replay 규칙은 바꾸지 않는다.
+- `import-section-image`는 고정된 read-only snapshot script로 대상 글 본문/상태, 대표이미지 ID, Rank Math 3종을 한 번에 읽고, import 뒤 attachment 메타까지 한 번에 재조회한다. 따라서 정상 경로의 WP-CLI 조회/변경은 `pre snapshot → media import → post snapshot` 3회가 기본이다. 두 snapshot은 읽기 전용이라 SSH 255에서 1회 재시도할 수 있지만 **media import는 절대 자동 재시도하지 않는다.**
 - 과거 서버에서 만든 reviewed draft의 manifest가 로컬 `agent-publisher/data/draft_posts.json`에 아직 없다면 **전환 시 1회만** `scripts/sync_editorial_state_via_ssh.py`로 기존 `draft_posts.json`/`published_posts.json`을 가져온다. 이 도구는 로컬 상태 파일이 하나라도 이미 존재하면 덮어쓰기를 거부한다. 이후 로컬 상태가 정본이므로 서버 파일을 다시 가져와 덮지 않는다.
+
+### reviewed state 저장 구조
+
+P10부터 대형 reviewed bundle을 `draft_posts.json`/`published_posts.json` 한 파일 안에 반복 저장하지 않아도 된다. `agent-publisher/data/post_manifests/schema.json` marker가 없는 기존 설치는 예전 inline index를 그대로 읽고 쓰며, marker가 활성화된 설치는 index에는 ID·제목·상태·URL·카테고리 같은 경량 metadata와 `manifest_sha256`만 남기고 실제 `fact_manifest`는 `post_manifests/post-<ID>-<digest>.json`에 불변 파일로 저장한다.
+
+전환은 **새 코드를 먼저 배치한 뒤** `python agent-publisher/agents/post_manifest_store.py --data-dir agent-publisher/data`로 수행한다. 이전 코드가 실행 중인 상태에서는 compact index를 이해하지 못하므로 marker를 먼저 만들지 않는다.
+
+전환기는 두 index를 먼저 검증한 뒤 marker를 만들고 reviewed record만 sidecar로 분리한다. unreviewed legacy row는 inline으로 남긴다. per-post 모드의 local CAS는 대상 manifest와 대상 index projection에만 결합하므로 다른 글의 병렬 수정 때문에 실패하지 않는다. manifest는 content-addressed 불변 파일을 먼저 쓴 뒤 index pointer를 원자 교체하므로 index 교체 전 중단돼도 기존 record가 깨지지 않는다. WordPress의 content SHA CAS, 원문 backup, guarded readback과 전역 editorial mutation lock은 그대로 유지한다.
 
 이 구조에서 운영 서버 checkout의 버전이 로컬보다 오래됐다는 이유만으로 원고 review를 다시 수행할 필요가 없다. 반대로 실제 bundle, source, 정책 fingerprint, review 신선도가 달라졌다면 로컬 정본에서도 정상 검증이 차단되며 해당 review를 새로 해야 한다.
 
@@ -240,7 +251,7 @@ WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, �
 - `restore_backup.sh <archive> --verify-only`: **데이터를 변경하지 않는** 해시·구조 확인. 구형 v2는 검증만 지원하고 전체 복원을 거부한다.
 - `scripts/sync_backups.py`: 신뢰된 SSH 별칭/호스트키, 전후 해시, 임시 파일 검증 후 로컬 확정. 기존 백업을 건드리지 않는 다운로드라도 저장 경로의 권한과 여유 공간을 확인한다.
 - v3의 `secrets.tar.gz`는 일반 압축이며 **암호화된 금고가 아니다**. 접근권한, 오프사이트 암호화·키 보관·독립 복구 계획 없이 완전 백업이라고 표현하지 않는다. 실제 격리 복원 범위와 호스트 단위 미검증 항목은 [2026-09-25 애플리케이션/데이터 복구 훈련](backup-restore-drill-2026-09-25.md)과 [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md)의 PASS/PARTIAL/NOT TESTED 판정을 따른다.
-- 운영 서버는 로컬 Compose와 `.env` 구성·systemd 설정이 다를 수 있다. **이미지 digest가 같다는 이유만으로 재생성할 필요는 없다.** 사전 해시·백업·비밀값 비노출 설정 확인, 스테이징 테스트, 서비스별 롤백 계획을 마련한 뒤 변경한다. WhatsApp 명령 검사에서 **유효한 `/publish`를 스모크 테스트로 보내지 않는다.**
+- 운영 서버는 로컬 Compose와 `.env` 구성·systemd 설정이 다를 수 있다. **이미지 digest가 같다는 이유만으로 재생성할 필요는 없다.** 사전 해시·백업·비밀값 비노출 설정 확인, 스테이징 테스트, 서비스별 롤백 계획을 마련한 뒤 변경한다.
 
 ### WP-CLI 재구축
 
@@ -263,6 +274,6 @@ provisioner는 WP-CLI `2.12.0`의 버전 지정 release URL과 SHA-256 `ce34ddd8
 
 - WordPress 관리 글 목록의 ID 열은 [2026-09-21 적용 기록](admin-post-id-column-2026-09-21.md)에 서버 반영과 WP 후크 검사 결과가 있다. 로그인 브라우저 UI 검사는 당시 수행하지 않았다.
 - 백업 크론 `04:00`, 초안 생성 `08:00`(KST)은 2026-09-20에 관측된 기록이며 현재 스케줄은 서버 `crontab -l`로 재확인한다.
-- 플러그인 활성화, GA4/Site Kit, 공개/임시글 수, WhatsApp 실사용, 서치콘솔 지표는 저장소 문서만 보고 현재 상태·성능으로 단정하지 않는다.
+- 플러그인 활성화, GA4/Site Kit, 공개/임시글 수, 서치콘솔 지표는 저장소 문서만 보고 현재 상태·성능으로 단정하지 않는다.
 - 작업마다 **기준 commit, 사전 변경 파일, 실제 변경/배포 범위, 테스트 결과, 서버 검증 여부, 미검증/롤백 지점**을 날짜별 기록에 남기고 [문서 안내](INDEX.md)에 편입한다. 개인식별자·API 키·DB 암호는 출력·Git·보고서에 기록하지 않는다.
 - 같은 게시물이나 같은 기능의 후속 수정은 기존 작업 기록 MD의 새 날짜/절에 이어서 기록한다. 새 MD는 새로운 기능, 독립 장애, 배포, 아키텍처 변경처럼 별도 이력으로 찾을 가치가 있는 경우에만 만든다.

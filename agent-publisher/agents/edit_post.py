@@ -18,6 +18,7 @@ from agents.fast_edit import (
     validate_prepared_delta_review,
 )
 from agents.featured_image import reconcile_featured_image_outcome, replace_featured_image
+from agents.post_manifest_store import load_record, replace_record
 from agents.public_fast_edit import (
     classify_public_fast_edit,
     fast_update_public_post,
@@ -43,14 +44,11 @@ def _index_contains_reviewed(path: Path, post_id: int) -> bool:
     if not path.is_file():
         return False
     try:
-        rows = json.loads(path.read_text(encoding="utf-8"))
+        snapshot = load_record(path, post_id)
     except (OSError, TypeError, ValueError):
         return False
-    return sum(
-        1 for row in rows
-        if int(row.get("id", -1)) == int(post_id)
-        and isinstance(row.get("fact_manifest", {}).get("editorial_bundle"), dict)
-    ) == 1
+    return bool(snapshot and isinstance(
+        snapshot.record.get("fact_manifest", {}).get("editorial_bundle"), dict))
 
 
 def reviewed_target_kind(post_id: int) -> str:
@@ -120,12 +118,10 @@ def classify_reviewed_post_route(
 
 
 def _replace_public_manifest_if_expected(post_id: int, expected_old_sha: str, new_bundle: dict) -> None:
-    raw = POSTS_INDEX_FILE.read_text(encoding="utf-8")
-    rows = json.loads(raw)
-    matches = [row for row in rows if int(row.get("id", -1)) == int(post_id)]
-    if len(matches) != 1:
+    snapshot = load_record(POSTS_INDEX_FILE, post_id)
+    if snapshot is None:
         raise ValueError("resume_public_manifest_conflict")
-    current = matches[0].get("fact_manifest", {}).get("editorial_bundle")
+    current = snapshot.record.get("fact_manifest", {}).get("editorial_bundle")
     if not isinstance(current, dict):
         raise ValueError("resume_public_manifest_conflict")
     current_sha = content_sha256(render(current["plan"], current["sources"]))
@@ -134,12 +130,12 @@ def _replace_public_manifest_if_expected(post_id: int, expected_old_sha: str, ne
         return
     if current_sha != expected_old_sha:
         raise ValueError("resume_public_manifest_conflict")
-    matches[0].setdefault("fact_manifest", {})["editorial_bundle"] = new_bundle
-    if POSTS_INDEX_FILE.read_text(encoding="utf-8") != raw:
-        raise ValueError("resume_public_manifest_conflict")
-    temporary = POSTS_INDEX_FILE.with_suffix(".resume-public-tmp")
-    temporary.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(POSTS_INDEX_FILE)
+    updated = dict(snapshot.record)
+    updated.setdefault("fact_manifest", dict(snapshot.record.get("fact_manifest", {})))["editorial_bundle"] = new_bundle
+    try:
+        replace_record(snapshot, updated)
+    except ValueError as exc:
+        raise ValueError("resume_public_manifest_conflict") from exc
 
 
 def _validated_prepared_decision(
@@ -216,7 +212,6 @@ def _edit_reviewed_public_post(
     profile = (decision.get("validation_plan") or {}).get("profile")
     if profile:
         increment("validation_profile_" + profile.replace("-", "_"))
-        increment("validation_test_groups_planned", len(decision["validation_plan"].get("test_groups", [])))
     candidate = decision["candidate"] if decision["route"] == "fast" else bundle
     desired = render(candidate["plan"], candidate["sources"])
     desired_sha = content_sha256(desired)

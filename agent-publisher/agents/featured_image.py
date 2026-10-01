@@ -12,6 +12,7 @@ from PIL import Image
 
 from agents.editorial import ROOT
 from agents.editorial_updater import RANK_MATH_META_KEYS
+from agents.post_manifest_store import acquire_editorial_lock, release_editorial_lock
 from agents.task_state import (
     complete_task_state,
     completion_requirements_for_task,
@@ -158,12 +159,7 @@ def replace_featured_image(
     image_info = validate_featured_image_file(image_path)
     image_path = Path(image_info["path"])
 
-    lock = ROOT / "data" / ".editorial-publish.lock"
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError("editorial_publication_busy: inspect the existing job")
+    lock = acquire_editorial_lock(ROOT)
 
     base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
     state_started = False
@@ -355,7 +351,7 @@ def replace_featured_image(
             fail_task_state(post_id, exc)
         raise
     finally:
-        lock.rmdir()
+        release_editorial_lock(lock)
 
 
 def _quick_attempt_key(
