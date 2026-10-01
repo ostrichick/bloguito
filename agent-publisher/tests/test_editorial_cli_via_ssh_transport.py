@@ -123,7 +123,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'revise-draft', {463}, '100.99.177.119',
+            'draft-standard', {463}, '100.99.177.119',
             ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         result = transport(module._WP_PREFIX + module._LIST_ARGS,
                            capture_output=True, text=True, check=True)
@@ -145,7 +145,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'revise-draft', {463}, '100.99.177.119',
+            'draft-standard', {463}, '100.99.177.119',
             ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         for _ in range(2):
             with self.assertRaises(subprocess.CalledProcessError):
@@ -171,7 +171,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'revise-draft', {463}, '100.99.177.119',
+            'draft-standard', {463}, '100.99.177.119',
             ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         result = transport(module._WP_PREFIX + module._LIST_ARGS,
                            capture_output=True, text=True, check=False)
@@ -179,7 +179,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual(2, ssh_attempts)
         self.assertEqual(2, len([args for args in calls if 'tailscale' in args]))
 
-    def test_publish_create_255_is_not_retried(self):
+    def test_prepare_draft_create_255_is_not_retried(self):
         module = load_module()
         calls = []
 
@@ -191,7 +191,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'publish', set(), '100.99.177.119', ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
+            'prepare-draft', set(), '100.99.177.119', ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         result = transport(module._WP_PREFIX + [
             'post', 'create', '/tmp/editorial_candidate.html', '--post_type=post',
             '--post_status=draft', '--post_title=title', '--post_category=4',
@@ -205,7 +205,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
             args, 0, stdout='{}', stderr='')
-        transport = module.make_transport('fast-revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-fast', {463}, 'bloguito')
         transport(module._WP_PREFIX + [
             'post', 'get', '463',
             '--fields=post_status,post_title,post_name,post_content,post_excerpt',
@@ -225,7 +225,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
         module._RUN = fake_run
-        transport = module.make_transport('fast-revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-fast', {463}, 'bloguito')
         payload = json.dumps({
             'protocol': 1, 'post_id': 463,
             'expected': {
@@ -250,14 +250,14 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'revise-draft', {463}, '100.99.177.119',
+            'draft-standard', {463}, '100.99.177.119',
             ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         result = transport(module._WP_PREFIX + module._LIST_ARGS,
                            capture_output=True, text=True, check=False)
         self.assertEqual(1, result.returncode)
         self.assertEqual([], [args for args, _ in calls if 'tailscale' in args])
 
-    def test_explicit_tailscale_ssh_uses_tailscale_transport(self):
+    def test_explicit_tailscale_profile_uses_tailscale_transport(self):
         module = load_module()
         calls = []
 
@@ -267,8 +267,8 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'revise-draft', {463}, '100.99.177.119', ssh_user='ubuntu',
-            wsl_distro='Ubuntu-24.04', tailscale_ssh=True)
+            'draft-standard', {463}, '100.99.177.119', ssh_user='ubuntu',
+            wsl_distro='Ubuntu-24.04', use_tailscale=True)
         transport(module._WP_PREFIX + module._LIST_ARGS,
                   capture_output=True, text=True, check=True)
         self.assertEqual(
@@ -287,7 +287,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         module._RUN = fake_run
         transport = module.make_transport(
-            'revise-draft', {463}, '100.99.177.119',
+            'draft-standard', {463}, '100.99.177.119',
             ssh_user='ubuntu', wsl_distro='Ubuntu-24.04')
         transport(module._WP_PREFIX + module._LIST_ARGS,
                   capture_output=True, text=True, check=True)
@@ -302,7 +302,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         calls = []
         module._RUN = lambda args, **kwargs: (
             calls.append(list(args)) or subprocess.CompletedProcess(args, 0, stdout='[]', stderr=''))
-        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
         transport(module._WP_PREFIX + module._LIST_ARGS,
                   capture_output=True, text=True, check=True)
         self.assertNotIn('ControlMaster=auto', calls[0])
@@ -311,7 +311,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
     def test_revise_draft_allows_only_exact_guarded_target_and_fields(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
-        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
         expected = {
             'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
             'post_excerpt': 'old', 'content_sha256': '0' * 64,
@@ -342,7 +342,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout='Success', stderr='')
 
         module._RUN = fake_run
-        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
         reviewed = '<div>' + ('검토된 긴 본문' * 10000) + '</div>'
         payload = json.dumps({
             'protocol': 1, 'post_id': 463,
@@ -376,43 +376,33 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                         'post_title': 'reviewed title'},
         })
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
-            module.make_transport('revise-draft', {463}, 'bloguito')(command, input=payload, text=True)
+            module.make_transport('draft-standard', {463}, 'bloguito')(command, input=payload, text=True)
         module.make_transport(
-            'revise-draft', {463}, 'bloguito', allow_title_change=True)(command, input=payload, text=True)
+            'draft-standard', {463}, 'bloguito', allow_title_change=True)(command, input=payload, text=True)
 
-    def test_edit_draft_transport_must_be_preclassified(self):
+    def test_edit_post_transport_must_be_preclassified(self):
         module = load_module()
-        with self.assertRaisesRegex(ValueError, 'edit_draft_requires_preclassified_transport'):
-            module.make_transport('edit-draft', {463}, 'bloguito')
+        with self.assertRaisesRegex(ValueError, 'edit_post_requires_preclassified_transport'):
+            module.make_transport('edit-post', {463}, 'bloguito')
 
     def test_internal_public_transport_profiles_are_not_user_cli_actions(self):
         module = load_module()
+        self.assertIn('draft-fast', module._TRANSPORT_PROFILES)
+        self.assertIn('draft-standard', module._TRANSPORT_PROFILES)
         self.assertIn('public-fast', module._TRANSPORT_PROFILES)
         self.assertIn('public-standard', module._TRANSPORT_PROFILES)
+        self.assertNotIn('draft-fast', module._CLI_ACTIONS)
+        self.assertNotIn('draft-standard', module._CLI_ACTIONS)
         self.assertNotIn('public-fast', module._CLI_ACTIONS)
         self.assertNotIn('public-standard', module._CLI_ACTIONS)
 
-    def test_edit_draft_wrapper_preclassifies_before_transport_permissions(self):
+    def test_legacy_edit_actions_are_not_user_cli_actions(self):
         module = load_module()
-        with tempfile.TemporaryDirectory() as folder:
-            bundle = Path(folder) / 'bundle.json'
-            bundle.write_text('{}', encoding='utf-8')
-            argv = [
-                'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
-                'edit-draft', str(bundle), '--post-id', '463',
-                '--expected-content-sha256', '0' * 64, '--confirm-update',
-                '--edit-intent', '표현 정리',
-            ]
-            with patch('sys.argv', argv), \
-                 patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
-                     mode='direct', host='bloguito', user=None, wsl_distro=None)), \
-                 patch('agents.edit_router.classify_edit_route', return_value={
-                     'route': 'fast', 'reasons': [],
-                 }), \
-                 patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
-                    patch.object(module.editorial_cli, 'main'):
-                module.main()
-        self.assertEqual('fast-revise-draft', make.call_args.args[0])
+        for action in {
+            'publish', 'edit-draft', 'revise-draft', 'fast-revise-draft',
+            'update-existing', 'update-draft', 'quick-image-replace',
+        }:
+            self.assertNotIn(action, module._CLI_ACTIONS)
 
     def test_edit_post_standard_wrapper_passes_reviewed_rank_math_meta(self):
         module = load_module()
@@ -448,7 +438,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                  patch.object(module.editorial_cli, 'main'):
                 module.main()
 
-        self.assertEqual('revise-draft', make.call_args.args[0])
+        self.assertEqual('draft-standard', make.call_args.args[0])
         self.assertEqual({
             'rank_math_focus_keyword': '2026 부산 10월 축제',
             'rank_math_title': '2026 부산 10월 축제 일정',
@@ -477,7 +467,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
         module._RUN = fake_run
-        transport = module.make_transport('publish', set(), 'bloguito')
+        transport = module.make_transport('prepare-draft', set(), 'bloguito')
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / 'candidate.html'
             source.write_text('<p>reviewed</p>', encoding='utf-8')
@@ -498,7 +488,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
     def test_publish_allows_only_supported_rank_math_meta(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
-        transport = module.make_transport('publish', {901}, 'bloguito')
+        transport = module.make_transport('prepare-draft', {901}, 'bloguito')
         for key in ('rank_math_focus_keyword', 'rank_math_title', 'rank_math_description'):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'set', '901', key, 'reviewed value', '--allow-root'])
@@ -520,7 +510,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             'rank_math_description': '10월 대전 행사 설명',
         }
         transport = module.make_transport(
-            'revise-draft', {641}, 'bloguito', expected_rank_math_meta=expected)
+            'draft-standard', {641}, 'bloguito', expected_rank_math_meta=expected)
         for key, value in expected.items():
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'get', '641', key, '--allow-root'])
@@ -692,25 +682,9 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
         self.assertEqual(0, result.returncode)
 
-    def test_quick_image_replace_wrapper_reuses_restricted_image_transport(self):
+    def test_quick_image_replace_alias_is_removed_from_user_cli(self):
         module = load_module()
-        with tempfile.TemporaryDirectory() as folder:
-            image = Path(folder) / 'cover.jpg'
-            image.write_bytes(b'image')
-            argv = [
-                'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
-                'quick-image-replace', '--post-id', '724', '--image-path', str(image),
-                '--alt-text', '국민연금 수령 시기 안내', '--confirm-update',
-            ]
-            with patch('sys.argv', argv), \
-                    patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
-                        mode='direct', host='bloguito', user=None, wsl_distro=None)), \
-                    patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
-                    patch.object(module.editorial_cli, 'main') as cli_main:
-                module.main()
-        cli_main.assert_called_once()
-        self.assertEqual('replace-featured-image', make.call_args.args[0])
-        self.assertEqual({724}, make.call_args.args[1])
+        self.assertNotIn('quick-image-replace', module._CLI_ACTIONS)
 
     def test_primary_replace_featured_image_uses_restricted_image_transport(self):
         module = load_module()
@@ -789,7 +763,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
     def test_rejects_arbitrary_remote_wordpress_command(self):
         module = load_module()
-        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + ['option', 'delete', 'siteurl', '--allow-root'])
 
@@ -812,7 +786,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
 
         module._RUN = fake_run
-        transport = module.make_transport('revise-draft', {463}, 'bloguito')
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
         transport(module._WP_PREFIX + module._LIGHT_INVENTORY_ARGS,
                   capture_output=True, text=True, check=True)
         remote_commands = [args[-1] for args, _ in calls if args]

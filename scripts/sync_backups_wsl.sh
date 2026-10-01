@@ -3,7 +3,7 @@ set -euo pipefail
 
 LOCAL_BACKUP_DIR="/mnt/c/Users/gip4k/BloguitoBackups"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SYNC_SCRIPT="${SCRIPT_DIR}/sync_backups_tailscale.py"
+SYNC_SCRIPT="${SCRIPT_DIR}/sync_backups.py"
 LOG_FILE="${LOCAL_BACKUP_DIR}/sync.log"
 
 mkdir -p "$LOCAL_BACKUP_DIR"
@@ -28,7 +28,9 @@ if [ "$ready" -ne 1 ]; then
     exit 1
 fi
 
-if BLOGUITO_BACKUP_LOCAL_DIR="$LOCAL_BACKUP_DIR" python3 "$SYNC_SCRIPT" >> "$LOG_FILE" 2>&1; then
+if BLOGUITO_BACKUP_TRANSPORT=tailscale \
+   BLOGUITO_BACKUP_LOCAL_DIR="$LOCAL_BACKUP_DIR" \
+   python3 "$SYNC_SCRIPT" >> "$LOG_FILE" 2>&1; then
     find "$LOCAL_BACKUP_DIR" -maxdepth 1 -type f -name 'bloguito_backup_*.tar.gz' -mtime +30 -delete
     log "Scheduled Tailscale backup sync completed successfully."
 else

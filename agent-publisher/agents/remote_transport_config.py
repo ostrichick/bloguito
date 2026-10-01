@@ -46,11 +46,9 @@ class RemoteTransportConfig:
         return self
 
 
-def resolve_transport(*, ssh_mode=None, ssh_host=None, ssh_user=None, wsl_distro=None,
-                      tailscale_ssh=False):
+def resolve_transport(*, ssh_mode=None, ssh_host=None, ssh_user=None, wsl_distro=None):
     """Resolve a transport with direct SSH as the ordinary default.
 
-    Explicit legacy --wsl-distro/--tailscale-ssh options remain compatible;
     Tailscale and WSL modes are opt-in for exceptional recovery/admin work.
     BLOGUITO_SSH_* may still provide parameters for an explicitly selected
     transport, but a persisted non-direct mode must not silently become the
@@ -59,16 +57,13 @@ def resolve_transport(*, ssh_mode=None, ssh_host=None, ssh_user=None, wsl_distro
     base = RemoteTransportConfig.from_env()
     mode = _clean(ssh_mode)
     if mode is None:
-        if tailscale_ssh:
-            mode = "tailscale"
-        elif _clean(wsl_distro):
+        if _clean(wsl_distro):
             mode = "wsl"
         else:
             mode = "direct"
 
     implicit_direct = (
         _clean(ssh_mode) is None
-        and not tailscale_ssh
         and _clean(wsl_distro) is None
         and mode == "direct"
     )

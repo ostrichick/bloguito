@@ -123,25 +123,76 @@ def scp_args() -> list[str]:
     return ["scp", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10"]
 
 
-def remote_hash(host: str, remote_path: str) -> str:
-    output = run(ssh_args(host) + ["sha256sum -- " + shlex.quote(remote_path)])
+def _valid_host(host: str, label: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*", host):
+        raise BackupError("invalid " + label)
+
+
+def _checksum(output: str) -> str:
     first = output.split(maxsplit=1)[0] if output.strip() else ""
     if not re.fullmatch(r"[0-9a-f]{64}", first):
         raise BackupError("invalid remote checksum")
     return first
 
 
-def sync(host: str, remote_dir: str, local_dir: Path) -> tuple[int, int]:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*", host):
-        raise BackupError("invalid SSH alias")
+class DirectTransport:
+    def __init__(self, host: str):
+        _valid_host(host, "SSH alias")
+        self.host = host
+
+    def list_filenames(self, remote_dir: str) -> list[str]:
+        command = ("find " + shlex.quote(remote_dir) +
+                   " -maxdepth 1 -type f -name 'bloguito_backup_*.tar.gz' -printf '%f\\n'")
+        return [name for name in run(ssh_args(self.host) + [command]).splitlines() if name]
+
+    def remote_hash(self, remote_path: str) -> str:
+        return _checksum(run(ssh_args(self.host) + ["sha256sum -- " + shlex.quote(remote_path)]))
+
+    def download(self, remote_path: str, destination: Path) -> None:
+        run(scp_args() + ["--", self.host + ":" + remote_path, str(destination)])
+
+
+class TailscaleTransport:
+    def __init__(self, host: str):
+        _valid_host(host, "Tailscale SSH host")
+        self.host = host
+
+    def _run_text(self, args: list[str]) -> str:
+        result = subprocess.run(["tailscale", "ssh", self.host, *args], capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise BackupError("Tailscale SSH command failed")
+        return result.stdout
+
+    def list_filenames(self, remote_dir: str) -> list[str]:
+        paths = [p for p in self._run_text(["find", remote_dir, "-maxdepth", "1", "-type", "f",
+                                            "-name", "bloguito_backup_*.tar.gz", "-print"]).splitlines() if p]
+        return [PurePosixPath(path).name for path in paths]
+
+    def remote_hash(self, remote_path: str) -> str:
+        return _checksum(self._run_text(["sha256sum", "--", remote_path]))
+
+    def download(self, remote_path: str, destination: Path) -> None:
+        with destination.open("wb") as sink:
+            result = subprocess.run(["tailscale", "ssh", self.host, "cat", "--", remote_path],
+                                    stdout=sink, stderr=subprocess.PIPE, check=False)
+        if result.returncode:
+            raise BackupError("Tailscale SSH download failed")
+
+
+def remote_hash(host: str, remote_path: str) -> str:
+    return DirectTransport(host).remote_hash(remote_path)
+
+
+def sync_transport(transport, remote_dir: str, local_dir: Path) -> tuple[int, int]:
     if not re.fullmatch(r"/[A-Za-z0-9/_-]+", remote_dir):
         raise BackupError("invalid remote directory")
     local_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name != "nt":
-        local_dir.chmod(0o700)
-    list_command = ("find " + shlex.quote(remote_dir) +
-                    " -maxdepth 1 -type f -name 'bloguito_backup_*.tar.gz' -printf '%f\\n'")
-    filenames = [name for name in run(ssh_args(host) + [list_command]).splitlines() if name]
+        try:
+            local_dir.chmod(0o700)
+        except PermissionError:
+            pass
+    filenames = transport.list_filenames(remote_dir)
     if any(not FILE_PATTERN.fullmatch(name) for name in filenames):
         raise BackupError("unexpected filename in remote backup listing")
     downloaded = skipped = 0
@@ -151,7 +202,7 @@ def sync(host: str, remote_dir: str, local_dir: Path) -> tuple[int, int]:
         destination = local_dir / filename
         temporary = None
         try:
-            expected = remote_hash(host, remote_path)
+            expected = transport.remote_hash(remote_path)
             if destination.is_file() and sha256(destination) == expected:
                 verify_archive(destination)
                 skipped += 1
@@ -159,12 +210,15 @@ def sync(host: str, remote_dir: str, local_dir: Path) -> tuple[int, int]:
                 continue
             with tempfile.NamedTemporaryFile(dir=local_dir, prefix=".bloguito-", suffix=".part", delete=False) as temp:
                 temporary = Path(temp.name)
-            run(scp_args() + ["--", host + ":" + remote_path, str(temporary)])
-            if sha256(temporary) != expected or remote_hash(host, remote_path) != expected:
+            transport.download(remote_path, temporary)
+            if sha256(temporary) != expected or transport.remote_hash(remote_path) != expected:
                 raise BackupError("remote/local checksum mismatch or snapshot changed during transfer")
             verify_archive(temporary)
             if os.name != "nt":
-                temporary.chmod(0o600)
+                try:
+                    temporary.chmod(0o600)
+                except PermissionError:
+                    pass
             os.replace(temporary, destination)
             temporary = None
             downloaded += 1
@@ -180,13 +234,29 @@ def sync(host: str, remote_dir: str, local_dir: Path) -> tuple[int, int]:
     return downloaded, skipped
 
 
+def sync(host: str, remote_dir: str, local_dir: Path) -> tuple[int, int]:
+    return sync_transport(DirectTransport(host), remote_dir, local_dir)
+
+
+def sync_tailscale(host: str, remote_dir: str, local_dir: Path) -> tuple[int, int]:
+    return sync_transport(TailscaleTransport(host), remote_dir, local_dir)
+
+
 def main() -> int:
-    host = os.environ.get("BLOGUITO_BACKUP_SSH_HOST", "bloguito")
+    transport_name = os.environ.get("BLOGUITO_BACKUP_TRANSPORT", "direct").strip().lower()
     remote_dir = os.environ.get("BLOGUITO_BACKUP_REMOTE_DIR", "/home/ubuntu/backups")
-    local_dir = Path(os.environ.get("BLOGUITO_BACKUP_LOCAL_DIR", str(DEFAULT_LOCAL_DIR)))
     try:
-        downloaded, skipped = sync(host, remote_dir, local_dir)
-        print(f"Backup sync complete: {downloaded} verified downloads, {skipped} verified existing snapshots")
+        if transport_name == "direct":
+            transport = DirectTransport(os.environ.get("BLOGUITO_BACKUP_SSH_HOST", "bloguito"))
+            default_local = DEFAULT_LOCAL_DIR
+        elif transport_name == "tailscale":
+            transport = TailscaleTransport(os.environ.get("BLOGUITO_BACKUP_TS_HOST", "ubuntu@bloguito-server"))
+            default_local = Path.home() / "BloguitoBackups"
+        else:
+            raise BackupError("invalid BLOGUITO_BACKUP_TRANSPORT")
+        local_dir = Path(os.environ.get("BLOGUITO_BACKUP_LOCAL_DIR", str(default_local)))
+        downloaded, skipped = sync_transport(transport, remote_dir, local_dir)
+        print(f"Backup sync complete ({transport_name}): {downloaded} verified downloads, {skipped} verified existing snapshots")
         return 0
     except BackupError as exc:
         print("Backup sync failed:", str(exc), file=sys.stderr)
