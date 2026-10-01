@@ -230,6 +230,27 @@ class EditorialDraftReviserTests(unittest.TestCase):
             _normalize_renderer_migrations(new),
         )
 
+    def test_cta_grid_renderer_migration_is_normalized_without_hiding_copy(self):
+        old = (
+            '<div class="bloguito-cta">'
+            '<style>@media(max-width:640px){.bloguito-cta-grid{grid-template-columns:1fr!important}}</style>'
+            '<div class="bloguito-cta-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">'
+            '<a href="https://example.org/apply">신청</a></div></div>'
+        )
+        new = (
+            '<div class="bloguito-cta">'
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">'
+            '<a href="https://example.org/apply">신청</a></div></div>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+        self.assertNotEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new.replace('신청</a>', '다른 문구</a>')),
+        )
+
     def test_event_image_caption_migration_does_not_hide_authored_prose_change(self):
         old = (
             '<p>검토된 본문입니다.</p><figure><figcaption>공식 행사 이미지 · '

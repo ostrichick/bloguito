@@ -76,7 +76,10 @@ def _read_post_meta(base, post_id: int, key: str) -> str | None:
     if result.returncode == 0:
         return (result.stdout or "").lstrip("\ufeff").rstrip("\r\n")
     stderr = (result.stderr or "").lower()
-    if result.returncode == 1 and "could not find the specified post meta field" in stderr:
+    stdout = result.stdout or ""
+    if result.returncode == 1 and (
+            "could not find the specified post meta field" in stderr
+            or (not stdout.strip() and not stderr.strip())):
         return None
     raise subprocess.CalledProcessError(
         result.returncode, result.args, output=result.stdout, stderr=result.stderr
@@ -137,7 +140,7 @@ def replace_featured_image(
     image_path: Path | str,
     expected_content_sha256: str,
     *,
-    expected_thumbnail_id: int,
+    expected_thumbnail_id: int | None,
     alt_text: str,
     confirmed: bool = False,
     manage_task_state: bool = True,
@@ -151,7 +154,8 @@ def replace_featured_image(
         raise ValueError("specific_featured_image_confirmation_required")
     if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
         raise ValueError("original_content_sha256_required")
-    if not isinstance(expected_thumbnail_id, int) or expected_thumbnail_id <= 0:
+    if expected_thumbnail_id is not None and (
+            not isinstance(expected_thumbnail_id, int) or expected_thumbnail_id <= 0):
         raise ValueError("expected_thumbnail_id_required")
     alt_text = (alt_text or "").strip()
     if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
@@ -171,7 +175,8 @@ def replace_featured_image(
         ):
             raise ValueError("target_missing_or_modified")
         before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
-        if before_thumb != str(expected_thumbnail_id):
+        expected_thumb_text = None if expected_thumbnail_id is None else str(expected_thumbnail_id)
+        if before_thumb != expected_thumb_text:
             raise ValueError("featured_image_changed_before_replacement")
         qa_requirements = []
         if manage_task_state:
@@ -236,7 +241,7 @@ def replace_featured_image(
             if outcome_callback is not None:
                 outcome_callback(payload)
 
-        if _read_post_meta(base, post_id, "_thumbnail_id") != str(expected_thumbnail_id):
+        if _read_post_meta(base, post_id, "_thumbnail_id") != expected_thumb_text:
             raise ValueError(f"featured_image_changed_before_import: backup {backup}")
 
         remote_image = f"/tmp/editorial_cover_{post_id}{image_path.suffix.lower()}"
@@ -426,9 +431,12 @@ def replace_featured_image_from_live_baseline(
         raise ValueError("target_missing_or_modified")
     expected_content_sha256 = content_sha256(live.get("post_content", ""))
     before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
-    if not before_thumb or not before_thumb.isdigit() or int(before_thumb) <= 0:
+    if before_thumb is None:
+        expected_thumbnail_id = None
+    elif before_thumb.isdigit() and int(before_thumb) > 0:
+        expected_thumbnail_id = int(before_thumb)
+    else:
         raise ValueError("expected_thumbnail_id_required")
-    expected_thumbnail_id = int(before_thumb)
     attempt_key = _quick_attempt_key(
         post_id, image_path, alt_text, expected_content_sha256)
 
@@ -484,9 +492,13 @@ def replace_featured_image_from_live_baseline(
             import_attempt = (previous.get("checkpoints") or {}).get("image_import_attempt") or {}
             if import_attempt.get("started"):
                 raise ValueError("featured_image_import_outcome_ambiguous")
-            if type(previous_thumbnail_id) is not str or not previous_thumbnail_id.isdigit():
+            if previous_thumbnail_id is None:
+                previous_expected_thumbnail_id = None
+            elif type(previous_thumbnail_id) is str and previous_thumbnail_id.isdigit():
+                previous_expected_thumbnail_id = int(previous_thumbnail_id)
+            else:
                 raise ValueError("quick_image_retry_baseline_missing")
-            if expected_thumbnail_id != int(previous_thumbnail_id):
+            if expected_thumbnail_id != previous_expected_thumbnail_id:
                 raise ValueError("featured_image_changed_since_failed_attempt")
             attempt_number = int(previous_baseline.get("attempt_number") or 1) + 1
             if attempt_number > SIMPLE_TASK_MAX_ATTEMPTS:

@@ -70,6 +70,18 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'specific_public_post_update_confirmation_required'):
             updater.update_existing_public_post(243, self.bundle, self.sha)
 
+    def test_missing_post_meta_with_empty_wp_cli_output_returns_none(self):
+        with patch.object(
+            updater.subprocess,
+            'run',
+            return_value=Mock(returncode=1, stdout='', stderr=''),
+        ):
+            self.assertIsNone(updater._read_post_meta(
+                ['sudo', 'docker', 'exec', 'wordpress_app', 'wp'],
+                559,
+                'rank_math_title',
+            ))
+
     def test_title_change_requires_separate_confirmation_and_preserves_slug(self):
         bundle = {**self.bundle, 'plan': {'title': 'Reviewed new title'}}
         updated = {**self.post, 'post_title': 'Reviewed new title', 'post_content': 'Reviewed HTML'}

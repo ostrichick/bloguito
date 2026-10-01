@@ -102,6 +102,18 @@ def _normalize_renderer_migrations(content):
         r'\1',
         content,
     )
+    # CTA responsiveness moved from an inline renderer-owned <style> + helper
+    # class to the surrounding site stylesheet. Normalize only those exact
+    # generated tokens so reviewed copy, hrefs and authored markup still take
+    # part in the baseline comparison.
+    content = content.replace(
+        '<style>@media(max-width:640px){.bloguito-cta-grid{grid-template-columns:1fr!important}}</style>',
+        '',
+    )
+    content = content.replace(
+        '<div class="bloguito-cta-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">',
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">',
+    )
     content = re.sub(
         r'(<figcaption\b[^>]*>[^<]*) · '
         r'(<a href="[^"]+"[^>]*>공식 자료</a></figcaption>)',

@@ -35,6 +35,12 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                 returncode=0, stdout="\ufeff650\r\n", stderr="")):
             self.assertEqual("650", _read_post_meta(base, 648, "_thumbnail_id"))
 
+    def test_post_meta_read_treats_empty_exit_one_as_missing(self):
+        base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+        with patch("agents.featured_image.subprocess.run", return_value=Mock(
+                returncode=1, stdout="", stderr="")):
+            self.assertIsNone(_read_post_meta(base, 559, "_thumbnail_id"))
+
     def test_replace_preserves_post_and_rank_math_and_verifies_alt(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -206,6 +212,33 @@ class FeaturedImageReplacementTests(unittest.TestCase):
         self.assertEqual(1, kwargs["task_baseline_extra"]["attempt_number"])
         self.assertEqual(expected_sha, result["baseline_content_sha256"])
         self.assertEqual(70, result["replaced_thumbnail_id"])
+
+    def test_quick_replace_can_set_first_featured_image_without_existing_thumbnail(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = self._image(folder)
+            live = {
+                "post_status": "draft", "post_title": "제목", "post_name": "slug",
+                "post_content": "body", "post_excerpt": "요약",
+            }
+            expected_sha = hashlib.sha256(b"body").hexdigest()
+            replacement = {
+                "post_id": 559,
+                "status": "draft",
+                "attachment_id": 805,
+                "attachment_url": "https://lifeinfo24.org/uploads/cover.jpg",
+                "alt_text": "대체텍스트",
+            }
+            with patch("agents.featured_image.get_post", return_value=live), \
+                 patch("agents.featured_image._read_post_meta", return_value=None), \
+                 patch("agents.featured_image.load_task_state", return_value=None), \
+                 patch("agents.featured_image.replace_featured_image", return_value=replacement) as replace, \
+                 patch("agents.featured_image.load_after_image_checkpoint", return_value=None):
+                result = quick_replace_featured_image(
+                    559, image_path, alt_text="대체텍스트", confirmed=True)
+        replace.assert_called_once()
+        self.assertIsNone(replace.call_args.kwargs["expected_thumbnail_id"])
+        self.assertIsNone(result["replaced_thumbnail_id"])
+        self.assertEqual(expected_sha, result["baseline_content_sha256"])
 
     def test_quick_replace_blocks_third_identical_attempt(self):
         with tempfile.TemporaryDirectory() as folder:

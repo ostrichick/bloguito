@@ -76,7 +76,10 @@ def _read_post_meta(base, post_id, key):
     if result.returncode == 0:
         return (result.stdout or '').rstrip('\r\n')
     stderr = (result.stderr or '').lower()
-    if result.returncode == 1 and 'could not find the specified post meta field' in stderr:
+    stdout = result.stdout or ''
+    if result.returncode == 1 and (
+            'could not find the specified post meta field' in stderr
+            or (not stdout.strip() and not stderr.strip())):
         return None
     raise subprocess.CalledProcessError(
         result.returncode, result.args, output=result.stdout, stderr=result.stderr)
