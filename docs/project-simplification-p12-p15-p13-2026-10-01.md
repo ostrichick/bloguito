@@ -48,5 +48,5 @@
 - backup recovery v3/direct/Tailscale synthetic 검증: 9 tests PASS. 의도된 transfer-failure 주입 메시지는 정상이다.
 - DR shell syntax: PASS.
 - `git diff --check`: PASS.
-- 전체 Python suite는 obsolete `publish` action 전용 테스트를 제거한 뒤 742 tests를 실행했고 새 실패는 0건이다. 남은 8 errors + 1 skip은 작업 전 `origin/main`에서 동일하게 재현한 기존 `test_designer_safety` baseline이다.
-- 로컬 Windows/WSL에 PHP runtime과 Docker가 없어 새 `wordpress/tests/run.php`의 실제 실행은 feature branch push 뒤 GitHub Actions PHP 환경에서 확인한다.
+- 로컬 전체 Python suite는 obsolete `publish` action 전용 테스트를 제거한 뒤 742 tests를 실행했고 새 실패는 0건이다. 로컬에 남은 8 errors + 1 skip은 작업 전 `origin/main`에서 동일하게 재현한 기존 `test_designer_safety` baseline이다.
+- feature branch PR GitHub Actions에서 독립 `wordpress-test`와 `infrastructure-test`는 PASS했다. Python job은 742 tests 중 11 errors로 실패했지만, 직전 `main` commit `00d9076`의 Actions도 767 tests에서 **동일한 11개 designer_routing/designer_safety 오류**로 실패했음을 로그에서 대조했다. 따라서 이 작업으로 추가된 CI 회귀는 0건이다.
