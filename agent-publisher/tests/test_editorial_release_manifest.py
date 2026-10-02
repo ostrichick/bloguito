@@ -17,7 +17,8 @@ class ReleaseManifestTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.files = {}
-        for name in ('agents/edit_post.py', 'editorial_cli.py', 'agents/edit_orchestration.py', 'editorial_policy.json'):
+        for name in ('agents/edit_post.py', 'editorial_cli.py', 'agents/edit_orchestration.py', 'editorial_policy.json',
+                     'agents/article_renderer.py', 'agents/editorial_schema.py', 'agents/source_collector.py', 'agents/source_extractors.py'):
             path = self.root / 'agent-publisher' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'original')
@@ -46,3 +47,8 @@ class ReleaseManifestTests(unittest.TestCase):
         self.write_manifest()
         with self.assertRaisesRegex(ValueError, 'module_missing'):
             installer.verify_release_manifest(self.root)
+
+    def test_entrypoint_replacement_requires_environment_credentials(self):
+        external = "import os\nGEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')\nKAKAO_MAP_JAVASCRIPT_KEY = os.getenv('KAKAO_MAP_JAVASCRIPT_KEY', '')\nSITE_URL = os.getenv('SITE_URL', 'http://localhost')\n"
+        self.assertTrue(installer.environment_config_is_external(external))
+        self.assertFalse(installer.environment_config_is_external(external.replace("os.getenv('GEMINI_API_KEY', '')", "'inline-credential'")))

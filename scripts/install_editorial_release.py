@@ -1,5 +1,6 @@
 """Run on OCI with a reviewed release folder; preserve secrets and the cron schedule."""
 import argparse
+import ast
 import hashlib
 import json
 import shutil
@@ -27,10 +28,25 @@ def verify_release_manifest(release):
         if not path.is_relative_to(release.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('release_file_hash_mismatch')
     required = {'agent-publisher/agents/edit_post.py', 'agent-publisher/editorial_cli.py',
-                'agent-publisher/agents/edit_orchestration.py', 'agent-publisher/editorial_policy.json'}
+                'agent-publisher/agents/edit_orchestration.py', 'agent-publisher/editorial_policy.json',
+                'agent-publisher/agents/article_renderer.py', 'agent-publisher/agents/editorial_schema.py',
+                'agent-publisher/agents/source_collector.py', 'agent-publisher/agents/source_extractors.py'}
     if not required.issubset(expected):
         raise ValueError('required_release_module_missing')
     return manifest
+
+
+def environment_config_is_external(text):
+    """Refuse replacement of a legacy config containing inline credentials."""
+    expected = {'GEMINI_API_KEY', 'KAKAO_MAP_JAVASCRIPT_KEY', 'SITE_URL'}
+    expressions = {target.id: node.value for node in ast.parse(text).body
+                   if isinstance(node, ast.Assign) for target in node.targets
+                   if isinstance(target, ast.Name) and target.id in expected}
+    return (set(expressions) == expected and all(
+        isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name) and value.func.value.id == 'os'
+        and value.func.attr == 'getenv'
+        for value in expressions.values()))
 
 
 def install(release, app):
@@ -38,6 +54,13 @@ def install(release, app):
     if not (app/'main.py').is_file() or not (app/'config.py').is_file():
         raise ValueError('existing_publisher_required')
     release_manifest = verify_release_manifest(release)
+    replace_entrypoints = (release / 'agent-publisher/main.py').is_file() or (release / 'agent-publisher/config.py').is_file()
+    if replace_entrypoints and (
+            not (release / 'agent-publisher/main.py').is_file()
+            or not (release / 'agent-publisher/config.py').is_file()
+            or not environment_config_is_external((app / 'config.py').read_text(encoding='utf-8'))
+            or not environment_config_is_external((release / 'agent-publisher/config.py').read_text(encoding='utf-8'))):
+        raise ValueError('entrypoint_release_requires_external_environment_config')
     files = [p for p in (release/'agent-publisher').rglob('*') if p.is_file()]
     for p in files:
         if p.suffix not in {'.py', '.json'} or '.env' in p.parts or '__pycache__' in p.parts:
@@ -70,8 +93,6 @@ def install(release, app):
     try:
         for file in files:
             relative=file.relative_to(release/'agent-publisher')
-            if relative.name in {'config.py', 'main.py'}:
-                raise ValueError('config_and_main_must_be_patched_not_replaced')
             # Existing topic research is user data. Do not replace the server's reviewed list.
             if relative.as_posix()=='data/search_briefs.json' and (app/relative).exists():
                 continue
@@ -82,7 +103,6 @@ def install(release, app):
                 raise ValueError('required_policy_document_missing:' + name)
             put(app.parent/'docs'/name, source.read_bytes())
         text=(app/'config.py').read_text(encoding='utf-8')
-        import ast
         names={node.id for node in ast.walk(ast.parse(text)) if isinstance(node,ast.Name) and isinstance(node.ctx,ast.Store)}
         if 'DRAFTS_INDEX_FILE' not in names:
             text+='\nDRAFTS_INDEX_FILE = DATA_DIR / "draft_posts.json"\n'
