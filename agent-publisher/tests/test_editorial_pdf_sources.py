@@ -15,7 +15,7 @@ class PdfSourceTests(unittest.TestCase):
         resp = MagicMock(status_code=200, content=b'%PDF-1.7 sample attachment')
         brief = {'official_urls': ['https://fsc.go.kr/comm/getFile?fileNo=2'],
                  'entity': '은행'}
-        with patch('agents.editorial_writer.requests.get', return_value=resp), \
+        with patch('agents.source_collector.requests.get', return_value=resp), \
              patch('pypdf.PdfReader', return_value=doc) as pdf:
             source = fetch_sources(brief)[0]
         self.assertIn('Branch information', source['text'])
@@ -31,7 +31,7 @@ class PdfSourceTests(unittest.TestCase):
         doc = MagicMock()
         doc.pages = [page]
         resp = MagicMock(status_code=200, content=b'%PDF-1.7 corrupt')
-        with patch('agents.editorial_writer.requests.get', return_value=resp), \
+        with patch('agents.source_collector.requests.get', return_value=resp), \
              patch('pypdf.PdfReader', return_value=doc):
             with self.assertRaisesRegex(ValueError, 'official_pdf_text_missing'):
                 fetch_sources({'official_urls': ['https://fsc.go.kr/comm/getFile'],

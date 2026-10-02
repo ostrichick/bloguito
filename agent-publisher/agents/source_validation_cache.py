@@ -39,8 +39,11 @@ def _receipt_ttl_minutes() -> int:
 
 def _fetcher_fingerprint(root: Path | None = None) -> str:
     root = Path(root or ROOT)
-    source = root / "agents" / "editorial_writer.py"
-    return hashlib.sha256(source.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    for name in ('source_collector.py', 'source_extractors.py', 'fact_validation.py', 'temporal_validation.py'):
+        digest.update(name.encode('ascii'))
+        digest.update((root / 'agents' / name).read_bytes())
+    return digest.hexdigest()
 
 
 def _receipt_path(url: str, root: Path | None = None) -> Path:

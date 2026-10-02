@@ -21,7 +21,7 @@ class Response:
 
 class AirportOfficialSourceTests(unittest.TestCase):
     def test_airport_public_subview_uses_browser_headers_without_following_redirects(self):
-        with patch('agents.editorial_writer.requests.get', return_value=Response()) as get:
+        with patch('agents.source_collector.requests.get', return_value=Response()) as get:
             source = fetch_sources({'official_urls': [URL], 'entity': '인천국제공항'})[0]
         headers = get.call_args.kwargs['headers']
         self.assertIn('Mozilla/5.0', headers['User-Agent'])
@@ -31,7 +31,7 @@ class AirportOfficialSourceTests(unittest.TestCase):
 
     def test_unrelated_airport_path_keeps_default_header_policy(self):
         url = 'https://www.airport.kr/other'
-        with patch('agents.editorial_writer.requests.get', return_value=Response()) as get:
+        with patch('agents.source_collector.requests.get', return_value=Response()) as get:
             fetch_sources({'official_urls': [url], 'entity': '인천국제공항'})
         self.assertEqual({}, get.call_args.kwargs['headers'])
 

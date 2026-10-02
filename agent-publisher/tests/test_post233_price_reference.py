@@ -16,7 +16,7 @@ class Post233PriceReferenceTests(unittest.TestCase):
                 + '</div></body></html>')
         response = MagicMock(status_code=200, content=body.encode('utf-8'))
         brief = {'official_urls': [], 'reference_urls': [URL], 'entity': '안전상비의약품'}
-        with patch('agents.editorial_writer.requests.get', return_value=response):
+        with patch('agents.source_collector.requests.get', return_value=response):
             source = fetch_sources(brief)[0]
         self.assertEqual(source['source_type'], 'reference')
         self.assertIn('타이레놀정 500mg 3600원', source['text'])

@@ -42,7 +42,7 @@ def board(*, downloads=('2389', '21006'), previews=('2722', '2751'),
 
 class MohwAttachmentCounterTests(unittest.TestCase):
     def fetch(self, *htmls, url=URL):
-        with patch('agents.editorial_writer.requests.get',
+        with patch('agents.source_collector.requests.get',
                    side_effect=[Response(html) for html in htmls]):
             return [fetch_sources({'official_urls': [url], 'entity': '기초연금'})[0]
                     for _ in htmls]

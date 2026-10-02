@@ -56,7 +56,7 @@ class NolOfficialSourceTests(unittest.TestCase):
         self.assertEqual('예매기간: 2026.09.03 14:00 ~ 2026.09.20 17:00', text)
 
     def test_product_route_uses_browser_headers_and_volatile_counts_do_not_change_hash(self):
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
                 Response(rank=16, likes='400', reviews=15),
                 Response(rank=3, likes='4,999', reviews=44),
         ]) as get:
@@ -76,7 +76,7 @@ class NolOfficialSourceTests(unittest.TestCase):
             self.assertFalse(call.kwargs['allow_redirects'])
 
     def test_product_fact_change_changes_hash(self):
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
                 Response(), Response(claim='공식 상품의 공연일이 변경되었습니다.'),
         ]):
             first = fetch_sources({'official_urls': [URL], 'entity': '무명전설'})[0]
@@ -85,7 +85,7 @@ class NolOfficialSourceTests(unittest.TestCase):
 
     def test_other_hosts_keep_default_header_policy(self):
         url = 'https://example.org/official'
-        with patch('agents.editorial_writer.requests.get', return_value=Response()) as get:
+        with patch('agents.source_collector.requests.get', return_value=Response()) as get:
             fetch_sources({'official_urls': [url], 'entity': '다른 공식 페이지'})
         self.assertEqual({}, get.call_args.kwargs['headers'])
 

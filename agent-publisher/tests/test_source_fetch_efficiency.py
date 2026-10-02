@@ -1,3 +1,4 @@
+from agents import source_collector
 import copy
 import unittest
 from unittest.mock import patch
@@ -26,7 +27,7 @@ class SourceFetchEfficiencyTests(unittest.TestCase):
         }
 
     def test_parallel_fetch_preserves_declared_order_and_ids(self):
-        with patch.object(editorial_writer, '_fetch_single_source', side_effect=self.fake_fetch):
+        with patch.object(source_collector, '_fetch_single_source', side_effect=self.fake_fetch):
             rows = editorial_writer.fetch_sources(self.brief)
         self.assertEqual(['s0', 's1', 's2'], [row['id'] for row in rows])
         self.assertEqual(
@@ -48,7 +49,7 @@ class SourceFetchEfficiencyTests(unittest.TestCase):
         refreshed['text'] = 'y' * 100
         refreshed['sha256'] = 'newhash'
         refreshed.pop('actions', None)
-        with patch.object(editorial_writer, '_fetch_single_source', return_value=refreshed):
+        with patch.object(source_collector, '_fetch_single_source', return_value=refreshed):
             rows = editorial_writer.fetch_sources_subset(self.brief, existing, ['s0'])
         self.assertEqual('s0', rows[0]['id'])
         self.assertEqual('newhash', rows[0]['sha256'])
