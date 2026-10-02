@@ -38,7 +38,7 @@ class IndexingAndInterlinkingTests(unittest.TestCase):
             post_id=101,
             title="임시 작성중인 복지 글",
             category_id=3,
-            category_name="정부 복지·지원금",
+            category_name="복지/지원금",
             status="draft",
             expires_at="2026-12-31"
         )
@@ -58,12 +58,12 @@ class IndexingAndInterlinkingTests(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=0, stdout="http://localhost/?p=102\n")
 
         # 1. 먼저 초안으로 등록
-        self.publisher._record_post(102, "콘서트 예매 안내", 2, "공연·콘서트 예매", status="draft")
+        self.publisher._record_post(102, "콘서트 예매 안내", 2, "공연/콘서트", status="draft")
         drafts = json.loads(self.draft_file.read_text(encoding="utf-8"))
         self.assertEqual(len(drafts), 1)
 
         # 2. 공개(publish)로 재등록 (승격)
-        self.publisher._record_post(102, "콘서트 예매 안내 [확정]", 2, "공연·콘서트 예매", status="publish", expires_at="2026-12-25")
+        self.publisher._record_post(102, "콘서트 예매 안내 [확정]", 2, "공연/콘서트", status="publish", expires_at="2026-12-25")
 
         drafts_after = json.loads(self.draft_file.read_text(encoding="utf-8"))
         self.assertEqual(len(drafts_after), 0, "Drafts list should be empty after promotion")

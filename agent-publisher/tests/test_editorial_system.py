@@ -86,10 +86,10 @@ class EditorialTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         posts_data = [
-            {'title': '서초구 선풍기 배출 상세 안내', 'url': 'https://lifeinfo24.org/p1', 'category_name': '생활 행정·서비스', 'status': 'publish'},
-            {'title': '기초연금 안내', 'url': 'https://lifeinfo24.org/p3', 'category_name': '정부 복지·지원금', 'status': 'publish'},
-            {'title': '서초구 선풍기 오래된 글', 'url': 'http://161.33.0.234/p4', 'category_name': '생활 행정·서비스', 'status': 'publish'},
-            {'title': self.b['plan']['title'], 'url': 'https://lifeinfo24.org/p2', 'category_name': '생활 행정·서비스', 'status': 'publish'},
+            {'title': '서초구 선풍기 배출 상세 안내', 'url': 'https://lifeinfo24.org/p1', 'category_name': '행정/생활서비스', 'status': 'publish'},
+            {'title': '기초연금 안내', 'url': 'https://lifeinfo24.org/p3', 'category_name': '복지/지원금', 'status': 'publish'},
+            {'title': '서초구 선풍기 오래된 글', 'url': 'http://161.33.0.234/p4', 'category_name': '행정/생활서비스', 'status': 'publish'},
+            {'title': self.b['plan']['title'], 'url': 'https://lifeinfo24.org/p2', 'category_name': '행정/생활서비스', 'status': 'publish'},
         ]
         with tempfile.TemporaryDirectory() as folder:
             data_folder = Path(folder) / 'data'
