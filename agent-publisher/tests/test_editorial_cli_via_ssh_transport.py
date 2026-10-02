@@ -396,6 +396,76 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertNotIn('public-fast', module._CLI_ACTIONS)
         self.assertNotIn('public-standard', module._CLI_ACTIONS)
 
+    def test_cli_action_metadata_is_single_source_for_user_action_sets(self):
+        module = load_module()
+        self.assertEqual(set(module._CLI_ACTION_METADATA), module._CLI_ACTIONS)
+        self.assertEqual(
+            {'prepare-draft', 'edit-post', 'replace-featured-image'},
+            module._PRIMARY_CLI_ACTIONS,
+        )
+        self.assertEqual({'promote-draft'}, module._PUBLICATION_CLI_ACTIONS)
+        self.assertEqual(
+            {'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image'},
+            module._MAINTENANCE_CLI_ACTIONS,
+        )
+        self.assertEqual({'prepare-draft'}, module._CREATE_ACTIONS)
+        self.assertEqual(
+            {'prepare-draft', 'promote-draft', 'reformat', 'repair-draft-category'},
+            module._PERMALINK_ACTIONS,
+        )
+        self.assertEqual({
+            'repair-draft-category': {'post_category'},
+            'promote-draft': {'post_status'},
+            'reformat': {'post_content'},
+            'fix-excerpt': {'post_excerpt'},
+        }, module._UPDATE_FIELDS)
+
+    def test_parse_cli_request_normalizes_edit_post_inputs(self):
+        module = load_module()
+        expected_sha = 'a' * 64
+        request = module._parse_cli_request([
+            'edit-post', 'bundle.json', '--post-id', '648',
+            '--expected-content-sha256', expected_sha,
+            '--image-path', 'cover.webp', '--confirm-title-change', '--resume',
+            '--output', 'receipt.json',
+        ])
+
+        self.assertEqual('edit-post', request.action)
+        self.assertEqual(frozenset({648}), request.target_ids)
+        self.assertEqual(Path('bundle.json'), request.bundle_path)
+        self.assertEqual(Path('cover.webp'), request.image_path)
+        self.assertTrue(request.image_path_supplied)
+        self.assertEqual(expected_sha, request.expected_content_sha256)
+        self.assertTrue(request.confirm_title_change)
+        self.assertTrue(request.resume)
+        self.assertEqual(Path('receipt.json'), request.output_path)
+
+    def test_parse_cli_request_preserves_promote_and_reformat_target_shapes(self):
+        module = load_module()
+        promote = module._parse_cli_request([
+            'promote-draft', '101,125', '--ids', '130', '131', '--confirm-publish',
+        ])
+        reformat = module._parse_cli_request(['reformat', '463'])
+
+        self.assertEqual(frozenset({101, 125, 130, 131}), promote.target_ids)
+        self.assertEqual(frozenset({463}), reformat.target_ids)
+
+    def test_parse_cli_request_keeps_existing_first_value_and_target_semantics(self):
+        module = load_module()
+        request = module._parse_cli_request([
+            'edit-post', 'bundle.json',
+            '--post-id', '648', '--post-id', '649',
+            '--expected-content-sha256', 'a' * 64,
+            '--expected-content-sha256', 'b' * 64,
+        ])
+        promote = module._parse_cli_request([
+            'promote-draft', '--ids', '101', '--ids', '202',
+        ])
+
+        self.assertEqual(frozenset({648, 649}), request.target_ids)
+        self.assertEqual('a' * 64, request.expected_content_sha256)
+        self.assertEqual(frozenset({101}), promote.target_ids)
+
     def test_legacy_edit_actions_are_not_user_cli_actions(self):
         module = load_module()
         for action in {

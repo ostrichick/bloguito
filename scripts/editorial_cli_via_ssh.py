@@ -58,31 +58,97 @@ _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
 _REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 _REMOTE_SECTION_IMAGE = re.compile(
     r'/tmp/editorial_section_([1-9][0-9]*)_[0-9a-f]{12}\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
-_CREATE_ACTIONS = {'prepare-draft'}
+
+
+class _CliActionMeta:
+    __slots__ = (
+        'group', 'target_mode', 'bundle_positional', 'requires_image_path',
+        'creates_post', 'update_fields', 'permalink',
+    )
+
+    def __init__(self, group, *, target_mode='post-id', bundle_positional=False,
+                 requires_image_path=False, creates_post=False, update_fields=(),
+                 permalink=False):
+        self.group = group
+        self.target_mode = target_mode
+        self.bundle_positional = bundle_positional
+        self.requires_image_path = requires_image_path
+        self.creates_post = creates_post
+        self.update_fields = frozenset(update_fields)
+        self.permalink = permalink
+
+
+class _CliRequest:
+    __slots__ = (
+        'action', 'cli_args', 'target_ids', 'bundle_path', 'image_path',
+        'image_path_supplied', 'expected_content_sha256', 'confirm_title_change',
+        'resume', 'output_path',
+    )
+
+    def __init__(self, *, action, cli_args, target_ids, bundle_path, image_path,
+                 image_path_supplied, expected_content_sha256, confirm_title_change,
+                 resume, output_path):
+        self.action = action
+        self.cli_args = tuple(cli_args)
+        self.target_ids = frozenset(target_ids)
+        self.bundle_path = bundle_path
+        self.image_path = image_path
+        self.image_path_supplied = image_path_supplied
+        self.expected_content_sha256 = expected_content_sha256
+        self.confirm_title_change = confirm_title_change
+        self.resume = resume
+        self.output_path = output_path
+
+
+_CLI_ACTION_METADATA = {
+    'prepare-draft': _CliActionMeta(
+        'primary', target_mode='none', bundle_positional=True,
+        creates_post=True, permalink=True),
+    'edit-post': _CliActionMeta('primary', bundle_positional=True),
+    'replace-featured-image': _CliActionMeta('primary'),
+    'promote-draft': _CliActionMeta(
+        'publication', target_mode='promote', update_fields={'post_status'},
+        permalink=True),
+    'reformat': _CliActionMeta(
+        'maintenance', target_mode='positional', update_fields={'post_content'},
+        permalink=True),
+    'fix-excerpt': _CliActionMeta(
+        'maintenance', update_fields={'post_excerpt'}),
+    'repair-draft-category': _CliActionMeta(
+        'maintenance', update_fields={'post_category'}, permalink=True),
+    'import-section-image': _CliActionMeta(
+        'maintenance', requires_image_path=True),
+}
+
+_CREATE_ACTIONS = {
+    action for action, meta in _CLI_ACTION_METADATA.items() if meta.creates_post
+}
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
 _DRAFT_EDIT_PROFILES = {'draft-fast', 'draft-standard'}
 _IMAGE_EDIT_ACTIONS = {*_DRAFT_EDIT_PROFILES, 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
 _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
-_PRIMARY_CLI_ACTIONS = {'prepare-draft', 'edit-post', 'replace-featured-image'}
-_PUBLICATION_CLI_ACTIONS = {'promote-draft'}
-_MAINTENANCE_CLI_ACTIONS = {
-    'reformat', 'fix-excerpt', 'repair-draft-category', 'import-section-image'
+_PRIMARY_CLI_ACTIONS = {
+    action for action, meta in _CLI_ACTION_METADATA.items() if meta.group == 'primary'
 }
-_CLI_ACTIONS = (
-    _PRIMARY_CLI_ACTIONS | _PUBLICATION_CLI_ACTIONS
-    | _MAINTENANCE_CLI_ACTIONS
-)
+_PUBLICATION_CLI_ACTIONS = {
+    action for action, meta in _CLI_ACTION_METADATA.items() if meta.group == 'publication'
+}
+_MAINTENANCE_CLI_ACTIONS = {
+    action for action, meta in _CLI_ACTION_METADATA.items() if meta.group == 'maintenance'
+}
+_CLI_ACTIONS = set(_CLI_ACTION_METADATA)
 _TRANSPORT_PROFILES = {*_DRAFT_EDIT_PROFILES, 'public-fast', 'public-standard'}
 _SUPPORTED_ACTIONS = _CLI_ACTIONS | _TRANSPORT_PROFILES
 _UPDATE_FIELDS = {
-    'repair-draft-category': {'post_category'},
-    'promote-draft': {'post_status'},
-    'reformat': {'post_content'},
-    'fix-excerpt': {'post_excerpt'},
+    action: set(meta.update_fields)
+    for action, meta in _CLI_ACTION_METADATA.items() if meta.update_fields
 }
 _PERMALINK_ACTIONS = {
-    'prepare-draft', 'promote-draft', 'reformat',
-    'repair-draft-category',
+    action for action, meta in _CLI_ACTION_METADATA.items() if meta.permalink
+}
+
+_REQUEST_VALUE_FLAGS = {
+    '--post-id', '--image-path', '--expected-content-sha256', '--output',
 }
 
 
@@ -91,39 +157,66 @@ def _safe_identifier(value, label):
         raise ValueError(f'invalid_{label}')
 
 
-def _target_ids(action, cli_args):
+def _parse_cli_request(cli_args):
+    if not cli_args or cli_args[0] not in _CLI_ACTION_METADATA:
+        raise ValueError('unsupported_editorial_ssh_action')
+    action = cli_args[0]
+    meta = _CLI_ACTION_METADATA[action]
+    positional = cli_args[1] if len(cli_args) > 1 and not cli_args[1].startswith('--') else None
     ids = set()
-    for index, value in enumerate(cli_args):
-        if value == '--post-id' and index + 1 < len(cli_args) and cli_args[index + 1].isdigit():
-            ids.add(int(cli_args[index + 1]))
-    if action == 'reformat' and len(cli_args) > 1 and cli_args[1].isdigit():
-        ids.add(int(cli_args[1]))
-    if action == 'promote-draft':
-        if len(cli_args) > 1 and not cli_args[1].startswith('--'):
-            for item in cli_args[1].split(','):
-                if item.strip().isdigit():
-                    ids.add(int(item.strip()))
-        if '--ids' in cli_args:
-            start = cli_args.index('--ids') + 1
-            for value in cli_args[start:]:
-                if value.startswith('--'):
-                    break
-                if value.isdigit():
-                    ids.add(int(value))
-    return ids
+    values = {}
+    confirm_title_change = False
+    resume = False
+    promotion_ids_seen = False
+    index = 1
+    while index < len(cli_args):
+        value = cli_args[index]
+        if value in _REQUEST_VALUE_FLAGS:
+            next_value = cli_args[index + 1] if index + 1 < len(cli_args) else None
+            values.setdefault(value, next_value)
+            if value == '--post-id' and next_value is not None and next_value.isdigit():
+                ids.add(int(next_value))
+            index += 1
+            continue
+        if value == '--confirm-title-change':
+            confirm_title_change = True
+        elif value == '--resume':
+            resume = True
+        elif action == 'promote-draft' and value == '--ids' and not promotion_ids_seen:
+            promotion_ids_seen = True
+            index += 1
+            while index < len(cli_args) and not cli_args[index].startswith('--'):
+                if cli_args[index].isdigit():
+                    ids.add(int(cli_args[index]))
+                index += 1
+            continue
+        index += 1
+
+    if meta.target_mode == 'positional' and positional is not None and positional.isdigit():
+        ids.add(int(positional))
+    elif meta.target_mode == 'promote' and positional is not None:
+        for item in positional.split(','):
+            if item.strip().isdigit():
+                ids.add(int(item.strip()))
+
+    image_value = values.get('--image-path')
+    output_value = values.get('--output')
+    return _CliRequest(
+        action=action,
+        cli_args=cli_args,
+        target_ids=ids,
+        bundle_path=(Path(positional) if meta.bundle_positional and positional is not None else None),
+        image_path=(Path(image_value) if image_value is not None else None),
+        image_path_supplied='--image-path' in values,
+        expected_content_sha256=values.get('--expected-content-sha256'),
+        confirm_title_change=confirm_title_change,
+        resume=resume,
+        output_path=(Path(output_value) if output_value is not None else None),
+    )
 
 
-def _receipt_output_path(cli_args):
-    if '--output' not in cli_args:
-        return None
-    index = cli_args.index('--output') + 1
-    if index >= len(cli_args):
-        return None
-    return Path(cli_args[index])
-
-
-def _mark_catalog_sync(cli_args, status, attempts):
-    target = _receipt_output_path(cli_args)
+def _mark_catalog_sync(request, status, attempts):
+    target = request.output_path
     if target is None or not target.is_file():
         return
     try:
@@ -562,9 +655,10 @@ def _main():
         cli_args.pop(0)
     if not cli_args or cli_args[0] not in _CLI_ACTIONS:
         parser.error('use -- followed by a supported editorial_cli action')
-    action = cli_args[0]
-    targets = _target_ids(action, cli_args)
-    image_path = None
+    request = _parse_cli_request(cli_args)
+    action = request.action
+    targets = set(request.target_ids)
+    image_path = request.image_path
     if action not in _CREATE_ACTIONS and not targets:
         parser.error('a concrete target post ID is required for this action')
     config = resolve_transport(
@@ -576,10 +670,9 @@ def _main():
     transport_action = action
     expected_rank_math_meta = None
     if action == 'edit-post':
-        if len(cli_args) < 2:
-            if '--image-path' not in cli_args:
-                parser.error('edit-post requires a bundle file or --image-path')
-        bundle_path = Path(cli_args[1]) if len(cli_args) >= 2 and not cli_args[1].startswith('--') else None
+        if request.bundle_path is None and not request.image_path_supplied:
+            parser.error('edit-post requires a bundle file or --image-path')
+        bundle_path = request.bundle_path
         bundle = None
         if bundle_path is not None:
             if not bundle_path.is_file():
@@ -588,35 +681,29 @@ def _main():
         post_ids = sorted(targets)
         if len(post_ids) != 1:
             parser.error(f'{action} requires exactly one --post-id')
-        if '--image-path' in cli_args:
-            image_index = cli_args.index('--image-path') + 1
-            if image_index >= len(cli_args):
-                parser.error('--image-path requires a value')
-            image_path = Path(cli_args[image_index])
+        if request.image_path_supplied and image_path is None:
+            parser.error('--image-path requires a value')
         if bundle is None:
             from agents.edit_post import reviewed_target_kind
             from agents.validation_router import build_validation_plan
             target_status = reviewed_target_kind(post_ids[0])
-            expected_sha = (cli_args[cli_args.index('--expected-content-sha256') + 1]
-                            if '--expected-content-sha256' in cli_args else None)
             transport_action = 'replace-featured-image'
             decision = {
                 'route': 'image-only',
                 'reasons': [],
                 'validation_plan': build_validation_plan(
                     None, None, image_changed=True, target_status=target_status,
-                    resume='--resume' in cli_args, route='image-only', post_id=post_ids[0],
-                    expected_content_sha256=expected_sha),
+                    resume=request.resume, route='image-only', post_id=post_ids[0],
+                    expected_content_sha256=request.expected_content_sha256),
             }
         else:
             from agents.edit_post import classify_reviewed_post_route
             decision = classify_reviewed_post_route(
                 post_ids[0], bundle,
-                expected_content_sha256=(cli_args[cli_args.index('--expected-content-sha256') + 1]
-                                         if '--expected-content-sha256' in cli_args else None),
-                confirm_title_change='--confirm-title-change' in cli_args,
+                expected_content_sha256=request.expected_content_sha256,
+                confirm_title_change=request.confirm_title_change,
                 image_path=image_path,
-                resume='--resume' in cli_args)
+                resume=request.resume)
             if decision['target_status'] == 'draft':
                 transport_action = 'draft-fast' if decision['route'] == 'fast' else 'draft-standard'
             else:
@@ -645,19 +732,17 @@ def _main():
             f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
         )
 
-    if action == 'import-section-image':
-        if '--image-path' not in cli_args:
-            parser.error('import-section-image requires --image-path')
-        image_index = cli_args.index('--image-path') + 1
-        if image_index >= len(cli_args):
+    if _CLI_ACTION_METADATA[action].requires_image_path:
+        if not request.image_path_supplied:
+            parser.error(f'{action} requires --image-path')
+        if image_path is None:
             parser.error('--image-path requires a value')
-        image_path = Path(cli_args[image_index])
 
     transport = make_transport(
         transport_action, targets, config.host, ssh_user=config.user,
         wsl_distro=config.wsl_distro if config.mode in {'wsl', 'tailscale'} else None,
         allow_title_change=(transport_action in {'draft-standard', 'public-standard'}
-                            and '--confirm-title-change' in cli_args),
+                            and request.confirm_title_change),
         use_tailscale=config.mode == 'tailscale',
         expected_rank_math_meta=expected_rank_math_meta,
         allow_image=image_path is not None)
@@ -667,7 +752,7 @@ def _main():
     )
     with timed('remote_editorial_cli'):
         with decision_context, patch('subprocess.run', side_effect=transport), \
-                patch.object(sys, 'argv', ['editorial_cli.py', *cli_args]):
+                patch.object(sys, 'argv', ['editorial_cli.py', *request.cli_args]):
             editorial_cli.main()
 
     # prepare-draft is the user-facing one-shot path. Keep the catalog follow-up
@@ -688,11 +773,11 @@ def _main():
                     if last.stdout:
                         print(last.stdout.rstrip())
                     print('[Catalog Sync] POST_CATALOG.md updated.')
-                    _mark_catalog_sync(cli_args, 'passed', attempts)
+                    _mark_catalog_sync(request, 'passed', attempts)
                     synced = True
                     break
         if not synced:
-            _mark_catalog_sync(cli_args, 'failed', attempts)
+            _mark_catalog_sync(request, 'failed', attempts)
             detail = (last.stderr or last.stdout or '').strip() if last is not None else 'unknown error'
             print('[Catalog Sync] WARNING: draft is already saved, but catalog sync failed. '
                   'Run `python scripts/sync_post_catalog.py` only; do not rerun prepare-draft.',
