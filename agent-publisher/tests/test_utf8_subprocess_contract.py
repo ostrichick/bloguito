@@ -13,7 +13,10 @@ class Utf8SubprocessContractTests(unittest.TestCase):
         for source_root in roots:
             for path in source_root.rglob("*.py"):
                 relative = path.relative_to(ROOT).as_posix()
-                if "/tests/" in f"/{relative}/" or "/archive/" in f"/{relative}/":
+                if any(part in {".venv", "venv", "__pycache__"} for part in path.relative_to(ROOT).parts):
+                    continue
+                if ("/tests/" in f"/{relative}/" or "/archive/" in f"/{relative}/"
+                        or "/data/" in f"/{relative}/"):
                     continue
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
                 for node in ast.walk(tree):
