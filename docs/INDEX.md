@@ -47,6 +47,7 @@
 
 ## 최근 추가 점검
 
+- [2026-10-02 일반 정보 포스트 정책 4단계 후속 계획](general-post-stage4-plan-2026-10-02.md): 1~3단계 정합성·정책 모듈화·검증 최적화 이후의 General/Event schema 분리, post-specific exception registry, volatility 기반 freshness, critical facts 데이터화를 구현 순서와 종료 조건으로 정리한 계획. 4단계 코드는 아직 구현하지 않음.
 - [2026-10-01 프로젝트 간소화 P9~P11 및 WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md): validation registry 제거, per-post reviewed manifest 저장 구조, WSL SSH 연결 재사용, section-image 왕복 축소, 운영 WhatsApp service 제거와 전체 회귀 검증 기록.
 
 - [2026-09-29 #598 임플란트 건강보험 대표 이미지 문구 정정](post-598-cover-text-fix-2026-09-29.md): 대표 이미지 좌측 하단 알약 배지의 '팩트' 단어를 제거하고 '안내'로 수정한 WebP를 재생성하여 운영 WordPress의 대표 이미지(_thumbnail_id=679)로 교체 및 실서비스 검증을 완료한 기록.
