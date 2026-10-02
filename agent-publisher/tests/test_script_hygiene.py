@@ -17,7 +17,8 @@ class ScriptHygieneTests(unittest.TestCase):
         lines = {
             line.strip() for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         }
-        self.assertTrue({"/scratch/", "/docs/tasks/", "/scripts/archive/"}.issubset(lines))
+        self.assertTrue({"/scratch/", "/scripts/archive/"}.issubset(lines))
+        self.assertTrue({"/docs/tasks/**", "!/docs/tasks/**/", "!/docs/tasks/**/*.md"}.issubset(lines))
 
 
 if __name__ == "__main__":
