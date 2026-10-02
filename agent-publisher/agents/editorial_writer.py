@@ -16,7 +16,8 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 from config import GEMINI_API_KEY, CATEGORIES, resolve_category
-from agents.editorial import policy, policy_fingerprint, digest, validate_bundle, render, topic_reasons, ROOT, save_report
+from agents.editorial import (policy, policy_fingerprint, policy_instructions, digest,
+                              validate_bundle, render, topic_reasons, ROOT, save_report)
 from agents.event_post_standard import event_review_instruction, event_writer_instruction
 from agents.fact_validation import snapshot
 from agents.review_cache import load_cached_review, store_cached_review
@@ -1095,12 +1096,12 @@ class EditorialWriterAgent:
                 if GEMINI_API_KEY else None
             )
 
-    def _call(self, task, data, schema, role):
+    def _call(self, task, data, schema, role, policy_context=None):
         if self.client is None:
             raise ValueError('editorial_model_unavailable')
         from google.genai import types
         from agents.quota_tracker import get_model_cascade, record_usage
-        instructions = (ROOT.parent / 'docs' / 'EDITORIAL_SYSTEM.md').read_text(encoding='utf-8')
+        instructions = policy_instructions(policy_context if policy_context is not None else data)
         preferred = os.getenv(f'EDITORIAL_{role.upper()}_MODEL', policy().get(role+'_model', 'gemini-3.6-flash'))
         candidates = get_model_cascade(preferred)
         # Keep one preferred model plus one capacity-oriented fallback. A policy
@@ -1164,23 +1165,14 @@ class EditorialWriterAgent:
         event_rules = event_review_instruction(bundle)
         with timed('semantic_review'):
             result = self._call(
-                '독립 편집 검토다. 작성자의 자기평가를 신뢰하지 말고 모든 문장, 제목, 소제목, 표의 각 행·셀, FAQ를 원문과 대조하라. '
-            '인용이 존재해도 해당 주장을 뒷받침하지 않으면 실패다. 수치의 단위, 부정/긍정, 예외, 대상·지역, '
-            '신청과 사용기간을 대조하고 중요한 조건 누락·출처 간 충돌을 거부하라. '
-            'reader_questions마다 답이 본문에 충분히 있는지 검토하라. '
-            '원문이 참고번호나 첨부파일의 지점·날짜·시간·조건 등 핵심 표를 가리키는데 그 첨부를 실제 읽지 않고 '
-            '독자에게 찾아보라고 하거나 직접 대조하라고 넘긴 원고는 no_reader_deflection과 question_answered를 false로 하라. '
-            '자료 본문과 첨부 표의 수량·날짜 충돌은 감추지 말고 쟁점으로 적어라. '
-            'evergreen으로 분류한 시한부 안내와 확인되지 않은 현재 구매/신청 가능 주장을 거부하라. '
-            'sources.actions가 있으면 링크가 실제 조회·신청·예매·구매·설치 목적지인지 점검하고, '
-            '소개·홍보·보도자료 페이지나 기능과 맞지 않는 이름을 버튼으로 제공하면 거부하라. '
-            '링크 접근을 직접 확인하지 못했다면 검증했다고 추정하지 말 것. '
-            'plan.related_posts가 있으면 각 ID·현재 공개 상태·관련성·도착 주제와 기존 관련 글 링크의 보존을 검토하라. '
-            '내부 관련 글은 공식 출처나 신청·조회 버튼이 아니다. '
+                '독립 편집 검토다. 활성 정책을 기준으로 제목, 문장, 표의 각 행·셀, FAQ와 행동 링크를 '
+            '연결된 원문 evidence에 대조하라. 작성자의 자기평가나 인용의 존재 자체를 신뢰하지 말고, '
+            'reader_questions의 실제 해결 여부, 중요한 조건·예외·출처 충돌, 독자에게 자료 확인을 떠넘기는 문장을 확인하라. '
+            '현재 신청·구매·접수 가능처럼 시점 의존 주장은 현재 근거가 없으면 실패시키고, 관련 글은 공식 출처나 CTA로 취급하지 마라. '
             + event_rules +
             ' 각 checks는 완전히 충족할 때만 true. issues에는 문제 위치와 수정 방법을 적어라.',
-                body, Review, 'reviewer')
-        review = {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(),
+                body, Review, 'reviewer', policy_context=bundle)
+        review = {**result, 'digest': digest(body), 'policy_digest': policy_fingerprint(bundle),
                   'checked_at': datetime.now(KST).isoformat()}
         if self.review_cache_enabled:
             store_cached_review(bundle, review)
@@ -1215,6 +1207,7 @@ class EditorialWriterAgent:
                 payload,
                 DeltaReview,
                 'reviewer',
+                policy_context=new_bundle,
             )
         base_body = {k: old_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in old_bundle}
         result_body = {k: new_bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in new_bundle}
@@ -1239,29 +1232,12 @@ class EditorialWriterAgent:
         for attempt in range(policy()['max_revisions']+1):
             plan = self._call(
                 '검색 질문에 직접 답하는 고품질 한국어 원고를 작성하라. '
-                '첫 문단(lead)은 핵심 질문에 대한 즉각적인 두괄식 답변이다. 독자가 3초 안에 대상, 혜택, 신청 기한을 파악할 수 있도록 핵심 결론을 직격으로 서술하라. '
-                '서론의 불필요한 잡담이나 상투적 클리셰(\'알아보겠습니다\', \'유익한 정보가 되길 바랍니다\')는 일절 배제하라. '
-                '문체는 공문서의 딱딱한 용어를 독자 눈높이로 쉽게 풀어주면서도 신뢰감 있고 정중한 경어체(~합니다, ~할 수 있습니다)를 일관되게 유지하라. '
-                '신청 절차와 실행 방법은 모호한 안내 대신 실제 공식 사이트의 메뉴 이동 경로(예: 홈택스 로그인 > [조회/발급] > [국세환급금 찾기])를 단계별로 명확히 명시하라. '
-                '원문이 첨부 PDF나 참고표로 독자의 핵심 질문을 넘기면 그 첨부의 실제 데이터를 sources에서 확보한 다음 장소·운영일·시간·취급업무 등을 직접 원고에 써라. '
-                '첨부에서 확인할 것, 공지에서 직접 찾을 것 등 독자에게 자료 조사·검증을 맡기는 문장은 작성하지 마라. '
-                '개인별 약정·실시간 재고처럼 원자료에 없는 값만 필요한 확인사항으로 분명히 구분하라. '
-                '정보글 기본 순서는 핵심 답(lead) → 필요한 경우 한눈에 보기(overview 표) → 대상·예외 또는 상황별 분기(eligibility/comparison) → 실제 행동 절차(procedure) → 실패·문의(exceptions) → 의미 있는 FAQ다. '
-                '절마다 kind를 overview/eligibility/comparison/procedure/exceptions/schedule/general 중 지정하고 실제 시간 순서의 실행 단계에만 procedure를 써라. 공연 일정은 schedule, 병렬 비교는 comparison을 선택하라. '
-                '대상 연령이나 음악 장르를 근거 없이 제목이나 소개에 붙이지 말고, 핵심 조건과 제외 조건을 표 아래에 묻어두지 말 것. '
-                '원고는 순수 텍스트 문단과 절, 필요한 FAQ로 구성하고 각 문단에 실제 원문 인용 evidence와 '
-                '답한 질문의 ID인 answers를 붙여라. 인용은 원문의 연속 발췌이며 뜻을 바꾸지 말 것. '
-                '지역별 공연일·공연장이나 금액·조건처럼 여러 항목을 비교할 때는 장문 나열 대신 섹션의 table에 '
-                'caption, headers, rows를 작성하라. 각 row에는 cells와 해당 행 전체를 뒷받침하는 실제 원문 연속 발췌 '
-                'evidence, answers를 연결하라. table이 있는 섹션은 paragraphs를 빈 배열로 둘 수 있다. '
-                '확인되지 않은 시간·가격·할인을 빈 표 셀에 지어내지 말고 원고 본문에도 자유 HTML을 넣지 말 것. '
-                'FAQ question_id도 반드시 reader_questions의 기존 ID를 사용하고 answer.answers에 같은 ID를 넣어라. '
-                '본문의 숫자는 해당 문단의 인용으로 증명해야 한다. 제품 개수는 5개 미만 같은 명시적 범위에 '
-                '속하는 1개 등으로 설명할 수 있으나 반드시 그 범위가 있는 인용을 연결하라. 금액·날짜는 원문 수치 표기를 유지하라. '
-                '새로운 계산/근거 없는 이유/조언/분량 채우기를 하지 말 것. '
-                '유효한 조건과 절차를 보존하고 기존 issues를 고쳐라.'
+                '활성 정책의 구조와 문체를 따르고 각 reader-facing block에 실제 원문 evidence와 답한 reader_questions의 ID를 연결하라. '
+                '숫자·조건·현재 상태는 evidence 또는 validator가 허용한 결정론적 계산 범위를 넘지 말고, 자유 HTML이나 확인하지 않은 값을 만들지 마라. '
+                '이전 시도의 issues가 있으면 해당 문제를 고치되 근거 범위를 넓히지 마라.'
                 + event_rules,
-                {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, Plan, 'writer')
+                {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, Plan, 'writer',
+                policy_context=bundle)
             bundle['plan'] = plan
             report = validate_bundle(bundle, inventory, require_review=False)
             if report['status'] == 'ready':

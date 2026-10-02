@@ -264,7 +264,7 @@ def _edit_reviewed_public_post(
         if (baseline.get("expected_content_sha256") != expected_content_sha256
                 or baseline.get("desired_content_sha256") != desired_sha
                 or state.get("edit_intent_sha256") != intent_sha256(edit_intent)
-                or state_policy != policy_fingerprint()
+                or state_policy != policy_fingerprint(candidate)
                 or baseline.get("expected_thumbnail_id") != expected_thumbnail_id
                 or baseline.get("alt_text_sha256") != alt_sha):
             raise ValueError("resume_state_fingerprint_conflict")

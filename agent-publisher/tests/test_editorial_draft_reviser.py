@@ -100,7 +100,7 @@ class EditorialDraftReviserTests(unittest.TestCase):
                  patch("agents.editorial_draft_reviser.invalidate_inventory") as invalidate, \
                  patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
                  patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
-                 patch("agents.editorial_draft_reviser.verify_sources_unchanged", return_value={
+                 patch("agents.editorial_draft_reviser.verify_revision_sources", return_value={
                      "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
                      "all_unchanged": True,
                  }) as source_recheck, \
@@ -185,7 +185,7 @@ class EditorialDraftReviserTests(unittest.TestCase):
                  patch("agents.editorial_draft_reviser.invalidate_inventory"), \
                  patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
                  patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
-                 patch("agents.editorial_draft_reviser.verify_sources_unchanged", return_value={
+                 patch("agents.editorial_draft_reviser.verify_revision_sources", return_value={
                      "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
                      "all_unchanged": True,
                  }), \

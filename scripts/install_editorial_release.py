@@ -18,9 +18,16 @@ def install(release, app):
     backup = app/'backups'/('editorial-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
     backup.mkdir(parents=True, mode=0o700)
     changes = []
+    policy_documents = (
+        'EDITORIAL_SYSTEM.md',
+        'GENERAL_POST_STANDARD.md',
+        'EVENT_POST_STANDARD.md',
+        'FEATURED_IMAGE_STANDARD.md',
+    )
     def put(target, data):
-        # app files plus the single shared policy document are the only allowed targets.
-        if not target.is_relative_to(app) and target != app.parent/'docs'/'EDITORIAL_SYSTEM.md':
+        # App files plus the explicit shared policy modules are the only allowed targets.
+        allowed_docs = {app.parent/'docs'/name for name in policy_documents}
+        if not target.is_relative_to(app) and target not in allowed_docs:
             raise ValueError('target_outside_release_scope')
         existed = target.exists()
         original = target.read_bytes() if existed else None
@@ -42,7 +49,11 @@ def install(release, app):
             if relative.as_posix()=='data/search_briefs.json' and (app/relative).exists():
                 continue
             put(app/relative,file.read_bytes())
-        put(app.parent/'docs'/'EDITORIAL_SYSTEM.md',(release/'docs'/'EDITORIAL_SYSTEM.md').read_bytes())
+        for name in policy_documents:
+            source = release/'docs'/name
+            if not source.is_file():
+                raise ValueError('required_policy_document_missing:' + name)
+            put(app.parent/'docs'/name, source.read_bytes())
         text=(app/'config.py').read_text(encoding='utf-8')
         import ast
         names={node.id for node in ast.walk(ast.parse(text)) if isinstance(node,ast.Name) and isinstance(node.ctx,ast.Store)}

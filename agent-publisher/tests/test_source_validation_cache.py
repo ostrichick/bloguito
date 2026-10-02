@@ -5,11 +5,23 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agents.source_validation_cache import verify_sources_unchanged
+from agents.source_validation_cache import revision_source_recheck_plan, verify_sources_unchanged
 from test_editorial_system import NOW, sample
 
 
 class SourceValidationCacheTests(unittest.TestCase):
+    def test_standard_recheck_plan_reuses_only_unchanged_fresh_nonlive_sources(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        plan = revision_source_recheck_plan(old, new, now=NOW)
+        self.assertEqual([new['sources'][0]['id']], plan['reused_source_ids'])
+        self.assertEqual([], plan['refresh_sources'])
+
+        new['sources'][0]['title'] = '수정된 공식 제목'
+        plan = revision_source_recheck_plan(old, new, now=NOW)
+        self.assertEqual([], plan['reused_source_ids'])
+        self.assertEqual([new['sources'][0]['id']], [s['id'] for s in plan['refresh_sources']])
+
     def test_second_identical_recheck_reuses_short_lived_receipt(self):
         bundle = sample()
         sources = bundle['sources']

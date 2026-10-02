@@ -31,9 +31,68 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def policy_fingerprint():
-    instructions = (ROOT.parent / 'docs' / 'EDITORIAL_SYSTEM.md').read_text(encoding='utf-8')
-    return digest({'rules': policy(), 'instructions': instructions, 'contract_version': 1})
+def policy_profile(bundle=None):
+    """Return the reader-content policy profile that applies to one bundle."""
+    bundle = bundle if isinstance(bundle, dict) else {}
+    brief = bundle.get('brief') if isinstance(bundle.get('brief'), dict) else bundle
+    temporal = bundle.get('temporal_source') if isinstance(bundle.get('temporal_source'), dict) else {}
+    if (brief.get('event_post_standard_version') == 1
+            or temporal.get('multi_event_schedule') is True):
+        return 'event'
+    return 'general'
+
+
+def policy_document_names(bundle=None):
+    """Policy documents relevant to semantic writing/review for this bundle."""
+    specific = 'EVENT_POST_STANDARD.md' if policy_profile(bundle) == 'event' else 'GENERAL_POST_STANDARD.md'
+    return ('EDITORIAL_SYSTEM.md', specific)
+
+
+def _policy_document_text(name):
+    return (ROOT.parent / 'docs' / name).read_text(encoding='utf-8')
+
+
+def policy_instructions(bundle=None):
+    """Load only the common policy plus the current post-type policy."""
+    return '\n\n'.join(_policy_document_text(name) for name in policy_document_names(bundle))
+
+
+def applicable_policy_rules(bundle=None):
+    """Select only machine rules that can affect this bundle's semantic approval.
+
+    Image-generation settings, model preferences and exceptions for unrelated
+    posts intentionally do not invalidate an otherwise identical text review.
+    Deterministic freshness gates continue to read the live full policy directly.
+    """
+    rules = policy()
+    selected = {
+        key: rules[key]
+        for key in ('version', 'min_remaining_days', 'review_checks', 'blocked_patterns')
+        if key in rules
+    }
+    bundle = bundle if isinstance(bundle, dict) else {}
+    brief = bundle.get('brief') if isinstance(bundle.get('brief'), dict) else bundle
+    brief_id = brief.get('id') if isinstance(brief, dict) else None
+    dated = rules.get('dated_post_exceptions', {}).get(brief_id)
+    if dated is not None:
+        selected['dated_post_exception'] = {brief_id: dated}
+    legacy = rules.get('legacy_welfare_procedural_exceptions', {}).get(brief_id)
+    if legacy is not None:
+        selected['legacy_welfare_procedural_exception'] = {brief_id: legacy}
+    return selected
+
+
+def policy_fingerprint(bundle=None):
+    documents = {
+        name: _policy_document_text(name)
+        for name in policy_document_names(bundle)
+    }
+    return digest({
+        'profile': policy_profile(bundle),
+        'rules': applicable_policy_rules(bundle),
+        'instructions': documents,
+        'contract_version': 2,
+    })
 
 
 def normalized(text):
@@ -1031,7 +1090,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
         if 'review' in scopes:
             review = bundle.get('review', {})
             body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
-            if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint():
+            if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint(bundle):
                 reasons.append('review_not_bound_to_current_content')
             if not fresh(review.get('checked_at'), now, rules['review_max_age_hours']):
                 reasons.append('review_stale')

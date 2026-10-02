@@ -45,7 +45,7 @@ def reviewer_contract_digest() -> str:
 def review_cache_key(bundle: dict) -> str:
     return digest({
         "body_digest": digest(review_body(bundle)),
-        "policy_digest": policy_fingerprint(),
+        "policy_digest": policy_fingerprint(bundle),
         "review_contract_digest": reviewer_contract_digest(),
     })
 
@@ -87,7 +87,7 @@ def load_cached_review(
         return None
     body = review_body(bundle)
     review = payload.get("review")
-    current_policy = policy_fingerprint()
+    current_policy = policy_fingerprint(bundle)
     now = now or datetime.now(KST)
     valid = (
         payload.get("schema") == REVIEW_CACHE_SCHEMA
@@ -111,7 +111,7 @@ def store_cached_review(bundle: dict, review: dict, *, root: Path | None = None)
     if not _review_shape_valid(review):
         raise ValueError("invalid_semantic_review_cache_record")
     body = review_body(bundle)
-    current_policy = policy_fingerprint()
+    current_policy = policy_fingerprint(bundle)
     if review.get("digest") != digest(body) or review.get("policy_digest") != current_policy:
         raise ValueError("semantic_review_cache_binding_mismatch")
     target = review_cache_path(bundle, root)

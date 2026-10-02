@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from agents.editorial import ROOT
+from agents.editorial import ROOT, fresh, policy
 from agents.temporal_validation import KST
 from agents.workflow_metrics import increment, timed
 
@@ -24,6 +24,7 @@ from agents.workflow_metrics import increment, timed
 SOURCE_RECEIPT_SCHEMA = 1
 DEFAULT_RECEIPT_TTL_MINUTES = 15
 MAX_RECEIPT_TTL_MINUTES = 30
+SOURCE_IDENTITY_FIELDS = ("url", "source_type", "sha256", "title")
 
 
 def _receipt_ttl_minutes() -> int:
@@ -56,6 +57,64 @@ def source_requires_live_refresh(source: dict) -> bool:
         r"(?:잔여\s*좌석|남은\s*좌석|재고\s*(?:있음|없음)|매진|품절)",
     )
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def revision_source_recheck_plan(old_bundle: dict, new_bundle: dict, *, now: datetime | None = None) -> dict:
+    """Choose new/changed/stale/live sources for a Standard edit network recheck."""
+    now = now or datetime.now(KST)
+    old_sources = {
+        source.get("id"): source
+        for source in (old_bundle or {}).get("sources", [])
+        if isinstance(source, dict) and isinstance(source.get("id"), str)
+    }
+    refresh_sources = []
+    reused_source_ids = []
+    max_age = policy()["source_max_age_hours"]
+    for source in (new_bundle or {}).get("sources", []):
+        if not isinstance(source, dict) or not isinstance(source.get("id"), str):
+            raise ValueError("reviewed_revision_source_ids_required")
+        prior = old_sources.get(source["id"])
+        changed = (
+            prior is None
+            or any(prior.get(field) != source.get(field) for field in SOURCE_IDENTITY_FIELDS)
+        )
+        stale = not fresh(source.get("fetched_at"), now, max_age)
+        live_state = source_requires_live_refresh(source)
+        if changed or stale or live_state:
+            refresh_sources.append(source)
+        else:
+            reused_source_ids.append(source["id"])
+    return {
+        "refresh_sources": refresh_sources,
+        "reused_source_ids": reused_source_ids,
+    }
+
+
+def verify_revision_sources(old_bundle: dict, new_bundle: dict, *, now: datetime | None = None) -> dict:
+    """Verify only source snapshots affected by a Standard edit or freshness/live-state rules."""
+    plan = revision_source_recheck_plan(old_bundle, new_bundle, now=now)
+    refresh_sources = plan["refresh_sources"]
+    if not refresh_sources:
+        return {
+            "reused_source_ids": plan["reused_source_ids"],
+            "refetched_source_ids": [],
+            "all_unchanged": True,
+        }
+    refresh_ids = {source["id"] for source in refresh_sources}
+    checked = verify_sources_unchanged(
+        new_bundle["brief"],
+        refresh_sources,
+        force_refresh_ids=refresh_ids,
+        now=now,
+    )
+    return {
+        "reused_source_ids": [
+            *plan["reused_source_ids"],
+            *checked.get("reused_source_ids", []),
+        ],
+        "refetched_source_ids": checked.get("refetched_source_ids", []),
+        "all_unchanged": checked.get("all_unchanged") is True,
+    }
 
 
 def _load_reusable_receipt(source: dict, *, root: Path | None = None,

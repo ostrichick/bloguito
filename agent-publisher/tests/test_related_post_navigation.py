@@ -48,7 +48,7 @@ class RelatedPostNavigationTests(unittest.TestCase):
             {'ID': 63, 'post_title': '독감 무료접종 종합 안내', 'post_status': 'publish',
              'post_content': '<p>related</p>'}]}
         body = {k: self.bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source')}
-        self.bundle['review'] = {'digest': digest(body), 'policy_digest': policy_fingerprint(),
+        self.bundle['review'] = {'digest': digest(body), 'policy_digest': policy_fingerprint(self.bundle),
                                  'checked_at': self.now.isoformat(),
                                  'checks': {key: True for key in policy()['review_checks']},
                                  'issues': []}

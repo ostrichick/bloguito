@@ -10,7 +10,7 @@ from contextvars import copy_context
 from datetime import datetime
 from pathlib import Path
 
-from agents.editorial import ROOT, excerpt_from_lead, fresh, policy, render, save_report, validate_bundle
+from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
 from agents.editorial_writer import load_inventory
 from agents.post_manifest_store import (
     acquire_editorial_lock,
@@ -20,7 +20,7 @@ from agents.post_manifest_store import (
     replace_record,
     snapshot_backup_payload,
 )
-from agents.source_validation_cache import source_requires_live_refresh, verify_sources_unchanged
+from agents.source_validation_cache import revision_source_recheck_plan, verify_revision_sources
 from agents.temporal_validation import KST
 from agents.editorial_updater import (
     _read_rank_math_meta,
@@ -64,72 +64,13 @@ def _sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-_SOURCE_IDENTITY_FIELDS = ("url", "source_type", "sha256", "title")
-
-
 def _revision_source_recheck_plan(old_bundle, new_bundle, now=None):
-    """Select only sources that need a network recheck for a full draft revision.
-
-    A Standard revision can substantially change prose while still reusing the
-    exact reviewed source snapshots.  Re-fetch sources that are new/changed,
-    stale, or explicitly describe live/current state.  Reusing an unchanged,
-    still-fresh snapshot avoids making an unrelated upstream outage block a
-    revision while preserving fail-closed behavior for facts that actually
-    changed or can change independently of the snapshot.
-    """
-    now = now or datetime.now(KST)
-    old_sources = {
-        source.get("id"): source
-        for source in old_bundle.get("sources", [])
-        if isinstance(source, dict) and isinstance(source.get("id"), str)
-    }
-    refresh_sources = []
-    reused_source_ids = []
-    max_age = policy()["source_max_age_hours"]
-    for source in new_bundle.get("sources", []):
-        if not isinstance(source, dict) or not isinstance(source.get("id"), str):
-            raise ValueError("reviewed_revision_source_ids_required")
-        prior = old_sources.get(source["id"])
-        changed = (
-            prior is None
-            or any(prior.get(field) != source.get(field) for field in _SOURCE_IDENTITY_FIELDS)
-        )
-        stale = not fresh(source.get("fetched_at"), now, max_age)
-        live_state = source_requires_live_refresh(source)
-        if changed or stale or live_state:
-            refresh_sources.append(source)
-        else:
-            reused_source_ids.append(source["id"])
-    return {
-        "refresh_sources": refresh_sources,
-        "reused_source_ids": reused_source_ids,
-    }
+    """Compatibility wrapper for the shared draft/public Standard source planner."""
+    return revision_source_recheck_plan(old_bundle, new_bundle, now=now)
 
 
 def _verify_revision_sources(old_bundle, new_bundle, now=None):
-    plan = _revision_source_recheck_plan(old_bundle, new_bundle, now=now)
-    refresh_sources = plan["refresh_sources"]
-    if not refresh_sources:
-        return {
-            "reused_source_ids": plan["reused_source_ids"],
-            "refetched_source_ids": [],
-            "all_unchanged": True,
-        }
-    refresh_ids = {source["id"] for source in refresh_sources}
-    checked = verify_sources_unchanged(
-        new_bundle["brief"],
-        refresh_sources,
-        force_refresh_ids=refresh_ids,
-        now=now,
-    )
-    return {
-        "reused_source_ids": [
-            *plan["reused_source_ids"],
-            *checked.get("reused_source_ids", []),
-        ],
-        "refetched_source_ids": checked.get("refetched_source_ids", []),
-        "all_unchanged": checked.get("all_unchanged") is True,
-    }
+    return verify_revision_sources(old_bundle, new_bundle, now=now)
 
 
 def _before_generated_source_footer(content):

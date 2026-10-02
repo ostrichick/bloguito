@@ -40,7 +40,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory') as invalidate, \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_revision_sources', return_value={
+                 'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -56,7 +57,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater, 'sync_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [changed]}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_revision_sources', return_value={
+                 'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
              patch.object(updater.subprocess, 'run', return_value=Mock(stdout=json.dumps(changed))) as command:
             with self.assertRaisesRegex(ValueError, 'target_missing_changed_or_not_public'):
                 updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True)
@@ -101,7 +103,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                   patch.object(updater, 'invalidate_inventory'),
                   patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}),
                   patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}),
-                  patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']),
+                  patch.object(updater, 'verify_revision_sources', return_value={
+                      'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}),
                   patch.object(updater, 'render', return_value='Reviewed HTML'),
                   patch.object(updater, 'save_report')]
         with common[0], common[1], common[2], common[3], common[4], common[5], common[6], \
@@ -114,7 +117,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_revision_sources', return_value={
+                 'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -143,7 +147,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_revision_sources', return_value={
+                 'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Original body'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -195,7 +200,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'invalidate_inventory') as invalidate, \
              patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_revision_sources', return_value={
+                 'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report'), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
@@ -252,7 +258,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater, 'sync_inventory'), \
              patch.object(updater, 'load_inventory', return_value={'posts': [post]}), \
              patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
-             patch.object(updater, 'fetch_sources', return_value=self.bundle['sources']), \
+             patch.object(updater, 'verify_revision_sources', return_value={
+                 'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
              patch.object(updater, 'render', return_value='Reviewed HTML'), \
              patch.object(updater, 'save_report') as save_report, \
              patch.object(updater.subprocess, 'run', side_effect=execute):

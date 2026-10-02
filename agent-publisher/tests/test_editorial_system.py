@@ -34,7 +34,7 @@ def sample():
 
 def sign(bundle):
     body = {k:bundle[k] for k in ('brief','sources','plan','temporal_source')}
-    bundle['review']={'digest':digest(body),'policy_digest':policy_fingerprint(), 'checked_at':NOW.isoformat(),
+    bundle['review']={'digest':digest(body),'policy_digest':policy_fingerprint(bundle), 'checked_at':NOW.isoformat(),
         'checks':{k:True for k in policy()['review_checks']}, 'issues':[]}
 
 
@@ -82,7 +82,7 @@ class EditorialTests(unittest.TestCase):
         self.b['sources'][0]['citation_label'] = '배출, 수거 안내'
         self.assertNotIn('reader_middle_dot_disallowed', self.check(review=False)['reasons'])
 
-    def test_render_includes_interlinks_and_excludes_self(self):
+    def test_render_ignores_unreviewed_local_interlink_candidates(self):
         import tempfile
         from pathlib import Path
         posts_data = [
@@ -98,8 +98,8 @@ class EditorialTests(unittest.TestCase):
             posts_file.write_text(json.dumps(posts_data), encoding='utf-8')
             with patch('agents.editorial.ROOT', Path(folder)):
                 content = render(self.b['plan'], self.b['sources'])
-                self.assertIn('bloguito-interlink', content)
-                self.assertIn('서초구 선풍기 배출 상세 안내', content)
+                self.assertNotIn('bloguito-interlink', content)
+                self.assertNotIn('서초구 선풍기 배출 상세 안내', content)
                 self.assertNotIn('기초연금 안내', content)
                 self.assertNotIn('http://161.33.0.234', content)
                 self.assertNotIn('https://lifeinfo24.org/p2', content)
