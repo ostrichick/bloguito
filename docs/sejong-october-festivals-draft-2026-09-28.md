@@ -39,3 +39,25 @@
    - **가운데점(`·`) 완전 배제**: 독자 노출 텍스트 전체에서 쉼표(`,`) 및 자연스러운 연결어 사용 (단위 테스트 100% 통과).
    - **한국어 어휘 수**: 1,200단어 이상 충족.
    - **Rank Math SEO 설정**: 타이틀, 설명, 포커스 키워드 완비.
+
+## 2026-10-01 최신 행사 v1 지침 기준 7개 행사 재정비
+
+- 사용자 승인에 따라 #665의 행사 목록을 `세종한글축제`, `세종과 남준`, `국립세종수목원 야간개장`, `베어트리파크 2026 가을축제 시간의 정원`, `거리 한글문화 한마당 연서면`, `세종보헤미안뮤직페스티벌`, `거리 한글문화 한마당 종촌동` 7개로 재구성했다. 금강보행교 야경 산책은 상시 관광지 성격이 강해 행사 목록에서 제외했다.
+- 최신 공식 source로 날짜, 장소, 프로그램, 무료/유료, 운영시간을 다시 결합했다. 보헤미안뮤직페스티벌은 NOL 상품 상세가 현재 HTTP 200이며 해당 행사명과 연결된 것을 확인했다.
+- 베어트리파크 공식 공지는 실질 일정이 이미지형 카드뉴스에만 있어, exact 공식 detail page에 포함된 CDN 카드 이미지를 고정 SHA256과 대조하고 사람이 검토한 최소 전사문을 결합하는 source adapter를 추가했다. 현재 첫 카드 SHA256은 `825e1b87c7bc139702c5b93668573b8b95703de3fbc30f0609ea98cc26a2ebb4`이며, asset이 교체되면 기존 전사문을 재사용하지 않고 fail closed한다.
+- 기존 4개 Bloguito 제작 이미지는 provenance를 확인해 재사용했고, 새 행사 3개(`세종과 남준`, 연서면, 종촌동)는 SDXL 작업용 로컬 환경에서 새 안내 이미지를 제작·시각 확인한 뒤 WordPress attachment #772, #773, #774로 import했다. 각 caption은 실제 현장 사진이 아니라 공식 프로그램을 바탕으로 제작한 안내 이미지임을 명시한다.
+- 최신 renderer의 공통 Kakao map component를 사용해 7개 event_name 모두를 지도에 결합했다. 동일 중앙공원 좌표의 3개 행사는 grouped marker로 묶여 물리 marker는 총 5개이며, 정보창 내용에는 7개 행사와 각 본문 anchor가 모두 포함된다.
+- `manual-review` full semantic review는 source_support, conditions_preserved, question_answered, useful_lifetime, no_reader_deflection, no_unsupported_claims 6개가 모두 true, issues 0으로 통과했다.
+- `edit-post`는 `standard-event`/Standard route를 선택했고 Draft #665를 CAS 기반으로 한 번 저장했다. 최종 본문 SHA256은 `687cae26c2b106f2e64065c2da570e0afdb39540f58bf609fe0298cec0bb4911`, 상태는 계속 `draft`, slug는 `sejong-october-festivals-2026`다.
+- 최종 제목은 `2026 세종 10월 축제 7곳: 한글축제, 세종과 남준, 보헤미안뮤직`. Rank Math focus keyword `2026 세종 10월 축제`, SEO title `2026 세종 10월 축제 일정: 한글축제부터 보헤미안뮤직까지 7곳`으로 readback했다.
+- 저장 HTML readback에서 overview 7행, 모바일 카드 7개, 본문 이미지 7개, 위치 카드 7개, 공통 Kakao map 1개, NOL CTA 1개를 확인했다. 실제 Kakao SDK 로드 테스트에서 map DOM이 생성되고 5개 grouped marker가 렌더됐다.
+- 저장 HTML을 데스크톱과 모바일 viewport로 렌더한 계측에서 페이지 overflow는 모두 0이었다. 모바일은 카드 7개, 데스크톱은 비교표로 전환되는 것을 확인했다. required QA `content-mobile-desktop`, `cta-destination`, `layout-accessibility`를 완료 처리했다.
+- 관련 표적 회귀 70개는 PASS. 공유 source-fetcher 변경 때문에 전체 suite를 1회 실행했으며 751 tests 중 8 errors, 1 skipped였다. 8 errors는 모두 기존 `designer_safety`/이미지 생성 폴백 및 테스트 temp 경로 문제이고 이번 source/event 변경 관련 표적 테스트에는 신규 회귀가 없었다.
+- `python scripts/sync_post_catalog.py`를 1회 실행해 `POST_CATALOG.md`의 #665 제목과 포커스 키워드를 최신 상태로 동기화했다.
+
+## 2026-10-02 최종 행사 선별 및 대표이미지 정리
+
+- 후속 편집 검토에서 `국립세종수목원 야간개장`은 10월 월간 행사 목록에 넣기 적절하지 않다고 판단해 제외했고, 최종 상세 행사 수를 6개로 정리했다.
+- 최종 제목은 `2026 세종 10월 축제 6곳: 한글축제, 세종과 남준, 보헤미안뮤직`, slug는 `sejong-october-festivals-2026`, 상태는 계속 `draft`다.
+- 대표이미지는 사용자 선택안 A04 + Noto Serif 조합으로 교체했고 최종 attachment ID는 `824`, 파일 URL은 `https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_cover_665-1.jpg`다.
+- 이 최종 단계에서는 본문을 다시 덮어쓰지 않고 대표이미지만 교체했으며, 저장 후에도 Draft 상태와 기존 본문이 유지된 것을 확인했다.

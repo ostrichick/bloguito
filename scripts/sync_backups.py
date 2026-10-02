@@ -109,7 +109,8 @@ def verify_archive(path: Path) -> str:
 
 
 def run(command: list[str]) -> str:
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        command, capture_output=True, text=True, encoding="utf-8", errors="strict", check=False)
     if result.returncode:
         raise BackupError("SSH/SCP failed; check trusted host key, alias and network")
     return result.stdout
@@ -158,7 +159,9 @@ class TailscaleTransport:
         self.host = host
 
     def _run_text(self, args: list[str]) -> str:
-        result = subprocess.run(["tailscale", "ssh", self.host, *args], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["tailscale", "ssh", self.host, *args], capture_output=True, text=True,
+            encoding="utf-8", errors="strict", check=False)
         if result.returncode:
             raise BackupError("Tailscale SSH command failed")
         return result.stdout

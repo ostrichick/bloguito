@@ -71,6 +71,8 @@ def _read_post_meta(base, post_id: int, key: str) -> str | None:
             list(base) + ["post", "meta", "get", str(int(post_id)), key, "--allow-root"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             check=False,
         )
     if result.returncode == 0:
@@ -275,6 +277,8 @@ def replace_featured_image(
                     ],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="strict",
                     check=True,
                 )
             attachment_id = (imported.stdout or "").lstrip("\ufeff").strip()

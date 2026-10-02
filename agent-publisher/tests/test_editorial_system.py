@@ -250,6 +250,21 @@ class EditorialTests(unittest.TestCase):
         self.assertNotIn('google.com/maps/dir', content)
         self.assertNotIn('길찾기 시작', content)
 
+    def test_location_coordinates_must_be_paired_and_in_range(self):
+        location = {
+            'venue': '서초구 행사장',
+            'address': '서울 서초구 행사장 1',
+            'query': '서초구 행사장',
+            'evidence': self.b['plan']['lead']['evidence'],
+            'latitude': 37.5,
+        }
+        self.b['plan']['sections'][0]['location'] = location
+        self.assertIn('invalid_section_assets', self.check(review=False)['reasons'])
+        location['longitude'] = 181.0
+        self.assertIn('invalid_section_assets', self.check(review=False)['reasons'])
+        location['longitude'] = 127.0
+        self.assertNotIn('invalid_section_assets', self.check(review=False)['reasons'])
+
     def test_render_includes_mobile_overflow_guards(self):
         content = render(self.b['plan'], self.b['sources'])
         self.assertIn('id="bloguito-responsive-layout"', content)

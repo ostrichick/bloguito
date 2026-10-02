@@ -51,6 +51,9 @@ from agents.wordpress_mutation import (
 
 FULL_REVIEW_REQUIRED = "FULL_REVIEW_REQUIRED"
 FAST_CHAIN_MAX_LENGTH = 5
+_BASELINE_MIGRATION_REASONS = {
+    "event_standard_overview_schedule_layout_invalid",
+}
 
 
 def _sha(text: str) -> str:
@@ -160,6 +163,10 @@ def _evidence_pairs(bundle):
 _NUMBER_FACT_TOKEN = re.compile(
     r"\d+(?:[.,]\d+)*(?:\s*(?:원|만원|명|개|회|분|시간|시|일|월|년|%))?"
 )
+_KOREAN_MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
+_COMPACT_MONTH_DAY = re.compile(
+    r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:\([월화수목금토일]\))?"
+)
 _GEO_VENUE_CANDIDATE = re.compile(
     r"[가-힣A-Za-z0-9]+(?:특별시|광역시|특별자치시|특별자치도|도|시|군|구|동|읍|면|리|역|센터|회관|홀|아레나|돔|체육관)"
 )
@@ -206,6 +213,37 @@ def _fact_tokens(plan, sources):
         if count:
             result[token] += count
     return result
+
+
+def _date_format_number_allowance(old_plan, new_plan):
+    """Allow only digit fragments created by an equivalent date-format rewrite.
+
+    Fast edits normally reject every newly visible number.  Converting an already
+    reviewed Korean date such as ``10월 7일`` to the compact overview form
+    ``10/7(수)`` changes the tokenizer from ``10월``/``7일`` to bare ``10``/``7``
+    even though the date itself is unchanged.  Match exact month/day pairs and
+    exempt only the bare numeric fragments belonging to those matched pairs.
+
+    This deliberately does not exempt prices, times, years, counts, or a compact
+    date whose month/day pair did not already appear in the reviewed copy.
+    """
+    old_dates = Counter(
+        (str(int(month)), str(int(day)))
+        for month, day in _KOREAN_MONTH_DAY.findall(_visible_text(old_plan))
+    )
+    new_dates = Counter(
+        (str(int(month)), str(int(day)))
+        for month, day in _COMPACT_MONTH_DAY.findall(_visible_text(new_plan))
+    )
+    allowed = Counter()
+    for pair, count in new_dates.items():
+        matched = min(count, old_dates.get(pair, 0))
+        if not matched:
+            continue
+        month, day = pair
+        allowed[month] += matched
+        allowed[day] += matched
+    return allowed
 
 
 def _high_risk_claims(plan):
@@ -315,12 +353,20 @@ def classify_fast_edit(old_bundle, new_bundle):
         reasons.append("related_posts_changed")
     if old_plan.get("official_navigation", []) != new_plan.get("official_navigation", []):
         reasons.append("official_navigation_changed")
+    old_section_links = [section.get("official_links", []) for section in old_plan.get("sections", [])]
+    new_section_links = [section.get("official_links", []) for section in new_plan.get("sections", [])]
+    if old_section_links != new_section_links:
+        # Reader navigation to an external destination is not a wording-only
+        # delta. Force Standard so the URL/source binding is fully validated.
+        reasons.append("section_official_links_changed")
     if not _evidence_pairs(new_bundle).issubset(_evidence_pairs(old_bundle)):
         reasons.append("new_evidence_added")
 
     old_tokens = _fact_tokens(old_plan, old_bundle.get("sources", []))
     new_tokens = _fact_tokens(new_plan, new_bundle.get("sources", []))
-    added_tokens = sorted((new_tokens - old_tokens).elements())
+    added = new_tokens - old_tokens
+    added -= _date_format_number_allowance(old_plan, new_plan)
+    added_tokens = sorted(added.elements())
     if added_tokens:
         reasons.append("new_fact_tokens:" + ",".join(added_tokens[:12]))
 
@@ -358,7 +404,14 @@ def validate_fast_edit(old_bundle, new_bundle, now=None):
         now=now,
         require_review=False,
     )
-    if old_report["status"] != "ready":
+    old_reasons = set(old_report.get("reasons", []))
+    baseline_layout_migration = bool(
+        old_reasons
+        and old_reasons <= _BASELINE_MIGRATION_REASONS
+        and old_bundle.get("brief", {}).get("event_post_standard_version") is not None
+        and new_bundle.get("brief", {}).get("event_post_standard_version") is not None
+    )
+    if old_report["status"] != "ready" and not baseline_layout_migration:
         return {
             "status": FULL_REVIEW_REQUIRED,
             "reasons": ["base_review_not_current", *old_report["reasons"]],
@@ -397,6 +450,9 @@ def validate_fast_edit(old_bundle, new_bundle, now=None):
             "base_content_digest": classification["base_content_digest"],
             "result_content_digest": classification["result_content_digest"],
         }
+    if baseline_layout_migration:
+        classification = dict(classification)
+        classification["baseline_migration"] = sorted(old_reasons)
     return classification
 
 

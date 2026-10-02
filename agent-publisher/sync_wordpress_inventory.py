@@ -38,7 +38,8 @@ def sync_inventory():
     with timed('inventory_sync'):
         increment('wp_roundtrips')
         result = subprocess.run(_WP_BASE + LIGHTWEIGHT_INVENTORY_ARGS,
-                                check=True, capture_output=True, text=True, timeout=60)
+                                check=True, capture_output=True, text=True,
+                                encoding='utf-8', errors='strict', timeout=60)
     posts = json.loads(result.stdout)
     if (not isinstance(posts, list)
             or any(not isinstance(row, dict)

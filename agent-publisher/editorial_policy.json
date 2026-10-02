@@ -119,6 +119,22 @@
       "source_event_phrase": "9월 24일(목)부터 27일(일)까지",
       "source_date_phrase": "2026.09.18",
       "reason": "The user explicitly requested a richer, better-formatted refresh of existing legacy draft #239 on 2026-09-24 while keeping it as a draft. This exception is limited to that exact draft, exact official source set and the 2026-09-27 holiday window; it does not make Changdeokgung Secret Garden free, make every site share the same viewing hours or reservation rules, or weaken the 30-day rule for another dated article."
+    },
+    "gwangju-october-festivals-2026": {
+      "existing_post_id": 666,
+      "useful_until": "2026-10-25",
+      "official_urls": [
+        "https://www.accf.or.kr/main/event/musicsociety2026",
+        "https://www.recollection.kr/",
+        "https://www.buskingworldcup.com/about/about.php",
+        "https://www.seogu.gwangju.kr/menu.es?mid=c30201000000",
+        "https://artgwangju.kr/ko/about/",
+        "https://kimchi.gwangju.go.kr/index.php?cate=001002",
+        "https://www.accf.or.kr/main/board/pressrelease-view/1335"
+      ],
+      "source_event_url": "https://www.accf.or.kr/main/event/musicsociety2026",
+      "source_event_phrase": "2026. 10. 1.(목) ∼ 10. 4.(일)",
+      "reason": "The user explicitly requested remediation of existing Draft #666 on 2026-10-01. This exception is limited to that exact draft, exact official source set and the final 2026-10-25 event date; it does not weaken the 30-day rule for another dated post."
     }
   },
   "source_max_age_hours": 24,
@@ -135,8 +151,20 @@
     "purpose": "modern_editorial_cover",
     "benchmark": "post-475-movein-cover-2026-09-27",
     "scope": {
-      "applies_to": ["lookup", "application", "calculator", "comparison", "welfare", "pension", "health", "administrative_service"],
-      "exceptions": ["concert_poster", "reviewed_official_poster_preservation"]
+      "applies_to": [
+        "lookup",
+        "application",
+        "calculator",
+        "comparison",
+        "welfare",
+        "pension",
+        "health",
+        "administrative_service"
+      ],
+      "exceptions": [
+        "concert_poster",
+        "reviewed_official_poster_preservation"
+      ]
     },
     "canvas": {
       "width": 1200,
@@ -154,12 +182,47 @@
       "single_topic_word_may_match_article_title": true,
       "lists_in_image": false,
       "semantic_line_breaks_required": true,
+      "line_break_strategy": "fixed_semantic_plan",
+      "font_metrics_may_not_change_line_breaks": true,
+      "primary_line_target_chars": 10,
+      "primary_line_slot_px": 96,
+      "primary_baseline_offset_px": 82,
+      "secondary_line_slot_px": 36,
+      "secondary_baseline_offset_px": 30,
+      "primary_min_font_size_px": 52,
+      "secondary_min_font_size_px": 22,
+      "chip_min_font_size_px": 16,
+      "overflow_behavior": "shrink_same_lines_then_reject",
       "primary_font_role": "hangul_display",
       "display_font_required": true,
+      "generic_system_fonts_prohibited_for_all_visible_copy": true,
       "avoid_generic_system_font_for_primary": true,
-      "brand_primary_font_family": "HYPMokGak-Bold",
+      "brand_primary_font_family": "NotoSerifKR-900",
       "brand_primary_font_rotation": false,
-      "secondary_font_role": "clean_hangul_sans",
+      "secondary_font_role": "hangul_display",
+      "brand_secondary_font_family": "NotoSerifKR-900",
+      "chip_font_role": "hangul_display",
+      "brand_chip_font_family": "NotoSerifKR-900",
+      "candidate_font_families": [
+        "HanSantteutDotum-Bold",
+        "BlackHanSans",
+        "DoHyeon",
+        "Jua",
+        "Hahmlet-900",
+        "HYHeadLine-Medium",
+        "HYGraphic-Medium",
+        "HancomMalangMalang-Bold",
+        "NotoSerifKR-900"
+      ],
+      "excluded_font_families": [
+        "HYPMokGak-Bold",
+        "Gasoek One",
+        "HYShortSamul-Medium",
+        "HYGungSo-Bold",
+        "Headline R",
+        "한컴 훈민정음_H",
+        "Magic R"
+      ],
       "primary_larger_than_previous_default": true
     },
     "composition": {
@@ -170,9 +233,15 @@
       "text_vertical_alignment": "center",
       "top_aligned_text_prohibited": true,
       "text_area_percent": 45,
-      "text_area_percent_range": [44, 46],
+      "text_area_percent_range": [
+        44,
+        46
+      ],
       "scene_area_percent": 55,
-      "scene_area_percent_range": [54, 56],
+      "scene_area_percent_range": [
+        54,
+        56
+      ],
       "text_start_px": 96,
       "text_block_center_y_percent": 50,
       "reserved_text_area_percent": 45,
@@ -247,6 +316,12 @@
       "default_model": "gemini-3.5-flash",
       "model_env_override": "BLOGUITO_IMAGE_REVIEW_MODEL",
       "on_unavailable": "reject_nondeterministic_image"
+    },
+    "event_post_override": {
+      "layout_mode": "candidate_gallery",
+      "minimum_layout_candidates": 5,
+      "same_layout_font_variants_count_as_separate_candidates": false,
+      "selected_layout_may_override_default_left_right_composition": true
     },
     "concert_source_priority": [
       "official_ticket_vendor",

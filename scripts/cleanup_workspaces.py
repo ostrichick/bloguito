@@ -117,6 +117,8 @@ def active_browser_profile_paths() -> set[Path]:
     if os.name != "nt":
         raise RuntimeError("browser_process_check_unsupported")
     script = (
+        "$utf8 = New-Object System.Text.UTF8Encoding($false); "
+        "[Console]::OutputEncoding = $utf8; "
         "@(Get-CimInstance Win32_Process | "
         "Where-Object { @('msedge.exe','chrome.exe','brave.exe') -contains $_.Name } | "
         "ForEach-Object { $_.CommandLine }) | ConvertTo-Json -Compress"
@@ -127,6 +129,8 @@ def active_browser_profile_paths() -> set[Path]:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError) as error:

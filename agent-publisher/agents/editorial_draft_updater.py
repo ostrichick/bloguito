@@ -82,7 +82,8 @@ def update_draft(post_id, bundle, expected_content_sha256):
             raise ValueError('draft_contains_other_edits: do_not_overwrite')
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         live = json.loads(subprocess.run(base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
-                                         capture_output=True, text=True, check=True).stdout)
+                                         capture_output=True, text=True, encoding='utf-8',
+                                         errors='strict', check=True).stdout)
         if (live['post_status'] != 'draft' or live['post_title'] != current['post_title']
                 or _hash(live['post_content']) != expected_content_sha256):
             raise ValueError('draft_changed_during_review')
@@ -95,9 +96,11 @@ def update_draft(post_id, bundle, expected_content_sha256):
         save_report(bundle, report)
         if live['post_content'] != desired:
             subprocess.run(base + ['post', 'update', str(post_id), '--post_content=' + desired,
-                                   '--allow-root'], capture_output=True, text=True, check=True)
+                                   '--allow-root'], capture_output=True, text=True, encoding='utf-8',
+                                   errors='strict', check=True)
         saved = json.loads(subprocess.run(base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
-                                          capture_output=True, text=True, check=True).stdout)
+                                          capture_output=True, text=True, encoding='utf-8',
+                                          errors='strict', check=True).stdout)
         if (saved['post_status'] != 'draft' or saved['post_title'] != live['post_title']
                 or saved['post_name'] != live['post_name'] or saved['post_content'] != desired):
             raise ValueError('draft_save_verification_failed')

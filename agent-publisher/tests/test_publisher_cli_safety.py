@@ -1,4 +1,4 @@
-﻿import json, tempfile, unittest
+import json, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch, Mock
 from agents.publisher import PublisherAgent

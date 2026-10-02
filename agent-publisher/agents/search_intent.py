@@ -57,6 +57,7 @@ def duplicate_posts(brief, posts, related_post_ids=None):
     terms = brief.get('required_title_terms', [])
     official = set(brief.get('official_urls', []))
     related = set(related_post_ids or ())
+    existing_post_id = brief.get('existing_post_id')
     # Editing an existing article can cite the same broad official policy page
     # as a distinct article. New-post discovery still rejects any source URL
     # overlap, including source-only citations, as its conservative safeguard.
@@ -76,6 +77,7 @@ def duplicate_posts(brief, posts, related_post_ids=None):
             return True
         return isinstance(content, str) and url in unescape(content)
     return [p for p in posts if p.get('post_status') in {'publish', 'draft', 'pending', 'future', 'private'}
+            and not (isinstance(existing_post_id, int) and p.get('ID') == existing_post_id)
             and ((terms and all(norm(t) in norm(p.get('post_title', '')) for t in terms))
                  or any(url_duplicate(p, url) for url in official))]
 

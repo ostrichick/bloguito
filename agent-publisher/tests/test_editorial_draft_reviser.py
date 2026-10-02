@@ -10,12 +10,51 @@ from agents.editorial import excerpt_from_lead, render
 from agents.editorial_draft_reviser import (
     _before_generated_source_footer,
     _normalize_renderer_migrations,
+    _revision_source_recheck_plan,
     revise_reviewed_draft,
 )
 from test_editorial_system import NOW, sample, sign
 
 
 class EditorialDraftReviserTests(unittest.TestCase):
+    def test_revision_source_plan_rechecks_only_new_source_when_existing_sources_are_fresh(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        for source in old["sources"]:
+            source["fetched_at"] = NOW.isoformat()
+        new = copy.deepcopy(old)
+        new["sources"].append({
+            "id": "s-new",
+            "url": "https://example.org/new",
+            "title": "새 공식 자료",
+            "text": "새 공식 근거가 충분히 포함된 자료입니다.",
+            "source_type": "official",
+            "fetched_at": NOW.isoformat(),
+            "sha256": hashlib.sha256("새 공식 근거가 충분히 포함된 자료입니다.".encode()).hexdigest(),
+        })
+        plan = _revision_source_recheck_plan(old, new, now=NOW)
+        self.assertEqual(["s-new"], [source["id"] for source in plan["refresh_sources"]])
+        self.assertEqual([source["id"] for source in old["sources"]], plan["reused_source_ids"])
+
+    def test_revision_source_plan_rechecks_changed_existing_source(self):
+        old = sample()
+        for source in old["sources"]:
+            source["fetched_at"] = NOW.isoformat()
+        new = copy.deepcopy(old)
+        new["sources"][0]["title"] = "변경된 공식 자료 제목"
+        plan = _revision_source_recheck_plan(old, new, now=NOW)
+        self.assertEqual([new["sources"][0]["id"]], [source["id"] for source in plan["refresh_sources"]])
+
+    def test_revision_source_plan_rechecks_unchanged_live_state_source(self):
+        old = sample()
+        for source in old["sources"]:
+            source["fetched_at"] = NOW.isoformat()
+        old["sources"][0]["text"] += " 현재 신청 가능합니다."
+        old["sources"][0]["sha256"] = hashlib.sha256(old["sources"][0]["text"].encode()).hexdigest()
+        new = copy.deepcopy(old)
+        plan = _revision_source_recheck_plan(old, new, now=NOW)
+        self.assertIn(old["sources"][0]["id"], [source["id"] for source in plan["refresh_sources"]])
+
     def test_full_reviewed_draft_revision_can_apply_explicit_reviewed_title_change(self):
         old = sample()
         new = copy.deepcopy(old)
@@ -251,6 +290,18 @@ class EditorialDraftReviserTests(unittest.TestCase):
             _normalize_renderer_migrations(new.replace('신청</a>', '다른 문구</a>')),
         )
 
+    def test_event_image_source_link_label_renderer_migration_is_normalized(self):
+        old = (
+            '<figure><figcaption style="color:#64748b">행사 사진, '
+            '<a href="https://example.org/event" rel="noopener noreferrer">공식 자료</a>'
+            '</figcaption></figure>'
+        )
+        new = old.replace('>공식 자료</a>', '>사진 출처</a>')
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
     def test_event_image_caption_migration_does_not_hide_authored_prose_change(self):
         old = (
             '<p>검토된 본문입니다.</p><figure><figcaption>공식 행사 이미지 · '
@@ -366,6 +417,42 @@ class EditorialDraftReviserTests(unittest.TestCase):
         edited = (
             '<div>광안리 <span class="bloguito-semantic-unit">M 드론라이트쇼</span> '
             '10월 공연</div><p>사람이 바꾼 본문</p>'
+        )
+        self.assertNotEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(edited),
+        )
+
+    def test_kakao_map_payload_renderer_migration_is_normalized(self):
+        old = (
+            '<p>검토된 본문</p>'
+            '<section class="bloguito-kakao-map-container" aria-label="행사장 위치 지도">'
+            '<div id="bloguito-kakao-map"></div>'
+            '<script>var groups=[{"content":"<div>행사</div>"}];</script>'
+            '</section>'
+            '<p>다음 본문</p>'
+        )
+        new = (
+            '<p>검토된 본문</p>'
+            '<section class="bloguito-kakao-map-container" aria-label="행사장 위치 지도">'
+            '<div id="bloguito-kakao-map"></div>'
+            '<script>var groups=JSON.parse(atob("W10="));</script>'
+            '</section>'
+            '<p>다음 본문</p>'
+        )
+        self.assertEqual(
+            _normalize_renderer_migrations(old),
+            _normalize_renderer_migrations(new),
+        )
+
+    def test_kakao_map_migration_does_not_hide_authored_prose_change(self):
+        old = (
+            '<p>검토된 본문</p>'
+            '<section class="bloguito-kakao-map-container"><div id="bloguito-kakao-map"></div></section>'
+        )
+        edited = (
+            '<p>사람이 바꾼 본문</p>'
+            '<section class="bloguito-kakao-map-container"><div id="bloguito-kakao-map"></div></section>'
         )
         self.assertNotEqual(
             _normalize_renderer_migrations(old),

@@ -1,5 +1,6 @@
 """Model-independent plan format; Gemini is a configurable writing/review adapter."""
 import json
+import hashlib
 import os
 import re
 import time
@@ -62,8 +63,9 @@ class SectionImage(BaseModel):
     caption: str
     source_id: str
     rights: str | None = Field(default=None, description=(
-        'Event-post v1 should record generated_original, site_owned, open_license or permission_granted. '
-        'For open-license or permission-based images, rights_url should identify the reuse terms.'
+        'Event-post v1 should record site_owned, open_license, permission_granted or source_attributed. '
+        'For open-license or permission-based images, rights_url should identify the reuse terms. '
+        'The renderer may omit a separate photo-source link for site-owned event images.'
     ))
     rights_url: str | None = None
     year: int | None = Field(default=None, description=(
@@ -73,9 +75,22 @@ class SectionImage(BaseModel):
 
 class SectionLocation(BaseModel):
     venue: str
-    address: str
+    address: str = Field(description=(
+        'Verified street/lot address when the official source provides one. Use an empty string rather than inventing an address.'
+    ))
     query: str
     evidence: list[Evidence]
+    latitude: float | None = Field(default=None, description=(
+        'Event-post v1 only: verified Kakao Map marker latitude for this event venue.'
+    ))
+    longitude: float | None = Field(default=None, description=(
+        'Event-post v1 only: verified Kakao Map marker longitude for this event venue.'
+    ))
+
+
+class OfficialSectionLink(BaseModel):
+    label: str
+    url: str
 
 
 class Section(BaseModel):
@@ -92,6 +107,11 @@ class Section(BaseModel):
     actions: list[str] = Field(default_factory=list, description=(
         'Optional reviewed action URLs to render inside this section. Each URL must '
         'exactly match an official source action; scoped actions are omitted from the global CTA.'
+    ))
+    official_links: list[OfficialSectionLink] = Field(default_factory=list, description=(
+        'Informational links to an official source used by this section, for example a detailed event-program page. '
+        'Optional globally, but event-post v1 requires at least one when event_name is set. '
+        'These are not booking/apply/purchase actions.'
     ))
     kind: str | None = Field(default=None, description=(
         'Select overview, eligibility, comparison, procedure, exceptions, schedule or general. '
@@ -274,7 +294,14 @@ def _official_request_headers(url):
             or parsed.path == '/yeyak/www/selectTnExprnListU.do'
         )
     )
-    if nol_product or yes24_product or airport_public or donggu_public_event:
+    beartree_event = (
+        parsed.scheme == 'https'
+        and parsed.hostname == 'beartreepark.com'
+        and parsed.path == '/events/'
+        and (parse_qs(parsed.query).get('bmode') or [''])[0] == 'view'
+        and re.fullmatch(r'\d+', (parse_qs(parsed.query).get('idx') or [''])[0])
+    )
+    if nol_product or yes24_product or airport_public or donggu_public_event or beartree_event:
         return {
             'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                            'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -284,6 +311,53 @@ def _official_request_headers(url):
             'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
         }
     return {}
+
+
+def _official_visual_transcript(brief, url, soup):
+    """Bind a human-reviewed transcript to one exact visual-only official source.
+
+    Some official event boards publish the substantive schedule only as images.
+    The transcript is accepted only when the configured HTTPS asset is actually
+    embedded in the exact reviewed official page. The asset bytes are fetched
+    and hashed into the source text, so later image replacement invalidates the
+    source snapshot instead of silently reusing stale visual evidence.
+    """
+    configured = (brief.get('visual_source_transcripts') or {}).get(url)
+    if configured is None:
+        return None
+    if not isinstance(configured, dict) or set(configured) != {'asset_url', 'asset_sha256', 'transcript'}:
+        raise ValueError('official_visual_transcript_invalid')
+    asset_url = configured.get('asset_url')
+    asset_sha256 = configured.get('asset_sha256')
+    transcript = configured.get('transcript')
+    page = urlsplit(url)
+    asset = urlsplit(asset_url) if isinstance(asset_url, str) else None
+    # This route is intentionally narrow: it exists for the verified Beartree
+    # event board whose announcement body is a sequence of CDN card images.
+    if (page.scheme != 'https' or page.hostname != 'beartreepark.com'
+            or page.path != '/events/'
+            or (parse_qs(page.query).get('bmode') or [''])[0] != 'view'
+            or not re.fullmatch(r'\d+', (parse_qs(page.query).get('idx') or [''])[0])
+            or asset is None or asset.scheme != 'https' or asset.hostname != 'cdn.imweb.me'
+            or not isinstance(asset_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', asset_sha256)
+            or not isinstance(transcript, str) or not 20 <= len(transcript.strip()) <= 4000):
+        raise ValueError('official_visual_transcript_invalid')
+    board = soup.select('.board_txt_area')
+    if len(board) != 1:
+        raise ValueError('official_visual_source_structure_missing_or_ambiguous')
+    matches = [img for img in board[0].select('img[src]') if img.get('src') == asset_url]
+    if len(matches) != 1:
+        raise ValueError('official_visual_asset_missing_or_ambiguous')
+    response = requests.get(asset_url, headers=_official_request_headers(url), timeout=15, allow_redirects=False)
+    content_type = (response.headers.get('Content-Type', '') if hasattr(response, 'headers') else '').lower()
+    if response.status_code != 200 or not response.content or (content_type and 'image/' not in content_type):
+        raise ValueError(f'official_visual_asset_http_{response.status_code}')
+    asset_sha = hashlib.sha256(response.content).hexdigest()
+    if asset_sha != asset_sha256:
+        raise ValueError('official_visual_asset_sha256_mismatch')
+    return transcript.strip() + '\nofficial_visual_asset_sha256: ' + asset_sha
+
+
 def _normalize_nol_product_text(text, url):
     """Drop only volatile social counters from a verified NOL product page."""
     parsed = urlsplit(url)
@@ -637,6 +711,25 @@ def _yna_post233_distribution_reference_text(soup, url):
     return text
 
 
+def _newdaily_beartree_reference_text(soup, url):
+    """Extract only the stable article body used by event post #665.
+
+    The page includes a live ranking rail whose ordering changes independently
+    of the article. Lock normalization to the exact reviewed URL and fail closed
+    if the article-body structure or required facts disappear.
+    """
+    if url != 'https://cc.newdaily.co.kr/site/data/html/2026/09/30/2026093000102.html':
+        return None
+    bodies = soup.select('.article-body')
+    if len(bodies) != 1:
+        raise ValueError('newdaily_beartree_article_body_missing_or_ambiguous')
+    text = bodies[0].get_text('\n', strip=True)
+    required = ('10월 3일부터 11월 22일까지', '가을 산책길', '팝업 마켓')
+    if any(phrase not in text for phrase in required):
+        raise ValueError('newdaily_beartree_article_body_required_facts_missing')
+    return text
+
+
 def _official_get(url):
     """Fetch an official URL without trusting arbitrary redirects.
 
@@ -770,6 +863,12 @@ def _fetch_sources_sequential(brief):
         nol_booking_metadata = _nol_product_booking_metadata(response.content, url)
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
+        visual_text = _official_visual_transcript(brief, url, soup)
+        if visual_text is not None:
+            if not 80 <= len(visual_text) <= 60000:
+                raise ValueError('official_source_text_missing_or_too_large')
+            sources.append({'id': f's{i}', **snapshot(url, title, visual_text, source_type)})
+            continue
         # NTS article metadata renders `<strong>조회수</strong>65289` as two
         # separate text lines, so the line-based filter below cannot remove it.
         # Remove only the verified view-count list item in the NTS metadata;
@@ -864,6 +963,8 @@ def _fetch_sources_sequential(brief):
             text = _naver_post233_price_reference_text(soup, url)
         if text is None:
             text = _yna_post233_distribution_reference_text(soup, url)
+        if text is None:
+            text = _newdaily_beartree_reference_text(soup, url)
         if text is None:
             text = soup.get_text('\n', strip=True)
         # Government article page counters change on every read. They are not

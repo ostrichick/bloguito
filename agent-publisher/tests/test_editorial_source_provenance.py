@@ -7,6 +7,33 @@ from agents.editorial_writer import fetch_sources
 
 
 class EditorialSourceProvenanceTests(unittest.TestCase):
+    def test_newdaily_beartree_live_ranking_is_excluded_but_article_body_is_hashed(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, ranking, popup_end):
+                self.content = (
+                    '<html><head><title>베어트리파크 시간의 정원</title></head><body>'
+                    f'<aside class="ranking">많이 본 기사 {ranking}</aside>'
+                    '<div class="article-body">'
+                    '<p>세종 베어트리파크는 10월 3일부터 11월 22일까지 가을축제 시간의 정원을 개최한다.</p>'
+                    '<p>가을 산책길을 한시적으로 개방한다.</p>'
+                    f'<p>팝업 마켓은 10월 17일부터 11월 {popup_end}일까지 주말마다 운영한다.</p>'
+                    '<p>10월 31일 오후 1시와 3시에 버블쇼가 열린다.</p>'
+                    '</div></body></html>'
+                ).encode('utf-8')
+
+        url = 'https://cc.newdaily.co.kr/site/data/html/2026/09/30/2026093000102.html'
+        brief = {'official_urls': [], 'reference_urls': [url], 'entity': '베어트리파크 시간의 정원'}
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            Response('A-B-C', 1), Response('B-A-C', 1), Response('B-A-C', 2),
+        ]):
+            first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
+        self.assertEqual(first['sha256'], same['sha256'])
+        self.assertNotEqual(first['sha256'], changed['sha256'])
+        self.assertNotIn('많이 본 기사', first['text'])
+        self.assertIn('10월 3일부터 11월 22일까지', first['text'])
+
     def test_science_event_view_counter_is_stable_but_body_numbers_are_hashed(self):
         class Response:
             status_code = 200
@@ -338,6 +365,101 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         with patch('agents.editorial_writer.requests.get', return_value=Response()):
             result = fetch_sources({'official_urls': ['https://example.org/notice'], 'entity': 'test'})[0]
         self.assertIn('조회수 : 120은 이번 공고의 조건입니다.', result['text'])
+
+
+class BeartreeVisualOfficialSourceTests(unittest.TestCase):
+    URL = ('https://beartreepark.com/events/?q=x&bmode=view&idx=174457209&t=board')
+    ASSET = 'https://cdn.imweb.me/upload/test/beartree-card.png'
+    ASSET_BYTES = b'official-image-v1'
+
+    class Response:
+        def __init__(self, content, content_type='text/html; charset=utf-8'):
+            self.status_code = 200
+            self.content = content
+            self.headers = {'Content-Type': content_type}
+
+    def brief(self, asset_sha256=None):
+        import hashlib
+        asset_sha256 = asset_sha256 or hashlib.sha256(self.ASSET_BYTES).hexdigest()
+        return {
+            'official_urls': [self.URL],
+            'entity': '2026 베어트리파크 가을축제 시간의 정원',
+            'visual_source_transcripts': {
+                self.URL: {
+                    'asset_url': self.ASSET,
+                    'asset_sha256': asset_sha256,
+                    'transcript': ('2026 베어트리파크 가을축제 <시간의 정원>\n'
+                                   '행사기간: 2026.10.03 ~ 2026.11.22'),
+                }
+            },
+        }
+
+    def page(self, asset=None):
+        asset = asset or self.ASSET
+        return self.Response((
+            '<html><head><title>2026 베어트리파크 가을축제</title></head><body>'
+            '<div class="board_txt_area"><img src="' + asset + '"></div></body></html>'
+        ).encode('utf-8'))
+
+    def test_visual_only_official_card_is_bound_to_pinned_hash(self):
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            self.page(), self.Response(self.ASSET_BYTES, 'image/png'),
+        ]):
+            source = fetch_sources(self.brief())[0]
+        self.assertEqual('official', source['source_type'])
+        self.assertIn('행사기간: 2026.10.03 ~ 2026.11.22', source['text'])
+        self.assertIn('official_visual_asset_sha256:', source['text'])
+
+    def test_visual_transcript_rejects_asset_sha_mismatch(self):
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            self.page(), self.Response(b'replaced-official-image', 'image/png'),
+        ]):
+            with self.assertRaisesRegex(ValueError, 'official_visual_asset_sha256_mismatch'):
+                fetch_sources(self.brief())
+
+    def test_visual_transcript_rejects_unbound_asset(self):
+        with patch('agents.editorial_writer.requests.get', return_value=self.page('https://cdn.imweb.me/upload/other.png')):
+            with self.assertRaisesRegex(ValueError, 'official_visual_asset_missing_or_ambiguous'):
+                fetch_sources(self.brief())
+
+    def test_visual_transcript_supports_multi_event_temporal_entry(self):
+        from datetime import datetime
+        from agents.temporal_validation import KST, validate_multi_event_schedule
+        with patch('agents.editorial_writer.requests.get', side_effect=[
+            self.page(), self.Response(self.ASSET_BYTES, 'image/png'),
+        ]):
+            source = fetch_sources(self.brief())[0]
+        quote = '2026 베어트리파크 가을축제 <시간의 정원>\n행사기간: 2026.10.03 ~ 2026.11.22'
+        other_url = 'https://example.org/official-other'
+        other_text = '행사기간: 2026.10.17 ~ 2026.10.17\n다른행사 안내입니다.'
+        import hashlib
+        other = {
+            'id': 's1', 'url': other_url, 'title': '다른행사', 'text': other_text,
+            'source_type': 'official', 'fetched_at': '2026-10-01T12:00:00+09:00',
+            'sha256': hashlib.sha256(other_text.encode()).hexdigest(),
+        }
+        source['id'] = 's0'
+        brief = {
+            'content_type': 'dated', 'category_key': 'life',
+            'official_urls': [self.URL, other_url], 'useful_until': '2026-11-22',
+        }
+        plan = {
+            'title': '2026 세종 10월 축제',
+            'lead': {'text': '2026 베어트리파크 가을축제 시간의 정원과 다른행사 일정입니다.'},
+            'sections': [], 'faq': [],
+        }
+        temporal = {
+            'multi_event_schedule': True,
+            'event_entries': [
+                {'name': '2026 베어트리파크 가을축제 시간의 정원', 'start_date': '2026-10-03',
+                 'end_date': '2026-11-22', 'evidence': {'source_id': 's0', 'quote': quote}},
+                {'name': '다른행사', 'start_date': '2026-10-17', 'end_date': '2026-10-17',
+                 'evidence': {'source_id': 's1', 'quote': other_text}},
+            ],
+        }
+        reasons = validate_multi_event_schedule(
+            brief, [source, other], temporal, plan, datetime(2026, 10, 1, 12, tzinfo=KST), minimum_days=0)
+        self.assertEqual([], reasons)
 
 
 if __name__ == '__main__':

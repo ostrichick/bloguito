@@ -10,7 +10,7 @@ from contextvars import copy_context
 from datetime import datetime
 from pathlib import Path
 
-from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
+from agents.editorial import ROOT, excerpt_from_lead, fresh, policy, render, save_report, validate_bundle
 from agents.editorial_writer import load_inventory
 from agents.post_manifest_store import (
     acquire_editorial_lock,
@@ -20,7 +20,8 @@ from agents.post_manifest_store import (
     replace_record,
     snapshot_backup_payload,
 )
-from agents.source_validation_cache import verify_sources_unchanged
+from agents.source_validation_cache import source_requires_live_refresh, verify_sources_unchanged
+from agents.temporal_validation import KST
 from agents.editorial_updater import (
     _read_rank_math_meta,
     _set_rank_math_meta,
@@ -61,6 +62,74 @@ except ImportError:  # Compatibility with an older deployed worker during narrow
 
 def _sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_SOURCE_IDENTITY_FIELDS = ("url", "source_type", "sha256", "title")
+
+
+def _revision_source_recheck_plan(old_bundle, new_bundle, now=None):
+    """Select only sources that need a network recheck for a full draft revision.
+
+    A Standard revision can substantially change prose while still reusing the
+    exact reviewed source snapshots.  Re-fetch sources that are new/changed,
+    stale, or explicitly describe live/current state.  Reusing an unchanged,
+    still-fresh snapshot avoids making an unrelated upstream outage block a
+    revision while preserving fail-closed behavior for facts that actually
+    changed or can change independently of the snapshot.
+    """
+    now = now or datetime.now(KST)
+    old_sources = {
+        source.get("id"): source
+        for source in old_bundle.get("sources", [])
+        if isinstance(source, dict) and isinstance(source.get("id"), str)
+    }
+    refresh_sources = []
+    reused_source_ids = []
+    max_age = policy()["source_max_age_hours"]
+    for source in new_bundle.get("sources", []):
+        if not isinstance(source, dict) or not isinstance(source.get("id"), str):
+            raise ValueError("reviewed_revision_source_ids_required")
+        prior = old_sources.get(source["id"])
+        changed = (
+            prior is None
+            or any(prior.get(field) != source.get(field) for field in _SOURCE_IDENTITY_FIELDS)
+        )
+        stale = not fresh(source.get("fetched_at"), now, max_age)
+        live_state = source_requires_live_refresh(source)
+        if changed or stale or live_state:
+            refresh_sources.append(source)
+        else:
+            reused_source_ids.append(source["id"])
+    return {
+        "refresh_sources": refresh_sources,
+        "reused_source_ids": reused_source_ids,
+    }
+
+
+def _verify_revision_sources(old_bundle, new_bundle, now=None):
+    plan = _revision_source_recheck_plan(old_bundle, new_bundle, now=now)
+    refresh_sources = plan["refresh_sources"]
+    if not refresh_sources:
+        return {
+            "reused_source_ids": plan["reused_source_ids"],
+            "refetched_source_ids": [],
+            "all_unchanged": True,
+        }
+    refresh_ids = {source["id"] for source in refresh_sources}
+    checked = verify_sources_unchanged(
+        new_bundle["brief"],
+        refresh_sources,
+        force_refresh_ids=refresh_ids,
+        now=now,
+    )
+    return {
+        "reused_source_ids": [
+            *plan["reused_source_ids"],
+            *checked.get("reused_source_ids", []),
+        ],
+        "refetched_source_ids": checked.get("refetched_source_ids", []),
+        "all_unchanged": checked.get("all_unchanged") is True,
+    }
 
 
 def _before_generated_source_footer(content):
@@ -114,11 +183,30 @@ def _normalize_renderer_migrations(content):
         '<div class="bloguito-cta-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">',
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">',
     )
+    # The event-post overview map is renderer-owned markup.  The initial
+    # implementation embedded marker InfoWindow HTML directly in an inline JS
+    # string; WordPress wpautop could parse those literal tags and corrupt the
+    # script.  The current renderer Base64-encodes that payload.  Treat the
+    # whole generated map block as one migration unit so an otherwise unchanged
+    # reviewed draft can move between those renderer implementations without
+    # weakening the authored-prose CAS comparison.
+    content = re.sub(
+        r'<section class="bloguito-kakao-map-container"[^>]*>.*?</section>',
+        '<section data-bloguito-kakao-map="renderer-owned"></section>',
+        content,
+        flags=re.DOTALL,
+    )
     content = re.sub(
         r'(<figcaption\b[^>]*>[^<]*) · '
         r'(<a href="[^"]+"[^>]*>공식 자료</a></figcaption>)',
         r'\1, \2',
         content,
+    )
+    content = re.sub(
+        r'(<figcaption\b[^>]*>.*?<a href="[^"]+"[^>]*>)사진 출처(</a></figcaption>)',
+        r'\1공식 자료\2',
+        content,
+        flags=re.DOTALL,
     )
     content = content.replace(
         '>📍 행사장 지도 및 길찾기</div>',
@@ -212,9 +300,9 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 target_context.run, get_post, base, post_id, fields=post_fields)
             source_future = pool.submit(
                 source_context.run,
-                verify_sources_unchanged,
-                bundle["brief"],
-                bundle["sources"],
+                _verify_revision_sources,
+                old_bundle,
+                bundle,
             )
             inventory_future.result()
             initial_live = target_future.result()
@@ -346,7 +434,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 imported = subprocess.run(
                     base + ["media", "import", remote_image, f"--post_id={post_id}",
                             "--featured_image", "--porcelain", "--allow-root"],
-                    capture_output=True, text=True, check=True)
+                    capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
                 featured_attachment_id = imported.stdout.strip()
             finally:
                 subprocess.run(["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
@@ -355,7 +443,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 raise ValueError("featured_image_attachment_id_missing")
             observed_thumb = subprocess.run(
                 base + ["post", "meta", "get", str(post_id), "_thumbnail_id", "--allow-root"],
-                capture_output=True, text=True, check=True).stdout.strip()
+                capture_output=True, text=True, encoding="utf-8", errors="strict", check=True).stdout.strip()
             if observed_thumb != featured_attachment_id:
                 raise ValueError("featured_image_save_verification_failed")
 

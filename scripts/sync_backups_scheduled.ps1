@@ -6,11 +6,19 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Python = Join-Path $ProjectRoot "agent-publisher\.venv\Scripts\python.exe"
 $SyncScript = Join-Path $PSScriptRoot "sync_backups.py"
 New-Item -ItemType Directory -Path $LocalBackupDir -Force | Out-Null
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = $Utf8NoBom
+[Console]::OutputEncoding = $Utf8NoBom
+
+function Add-Utf8Line {
+    param([string]$Path, [string]$Value)
+    [System.IO.File]::AppendAllText($Path, $Value + [Environment]::NewLine, $Utf8NoBom)
+}
 
 function Write-BackupLog {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -LiteralPath $LogPath -Value "[$timestamp] $Message"
+    Add-Utf8Line -Path $LogPath -Value "[$timestamp] $Message"
 }
 
 Write-BackupLog "Scheduled backup sync started."
@@ -26,9 +34,10 @@ try {
     $env:BLOGUITO_BACKUP_SSH_HOST = "bloguito"
     $env:BLOGUITO_BACKUP_LOCAL_DIR = $LocalBackupDir
     $env:PYTHONUTF8 = "1"
+    $env:PYTHONIOENCODING = "utf-8"
 
     & $Python $SyncScript 2>&1 | ForEach-Object {
-        Add-Content -LiteralPath $LogPath -Value $_
+        Add-Utf8Line -Path $LogPath -Value ([string]$_)
         Write-Output $_
     }
     if ($LASTEXITCODE -ne 0) {

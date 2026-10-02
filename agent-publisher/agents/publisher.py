@@ -33,7 +33,8 @@ class PublisherAgent:
             "wp", "eval", f"echo get_permalink({int(post_id)});",
             "--allow-root"
         ]
-        res = subprocess.run(url_cmd, capture_output=True, text=True)
+        res = subprocess.run(
+            url_cmd, capture_output=True, text=True, encoding="utf-8", errors="strict")
         post_url = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"{SITE_URL}/?p={post_id}"
 
         # 반대쪽 색인에서 해당 post_id가 있으면 제거 (예: draft -> publish 승격)
@@ -102,13 +103,14 @@ class PublisherAgent:
                 '--post_type=post', '--post_status=draft', f'--post_title={title}',
                 f'--post_category={category["id"]}', '--post_excerpt=' + excerpt,
                 '--comment_status=closed', '--allow-root', '--porcelain'],
-                check=True, capture_output=True, text=True)
+                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict')
             post_id = int(result.stdout.strip())
             subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                 str(post_id), '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'],
                 check=True, capture_output=True)
             actual = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
-                '--fields=post_status,post_content', '--format=json', '--allow-root'], check=True, capture_output=True, text=True)
+                '--fields=post_status,post_content', '--format=json', '--allow-root'], check=True,
+                capture_output=True, text=True, encoding='utf-8', errors='strict')
             saved = json.loads(actual.stdout)
             if saved['post_status'] != 'draft' or saved['post_content'] != content:
                 raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
@@ -183,15 +185,21 @@ class PublisherAgent:
                 return post_id
             base = ['sudo', 'docker', 'exec', self.container_name, 'wp']
             # Re-read immediately before mutation to detect edits during validation.
-            current = json.loads(subprocess.run(base + ['post','get',str(post_id),'--format=json','--allow-root'], check=True,capture_output=True,text=True).stdout)
+            current = json.loads(subprocess.run(
+                base + ['post','get',str(post_id),'--format=json','--allow-root'],
+                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
             if current['post_content'] != old or current['post_status'] != 'draft' or current['post_title'] != existing['post_title']:
                 raise ValueError('reformat_user_edits_detected')
             backup = ROOT / 'data' / 'editorial_runs'
             backup.mkdir(parents=True, exist_ok=True)
             (backup / f'reformat-{post_id}-{datetime.now().strftime("%Y%m%dT%H%M%S")}.json').write_text(json.dumps(current,ensure_ascii=False),encoding='utf-8')
             # Only the content field changes; ID, title, status, category and media persist.
-            subprocess.run(base + ['post','update',str(post_id),'--post_content='+content,'--allow-root'],check=True,capture_output=True,text=True)
-            saved = json.loads(subprocess.run(base + ['post','get',str(post_id),'--format=json','--allow-root'],check=True,capture_output=True,text=True).stdout)
+            subprocess.run(
+                base + ['post','update',str(post_id),'--post_content='+content,'--allow-root'],
+                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict')
+            saved = json.loads(subprocess.run(
+                base + ['post','get',str(post_id),'--format=json','--allow-root'],
+                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
             if saved['post_content'] != content or saved['post_status'] != 'draft':
                 raise ValueError('reformat_saved_content_mismatch')
             category = __import__('config', fromlist=['CATEGORIES']).CATEGORIES[bundle['brief']['category_key']]
@@ -206,7 +214,9 @@ class PublisherAgent:
         args = ['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'list',
                 '--post_type=post', '--post_status=draft',
                 '--fields=ID,post_title,post_date,post_status', '--format=json', '--allow-root']
-        rows = json.loads(subprocess.run(args, check=True, capture_output=True, text=True).stdout)
+        rows = json.loads(subprocess.run(
+            args, check=True, capture_output=True, text=True,
+            encoding='utf-8', errors='strict').stdout)
         if not isinstance(rows, list) or any(not isinstance(p, dict) or p.get('post_status') != 'draft' for p in rows):
             raise ValueError('wordpress_drafts_invalid_response')
         index = []
@@ -268,13 +278,16 @@ class PublisherAgent:
                 raise ValueError('official_source_changed_since_review: fresh review required')
             base = ['sudo','docker','exec',self.container_name,'wp']
             final = json.loads(subprocess.run(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
-                                              check=True,capture_output=True,text=True).stdout)
+                                              check=True, capture_output=True, text=True,
+                                              encoding='utf-8', errors='strict').stdout)
             if final['post_status'] != 'draft' or final['post_title'] != title or not same(final['post_content'],expected):
                 raise ValueError('draft_changed_during_review')
             subprocess.run(base+['post','update',str(int(post_id)),'--post_status=publish','--allow-root'],
-                           check=True,capture_output=True,text=True)
+                           check=True, capture_output=True, text=True,
+                           encoding='utf-8', errors='strict')
             saved = json.loads(subprocess.run(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
-                                              check=True,capture_output=True,text=True).stdout)
+                                              check=True, capture_output=True, text=True,
+                                              encoding='utf-8', errors='strict').stdout)
             if saved['post_status'] != 'publish' or saved['post_title'] != title or not same(saved['post_content'],expected):
                 raise ValueError('publication_verification_failed: inspect WordPress state before retrying')
             category = resolve_category(bundle['brief']['category_key'])

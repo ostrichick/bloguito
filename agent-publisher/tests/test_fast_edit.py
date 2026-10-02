@@ -48,12 +48,39 @@ class FastEditTests(unittest.TestCase):
         self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
         self.assertTrue(any(reason.startswith('new_fact_tokens:') for reason in result['reasons']))
 
+    def test_classifier_allows_equivalent_compact_date_format(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        old['plan']['sections'][0]['heading'] = '행사 일정 10월 7일(수)~10월 11일(일)'
+        new['plan']['sections'][0]['heading'] = '행사 일정 10/7(수)~10/11(일)'
+        result = classify_fast_edit(old, new)
+        self.assertEqual('candidate', result['status'], result)
+
+    def test_classifier_rejects_unreviewed_compact_date(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        old['plan']['sections'][0]['heading'] = '행사 일정 10월 7일(수)'
+        new['plan']['sections'][0]['heading'] = '행사 일정 10/8(목)'
+        result = classify_fast_edit(old, new)
+        self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
+        self.assertTrue(any(reason.startswith('new_fact_tokens:') for reason in result['reasons']))
+
     def test_classifier_rejects_source_or_action_change(self):
         old, new = self._pair()
         new['sources'][0]['url'] = 'https://example.org/changed'
         result = classify_fast_edit(old, new)
         self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
         self.assertIn('sources_or_actions_changed', result['reasons'])
+
+    def test_classifier_routes_section_official_detail_link_change_to_full_review(self):
+        old, new = self._pair()
+        new['plan']['sections'][0]['official_links'] = [{
+            'label': '행사 상세 프로그램 보기',
+            'url': old['sources'][0]['url'],
+        }]
+        result = classify_fast_edit(old, new)
+        self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
+        self.assertIn('section_official_links_changed', result['reasons'])
 
     def test_classifier_rejects_title_and_related_post_changes(self):
         old, new = self._pair()
@@ -81,6 +108,41 @@ class FastEditTests(unittest.TestCase):
         result = validate_fast_edit(old, new, now=stale)
         self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
         self.assertIn('base_review_not_current', result['reasons'])
+
+    def test_fast_validator_allows_only_known_event_overview_baseline_migration(self):
+        old, new = self._pair()
+        old['brief']['event_post_standard_version'] = 1
+        new['brief']['event_post_standard_version'] = 1
+        ready = {'status': 'ready', 'reasons': [], 'details': []}
+        legacy = {
+            'status': 'needs_review',
+            'reasons': ['event_standard_overview_schedule_layout_invalid'],
+            'details': [],
+        }
+        with patch('agents.fast_edit.validate_bundle', side_effect=[legacy, ready]), \
+                patch('agents.fast_edit.validate_fast_review_lineage', return_value={
+                    'status': 'ready', 'reasons': [], 'chain_length': 0,
+                }):
+            result = validate_fast_edit(old, new)
+        self.assertEqual('candidate', result['status'], result)
+        self.assertEqual(
+            ['event_standard_overview_schedule_layout_invalid'],
+            result['baseline_migration'],
+        )
+
+    def test_fast_validator_does_not_broaden_baseline_migration_allowlist(self):
+        old, new = self._pair()
+        old['brief']['event_post_standard_version'] = 1
+        new['brief']['event_post_standard_version'] = 1
+        bad = {
+            'status': 'needs_review',
+            'reasons': ['event_standard_overview_schedule_layout_invalid', 'number_without_evidence'],
+            'details': [],
+        }
+        with patch('agents.fast_edit.validate_bundle', return_value=bad):
+            result = validate_fast_edit(old, new)
+        self.assertEqual(FULL_REVIEW_REQUIRED, result['status'])
+        self.assertIn('number_without_evidence', result['reasons'])
 
     def test_delta_reviewer_receives_user_edit_intent(self):
         old, new = self._pair()
