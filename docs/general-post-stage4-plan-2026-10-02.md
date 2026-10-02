@@ -1,12 +1,14 @@
 # 일반 정보 포스트 정책 최적화 4단계 후속 계획
 
-**상태:** 계획만 확정. 이 문서 작성 시점에는 4단계 코드를 구현하지 않는다.
+**상태 (2026-10-02):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 4.3은 [영향도 감사](general-post-stage4-3-impact-2026-10-02.md)까지만 완료했고 동작 코드는 아직 구현하지 않았다. 4.4는 계획 상태다.
 
 1~3단계에서 일반 정보글의 writer/validator/renderer 계약을 맞추고, 정책 문서를 글 유형별로 분리했으며, bundle에 실제 적용되는 정책만 semantic review fingerprint와 모델 지침에 포함하도록 변경했다. Standard 수정의 source recheck도 draft/public 공용 planner로 통합했다.
 
 4단계는 이 기반 위에서 **데이터 모델과 장기 유지보수 구조**를 정리한다. 한 번에 전부 바꾸지 않고 아래 4개 마이그레이션을 순서대로 진행한다.
 
 ## 4.1 일반/행사 writer schema 분리
+
+**진행 상태:** 완료. 신규 generation은 `GeneralPlan`/`EventPlan`을 분리해 사용하고 기존 `Plan`은 저장된 reviewed bundle을 위한 호환 superset parser로 유지한다.
 
 ### 목표
 
@@ -41,6 +43,8 @@
 - 저장 HTML diff가 schema 분리만으로 발생하지 않는다.
 
 ## 4.2 post-specific exception registry 분리
+
+**진행 상태:** 완료. dated 10건과 legacy procedure 1건을 `agent-publisher/data/policy_exceptions/`로 이동했고 기존 rule payload 동등성을 검증했다.
 
 ### 목표
 
@@ -80,6 +84,8 @@ agent-publisher/data/policy_exceptions/
 - 만료 예외가 자동으로 active 상태로 되돌아오지 않는다.
 
 ## 4.3 category 중심 freshness를 volatility 중심으로 전환
+
+**진행 상태:** 구현 전 영향도 확인 완료. 진행 중인 category reorganization과 핵심 파일이 겹치므로 해당 작업 정리 후 4.3A metadata-only 단계부터 시작한다. 단일 enum의 공백이 확인돼 `policy-current` 포함 여부와 post/source 두 레벨 live 표현을 구현 전에 확정한다.
 
 ### 목표
 
