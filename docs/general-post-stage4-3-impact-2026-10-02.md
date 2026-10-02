@@ -326,3 +326,18 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 - 자동 스케줄러를 위해 실버론 brief에 `requires_current_value_period=true`를 명시하고, writer가 source fetch 직후 현재 날짜를 포함하는 exact 연도+월 범위 또는 분기를 결정론적으로 추출해 temporal contract에 주입하도록 했다. exact period가 없거나 서로 다른 active period가 충돌하면 `current_value_period_unverified`로 HOLD한다. 연도 없는 `12~3월` 같은 반복 구간만으로는 자동 기간을 만들지 않는다.
 
 이 후속 작업으로 **장기요양 category false HOLD와 실버론 current-value false HOLD는 모두 의미를 보존한 일반 계약으로 해소**됐다. 다만 4.3C의 나머지 fallback 전체 제거는 만료된 기존 brief까지 재검토한 결과가 없으므로 아직 확대하지 않는다. 다음 정규 scheduler 표본은 2026-10-03 08:00 KST 이후에만 확인할 수 있고, 4.3D discovery 전환은 이 정규 표본과 4.3C 결과를 분리해 검토한다.
+
+### current-value 계약 운영 배포 — 2026-10-02 20:38~20:39 KST
+
+후속 current-value 계약은 최신 `origin/main`의 별도 refactor 12개를 먼저 반영한 격리 worktree에서 다시 검증한 뒤 운영에 배포했다. 최신 트리 전체 회귀는 **822 tests OK, skipped=1**이며 `git diff --check`도 통과했다.
+
+- release: `/home/ubuntu/releases/editorial-stage4-current-value-20261002-203819`
+- 코드 rollback manifest: `/home/ubuntu/agent-publisher/backups/editorial-20261002T113851Z/manifest.json`
+- 운영 SHA256은 `editorial.py=ba74680b1676292151c59f239082fcb30cb323050f023a7a6b31b3c62bddf104`, `editorial_writer.py=edcd778921e71d07ac1293689f364ae84ee41df543fd573ac31aa45bd625741b`, `temporal_validation.py=6d86d2f1e6f8f11db3bdc0268896062a9525ce738a190e9da5e540871c21f387`, `volatility.py=6f8f76251c3a4cac067d963f8e67a7e774699dfbc95a5c82e8a2cc02604d220c`이며 local release와 일치한다.
+- 운영 `search_briefs.json`은 전체 파일을 덮어쓰지 않았다. 장기요양과 실버론 두 reviewed row만 교체했고 나머지 11행은 구조적으로 완전히 동일함을 확인했다. data backup은 `/home/ubuntu/agent-publisher/backups/current-value-briefs-20261002T113921Z`다.
+- data SHA는 적용 전 `5b9329af4e9ffb35232dc49245493a668f578597aa7b9e5eb58bc24ad6e6dea4`, 적용 후 `d52b848246a2dbf3b088ee044e76792808f0c12414dd685c6d25d2cde0696567`이다. 두 row의 `reviewed_at`은 실제 재검토일 `2026-10-02`로 맞췄다.
+- 장기요양 row는 generic root 대신 실제 작성에서 검증한 NHIS 신청절차, 급여 이용안내, 복지용구 고시 세 URL을 사용한다. 운영 fresh fetch 결과는 각각 1,629자, 2,143자, 11,537자였고 source SHA도 수동 운영 표본과 일치했다.
+- 실버론 row는 네 NPS 세부 페이지를 direct official source로 사용하고 `requires_current_value_period=true`를 명시한다. 운영 fresh fetch 후 자동 추론은 `{start_date: 2026-10-01, end_date: 2026-12-31}`과 NPS의 금리 월 범위·4분기 인용 두 개를 반환했고 `validate_current_value_period()`는 빈 reason 목록을 반환했다.
+- 운영 readback에서 두 brief 모두 `topic_reasons()==[]`, migration conflict `[]`이며, `main.py --help`의 현행 8개 category도 그대로 유지됐다.
+
+이 시점에서 지금 즉시 수행 가능한 4.3C 작업은 모두 끝냈다. category false HOLD, live-state save-time refetch, current-value claim의 bounded 기간, 자동 writer의 exact-period 주입까지 운영 경로에서 확인했다. **전체 legacy fallback을 지금 제거하지 않는 이유는 남은 기술 결함이 아니라, review window가 만료된 기존 brief들을 자동 재승인하지 않는 정책과 다음 정규 scheduler 표본이 아직 미래라는 점**이다. 따라서 4.3C의 전면 fallback 제거와 4.3D discovery 전환은 2026-10-03 08:00 KST 정규 실행 결과를 확인한 뒤 별도 변경으로 진행한다.
