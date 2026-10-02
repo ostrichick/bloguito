@@ -25,26 +25,37 @@ def _string_groups(value):
             and all(_string_list(group) for group in value))
 
 
-def _load_influenza_rule():
-    """Load the pilot annual rule; malformed/missing data fails closed."""
-    path = CRITICAL_FACTS_DIR / "vaccination-2026.json"
+def _load_json(path):
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
+
+
+def _valid_rule_file_name(value):
+    if not isinstance(value, str) or not value.endswith('.json'):
+        return False
+    path = Path(value)
+    return path.name == value and value not in {'schema.json', 'registry.json'}
+
+
+def _validate_influenza_rule(payload):
     if not isinstance(payload, dict):
-        return None
+        return False
     required_keys = {
-        "schema_version", "rule_id", "year", "official_hosts",
+        "schema_version", "rule_id", "rule_type", "year", "match_terms", "official_hosts",
         "required_source_tokens", "required_source_any_groups",
         "stale_vaccine_tokens", "stale_schedule_tokens", "reason_codes",
     }
     if set(payload) != required_keys:
-        return None
+        return False
     reasons = payload.get("reason_codes")
-    if (payload.get("schema_version") != CRITICAL_FACT_SCHEMA_VERSION
-            or payload.get("rule_id") != "influenza-2026"
-            or payload.get("year") != 2026
+    return not (
+        payload.get("schema_version") != CRITICAL_FACT_SCHEMA_VERSION
+            or not isinstance(payload.get("rule_id"), str) or not payload.get("rule_id")
+            or payload.get("rule_type") != "influenza"
+            or type(payload.get("year")) is not int or payload.get("year") < 2000
+            or not _string_list(payload.get("match_terms"))
             or not _string_list(payload.get("official_hosts"))
             or not _string_list(payload.get("required_source_tokens"))
             or not _string_groups(payload.get("required_source_any_groups"))
@@ -52,9 +63,38 @@ def _load_influenza_rule():
             or not _string_list(payload.get("stale_schedule_tokens"))
             or not isinstance(reasons, dict)
             or set(reasons) != {"source_missing", "outdated_vaccine", "outdated_schedule"}
-            or not all(isinstance(value, str) and value for value in reasons.values())):
+            or not all(isinstance(value, str) and value for value in reasons.values())
+    )
+
+
+def _load_critical_fact_rules():
+    """Load indexed annual rules. Any registry/file error invalidates the set."""
+    registry = _load_json(CRITICAL_FACTS_DIR / "registry.json")
+    if (not isinstance(registry, dict)
+            or set(registry) != {"schema_version", "files"}
+            or registry.get("schema_version") != CRITICAL_FACT_SCHEMA_VERSION
+            or not isinstance(registry.get("files"), list)
+            or not registry["files"]
+            or len(set(registry["files"])) != len(registry["files"])
+            or not all(_valid_rule_file_name(name) for name in registry["files"])):
         return None
-    return payload
+    rules = []
+    for file_name in registry["files"]:
+        payload = _load_json(CRITICAL_FACTS_DIR / file_name)
+        if not _validate_influenza_rule(payload):
+            return None
+        rules.append(payload)
+    identities = [(rule["rule_type"], rule["year"]) for rule in rules]
+    if len(set(rule["rule_id"] for rule in rules)) != len(rules) or len(set(identities)) != len(rules):
+        return None
+    return rules
+
+
+def validate_critical_fact_registry():
+    """Release-time smoke check for the versioned critical-fact registry."""
+    if _load_critical_fact_rules() is None:
+        raise ValueError("critical_fact_registry_invalid")
+    return True
 
 
 def _flat(value):
@@ -175,11 +215,23 @@ def critical_fact_reasons(brief, sources, plan):
             reasons.append("tax_points_2026_expiry_cohort_missing")
         if "환급금" in body and re.search(r"세금포인트.{0,30}(?:현금환급|현금으로환급)", t):
             reasons.append("tax_points_misclassified_as_cash_refund")
-    if "2026" in name and any(w in name for w in ("인플루엔자", "독감")):
-        rule = _load_influenza_rule()
-        if rule is None:
+    if any(w in name for w in ("인플루엔자", "독감")):
+        rule = None
+        rules = _load_critical_fact_rules()
+        if rules is None:
             reasons.append("critical_fact_registry_invalid")
         else:
+            matching = [rule for rule in rules
+                        if str(rule["year"]) in name
+                        and any(term in name for term in rule["match_terms"])]
+            if len(matching) > 1:
+                reasons.append("critical_fact_registry_invalid")
+                matching = []
+            if not matching:
+                rule = None
+            else:
+                rule = matching[0]
+        if rule is not None:
             source = _flat(_official(sources, set(rule["official_hosts"])))
             source_ok = (
                 all(token in source for token in rule["required_source_tokens"])

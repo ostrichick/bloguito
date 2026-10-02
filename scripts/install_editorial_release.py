@@ -74,7 +74,7 @@ def install(release, app):
             text=text.replace('    radar = RadarAgent()', '    sync_inventory()\n    radar = RadarAgent()')
         put(app/'main.py',text.encode('utf-8'))
         python=app/'venv'/'bin'/'python'
-        subprocess.run([str(python),'-c','import main; from agents.editorial_writer import Plan; from agents.editorial import policy; print("Editorial imports ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        subprocess.run([str(python),'-c','import main; from agents.editorial_writer import Plan; from agents.editorial import policy; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); print("Editorial imports and critical-fact registry ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
         print('Installed. Rollback manifest:',backup/'manifest.json')
     except Exception:
         for change in reversed(changes):

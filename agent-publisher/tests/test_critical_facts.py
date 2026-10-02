@@ -6,7 +6,11 @@ import unittest
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
-from agents.critical_facts import critical_fact_reasons, published_content_risks
+from agents.critical_facts import (
+    critical_fact_reasons,
+    published_content_risks,
+    validate_critical_fact_registry,
+)
 from agents.editorial import validate_bundle
 from test_editorial_system import sample, NOW
 
@@ -82,6 +86,8 @@ class CriticalPolicyRegressionTests(unittest.TestCase):
         plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 21일부터'},'sections':[],'faq':[]}
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, 'vaccination-2026.json').write_text('{"schema_version": 999}', encoding='utf-8')
+            Path(tmp, 'registry.json').write_text(json.dumps({
+                'schema_version': 1, 'files': ['vaccination-2026.json']}), encoding='utf-8')
             with patch('agents.critical_facts.CRITICAL_FACTS_DIR', Path(tmp)):
                 self.assertEqual(critical_fact_reasons(b,s,plan),['critical_fact_registry_invalid'])
 
@@ -91,21 +97,31 @@ class CriticalPolicyRegressionTests(unittest.TestCase):
         plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 21일부터'},'sections':[],'faq':[]}
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, 'vaccination-2026.json').write_text('[{}]', encoding='utf-8')
+            Path(tmp, 'registry.json').write_text(json.dumps({
+                'schema_version': 1, 'files': ['vaccination-2026.json']}), encoding='utf-8')
             with patch('agents.critical_facts.CRITICAL_FACTS_DIR', Path(tmp)):
                 self.assertEqual(critical_fact_reasons(b,s,plan),['critical_fact_registry_invalid'])
 
-    def test_influenza_annual_values_can_change_in_data_without_engine_change(self):
-        b={'entity':'독감','primary_keyword':'2026 독감 백신'}
-        plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 22일부터'},'sections':[],'faq':[]}
+    def test_new_influenza_year_can_be_added_with_registry_data_only(self):
+        b={'entity':'독감','primary_keyword':'2027 독감 백신'}
+        plan={'title':'2027 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 22일부터'},'sections':[],'faq':[]}
         data_path = Path(__file__).resolve().parents[1] / 'data' / 'critical_facts' / 'vaccination-2026.json'
         payload = json.loads(data_path.read_text(encoding='utf-8'))
+        payload['rule_id'] = 'influenza-2027'
+        payload['year'] = 2027
+        payload['required_source_tokens'][0] = '2027'
         payload['required_source_any_groups'][0] = ['9월22', '9.22']
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, 'vaccination-2026.json').write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
-            source='2026년 3가 백신. 9월 22일 어린이, 10월 6일 75세 이상.'
+            Path(tmp, 'vaccination-2027.json').write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+            Path(tmp, 'registry.json').write_text(json.dumps({
+                'schema_version': 1, 'files': ['vaccination-2027.json']}), encoding='utf-8')
+            source='2027년 3가 백신. 9월 22일 어린이, 10월 6일 75세 이상.'
             s=[{'source_type':'official','url':'https://www.kdca.go.kr/latest','text':source}]
             with patch('agents.critical_facts.CRITICAL_FACTS_DIR', Path(tmp)):
                 self.assertEqual(critical_fact_reasons(b,s,plan),[])
+
+    def test_current_registry_passes_release_smoke_validation(self):
+        self.assertTrue(validate_critical_fact_registry())
 
     def test_correction_note_is_not_mistaken_for_active_old_claim(self):
         markup = '<div><strong>정정 안내 (2026년 9월 20일)</strong><p>연간 최대 50점 안내를 수정했습니다.</p></div><p>2025년 부여분부터 연간 1,000포인트입니다.</p>'

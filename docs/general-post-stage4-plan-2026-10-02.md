@@ -125,7 +125,7 @@ agent-publisher/data/policy_exceptions/
 
 ## 4.4 critical facts의 데이터와 엔진 분리
 
-**진행 상태:** 파일럿 구현. `vaccination-2026.json`에서 2026 인플루엔자 공식 도메인, 현행 백신 유형/일정 토큰, 알려진 구 일정 토큰을 관리하고 `critical_facts.py`는 검증 흐름과 fail-closed 제어를 유지한다. registry 누락·형식 오류는 `critical_fact_registry_invalid`로 보류한다. 다른 주제는 아직 코드에서 제거하지 않았다.
+**진행 상태:** 파일럿 구현. `registry.json`이 연도별 rule 파일을 나열하고 `vaccination-2026.json`에서 2026 인플루엔자 공식 도메인, 현행 백신 유형/일정 토큰, 알려진 구 일정 토큰을 관리한다. 같은 rule 형식의 다음 연도 값은 JSON 파일 추가와 registry 등록만으로 인식하며 `critical_facts.py`는 검증 흐름과 fail-closed 제어를 유지한다. registry 누락·형식 오류는 `critical_fact_registry_invalid`로 보류하고 release installer도 registry를 smoke-check한다. 다른 주제는 아직 코드에서 제거하지 않았다.
 
 ### 목표
 

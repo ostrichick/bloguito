@@ -6,7 +6,9 @@
   "required": [
     "schema_version",
     "rule_id",
+    "rule_type",
     "year",
+    "match_terms",
     "official_hosts",
     "required_source_tokens",
     "required_source_any_groups",
@@ -17,7 +19,13 @@
   "properties": {
     "schema_version": {"const": 1},
     "rule_id": {"type": "string", "minLength": 1},
+    "rule_type": {"const": "influenza"},
     "year": {"type": "integer", "minimum": 2000},
+    "match_terms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
     "official_hosts": {
       "type": "array",
       "minItems": 1,
