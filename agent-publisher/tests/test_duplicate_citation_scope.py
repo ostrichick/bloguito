@@ -91,6 +91,15 @@ class SharedSourceCitationTests(unittest.TestCase):
                      if key != 'existing_post_id'}
         self.assertEqual(duplicate_posts(new_brief, [self.post]), [self.post])
 
+    def test_existing_post_does_not_duplicate_against_itself(self):
+        post = {
+            **self.post,
+            'ID': self.brief['existing_post_id'],
+            'post_title': '기초연금 소득인정액 모의계산',
+            'post_content': '<div class="bloguito-cta"><a href="' + self.url + '">조회</a></div>',
+        }
+        self.assertEqual(duplicate_posts(self.brief, [post]), [])
+
 
 if __name__ == '__main__':
     unittest.main()
