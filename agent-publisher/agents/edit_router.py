@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import subprocess
 from pathlib import Path
 
 from agents.editorial import render
 from agents.editorial_draft_reviser import revise_reviewed_draft
+from agents.edit_orchestration import (
+    image_fingerprints,
+    record_route_profile_metrics,
+    run_combined_image_phase,
+    validate_resume_fingerprint,
+)
 from agents.featured_image import reconcile_featured_image_outcome, replace_featured_image
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
@@ -25,7 +30,6 @@ from agents.task_state import (
     complete_task_state,
     completion_requirements_for_task,
     fail_task_state,
-    intent_sha256,
     load_task_state,
     start_task_state,
     update_task_state,
@@ -178,9 +182,9 @@ def edit_reviewed_draft(
     qa_requirements = decision.get("qa_requirements", [])
     desired = render(bundle["plan"], bundle["sources"])
     desired_sha = hashlib.sha256(desired.encode("utf-8")).hexdigest()
-    image_sha = hashlib.sha256(image_path.read_bytes()).hexdigest() if image_path else None
-    alt_text_sha = hashlib.sha256(alt_text.encode("utf-8")).hexdigest() if image_path else None
+    image_sha, alt_text_sha = image_fingerprints(image_path, alt_text)
     content_already_saved = False
+    state = None
     simple_one_shot = (
         decision["route"] == "fast"
         and image_path is None
@@ -223,24 +227,18 @@ def edit_reviewed_draft(
             raise ValueError("resumable_edit_task_state_required")
         if state.get("status") not in {"in_progress", "saved_pending_qa", "failed"}:
             raise ValueError("task_state_not_resumable")
-        baseline = state.get("baseline", {})
-        state_policy = (
-            (state.get("reuse") or {}).get("fingerprint_after", {}).get("policy_digest")
-        )
         current_policy = decision["reuse"]["fingerprint_after"]["policy_digest"]
-        if (baseline.get("expected_content_sha256") != expected_content_sha256
-                or baseline.get("desired_content_sha256") != desired_sha
-                or baseline.get("candidate_content_digest")
-                    != decision["reuse"]["fingerprint_after"]["content_digest"]
-                or state.get("edit_intent_sha256") != intent_sha256(edit_intent)
-                or state_policy != current_policy
-                or baseline.get("expected_thumbnail_id") != expected_thumbnail_id
-                or baseline.get("alt_text_sha256") != alt_text_sha):
-            raise ValueError("resume_state_fingerprint_conflict")
-        if image_path is not None:
-            recorded_image = (state.get("artifacts") or {}).get("image_path") or {}
-            if recorded_image.get("sha256") != image_sha:
-                raise ValueError("resume_image_artifact_conflict")
+        validate_resume_fingerprint(
+            state,
+            expected_content_sha256=expected_content_sha256,
+            desired_content_sha256=desired_sha,
+            edit_intent=edit_intent,
+            current_policy_digest=current_policy,
+            expected_thumbnail_id=expected_thumbnail_id,
+            alt_text_sha256=alt_text_sha,
+            image_sha256=image_sha,
+            candidate_content_digest=decision["reuse"]["fingerprint_after"]["content_digest"],
+        )
         live = get_post(
             ["sudo", "docker", "exec", "wordpress_app", "wp"],
             post_id,
@@ -321,10 +319,7 @@ def edit_reviewed_draft(
             route_reasons=decision["reasons"],
             validation_plan=decision.get("validation_plan"),
         )
-    increment("edit_route_fast" if decision["route"] == "fast" else "edit_route_standard")
-    profile = (decision.get("validation_plan") or {}).get("profile")
-    if profile:
-        increment("validation_profile_" + profile.replace("-", "_"))
+    record_route_profile_metrics(decision, increment)
     if decision["reuse"].get("reuse_sources"):
         increment("validation_reuse_sources")
     if decision["reuse"].get("reuse_full_semantic_review"):
@@ -393,33 +388,18 @@ def edit_reviewed_draft(
                 "content_saved",
             ]
         update_task_state(post_id, completed=completed)
-        image_result = None
-        if image_path is not None:
-            update_task_state(post_id, completed=["image_validated"])
-            checkpoint = ((state or {}).get("checkpoints") or {}).get("image_outcome") if resume else None
-            if checkpoint and checkpoint.get("attachment_id"):
-                image_result = reconcile_featured_image_outcome(post_id, checkpoint, alt_text)
-            else:
-                def image_checkpoint(payload):
-                    update_task_state(post_id, checkpoints={"image_outcome": payload})
-
-                image_result = replace_featured_image(
-                    post_id,
-                    image_path,
-                    desired_sha,
-                    expected_thumbnail_id=expected_thumbnail_id,
-                    alt_text=alt_text,
-                    confirmed=True,
-                    manage_task_state=False,
-                    outcome_callback=image_checkpoint,
-                )
-            update_task_state(
-                post_id,
-                completed=["image_saved"],
-                result={"image_phase": image_result},
-            )
-        else:
-            update_task_state(post_id, completed=["image_saved"])
+        image_result = run_combined_image_phase(
+            post_id,
+            image_path=image_path,
+            desired_content_sha256=desired_sha,
+            expected_thumbnail_id=expected_thumbnail_id,
+            alt_text=alt_text,
+            resume=resume,
+            state=state,
+            update_state=update_task_state,
+            reconcile_image=reconcile_featured_image_outcome,
+            replace_image=replace_featured_image,
+        )
         update_task_state(
             post_id,
             completed=["wordpress_saved"],

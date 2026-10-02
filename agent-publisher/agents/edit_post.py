@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from pathlib import Path
 
 from agents.edit_router import edit_reviewed_draft
+from agents.edit_orchestration import (
+    image_fingerprints,
+    record_route_profile_metrics,
+    run_combined_image_phase,
+    validate_resume_fingerprint,
+)
 from agents.change_classifier import classify_change
 from agents.editorial import policy_fingerprint, render
 from agents.editorial_updater import update_existing_public_post
@@ -28,7 +32,6 @@ from agents.task_state import (
     complete_task_state,
     completion_requirements_for_task,
     fail_task_state,
-    intent_sha256,
     load_task_state,
     start_task_state,
     update_task_state,
@@ -208,17 +211,13 @@ def _edit_reviewed_public_post(
         post_id, bundle, expected_content_sha256=expected_content_sha256,
         confirm_title_change=confirm_title_change, image_path=image_path, resume=resume)
     increment("edit_target_public")
-    increment("edit_route_fast" if decision["route"] == "fast" else "edit_route_standard")
-    profile = (decision.get("validation_plan") or {}).get("profile")
-    if profile:
-        increment("validation_profile_" + profile.replace("-", "_"))
+    record_route_profile_metrics(decision, increment)
     candidate = decision["candidate"] if decision["route"] == "fast" else bundle
     desired = render(candidate["plan"], candidate["sources"])
     desired_sha = content_sha256(desired)
     old_bundle = decision["tracked_bundle"]
     reuse = assess_validation_reuse(old_bundle, candidate)
-    image_sha = hashlib.sha256(image_path.read_bytes()).hexdigest() if image_path else None
-    alt_sha = hashlib.sha256(alt_text.encode("utf-8")).hexdigest() if image_path else None
+    image_sha, alt_sha = image_fingerprints(image_path, alt_text)
     content_already_saved = False
     state = None
 
@@ -259,19 +258,16 @@ def _edit_reviewed_public_post(
         if not state or state.get("action") != "edit-post" or state.get("status") not in {
                 "in_progress", "failed", "saved_pending_qa"}:
             raise ValueError("resumable_edit_task_state_required")
-        baseline = state.get("baseline", {})
-        state_policy = (state.get("reuse") or {}).get("fingerprint_after", {}).get("policy_digest")
-        if (baseline.get("expected_content_sha256") != expected_content_sha256
-                or baseline.get("desired_content_sha256") != desired_sha
-                or state.get("edit_intent_sha256") != intent_sha256(edit_intent)
-                or state_policy != policy_fingerprint(candidate)
-                or baseline.get("expected_thumbnail_id") != expected_thumbnail_id
-                or baseline.get("alt_text_sha256") != alt_sha):
-            raise ValueError("resume_state_fingerprint_conflict")
-        if image_path is not None:
-            artifact = (state.get("artifacts") or {}).get("image_path") or {}
-            if artifact.get("sha256") != image_sha:
-                raise ValueError("resume_image_artifact_conflict")
+        validate_resume_fingerprint(
+            state,
+            expected_content_sha256=expected_content_sha256,
+            desired_content_sha256=desired_sha,
+            edit_intent=edit_intent,
+            current_policy_digest=policy_fingerprint(candidate),
+            expected_thumbnail_id=expected_thumbnail_id,
+            alt_text_sha256=alt_sha,
+            image_sha256=image_sha,
+        )
         live = get_post(
             ["sudo", "docker", "exec", "wordpress_app", "wp"], post_id,
             fields=["post_status", "post_title", "post_name", "post_content", "post_excerpt"])
@@ -363,24 +359,18 @@ def _edit_reviewed_public_post(
                 tracked_baseline_bundle=old_bundle)
         update_task_state(post_id, completed=["baseline_read", "content_saved"])
 
-        image_result = None
-        if image_path is not None:
-            update_task_state(post_id, completed=["image_validated"])
-            checkpoint_image = ((state or {}).get("checkpoints") or {}).get("image_outcome") if resume else None
-            if checkpoint_image and checkpoint_image.get("attachment_id"):
-                image_result = reconcile_featured_image_outcome(post_id, checkpoint_image, alt_text)
-            else:
-                def image_checkpoint(payload):
-                    update_task_state(post_id, checkpoints={"image_outcome": payload})
-
-                image_result = replace_featured_image(
-                    post_id, image_path, desired_sha,
-                    expected_thumbnail_id=expected_thumbnail_id, alt_text=alt_text,
-                    confirmed=True, manage_task_state=False,
-                    outcome_callback=image_checkpoint)
-            update_task_state(post_id, completed=["image_saved"], result={"image_phase": image_result})
-        else:
-            update_task_state(post_id, completed=["image_saved"])
+        image_result = run_combined_image_phase(
+            post_id,
+            image_path=image_path,
+            desired_content_sha256=desired_sha,
+            expected_thumbnail_id=expected_thumbnail_id,
+            alt_text=alt_text,
+            resume=resume,
+            state=state,
+            update_state=update_task_state,
+            reconcile_image=reconcile_featured_image_outcome,
+            replace_image=replace_featured_image,
+        )
         update_task_state(
             post_id, completed=["wordpress_saved"], status="saved_pending_qa",
             result={"post_id": updated, "desired_content_sha256": desired_sha})
