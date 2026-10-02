@@ -26,6 +26,17 @@ class SectionImageImportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'section_image_too_small'):
                 validate_section_image_file(self._image(folder, (800, 450)))
 
+    def test_import_rejects_question_mark_encoding_corruption_before_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = self._image(folder)
+            sha = hashlib.sha256(b'content').hexdigest()
+            with self.assertRaisesRegex(ValueError, 'section_image_metadata_encoding_corrupt'):
+                import_section_image(
+                    648, image, sha,
+                    media_title='2026 ?????? ?? ???', alt_text='2026 ?????? ?? ????',
+                    confirmed=True,
+                )
+
     def test_import_preserves_post_featured_image_and_seo(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -18,6 +18,20 @@ configure_utf8_stdio()
 _prepared_edit_decision = ContextVar('prepared_edit_decision', default=None)
 
 
+def _load_media_metadata_file(path: Path) -> tuple[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError('invalid_media_metadata_file') from exc
+    if not isinstance(payload, dict) or set(payload) != {'media_title', 'alt_text'}:
+        raise ValueError('invalid_media_metadata_file')
+    media_title = payload.get('media_title')
+    alt_text = payload.get('alt_text')
+    if not isinstance(media_title, str) or not isinstance(alt_text, str):
+        raise ValueError('invalid_media_metadata_file')
+    return media_title, alt_text
+
+
 @contextmanager
 def prepared_edit_decision(decision):
     """Bind one preclassified edit decision across the SSH adapter boundary."""
@@ -62,6 +76,8 @@ def _main():
                         help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
     parser.add_argument('--media-title', help='import-section-image: reviewed WordPress attachment title')
+    parser.add_argument('--media-metadata-file', type=Path,
+                        help='import-section-image: UTF-8 JSON with media_title and alt_text; avoids non-ASCII command-line transport')
     parser.add_argument('--qa-scope', action='append',
                         choices=['content-mobile-desktop', 'cta-destination', 'layout-accessibility',
                                  'featured-image', 'public-page'],
@@ -86,6 +102,9 @@ def _main():
     parser.add_argument('--image-path', type=Path,
                         help='prepare-draft: already reviewed local representative image; prepare-draft generates one when omitted')
     args = parser.parse_args()
+
+    if args.media_metadata_file and args.action != 'import-section-image':
+        parser.error('--media-metadata-file is only valid for import-section-image')
 
     if args.action == 'list-drafts':
         from agents.publisher import PublisherAgent
@@ -205,12 +224,21 @@ def _main():
     if args.action == 'import-section-image':
         if args.inventory or args.file:
             parser.error('import-section-image uses --post-id/--image-path and no bundle file')
-        if not args.image_path or not args.alt_text or not args.media_title:
-            parser.error('import-section-image requires --image-path, --media-title and --alt-text')
+        media_title = args.media_title
+        alt_text = args.alt_text
+        if args.media_metadata_file:
+            if media_title or alt_text:
+                parser.error('import-section-image uses either --media-metadata-file or --media-title/--alt-text')
+            try:
+                media_title, alt_text = _load_media_metadata_file(args.media_metadata_file)
+            except ValueError as exc:
+                parser.error(str(exc))
+        if not args.image_path or not alt_text or not media_title:
+            parser.error('import-section-image requires --image-path and either --media-metadata-file or --media-title/--alt-text')
         from agents.section_image import import_section_image
         result = import_section_image(
             args.post_id, args.image_path, args.expected_content_sha256,
-            media_title=args.media_title, alt_text=args.alt_text,
+            media_title=media_title, alt_text=alt_text,
             confirmed=args.confirm_update,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))

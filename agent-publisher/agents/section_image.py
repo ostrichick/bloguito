@@ -97,6 +97,10 @@ def import_section_image(
     if (not media_title or len(media_title) > 180 or "\x00" in media_title
             or not alt_text or len(alt_text) > 180 or "\x00" in alt_text):
         raise ValueError("section_image_title_and_alt_required")
+    if ("\ufffd" in media_title or "\ufffd" in alt_text
+            or re.search(r"\?{3,}", media_title)
+            or re.search(r"\?{3,}", alt_text)):
+        raise ValueError("section_image_metadata_encoding_corrupt")
     image_info = validate_section_image_file(image_path)
     image_path = Path(image_info["path"])
 
