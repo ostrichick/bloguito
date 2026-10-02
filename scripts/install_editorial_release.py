@@ -33,6 +33,12 @@ def verify_release_manifest(release):
                 'agent-publisher/agents/source_collector.py', 'agent-publisher/agents/source_extractors.py'}
     if not required.issubset(expected):
         raise ValueError('required_release_module_missing')
+    retired = manifest.get('retired_files', [])
+    if not isinstance(retired, list) or set(retired) - {'agents/copywriter.py'}:
+        raise ValueError('invalid_release_retirement_scope')
+    if retired and any('agents.copywriter' in (release / name).read_text(encoding='utf-8')
+                       for name in expected if name.endswith('.py')):
+        raise ValueError('retired_module_still_referenced')
     return manifest
 
 
@@ -120,13 +126,19 @@ def install(release, app):
         if '    sync_inventory()' not in text:
             text=text.replace('    radar = RadarAgent()', '    sync_inventory()\n    radar = RadarAgent()')
         put(app/'main.py',text.encode('utf-8'))
+        for relative in release_manifest.get('retired_files', []):
+            target = app / relative
+            if target.exists():
+                put(target, b'')
+                target.unlink()
         python=app/'venv'/'bin'/'python'
         subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; from agents.editorial_writer import Plan; from agents.editorial import policy; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); print("Editorial entrypoints and critical-fact registry ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
-        installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes}
+        installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes if Path(change['target']).exists()}
         put(app/'data'/'editorial-release.json', json.dumps({
             'schema_version': 1, 'revision': release_manifest['revision'],
             'installed_at_utc': datetime.now(timezone.utc).isoformat(),
             'files': installed_hashes,
+            'retired_files': release_manifest.get('retired_files', []),
         }, indent=2).encode('utf-8'))
         print('Installed. Rollback manifest:',backup/'manifest.json')
     except Exception:

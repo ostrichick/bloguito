@@ -52,3 +52,9 @@ class ReleaseManifestTests(unittest.TestCase):
         external = "import os\nGEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')\nKAKAO_MAP_JAVASCRIPT_KEY = os.getenv('KAKAO_MAP_JAVASCRIPT_KEY', '')\nSITE_URL = os.getenv('SITE_URL', 'http://localhost')\n"
         self.assertTrue(installer.environment_config_is_external(external))
         self.assertFalse(installer.environment_config_is_external(external.replace("os.getenv('GEMINI_API_KEY', '')", "'inline-credential'")))
+
+    def test_retirement_cannot_delete_arbitrary_operational_files(self):
+        self.manifest['retired_files'] = ['data/published_posts.json']
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'retirement_scope'):
+            installer.verify_release_manifest(self.root)
