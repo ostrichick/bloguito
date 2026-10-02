@@ -12,7 +12,6 @@ load_dotenv(BASE_DIR / ".env")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 KAKAO_MAP_JAVASCRIPT_KEY = os.getenv("KAKAO_MAP_JAVASCRIPT_KEY", "")
-POST_STATUS = os.getenv("POST_STATUS", "draft")  # draft or publish
 SITE_URL = os.getenv("SITE_URL", "http://localhost")
 
 # NOL (Yanolja) Tickets "Active Sale" (ENTERTAINMENT_SALE_STATUS_SALE) Filter Token

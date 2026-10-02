@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from config import POST_STATUS, POSTS_INDEX_FILE, DRAFTS_INDEX_FILE, SITE_URL
+from config import POSTS_INDEX_FILE, DRAFTS_INDEX_FILE, SITE_URL
 from agents.post_manifest_store import (
     acquire_editorial_lock,
     load_record,
@@ -55,10 +55,6 @@ class PublisherAgent:
 
         label = "공개 글 색인(Published)" if status == "publish" else "초안 색인(Drafts)"
         print(f"[PublisherAgent] 📚 {label} 업데이트 완료 ({len(load_records(target_file))}개 글 등록)")
-
-    def _record_published_post(self, post_id: int, title: str, category_id: int, category_name: str, status: str = "publish", expires_at: str = None):
-        """하위 호환성을 위한 래퍼 메서드"""
-        self._record_post(post_id, title, category_id, category_name, status=status, expires_at=expires_at)
 
     def publish(self, article: dict, image_path: Path = None) -> int:
         if 'editorial_bundle' in article:
