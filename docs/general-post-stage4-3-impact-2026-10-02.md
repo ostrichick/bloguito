@@ -227,3 +227,18 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 후속 수동 검토에서는 review window가 현재 유효한 3건을 `topic_reasons()`까지 대조했다. `senior-implant-insurance-guide`는 `policy-current` + `requires_live_state=false`, `national-pension-silver-loan`은 분기별 금리 확인 때문에 `policy-current` + `requires_live_state=true`로 로컬 reviewed brief에 명시했다. 두 항목 모두 기존 legacy gate 결과를 바꾸지 않는다. `long-term-care-grade-guide`는 기존 `welfare + evergreen` 조합이 `dated_category_cannot_bypass_time_check`에 이미 걸리므로 metadata만 덧붙여 관찰 가능한 것처럼 만들지 않고 다음 재검토 대상으로 남겼다. 만료된 10건의 `approved`/`review_until`은 변경하지 않았다.
 
 이 수동 확정은 **로컬 repository의 reviewed brief 데이터만** 변경한다. `scripts/install_editorial_release.py`는 운영 서버에 기존 `data/search_briefs.json`이 있으면 그 파일을 덮어쓰지 않으므로 코드 릴리스만으로 이 2건의 metadata가 운영에 적용되지는 않는다. 따라서 실제 4.3C/D 관찰기간은 별도의 reviewed data 적용 및 릴리스가 이루어진 뒤부터 계산해야 하며, 로컬 커밋 시점을 관찰 시작으로 간주하지 않는다.
+
+### 4.3C/D 실행 readiness 체크리스트
+
+현재 판정은 **NO-GO**다. 아래 조건을 모두 실제 운영 관찰로 충족하기 전에는 `content_type`/category fallback을 제거하거나 `radar.py`·`curator.py`의 discovery 분기를 volatility 기준으로 전환하지 않는다.
+
+1. 운영의 reviewed `search_briefs.json`에 사람이 확정한 explicit volatility metadata가 실제 적용되어야 한다. 코드 저장소의 로컬 값만으로는 관찰을 시작한 것으로 보지 않는다.
+2. 그 metadata를 사용하는 실제 릴리스를 최소 한 번 운영하고, 신규 또는 수정 bundle에서 legacy gate와 volatility gate의 결과를 함께 기록한다.
+3. legacy gate가 HOLD인데 volatility만 PASS하는 사례가 생기면 fallback 제거를 중단하고 원인을 먼저 해결한다. 안전 기준을 맞추기 위해 기존 gate를 자동 완화하지 않는다.
+4. `requires_live_state=true`인 실제 케이스에서 저장 직전 network recheck와 receipt bypass가 동작했는지 확인한다. 테스트 fixture만으로 이 조건을 충족했다고 보지 않는다.
+5. `long-term-care-grade-guide`처럼 현재 legacy shape 자체가 충돌하는 brief는 새 review에서 `content_type`/lifetime을 함께 재판단한다. volatility 필드만 추가해 우회하지 않는다.
+6. 4.3C 검토 시 `useful_until → WordPress expires_at`, 30일 최소 lifetime, category fail-closed, legacy exception 범위가 기존보다 약해지지 않았음을 비교한다.
+7. 4.3D 전에는 discovery fixture를 최소 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`별로 만든다. 상시 절차·현행 정책은 공식 source 직행 여부를, annual/seasonal은 최신 공고 탐색 필요성을 각각 검증한다.
+8. 4.3C와 4.3D는 같은 변경으로 묶지 않는다. fallback 제거 결과를 먼저 관찰한 뒤 discovery 전환을 별도 변경·회귀검증으로 진행한다.
+
+현재 `radar.py`는 `content_type == 'evergreen'`인 brief만 RSS 없이 `editorial_direct`로 보내고, `curator.py` 역시 `editorial_direct`를 evergreen에 한해 허용한다. 이는 아직 의도적인 legacy fallback이며 이번 단계에서는 수정하지 않는다.
