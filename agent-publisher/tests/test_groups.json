@@ -98,6 +98,7 @@
       "test_editorial_cli_via_ssh_transport.py",
       "test_inventory_cache_lifecycle.py",
       "test_lightweight_inventory.py",
+      "test_event_post_tool.py",
       "test_reformat_review_binding.py",
       "test_post_approval_preflight.py",
       "test_validation_router.py",

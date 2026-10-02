@@ -277,6 +277,28 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertNotIn('검토된 긴 본문', remote)
         self.assertEqual(reviewed, json.loads(kwargs['input'])['updates']['post_content'])
 
+    def test_replace_legacy_draft_streams_long_post_content_over_stdin(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            return subprocess.CompletedProcess(args, 0, stdout='Success', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-legacy-draft', {657}, 'bloguito')
+        content = '<div>' + ('긴 행사 본문' * 10000) + '</div>'
+        command = module._WP_PREFIX + [
+            'post', 'update', '657', f'--post_content={content}', '--post_excerpt=요약', '--allow-root']
+        transport(command, capture_output=True, text=True, check=True)
+
+        self.assertEqual(1, len(calls))
+        argv, kwargs = calls[0]
+        remote = argv[-1]
+        self.assertIn('wp post update 657 -', remote)
+        self.assertNotIn('긴 행사 본문', remote)
+        self.assertEqual(content, kwargs['input'])
+
     def test_revise_draft_guarded_title_change_requires_explicit_transport_permission(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
@@ -353,11 +375,11 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                      mode='direct', host='bloguito', user=None, wsl_distro=None)), \
                  patch('agents.edit_post.classify_reviewed_post_route', return_value={
                      'route': 'standard', 'reasons': [], 'target_status': 'draft',
-                     'validation_plan': {},
+                     'validation_plan': {'profile': 'standard-event'},
                  }), \
-                 patch('agents.validation_runner.require_validation_success', return_value={
-                     'profile': 'standard-event', 'tests_run': 1, 'selected_files': ['test.py'],
-                     'duration_ms': 1.0,
+                 patch('agents.validation_runner.require_post_edit_preflight', return_value={
+                     'profile': 'standard-event', 'tests_run': 0, 'selected_files': [],
+                     'duration_ms': 1.0, 'status': 'passed',
                  }), \
                  patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
                  patch.object(module.editorial_cli, 'main'):

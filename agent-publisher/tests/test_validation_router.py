@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from agents.validation_router import build_validation_plan
+from agents.validation_router import build_event_candidate_validation_plan, build_validation_plan
 from tests.test_editorial_system import sample
 from tests.test_multi_event_schedule import roundup_bundle
 
@@ -144,6 +144,15 @@ class ValidationRouterTests(unittest.TestCase):
         docs = build_validation_plan(changed_files=['docs/OPERATIONS.md'])
         self.assertEqual('docs-only', docs['profile'])
         self.assertEqual([], docs['test_groups'])
+
+    def test_complete_event_candidate_has_one_targeted_standard_event_plan(self):
+        bundle = roundup_bundle()
+        plan = build_event_candidate_validation_plan(bundle, post_id=657, expected_content_sha256='a' * 64)
+        self.assertEqual('standard-event', plan['profile'])
+        self.assertFalse(plan['full_regression_required'])
+        self.assertEqual(['event'], plan['test_groups'])
+        self.assertEqual('standard', plan['binding']['route'])
+        self.assertEqual(657, plan['binding']['post_id'])
 
 
 if __name__ == '__main__':

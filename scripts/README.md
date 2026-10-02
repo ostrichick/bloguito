@@ -13,8 +13,19 @@
 - 로컬 HTML의 한 컴포넌트 삽입·교체·삭제: `patch_post_component.py`
 - workflow 병목 확인: `summarize_workflow_metrics.py`
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
+- 행사형 원고 반복 작업: `event_post_tool.py`
+  - 후보 bundle 단일 검증: `python scripts/event_post_tool.py validate <bundle.json> --run-tests`
+  - 검토 완료 이미지 일괄 정규화/contact sheet: `python scripts/event_post_tool.py images <manifest.json> --output-dir <images/processed>`
+  - 렌더 구조 검사 + PC/모바일 2장만 캡처: `python scripts/event_post_tool.py qa <bundle.json> --html-out <qa.html> --screenshot-dir <qa/>`
 
 직접 WP-CLI나 임시 PHP로 편집 검증을 우회하지 않는다.
+
+행사 이미지 조사는 공식/재사용 가능 후보를 사람이 검토한 뒤 `event_post_tool.py images`에 넘긴다. 도구는
+저작권을 추측하지 않으며 manifest의 `source_url`, `source_year`, `rights`, `depiction`을 필수 provenance로
+요구한다. `rights`는 bundle과 같은 `generated_original|site_owned|open_license|permission_granted` 중 하나이고,
+`open_license`/`permission_granted`는 `rights_url`도 필요하다. 공공누리 제1유형 같은 사람이 읽는 표기는
+선택 `license_label`에 기록한다. 특정 이미지 후보를 5분 이상 찾지 못하면 행사형 표준의 안전한 fallback 정책으로 전환하고
+검색용 일회성 Python 파일을 계속 늘리지 않는다.
 
 ## 파일 수명주기
 

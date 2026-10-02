@@ -7,9 +7,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.validation_router import build_validation_plan
-from agents.validation_runner import ROOT, _load_suite, load_test_manifest, selected_test_files
+from agents.validation_router import build_event_candidate_validation_plan, build_validation_plan
+from agents.validation_runner import (
+    ROOT,
+    _load_suite,
+    load_test_manifest,
+    require_post_edit_preflight,
+    selected_test_files,
+)
 from tests.test_editorial_system import sample
+from tests.test_event_post_standard import event_bundle
 
 
 class ValidationRunnerTests(unittest.TestCase):
@@ -105,6 +112,29 @@ class ValidationRunnerTests(unittest.TestCase):
         finally:
             sys.path[:] = original_path
             sys.modules.update(removed_modules)
+
+    def test_standard_event_candidate_preflight_checks_actual_content_and_sources_without_tests(self):
+        bundle = event_bundle()
+        plan = build_event_candidate_validation_plan(bundle)
+        ready = {'status': 'ready', 'reasons': [], 'details': []}
+        with patch('agents.editorial.validate_content', return_value=ready) as content, \
+             patch('agents.editorial.validate_sources', return_value=ready) as sources:
+            receipt = require_post_edit_preflight(plan, bundle)
+        self.assertEqual('passed', receipt['status'])
+        self.assertEqual(0, receipt['tests_run'])
+        self.assertEqual([], receipt['selected_files'])
+        content.assert_called_once_with(bundle)
+        sources.assert_called_once_with(bundle)
+
+    def test_standard_event_candidate_preflight_fails_closed_on_candidate_error(self):
+        bundle = event_bundle()
+        plan = build_event_candidate_validation_plan(bundle)
+        with patch('agents.editorial.validate_content', return_value={
+                 'status': 'needs_review', 'reasons': ['event_standard_section_assets_missing'], 'details': []}), \
+             patch('agents.editorial.validate_sources', return_value={
+                 'status': 'ready', 'reasons': [], 'details': []}):
+            with self.assertRaisesRegex(RuntimeError, 'post_edit_candidate_preflight_failed'):
+                require_post_edit_preflight(plan, bundle)
 
 
 if __name__ == '__main__':

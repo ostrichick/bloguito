@@ -420,7 +420,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             # exact target/field set above, then transport that already-validated
             # content over stdin while leaving the short reviewed fields quoted
             # on the remote command line.
-            if action == 'update-draft' and wp[:2] == ['post', 'update']:
+            if action in {'update-draft', 'replace-legacy-draft'} and wp[:2] == ['post', 'update']:
                 content_args = [item for item in wp[3:-1] if item.startswith('--post_content=')]
                 if len(content_args) == 1:
                     content_arg = content_args[0]
@@ -610,16 +610,26 @@ def main():
         print(f"[Edit Route] {decision['route']}" +
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
         if action == 'edit-post':
-            # Run local regression tests before subprocess.run is replaced by the
-            # restricted WordPress transport.  This keeps test processes away from
-            # the SSH allowlist and guarantees failures happen before any mutation.
-            from agents.validation_runner import require_validation_success
-            validation = require_validation_success(decision['validation_plan'], verbosity=0)
-            print(
-                f"[Validation] {validation['profile']}: "
-                f"{validation['tests_run']} tests PASS "
-                f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
-            )
+            # Run the selected local validation before subprocess.run is replaced
+            # by the restricted WordPress transport. Event Standard uses actual-
+            # candidate preflight; other routes retain their selected regression
+            # suite. Either way, failures happen before any mutation.
+            validation_plan = decision['validation_plan']
+            if validation_plan.get('profile') == 'standard-event' and bundle is not None:
+                from agents.validation_runner import require_post_edit_preflight
+                validation = require_post_edit_preflight(validation_plan, bundle)
+                print(
+                    f"[Validation] {validation['profile']}: candidate preflight PASS "
+                    f"({validation['duration_ms']} ms; repository regressions skipped)"
+                )
+            else:
+                from agents.validation_runner import require_validation_success
+                validation = require_validation_success(validation_plan, verbosity=0)
+                print(
+                    f"[Validation] {validation['profile']}: "
+                    f"{validation['tests_run']} tests PASS "
+                    f"({len(validation['selected_files'])} files, {validation['duration_ms']} ms)"
+                )
 
     if action == 'import-section-image':
         if '--image-path' not in cli_args:

@@ -139,6 +139,8 @@ v1 행사 상세 section에는 `event_name`을 넣어 `temporal_source.event_ent
 
 후보 탐색은 먼저 공식 주최·지자체·공공기관·관광 아카이브·보도자료·공식 홍보물에서 수행한다. 검색으로 찾을 수 있는 공식 이미지가 있으면 생성 이미지보다 우선하며, 공공누리 제1유형처럼 상업적 재사용 조건이 명확한 자료를 우선한다. 상업적 이용 제한이 붙은 제2·4유형 자료는 광고·수익화 블로그 본문 이미지로 복제 사용하지 않는다.
 
+한 행사 이미지 하나를 찾느라 전체 편집을 오래 멈추지 않는다. **공식·재사용 가능 활동 사진 탐색은 행사당 기본 5분을 상한으로 두고**, 그 안에 적합한 후보가 없으면 아래의 안전한 fallback 순서로 전환한다. 후보를 찾았으면 작업별 `download_*`, `process_*`, `image_years.py` 같은 일회성 스크립트를 만들지 말고 `scripts/event_post_tool.py images` manifest에 `source_url`, `source_year`, `rights`, `depiction`을 기록해 다운로드/정규화/contact sheet 생성을 한 번에 수행한다. `rights`는 bundle과 동일한 `generated_original|site_owned|open_license|permission_granted` 값만 쓰며, `open_license`/`permission_granted`에는 공식 권리 근거 `rights_url`을 함께 기록한다. `공공누리 제1유형` 같은 사람이 읽는 라이선스 이름은 선택 `license_label`로 남길 수 있다. 도구는 권리 의미를 추측하지 않으므로 rights 판단 자체는 공식 페이지를 읽은 사람이 책임진다.
+
 풍경만 보이는 사진, 행사를 식별하기 어려운 이미지, 저해상도 thumbnail, 출처를 확인할 수 없는 임의 이미지는 사용하지 않는다. **공식 페이지에 사진이 있다는 사실만으로 재사용 권한이 생기지는 않는다.** 상업적 재사용 가능 여부가 불명확한 공식 사진·포스터는 Bloguito에 복제 업로드하지 않는다.
 
 사용권이 확인된 공식 활동 사진을 충분히 검색했는데도 적합한 자료를 구하지 못한 경우에만 공식 프로그램 사실에 근거해 Bloguito가 **직접 제작한 원본 안내 이미지**를 사용할 수 있다. 생성 이미지는 실제 이미지 시각 검토를 통과해야 하며, 이미지 생성기나 시각 검토가 실패했다고 해서 Pillow 도형·막대기 사람·단순 아이콘 조합 같은 저품질 로컬 폴백을 본문 소개 이미지로 자동 채택하지 않는다. 이 경우 이미지 교체를 보류하거나 사용권이 확인된 차선의 공식 자료를 다시 찾는다. 생성 이미지를 쓰면 실제 현장 사진처럼 보이게 설명하지 않고 caption에 `공식 프로그램을 바탕으로 제작한 행사 안내 이미지`처럼 제작물임을 표시한다. `image.source_id`는 장면의 근거가 된 현재 공식 source를 가리키고 `image.rights = "generated_original"`을 기록한다.
@@ -263,7 +265,7 @@ Rank Math는 **75점 이상을 실무 목표, 80점 이상을 양호**로 본다
 1. 최신 live content SHA 재조회
 2. source freshness 또는 유효 receipt
 3. full semantic review
-4. `standard-event` regression
+4. `standard-event` actual-candidate preflight (`content + source + event contract`); 필요할 때 `event_post_tool.py validate ... --run-tests`로 event 3-file smoke만 추가
 5. CAS 저장
 6. saved content SHA readback
 7. draft/public 상태와 제목 보존 확인
@@ -274,6 +276,16 @@ Rank Math는 **75점 이상을 실무 목표, 80점 이상을 양호**로 본다
 12. 카탈로그에 표시되는 메타가 바뀌었으면 `sync_post_catalog.py` 1회 실행
 
 renderer·validator·공통 정책 코드를 바꾼 작업은 표적 테스트 뒤 전체 suite를 1회 실행한다. 개별 도시 원고만 수정했다고 전체 regression을 반복하지 않는다.
+
+행사형 글의 반복 작업은 다음 공용 명령으로 묶는다.
+
+```text
+python scripts/event_post_tool.py validate <bundle.json> --post-id <ID> --expected-content-sha256 <SHA>
+python scripts/event_post_tool.py images <image-manifest.json> --output-dir <task>/images/processed
+python scripts/event_post_tool.py qa <bundle.json> --html-out <task>/qa.html --screenshot-dir <task>/qa
+```
+
+`validate`는 실제 후보 원고의 content/source/event contract를 검사하고, 기본 실행에서는 repository unit suite를 돌리지 않는다. `--run-tests`를 명시해도 event 전용 3개 파일만 smoke로 실행한다. 공통 Python/renderer/policy/test infrastructure를 수정한 개발 작업에서만 repository full regression을 별도로 수행한다. `qa`는 렌더 구조 검사와 대표 desktop/mobile screenshot 2장만 생성하며, 사진이 실제 활동 장면인지와 시각 품질은 사람이 최종 확인한다.
 
 ## 12. 금지되는 과거 관행
 

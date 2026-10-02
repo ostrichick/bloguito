@@ -169,5 +169,38 @@ def require_validation_success(plan: dict, *, stream=None, verbosity: int = 1) -
     return receipt
 
 
+def require_post_edit_preflight(plan: dict, bundle: dict) -> dict:
+    """Validate the actual candidate bundle without running repository regressions.
+
+    Standard event edits already receive authoritative full validation again in
+    the mutator before any WordPress write.  This fast preflight catches content,
+    source and event-contract failures early while keeping unit-test regression
+    suites reserved for repository/code changes.
+    """
+    validate_validation_plan(plan)
+    from agents.editorial import validate_content, validate_sources
+
+    started = time.perf_counter()
+    content = validate_content(bundle)
+    source_mode = plan.get("source_validation")
+    sources = ({"status": "ready", "reasons": [], "details": []}
+               if source_mode == "not-applicable" else validate_sources(bundle))
+    reasons = sorted(set(content.get("reasons", [])) | set(sources.get("reasons", [])))
+    receipt = {
+        "status": "passed" if not reasons else "failed",
+        "profile": plan.get("profile"),
+        "plan_digest": plan.get("plan_digest"),
+        "checks": {"content": content, "source": sources},
+        "tests_run": 0,
+        "selected_files": [],
+        "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        "reasons": reasons,
+    }
+    if reasons:
+        raise RuntimeError(
+            "post_edit_candidate_preflight_failed:" + json.dumps(receipt, ensure_ascii=False, sort_keys=True))
+    return receipt
+
+
 def validation_tests_active() -> bool:
     return os.getenv(_ACTIVE_ENV) == "1"

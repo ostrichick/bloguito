@@ -422,6 +422,89 @@ def build_validation_plan(
     return plan
 
 
+def build_event_candidate_validation_plan(
+    bundle: dict,
+    *,
+    target_status: str = "draft",
+    post_id: int | None = None,
+    expected_content_sha256: str | None = None,
+) -> dict:
+    """Build one conservative targeted plan for a complete event-post candidate.
+
+    This is intentionally different from :func:`build_validation_plan`: a newly
+    rebuilt event draft may not have a comparable reviewed ``before`` bundle.
+    Instead of inventing a diff, validate the candidate as a Standard event edit
+    and select only the event-relevant regression groups.
+    """
+    if not isinstance(bundle, dict) or not _event_domain(bundle):
+        raise ValueError("event_candidate_bundle_required")
+    if target_status not in {"draft", "publish"}:
+        raise ValueError("unknown_validation_target_status:" + str(target_status))
+    if post_id is not None and (type(post_id) is not int or post_id <= 0):
+        raise ValueError("invalid_validation_post_id")
+    if expected_content_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256):
+        raise ValueError("invalid_validation_expected_content_sha256")
+
+    plan_data = bundle.get("plan") or {}
+    sections = plan_data.get("sections") or []
+    actions_present = any((source.get("actions") or []) for source in (bundle.get("sources") or []) if isinstance(source, dict))
+    actions_present = actions_present or any(
+        (section.get("actions") or []) for section in sections if isinstance(section, dict)
+    )
+    scope = {
+        "content_changed": True,
+        "image_changed": any(isinstance(section, dict) and section.get("image") for section in sections),
+        "title_changed": False,
+        "brief_changed": True,
+        "category_changed": False,
+        "seo_changed": False,
+        "sources_changed": True,
+        "actions_changed": bool(actions_present),
+        "temporal_changed": True,
+        "layout_changed": True,
+        "related_changed": False,
+        "review_metadata_changed": False,
+        "unknown_bundle_change": False,
+        "unknown_bundle_keys": [],
+        "factual_risk": True,
+        "event_domain": True,
+        "ticket_domain": _ticket_domain(bundle),
+        "target_status": target_status,
+        "resume": False,
+        "fast_candidate": False,
+        "fast_reasons": [],
+        "qa_scopes": ["content-mobile-desktop", "cta-destination", "layout-accessibility"],
+    }
+    # Candidate validation is about the actual article, not repository-code
+    # regression.  ``validate_bundle`` and the event contract validate the
+    # candidate itself; when a smoke suite is explicitly requested, keep it to
+    # the dedicated event group rather than re-running fact/source/layout unit
+    # suites on every article edit.
+    groups = ["event"]
+    plan = {
+        "version": 1,
+        "profile": "standard-event",
+        "reasons": ["complete_event_candidate_validation"],
+        "scope": scope,
+        "test_groups": groups,
+        "source_validation": "full",
+        "semantic_review": "full",
+        "qa_scopes": list(scope["qa_scopes"]),
+        "full_regression_required": False,
+        "binding": {
+            "post_id": post_id,
+            "target_status": target_status,
+            "route": "standard",
+            "before_content_sha256": expected_content_sha256,
+            "after_content_sha256": _content_sha(bundle),
+        },
+        "before_digest": None,
+        "after_digest": _stable_digest(bundle),
+    }
+    plan["plan_digest"] = _stable_digest(plan)
+    return plan
+
+
 def validate_validation_plan(plan: dict) -> dict:
     """Validate a serialized plan before using it to select or run tests."""
     if not isinstance(plan, dict) or plan.get("version") != 1:
