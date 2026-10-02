@@ -2,7 +2,8 @@
 
 import unittest
 
-from agents.editorial_writer import Plan
+from agents.editorial_writer import GeneralPlan, Plan, writer_plan_schema
+from tests.test_editorial_system import sample
 
 
 class GeneralWriterContractTests(unittest.TestCase):
@@ -54,6 +55,30 @@ class GeneralWriterContractTests(unittest.TestCase):
         self.assertEqual('sum', plan['lead']['calculations'][0]['operation'])
         self.assertEqual(1200, plan['lead_image']['width'])
         self.assertEqual('공식 누리집에서 보험료 조회 메뉴 선택', plan['official_navigation'][0]['label'])
+
+    def test_general_generation_schema_excludes_event_only_fields(self):
+        schema = GeneralPlan.model_json_schema()
+        section_properties = schema['$defs']['BaseSection']['properties']
+        location_properties = schema['$defs']['SectionLocation']['properties']
+        self.assertNotIn('event_name', section_properties)
+        self.assertNotIn('latitude', location_properties)
+        self.assertNotIn('longitude', location_properties)
+        self.assertIs(writer_plan_schema(sample()), GeneralPlan)
+
+    def test_legacy_plan_parser_still_accepts_event_superset(self):
+        plan = Plan.model_validate({
+            'title': '행사 안내',
+            'lead': {'text': '행사 안내입니다.', 'evidence': [], 'answers': []},
+            'sections': [{
+                'heading': '행사 상세', 'paragraphs': [], 'event_name': '가을축제',
+                'location': {
+                    'venue': '시민광장', 'address': '시민광장', 'query': '시민광장',
+                    'evidence': [], 'latitude': 37.5, 'longitude': 127.0,
+                },
+            }],
+        }).model_dump()
+        self.assertEqual('가을축제', plan['sections'][0]['event_name'])
+        self.assertEqual(37.5, plan['sections'][0]['location']['latitude'])
 
 
 if __name__ == '__main__':

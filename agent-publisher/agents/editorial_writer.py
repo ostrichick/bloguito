@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 from config import GEMINI_API_KEY, CATEGORIES, resolve_category
-from agents.editorial import (policy, policy_fingerprint, policy_instructions, digest,
+from agents.editorial import (policy, policy_fingerprint, policy_instructions, policy_profile, digest,
                               validate_bundle, render, topic_reasons, ROOT, save_report)
 from agents.event_post_standard import event_review_instruction, event_writer_instruction
 from agents.fact_validation import snapshot
@@ -134,13 +134,12 @@ class SectionImage(BaseModel):
     caption: str
     source_id: str
     rights: str | None = Field(default=None, description=(
-        'Event-post v1 should record site_owned, open_license, permission_granted or source_attributed. '
-        'For open-license or permission-based images, rights_url should identify the reuse terms. '
-        'The renderer may omit a separate photo-source link for site-owned event images.'
+        'Optional reviewed reuse basis such as site_owned, open_license, permission_granted or source_attributed. '
+        'For open-license or permission-based images, rights_url should identify the reuse terms.'
     ))
     rights_url: str | None = None
     year: int | None = Field(default=None, description=(
-        'Event-post v1 should set the actual photo/poster year so prior-year use can be disclosed deterministically.'
+        'Optional actual image/photo year when the year is editorially relevant and reviewed.'
     ))
 
 
@@ -151,6 +150,9 @@ class SectionLocation(BaseModel):
     ))
     query: str
     evidence: list[Evidence]
+
+
+class EventSectionLocation(SectionLocation):
     latitude: float | None = Field(default=None, description=(
         'Event-post v1 only: verified Kakao Map marker latitude for this event venue.'
     ))
@@ -164,29 +166,32 @@ class OfficialSectionLink(BaseModel):
     url: str
 
 
-class Section(BaseModel):
+class BaseSection(BaseModel):
     heading: str
     paragraphs: list[Paragraph]
     table: InformationTable | None = None
     facts: list[SectionFact] = Field(default_factory=list)
     image: SectionImage | None = None
     location: SectionLocation | None = None
-    event_name: str | None = Field(default=None, description=(
-        'Event-post v1 only: exact temporal_source.event_entries[].name for one detailed event section. '
-        'Leave empty on overview/comparison/FAQ-oriented sections.'
-    ))
     actions: list[str] = Field(default_factory=list, description=(
         'Optional reviewed action URLs to render inside this section. Each URL must '
         'exactly match an official source action; scoped actions are omitted from the global CTA.'
     ))
     official_links: list[OfficialSectionLink] = Field(default_factory=list, description=(
-        'Informational links to an official source used by this section, for example a detailed event-program page. '
-        'Optional globally, but event-post v1 requires at least one when event_name is set. '
+        'Informational links to an official source used by this section. '
         'These are not booking/apply/purchase actions.'
     ))
     kind: str | None = Field(default=None, description=(
         'Select overview, eligibility, comparison, procedure, exceptions, schedule or general. '
         'Only procedure is a numbered STEP. Use overview for a short at-a-glance table before links.'
+    ))
+
+
+class EventSection(BaseSection):
+    location: EventSectionLocation | None = None
+    event_name: str | None = Field(default=None, description=(
+        'Event-post v1 only: exact temporal_source.event_entries[].name for one detailed event section. '
+        'Leave empty on overview/comparison/FAQ-oriented sections.'
     ))
 
 
@@ -215,10 +220,10 @@ class OfficialNavigation(BaseModel):
     note: str
 
 
-class Plan(BaseModel):
+class GeneralPlan(BaseModel):
     title: str
     lead: Paragraph
-    sections: list[Section]
+    sections: list[BaseSection]
     faq: list[FAQ] = Field(default_factory=list)
     lead_image: LeadImage | None = None
     official_navigation: list[OfficialNavigation] = Field(default_factory=list, description=(
@@ -228,6 +233,24 @@ class Plan(BaseModel):
         'Optional, at most two already-published articles on the same site, '
         'with verified https://lifeinfo24.org/?p=ID URLs; never official CTA or evidence.'
     ))
+
+
+class EventPlan(GeneralPlan):
+    sections: list[EventSection]
+
+
+class Plan(EventPlan):
+    """Backward-compatible parser for stored reviewed plans.
+
+    New model generation uses GeneralPlan or EventPlan based on policy_profile().
+    Keeping the legacy superset parser avoids rewriting stored bundles merely to
+    adopt the narrower generation schemas.
+    """
+
+
+def writer_plan_schema(bundle):
+    """Return the narrow response schema for a newly generated plan."""
+    return EventPlan if policy_profile(bundle) == 'event' else GeneralPlan
 
 
 class Checks(BaseModel):
@@ -1228,6 +1251,7 @@ class EditorialWriterAgent:
             raise ValueError('editorial_writer_disabled_for_manual_flow')
         bundle = {'brief': brief, 'sources': sources, 'temporal_source': temporal_source or {}}
         event_rules = event_writer_instruction(brief, temporal_source or {})
+        plan_schema = writer_plan_schema(bundle)
         feedback = []
         for attempt in range(policy()['max_revisions']+1):
             plan = self._call(
@@ -1236,7 +1260,7 @@ class EditorialWriterAgent:
                 '숫자·조건·현재 상태는 evidence 또는 validator가 허용한 결정론적 계산 범위를 넘지 말고, 자유 HTML이나 확인하지 않은 값을 만들지 마라. '
                 '이전 시도의 issues가 있으면 해당 문제를 고치되 근거 범위를 넓히지 마라.'
                 + event_rules,
-                {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, Plan, 'writer',
+                {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, plan_schema, 'writer',
                 policy_context=bundle)
             bundle['plan'] = plan
             report = validate_bundle(bundle, inventory, require_review=False)
