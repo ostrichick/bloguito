@@ -18,6 +18,7 @@ from typing import Callable
 
 from agents.editorial import ROOT, fresh, policy
 from agents.temporal_validation import KST
+from agents.volatility import requires_live_refresh
 from agents.workflow_metrics import increment, timed
 
 
@@ -48,8 +49,10 @@ def _receipt_path(url: str, root: Path | None = None) -> Path:
     return root / "data" / "editorial_runs" / "source-validation" / f"{key}.json"
 
 
-def source_requires_live_refresh(source: dict) -> bool:
+def source_requires_live_refresh(source: dict, brief: dict | None = None) -> bool:
     """Current-state evidence is never satisfied by a short-lived receipt."""
+    if requires_live_refresh(brief):
+        return True
     text = source.get("text", "") if isinstance(source, dict) else ""
     patterns = (
         r"(?:예매|판매|신청|접수)\s*상태\s*:\s*(?:예매중|판매중|신청중|접수중|가능)",
@@ -69,6 +72,7 @@ def revision_source_recheck_plan(old_bundle: dict, new_bundle: dict, *, now: dat
     }
     refresh_sources = []
     reused_source_ids = []
+    brief = (new_bundle or {}).get("brief", {})
     max_age = policy()["source_max_age_hours"]
     for source in (new_bundle or {}).get("sources", []):
         if not isinstance(source, dict) or not isinstance(source.get("id"), str):
@@ -79,7 +83,7 @@ def revision_source_recheck_plan(old_bundle: dict, new_bundle: dict, *, now: dat
             or any(prior.get(field) != source.get(field) for field in SOURCE_IDENTITY_FIELDS)
         )
         stale = not fresh(source.get("fetched_at"), now, max_age)
-        live_state = source_requires_live_refresh(source)
+        live_state = source_requires_live_refresh(source, brief)
         if changed or stale or live_state:
             refresh_sources.append(source)
         else:
@@ -117,9 +121,40 @@ def verify_revision_sources(old_bundle: dict, new_bundle: dict, *, now: datetime
     }
 
 
-def _load_reusable_receipt(source: dict, *, root: Path | None = None,
+def verify_explicit_live_sources(bundle: dict, *, root: Path | None = None,
+                                 now: datetime | None = None,
+                                 fetch_subset: Callable | None = None) -> dict:
+    """Force a network recheck for sources explicitly marked as live."""
+    if not isinstance(bundle, dict):
+        return {"refetched_source_ids": [], "all_unchanged": True}
+    brief = bundle.get("brief") if isinstance(bundle.get("brief"), dict) else {}
+    sources = bundle.get("sources") if isinstance(bundle.get("sources"), list) else []
+    live_sources = [
+        source for source in sources
+        if isinstance(source, dict) and source_requires_live_refresh(source, brief)
+    ]
+    if not live_sources:
+        return {"refetched_source_ids": [], "all_unchanged": True}
+    live_ids = {source.get("id") for source in live_sources}
+    if None in live_ids or len(live_ids) != len(live_sources):
+        raise ValueError("explicit_live_source_ids_required")
+    result = verify_sources_unchanged(
+        brief,
+        live_sources,
+        force_refresh_ids=live_ids,
+        root=root,
+        now=now,
+        fetch_subset=fetch_subset,
+    )
+    return {
+        "refetched_source_ids": result.get("refetched_source_ids", []),
+        "all_unchanged": result.get("all_unchanged") is True,
+    }
+
+
+def _load_reusable_receipt(source: dict, *, brief: dict | None = None, root: Path | None = None,
                            now: datetime | None = None) -> dict | None:
-    if source_requires_live_refresh(source):
+    if source_requires_live_refresh(source, brief):
         return None
     path = _receipt_path(source.get("url", ""), root)
     try:
@@ -188,7 +223,7 @@ def verify_sources_unchanged(
     refresh = []
     for source_id, source in expected.items():
         receipt = None if source_id in force_refresh_ids else _load_reusable_receipt(
-            source, root=root, now=now)
+            source, brief=brief, root=root, now=now)
         if receipt is not None:
             reusable.append(source_id)
         else:

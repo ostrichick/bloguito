@@ -1,6 +1,6 @@
 # 일반 정보 포스트 정책 최적화 4단계 후속 계획
 
-**상태 (2026-10-02):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 카테고리 8분류 개편과 병합 및 기존 회귀 문제 정리 후 전체 Python suite는 801 tests PASS, 1 skipped다. 4.3은 [영향도 감사와 실행 설계](general-post-stage4-3-impact-2026-10-02.md)를 완료해 4.3A metadata-only 단계가 GO 상태이며, 동작 코드는 아직 구현하지 않았다. 4.4는 계획 상태다.
+**상태 (2026-10-02):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 카테고리 8분류 개편과 병합 및 기존 회귀 문제 정리 후 4.3A/B까지 구현했다. 기존 brief 자동 변환은 하지 않았고 [volatility migration report](volatility-migration-report-2026-10-02.json)를 별도로 생성했다. 4.3C/D는 최소 한 릴리스 관찰 뒤 검토하며, 4.4는 계획 상태다.
 
 1~3단계에서 일반 정보글의 writer/validator/renderer 계약을 맞추고, 정책 문서를 글 유형별로 분리했으며, bundle에 실제 적용되는 정책만 semantic review fingerprint와 모델 지침에 포함하도록 변경했다. Standard 수정의 source recheck도 draft/public 공용 planner로 통합했다.
 
@@ -85,13 +85,13 @@ agent-publisher/data/policy_exceptions/
 
 ## 4.3 category 중심 freshness를 volatility 중심으로 전환
 
-**진행 상태:** 구현 전 영향도 확인 완료. category reorganization은 main에 통합됐고, 4.3A metadata-only 단계부터 시작할 수 있다. lifecycle은 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off`로 두고 현재 상태 검증은 `requires_live_state`로 분리한다.
+**진행 상태:** 4.3A/B 완료. lifecycle은 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off` 5종이며, 현재 상태 검증은 별도 `requires_live_state`로 분리한다. 기존 category/content-type fallback은 그대로 유지한다.
 
 ### 목표
 
 `복지`, `생활정보` 같은 카테고리 자체보다 **주장의 시간 변동성**에 따라 useful lifetime과 source 재검증 강도를 결정한다.
 
-### 제안 enum
+### 현행 lifecycle 값
 
 - `timeless-procedure`: 서비스 이용 경로·반복 절차처럼 기한이 없는 설명
 - `policy-current`: 종료일은 없지만 법·정책·요금·급여 기준이 개정될 수 있는 현행 제도
@@ -101,19 +101,20 @@ agent-publisher/data/policy_exceptions/
 
 현재 판매·예매·접수·재고처럼 수시 변동하는 상태는 lifecycle enum과 분리해 `requires_live_state=true`로 표시한다.
 
-### 안전한 도입 순서
+### 구현된 도입 순서
 
-1. 새 필드는 처음에는 optional로 추가하고 기존 `content_type`/category 규칙을 그대로 유지한다.
-2. 신규 brief부터 명시적인 volatility를 기록한다.
-3. 기존 글은 deterministic migration report를 만들어 후보값만 제안하고 자동 저장하지 않는다.
-4. 충분한 fixture가 쌓인 후 freshness 판단을 `volatility` 우선으로 전환한다.
-5. category 기반 규칙은 한 릴리스 동안 fallback으로 유지한 뒤 제거 여부를 결정한다.
+1. 새 필드는 optional로 추가하고 기존 `content_type`/category/30일 규칙을 그대로 유지한다. **완료**
+2. explicit metadata가 있는 bundle만 volatility contract를 policy fingerprint에 추가 결합한다. **완료**
+3. 기존 글은 deterministic migration report로 후보값만 제안하고 자동 저장하지 않는다. **완료**
+4. `requires_live_state=true`와 기존 live-state regex는 저장 전 network recheck를 강제하고 receipt reuse를 허용하지 않는다. **완료**
+5. category 기반 규칙은 최소 한 릴리스 동안 fallback으로 유지한 뒤 제거 여부를 결정한다. **보류**
 
 ### 기본 정책 방향
 
 - `requires_live_state=true`: 저장 직전 항상 관련 source를 network recheck. receipt로 현재 상태 검증을 생략하지 않는다.
 - `annual-policy`, `seasonal`, `one-off`: useful_until과 적용 연도/기간을 강하게 검증한다.
 - `timeless-procedure`: useful_until을 강제하지 않되 source·메뉴 경로가 바뀌면 새 검토가 필요하다.
+- `policy-current`: useful_until을 새로 강제하지 않고 기존 source/review freshness와 category/content-type 안전 규칙을 계속 적용한다.
 
 ### 완료 기준
 

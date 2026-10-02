@@ -79,6 +79,17 @@ class PolicyProfileTests(unittest.TestCase):
             after = editorial.policy_fingerprint(bundle)
         self.assertEqual(before, after)
 
+    def test_legacy_bundle_ignores_volatility_contract_until_explicit(self):
+        bundle = sample()
+        with patch('agents.editorial._policy_document_text', side_effect=lambda name: self.docs[name]):
+            before = editorial.policy_fingerprint(bundle)
+            unchanged = editorial.policy_fingerprint(copy.deepcopy(bundle))
+            explicit = copy.deepcopy(bundle)
+            explicit['brief']['volatility'] = 'timeless-procedure'
+            after = editorial.policy_fingerprint(explicit)
+        self.assertEqual(before, unchanged)
+        self.assertNotEqual(before, after)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -52,6 +52,7 @@ MAINTENANCE_ACTIONS = {
     'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
     'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
     'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
+    'volatility-report',
 }
 ALL_ACTIONS = sorted(
     PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | MAINTENANCE_ACTIONS
@@ -104,6 +105,32 @@ def _main():
 
     if args.media_metadata_file and args.action != 'import-section-image':
         parser.error('--media-metadata-file is only valid for import-section-image')
+
+    if args.action == 'volatility-report':
+        from agents.volatility import migration_report
+        source = Path(args.file) if args.file else Path(__file__).resolve().parent / 'data' / 'search_briefs.json'
+        try:
+            briefs = json.loads(source.read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError('invalid_volatility_report_source') from exc
+        if not isinstance(briefs, list) or any(not isinstance(item, dict) for item in briefs):
+            raise ValueError('invalid_volatility_report_source')
+        if args.file is None:
+            source_label = 'data/search_briefs.json'
+        else:
+            try:
+                source_label = source.resolve().relative_to(Path.cwd().resolve()).as_posix()
+            except ValueError:
+                source_label = str(source)
+        payload = {
+            'source': source_label,
+            'mode': 'read-only-suggestion',
+            'rows': migration_report(briefs),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if args.output:
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        return
 
     if args.action == 'list-drafts':
         from agents.publisher import PublisherAgent

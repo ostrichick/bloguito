@@ -286,6 +286,23 @@ class EditorialTests(unittest.TestCase):
                 PublisherAgent().publish(article)
             run.assert_not_called()
 
+    def test_publisher_live_recheck_fails_before_wordpress_write(self):
+        self.b['brief']['volatility'] = 'policy-current'
+        self.b['brief']['requires_live_state'] = True
+        sign(self.b)
+        article = article_from_bundle(self.b)
+        with patch('sync_wordpress_inventory.sync_inventory'), \
+             patch('agents.editorial_writer.load_inventory', return_value=self.inventory), \
+             patch('agents.source_validation_cache.verify_explicit_live_sources',
+                   side_effect=ValueError('official_sources_changed_since_review')), \
+             patch('agents.editorial.datetime') as clock, \
+             patch('agents.publisher.subprocess.run') as run:
+            clock.now.return_value = NOW
+            clock.fromisoformat = datetime.fromisoformat
+            with self.assertRaisesRegex(ValueError, 'official_sources_changed_since_review'):
+                PublisherAgent().publish(article)
+            run.assert_not_called()
+
     def test_writer_revises_within_budget_and_holds(self):
         writer=EditorialWriterAgent(client=Mock())
         with patch.object(writer,'_call',return_value=self.b['plan']) as call, patch('agents.editorial_writer.validate_bundle',return_value={'status':'needs_review','reasons':['question_missing']}):

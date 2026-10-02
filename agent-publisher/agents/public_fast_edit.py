@@ -25,6 +25,7 @@ from agents.post_manifest_store import (
     replace_record,
     snapshot_backup_payload,
 )
+from agents.source_validation_cache import verify_explicit_live_sources
 from agents.wordpress_mutation import (
     backup_json,
     content_sha256,
@@ -121,6 +122,8 @@ def fast_update_public_post(
             delta_review = prepared_delta_review
         else:
             delta_review = prepare_fast_delta_review(old_bundle, candidate, report, edit_intent)
+
+        verify_explicit_live_sources(candidate)
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]

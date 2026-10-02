@@ -1,14 +1,14 @@
 # 4.3 volatility 기반 freshness 전환 영향도 감사
 
-**상태:** 카테고리 8분류 개편과 1~4.2 통합 완료. 4.3A metadata-only 구현 시작 조건 충족. 4.3 동작 코드는 아직 시작하지 않음.
+**상태:** 카테고리 8분류 개편과 1~4.2 통합 완료. 4.3A metadata-only와 4.3B 안전 강화까지 구현 완료. 기존 category/content-type fallback 제거는 아직 하지 않음.
 
 이 문서는 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 완료한 뒤, `content_type`·카테고리 중심의 freshness 판단을 volatility 중심으로 바꾸기 전에 현재 코드·테스트·데이터에 미치는 영향을 읽기 전용으로 조사한 결과다. WordPress, 운영 서버, 기존 게시물은 변경하지 않았다.
 
 ## 결론
 
-카테고리 8분류 개편은 `5ea14ea`로 `main`에 통합됐고, 정책 최적화 1~4.2와 충돌도 해소했다. 통합 후 전체 Python suite는 **801 tests PASS, 1 skipped**다. 따라서 **4.3A metadata-only 단계는 지금 시작해도 된다.** 다만 4.3B부터는 실제 source 재조회와 useful lifetime 판정을 바꾸므로 A의 migration report를 검토하기 전에 한 번에 전환하지 않는다.
+카테고리 8분류 개편은 `5ea14ea`로 `main`에 통합됐고 정책 최적화 1~4.2와 충돌도 해소했다. 그 기반에서 **4.3A와 4.3B를 구현했다.** 다만 기존 category/content-type 규칙은 아직 제거하지 않고 additive gate로 유지한다.
 
-또한 현재 계획의 단일 `volatility` enum만으로는 게시물 수명과 source 재검증 강도를 모두 안전하게 표현하기 어렵다. 한 글 안에 상시 절차와 실시간 신청·예매 상태가 함께 존재할 수 있기 때문이다. 4.3 1차 구현에서는 기존 `content_type`과 30일 규칙을 fallback으로 유지하고, volatility는 **기존 안전 기준을 완화하지 않는 추가 메타데이터/강화 신호**로 도입해야 한다.
+단일 `volatility` enum 대신 lifecycle과 live-state를 분리했다. lifecycle은 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off` 5종이고, 현재 상태 재검증은 별도 `requires_live_state` boolean으로 관리한다. 기존 `content_type`과 30일 규칙은 fallback으로 유지한다.
 
 ## 현재 freshness는 네 층으로 분리되어 있다
 
@@ -81,7 +81,7 @@ dated 3개는 콘서트 1개, welfare 2개다. evergreen 10개 안에는 순수 
 - 임플란트 건강보험·기후동행 관련 현행 제도·세금포인트처럼 종료일은 없지만 정책 개정 가능성이 있는 글: 현재 5개 enum에는 정확한 표현이 없다.
 - 콘서트·지역 월간 행사처럼 특정 일정에 묶인 글: `one-off`가 자연스럽지만 예매 상태 주장은 별도로 `live` freshness가 필요할 수 있다.
 
-따라서 기존 초기 설계에서 검토했던 **`policy-current`를 enum에 다시 포함하는 것이 적절하다.** 권장 post-level 값은 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off`, `live`다. 다만 `live`는 아래 source-level 신호와 함께 사용한다.
+따라서 기존 초기 설계에서 검토했던 **`policy-current`를 enum에 다시 포함했다.** post-level lifecycle 값은 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off`이며 `live`는 enum이 아니라 별도 boolean 신호로 분리했다.
 
 ### `POST_CATALOG.md`
 
@@ -102,17 +102,17 @@ dated 3개는 콘서트 1개, welfare 2개다. evergreen 10개 안에는 순수 
 따라서 4.3은 다음 두 레벨을 구분하는 것이 안전하다.
 
 1. `brief.volatility`: 글 전체의 기본 lifecycle/정책 변경 성격.
-2. `requires_live_state` 또는 `sources[].volatility=live` 같은 별도 명시적 live 신호: 특정 source가 현재 상태를 증명할 때의 재조회 강도.
+2. `brief.requires_live_state`: 현재 상태를 증명할 때의 재조회 강도. 첫 릴리스에서는 source-level schema를 추가하지 않는다.
 
-기존 `source_requires_live_refresh()` regex는 계속 fallback으로 유지한다. 명시적 `live`가 있으면 regex가 상태 문구를 놓쳐도 항상 network recheck하고, regex가 live를 감지하면 메타데이터가 없어도 계속 강제 recheck한다.
+기존 `source_requires_live_refresh()` regex는 계속 fallback으로 유지한다. `requires_live_state=true`이면 regex가 상태 문구를 놓쳐도 항상 network recheck하고, regex가 live를 감지하면 metadata가 없어도 계속 강제 recheck한다.
 
 `fetch_sources_subset()`은 기존 snapshot core 필드 이외의 reviewed metadata를 보존하므로 향후 source-level volatility 필드를 넣어도 selective re-fetch 과정에서 유지할 수 있다.
 
 ## 확정 4.3 실행 순서
 
-### 4.3A — metadata-only 릴리스
+### 4.3A — metadata-only 릴리스 — 완료
 
-동작을 바꾸지 않는다.
+기존 metadata가 없는 bundle 동작은 바꾸지 않는다.
 
 - `brief.volatility`를 optional로 허용한다: `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off`.
 - 현재 상태 확인은 post lifecycle과 분리해 `brief.requires_live_state: bool`을 optional로 둔다. 향후 필요한 경우 source-level `volatility=live`를 추가할 수 있지만 A에서는 저장 schema를 넓히지 않는다.
@@ -125,7 +125,7 @@ dated 3개는 콘서트 1개, welfare 2개다. evergreen 10개 안에는 순수 
 
 이 단계에서 volatility 추가는 `brief_changed`이므로 기존 `change_classifier`가 자동으로 Standard 수정으로 올린다. 별도 Fast 우회 코드는 만들 필요가 없다.
 
-### 4.3B — 안전 기준 강화만 적용
+### 4.3B — 안전 기준 강화만 적용 — 완료
 
 기존 규칙을 완화하지 않고 volatility가 더 강한 검사를 요구할 때만 사용한다.
 
@@ -216,10 +216,10 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 
 ## Go / No-Go 기준
 
-현재 판단은 다음과 같다.
+현재 구현 결과는 다음과 같다.
 
-- **4.3A: GO.** 8분류 taxonomy가 main에 정리됐고, 4.1/4.2와 통합 후 801 tests PASS baseline을 확보했다.
-- **4.3B: A 결과 검토 전 NO-GO.** migration report의 ambiguous 후보와 live-state 범위를 확인한 뒤 진행한다.
+- **4.3A: 완료.** optional lifecycle/live metadata, fail-closed validation, explicit bundle fingerprint binding, read-only migration reporter를 구현했다.
+- **4.3B: 완료.** 기존 gate를 제거하지 않고 annual/timeless 추가 계약과 save-time live source network recheck를 구현했다.
 - **4.3C/4.3D: 최소 한 릴리스 fallback 데이터를 확보하기 전 NO-GO.** 기존 category/content_type 안전장치를 먼저 제거하지 않는다.
 
-4.3A 완료 직후에는 코드가 제안한 migration report를 검토해 자동 확정 가능한 항목과 사람 확인 항목을 분리한다. 그 결과를 승인된 fixture로 만든 다음 4.3B에서 **기존 기준을 완화하지 않는 강화 규칙만** 켠다.
+2026-10-02 migration report는 13개 brief 중 현재 review window가 살아 있는 3개를 그대로 식별했고, 9개를 사람 검토가 필요한 후보로 남겼다. 기존 `search_briefs.json`, `approved`, `review_until`, reviewed manifest, WordPress 상태는 자동 변경하지 않았다. 4.3C/D는 explicit metadata를 실제 신규/수정 bundle에 적용한 뒤 한 릴리스 이상 관찰하고 진행한다.

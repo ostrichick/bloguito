@@ -20,6 +20,7 @@ from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 from agents.event_post_standard import overview_event_date_labels, validate_event_post_standard
 from agents.policy_exceptions import get_policy_exception
+from agents.volatility import explicit_contract, lifecycle_reasons, temporal_contract_reasons
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,6 +81,9 @@ def applicable_policy_rules(bundle=None):
     legacy = get_policy_exception('legacy_procedure', brief_id)
     if legacy is not None:
         selected['legacy_welfare_procedural_exception'] = {brief_id: legacy}
+    volatility_contract = explicit_contract(brief)
+    if volatility_contract is not None:
+        selected['volatility_contract'] = volatility_contract
     return selected
 
 
@@ -240,7 +244,7 @@ def topic_reasons(brief, today=None):
     if not isinstance(brief, dict):
         return ['malformed_topic']
     today = today or datetime.now(KST).date()
-    reasons = []
+    reasons = list(lifecycle_reasons(brief))
     required = ('entity', 'primary_keyword', 'question', 'angle', 'official_urls', 'required_title_terms', 'reader_questions')
     if not all(brief.get(k) for k in required):
         reasons.append('topic_incomplete')
@@ -759,6 +763,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
         brief, sources, plan = bundle['brief'], bundle['sources'], bundle['plan']
         if 'content' in scopes:
             reasons.extend(topic_reasons(brief, now.date()))
+            reasons.extend(temporal_contract_reasons(bundle))
             if any('·' in value for value in reader_visible_strings(plan, sources)):
                 reasons.append('reader_middle_dot_disallowed')
                 details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')

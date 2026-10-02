@@ -5,7 +5,11 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agents.source_validation_cache import revision_source_recheck_plan, verify_sources_unchanged
+from agents.source_validation_cache import (
+    revision_source_recheck_plan,
+    verify_explicit_live_sources,
+    verify_sources_unchanged,
+)
 from test_editorial_system import NOW, sample
 
 
@@ -50,6 +54,41 @@ class SourceValidationCacheTests(unittest.TestCase):
             root = Path(folder)
             verify_sources_unchanged(bundle['brief'], sources, root=root, now=NOW, fetch_subset=fetch)
             verify_sources_unchanged(bundle['brief'], sources, root=root, now=NOW, fetch_subset=fetch)
+        self.assertEqual(2, fetch.call_count)
+
+    def test_explicit_post_live_state_forces_refresh_even_without_text_marker(self):
+        bundle = sample()
+        bundle['brief']['requires_live_state'] = True
+        old = copy.deepcopy(bundle)
+        new = copy.deepcopy(bundle)
+        plan = revision_source_recheck_plan(old, new, now=NOW)
+        self.assertEqual([], plan['reused_source_ids'])
+        self.assertEqual([new['sources'][0]['id']], [s['id'] for s in plan['refresh_sources']])
+
+        sources = bundle['sources']
+        by_id = {source['id']: source for source in sources}
+        fetch = Mock(side_effect=lambda brief, existing, ids: [copy.deepcopy(by_id[source_id]) for source_id in ids])
+        with tempfile.TemporaryDirectory() as folder, \
+             patch('agents.source_validation_cache._fetcher_fingerprint', return_value='fetcher-v1'):
+            root = Path(folder)
+            verify_sources_unchanged(bundle['brief'], sources, root=root, now=NOW, fetch_subset=fetch)
+            verify_sources_unchanged(bundle['brief'], sources, root=root, now=NOW, fetch_subset=fetch)
+        self.assertEqual(2, fetch.call_count)
+
+    def test_new_draft_explicit_live_recheck_is_forced(self):
+        bundle = sample()
+        bundle['brief']['requires_live_state'] = True
+        by_id = {source['id']: source for source in bundle['sources']}
+        fetch = Mock(side_effect=lambda brief, existing, ids: [copy.deepcopy(by_id[source_id]) for source_id in ids])
+        with tempfile.TemporaryDirectory() as folder, \
+             patch('agents.source_validation_cache._fetcher_fingerprint', return_value='fetcher-v1'):
+            root = Path(folder)
+            first = verify_explicit_live_sources(
+                bundle, root=root, now=NOW, fetch_subset=fetch)
+            second = verify_explicit_live_sources(
+                bundle, root=root, now=NOW, fetch_subset=fetch)
+        self.assertEqual([bundle['sources'][0]['id']], first['refetched_source_ids'])
+        self.assertEqual([bundle['sources'][0]['id']], second['refetched_source_ids'])
         self.assertEqual(2, fetch.call_count)
 
     def test_changed_source_sha_fails_closed(self):

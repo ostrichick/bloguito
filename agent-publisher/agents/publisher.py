@@ -73,6 +73,7 @@ class PublisherAgent:
     def _publish_editorial(self, article, image_path=None):
         from agents.editorial import validate_bundle, render, excerpt_from_lead
         from agents.editorial_writer import load_inventory
+        from agents.source_validation_cache import verify_explicit_live_sources
         from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
         from config import CATEGORIES, resolve_category
         # Legacy WordPress data contains hundreds of mostly one-off tags. The
@@ -87,6 +88,7 @@ class PublisherAgent:
         report = validate_bundle(bundle, load_inventory())
         if report['status'] != 'ready':
             raise ValueError(f"편집 검사 보류: {report['reasons']}")
+        verify_explicit_live_sources(bundle)
         content = render(bundle['plan'], bundle['sources'])
         title = bundle['plan']['title']
         excerpt = excerpt_from_lead(bundle['plan']['lead'])
@@ -152,6 +154,7 @@ class PublisherAgent:
         """Only migrate a stored reviewed draft whose body still equals our renderer."""
         from agents.editorial import ROOT, render, render_legacy, validate_bundle
         from agents.editorial_writer import load_inventory
+        from agents.source_validation_cache import verify_explicit_live_sources
         from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
         lock = acquire_editorial_lock(ROOT)
         try:
@@ -183,6 +186,7 @@ class PublisherAgent:
                 raise ValueError(f"편집 검사 보류: {report['reasons']}")
             if old == content:
                 return post_id
+            verify_explicit_live_sources(bundle)
             base = ['sudo', 'docker', 'exec', self.container_name, 'wp']
             # Re-read immediately before mutation to detect edits during validation.
             current = json.loads(subprocess.run(

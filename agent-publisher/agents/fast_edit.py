@@ -38,6 +38,7 @@ from agents.post_manifest_store import (
     snapshot_backup_payload,
 )
 from agents.temporal_validation import KST
+from agents.source_validation_cache import verify_explicit_live_sources
 from agents.workflow_metrics import increment
 from config import DRAFTS_INDEX_FILE
 from agents.wordpress_mutation import (
@@ -565,6 +566,8 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
             delta_review = prepared_delta_review
         else:
             delta_review = prepare_fast_delta_review(old_bundle, bundle, report, edit_intent)
+
+        verify_explicit_live_sources(bundle)
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]

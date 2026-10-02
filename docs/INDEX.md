@@ -51,6 +51,7 @@
 - [2026-10-02 카테고리 8분류 개편](category-reorganization-2026-10-02.md): `생활/건강 정보`의 과밀과 지역 행사 분산을 해소하기 위한 8개 평면 taxonomy, 실서버 61편 전수 재분류표, WordPress term/메뉴 마이그레이션 원칙을 기록.
 - [2026-10-02 일반 정보 포스트 정책 4단계 후속 계획](general-post-stage4-plan-2026-10-02.md): 4.1 General/Event schema 분리와 4.2 post-specific exception registry 분리를 완료하고, 4.3 volatility 기반 freshness와 4.4 critical facts 데이터화의 후속 순서와 종료 조건을 기록.
 - [2026-10-02 volatility 기반 freshness 4.3 영향도 점검](general-post-stage4-3-impact-2026-10-02.md): 8개 카테고리 구조와 기존 reviewed bundle을 기준으로 metadata-only 도입, migration report, live source 재검증, 기존 content_type fallback의 안전한 전환 순서를 정리.
+- [2026-10-02 volatility migration report](volatility-migration-report-2026-10-02.json): 기존 `search_briefs.json` 13건의 lifecycle/live-state 후보, 신뢰도, 충돌, review window 상태를 read-only로 제안. 원본 brief와 WordPress 상태는 수정하지 않음.
 - [2026-10-01 프로젝트 간소화 P9~P11 및 WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md): validation registry 제거, per-post reviewed manifest 저장 구조, WSL SSH 연결 재사용, section-image 왕복 축소, 운영 WhatsApp service 제거와 전체 회귀 검증 기록.
 
 - [2026-09-29 #598 임플란트 건강보험 대표 이미지 문구 정정](post-598-cover-text-fix-2026-09-29.md): 대표 이미지 좌측 하단 알약 배지의 '팩트' 단어를 제거하고 '안내'로 수정한 WebP를 재생성하여 운영 WordPress의 대표 이미지(_thumbnail_id=679)로 교체 및 실서비스 검증을 완료한 기록.
