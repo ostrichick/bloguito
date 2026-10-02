@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+from agents.wordpress_transport import run_wordpress
 from datetime import datetime
 
 from agents.editorial import ROOT, save_report, validate_bundle
@@ -63,11 +64,11 @@ def repair_reviewed_draft_category(post_id, expected_content_sha256, *, confirme
 
         category = resolve_category(bundle["brief"].get("category_key", ""), allow_legacy=False)
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
-        live = json.loads(subprocess.run(
+        live = json.loads(run_wordpress(
             base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
             capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         ).stdout)
-        terms = json.loads(subprocess.run(
+        terms = json.loads(run_wordpress(
             base + ["post", "term", "list", str(post_id), "category",
                     "--fields=term_id,name,slug", "--format=json", "--allow-root"],
             capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
@@ -91,15 +92,15 @@ def repair_reviewed_draft_category(post_id, expected_content_sha256, *, confirme
         os.chmod(backup, 0o600)
         save_report(bundle, report)
 
-        subprocess.run(
+        run_wordpress(
             base + ["post", "update", str(post_id), f"--post_category={target_id}", "--allow-root"],
             capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         )
-        saved = json.loads(subprocess.run(
+        saved = json.loads(run_wordpress(
             base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
             capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         ).stdout)
-        saved_terms = json.loads(subprocess.run(
+        saved_terms = json.loads(run_wordpress(
             base + ["post", "term", "list", str(post_id), "category",
                     "--fields=term_id,name,slug", "--format=json", "--allow-root"],
             capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,

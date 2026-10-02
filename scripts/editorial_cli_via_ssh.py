@@ -20,6 +20,7 @@ has a fixed WP-CLI allowlist, and Tailscale diagnostics run only after SSH fails
 """
 
 import argparse
+import hashlib
 from contextlib import nullcontext
 import json
 import os
@@ -36,11 +37,12 @@ sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 import editorial_cli  # noqa: E402
 from agents.editorial_updater import rank_math_meta_from_brief  # noqa: E402
+from agents.wordpress_transport import wordpress_transport
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
-from agents.workflow_metrics import timed, workflow_run  # noqa: E402
-from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT  # noqa: E402
+from agents.workflow_metrics import annotate, increment, timed, workflow_run  # noqa: E402
+from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT, POST_THUMBNAIL_SNAPSHOT_SCRIPT  # noqa: E402
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
 configure_utf8_stdio()
@@ -242,6 +244,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     allowed_ids = set(int(value) for value in target_ids)
     readable_ids = set(allowed_ids)
     diagnosed = False
+    pending_thumbnail = None
     control_path = f'/tmp/bloguito-editorial-{os.getpid()}-%C'
     image_mutation_allowed = bool(
         action in _CREATE_ACTIONS or action in {'replace-featured-image', 'import-section-image'} or allow_image
@@ -286,6 +289,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 pass
 
     def remote_run(remote, *, retry_255=False, **kwargs):
+        increment('ssh_roundtrips')
         options = dict(kwargs)
         if options.get('text') or options.get('universal_newlines'):
             options.setdefault('encoding', 'utf-8')
@@ -298,6 +302,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 raise
             diagnose_once()
             if retry_255:
+                increment('ssh_roundtrips')
                 return _RUN(argv, **options)
             raise
         except (OSError, subprocess.SubprocessError):
@@ -305,6 +310,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if getattr(result, 'returncode', 0) == 255:
             diagnose_once()
             if retry_255:
+                increment('ssh_roundtrips')
                 return _RUN(argv, **options)
         return result
 
@@ -533,12 +539,41 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         raise ValueError('unexpected_wordpress_command_during_editorial_ssh')
 
     def run(command, *args, **kwargs):
+        nonlocal pending_thumbnail
+        previous_thumbnail = pending_thumbnail
+        pending_thumbnail = None
         if args or not isinstance(command, (list, tuple)):
             raise ValueError('unexpected_subprocess_call_during_editorial_ssh')
         command = list(command)
         if command[:5] == _WP_PREFIX:
             wp = command[5:]
             kind = validate_wp(wp)
+            if previous_thumbnail is not None and wp == previous_thumbnail[0]:
+                increment('wp_snapshot_reuses')
+                value = previous_thumbnail[1]
+                result = subprocess.CompletedProcess(command, 0 if value is not None else 1,
+                                                     stdout=(value or ''), stderr='')
+                if kwargs.get('check') and result.returncode:
+                    raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
+                return result
+            if (action == 'replace-featured-image' and wp[:2] == ['post', 'get']
+                    and wp[3:] == ['--fields=post_status,post_title,post_name,post_content,post_excerpt',
+                                  '--format=json', '--allow-root']
+                    and kwargs.get('text')):
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(POST_THUMBNAIL_SNAPSHOT_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                options['input'] = json.dumps({'post_id': int(wp[2])})
+                result = remote_run(remote, retry_255=True, **options)
+                if result.returncode == 0:
+                    payload = json.loads(result.stdout)
+                    if (not isinstance(payload.get('post'), dict)
+                            or set(payload['post']) != {'post_status', 'post_title', 'post_name', 'post_content', 'post_excerpt'}
+                            or payload.get('thumbnail_id') is not None and not isinstance(payload['thumbnail_id'], str)):
+                        raise ValueError('invalid_image_baseline_snapshot')
+                    pending_thumbnail = (['post', 'meta', 'get', wp[2], '_thumbnail_id', '--allow-root'], payload['thumbnail_id'])
+                    result.stdout = json.dumps(payload['post'], ensure_ascii=False)
+                return result
             if kind == 'guarded_mutation':
                 payload = validate_guarded_payload(kwargs.get('input'))
                 remote = ('sudo docker exec -i wordpress_app wp eval '
@@ -667,6 +702,7 @@ def _main():
         ssh_user=args.ssh_user,
         wsl_distro=args.wsl_distro,
     )
+    annotate(transport=config.mode, transport_adapter_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     transport_action = action
     expected_rank_math_meta = None
     if action == 'edit-post':
@@ -712,6 +748,7 @@ def _main():
                     expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
         if transport_action == 'draft-standard' and bundle is not None:
             expected_rank_math_meta = rank_math_meta_from_brief(bundle.get('brief', {}))
+        annotate(route=decision['route'])
         print(f"[Edit Route] {decision['route']}" +
               (f" ({', '.join(decision['reasons'])})" if decision['reasons'] else ''))
         plan = decision['validation_plan']
@@ -751,12 +788,12 @@ def _main():
         if action == 'edit-post' else nullcontext()
     )
     with timed('remote_editorial_cli'):
-        with decision_context, patch('subprocess.run', side_effect=transport), \
+        with decision_context, wordpress_transport(transport), \
                 patch.object(sys, 'argv', ['editorial_cli.py', *request.cli_args]):
             editorial_cli.main()
 
     # prepare-draft is the user-facing one-shot path. Keep the catalog follow-up
-    # outside the patched WordPress transport so it uses the normal Direct SSH
+    # outside the WordPress transport context so it uses the normal Direct SSH
     # sync script. A catalog failure must not make callers retry the already
     # successful post create and accidentally produce a duplicate draft.
     if action == 'prepare-draft':

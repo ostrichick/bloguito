@@ -7,6 +7,7 @@ runtime data directory and never enter article bundles or reader-visible HTML.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
 import time
@@ -19,6 +20,20 @@ from agents.temporal_validation import KST
 
 
 _current = ContextVar("editorial_workflow_metrics", default=None)
+
+
+def code_identity() -> dict:
+    root = Path(__file__).resolve().parents[1]
+    fingerprint = hashlib.sha256()
+    for source in sorted((root / 'agents').glob('*.py')):
+        fingerprint.update(source.name.encode('utf-8'))
+        fingerprint.update(source.read_bytes())
+    revision = None
+    try:
+        revision = json.loads((root / 'data/editorial-release.json').read_text(encoding='utf-8')).get('revision')
+    except (OSError, ValueError):
+        pass
+    return {'code_version': fingerprint.hexdigest(), 'release_revision': revision}
 
 
 def _run_context() -> str:
@@ -48,6 +63,7 @@ class WorkflowMetrics:
         self.counters: dict[str, int] = {}
         self.status = "ok"
         self.error_type: str | None = None
+        self.metadata = code_identity()
 
     def add_timing(self, name: str, elapsed_seconds: float) -> None:
         self.timings_ms[name] = round(
@@ -62,6 +78,7 @@ class WorkflowMetrics:
         self.status = status
         self.error_type = error_type
         payload = {
+            "schema_version": 2,
             "started_at": self.started_at,
             "finished_at": datetime.now(KST).isoformat(),
             "action": self.action,
@@ -71,6 +88,7 @@ class WorkflowMetrics:
             "total_ms": round((time.perf_counter() - self.started) * 1000, 2),
             "timings_ms": self.timings_ms,
             "counters": self.counters,
+            **self.metadata,
         }
         target = _default_path(self.run_context)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -117,3 +135,13 @@ def increment(name: str, amount: int = 1) -> None:
     metrics = _current.get()
     if metrics is not None:
         metrics.increment(name, amount)
+
+
+def annotate(**metadata) -> None:
+    """Attach routing/version attributes, never article data or credentials."""
+    allowed = {'route', 'transport', 'transport_adapter_sha256'}
+    if set(metadata) - allowed:
+        raise ValueError('unsupported_workflow_metric_attribute')
+    metrics = _current.get()
+    if metrics is not None:
+        metrics.metadata.update(metadata)

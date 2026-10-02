@@ -1,9 +1,9 @@
 name: Private Google analytics collection
 
-# Read-only Google API reporting; deliver via a forced-command-only SSH key.
+# Read-only Google API reporting; deliver to an authenticated HTTPS receiver.
 # This public repository must never publish query data as commits, artifacts,
 # workflow summaries, or job logs. Daily schedule enabled after verified
-# end-to-end manual delivery (run 35606379576).
+# end-to-end manual delivery; report contents remain private.
 on:
   workflow_dispatch:
   # UTC 02:17 = KST 11:17. GitHub may delay scheduled runs.
@@ -49,61 +49,40 @@ jobs:
       - name: Collect and privately deliver both read-only reports
         env:
           REPORT_DIR: ${{ runner.temp }}/bloguito-private-report
-          REPORT_SSH_KEY: ${{ secrets.BLOGUITO_ANALYTICS_SSH_KEY }}
+          BLOGUITO_ANALYTICS_TOKEN: ${{ secrets.BLOGUITO_ANALYTICS_TOKEN }}
         run: |
           set -euo pipefail
           umask 077
           mkdir -m 700 -p "$REPORT_DIR"
-          trap 'rm -f "$REPORT_DIR"/*.json "$REPORT_DIR"/*.md "$REPORT_DIR"/ssh-key "$REPORT_DIR"/key.pub "$REPORT_DIR"/known_hosts' EXIT
-          test -n "$REPORT_SSH_KEY"
-          # Canonicalize Windows line endings and an accidentally escaped
-          # single-line paste. Never print the secret or any derived key.
-          python - "$REPORT_DIR/ssh-key" <<'PY'
-          import os
-          from pathlib import Path
-          import sys
-
-          secret = os.environ['REPORT_SSH_KEY'].strip().lstrip('\ufeff')
-          secret = secret.replace('\r\n', '\n').replace('\r', '\n')
-          if '\n' not in secret and '\\n' in secret:
-              secret = secret.replace('\\n', '\n')
-          if (not secret.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n')
-                  or not secret.endswith('\n-----END OPENSSH PRIVATE KEY-----')):
-              print('analytics_delivery_failed:ssh_secret_is_not_complete_private_key',
-                    file=sys.stderr)
-              sys.exit(1)
-          Path(sys.argv[1]).write_text(secret + '\n', encoding='utf-8')
-          PY
-          chmod 600 "$REPORT_DIR/ssh-key"
-          ssh-keygen -y -f "$REPORT_DIR/ssh-key" > "$REPORT_DIR/key.pub" 2>/dev/null || {
-            echo 'analytics_delivery_failed:invalid_ssh_secret_format' >&2
+          trap 'rm -f "$REPORT_DIR"/*.json "$REPORT_DIR"/*.md' EXIT
+          test -n "$BLOGUITO_ANALYTICS_TOKEN" || {
+            echo 'analytics_delivery_failed:missing_token' >&2
             exit 1
           }
-          test "$(ssh-keygen -lf "$REPORT_DIR/key.pub" | awk '{print $2}')" = \
-            'SHA256:B+6UdlxcxeGD1PSGzP3BJQ+HtwWXBXepu7hAO8geowQ' || {
-            echo 'analytics_delivery_failed:unexpected_ssh_key' >&2
-            exit 1
-          }
-          # A public host fingerprint verified via the pre-existing trusted
-          # operator SSH connection. Never accept a changed host key silently.
-          ssh-keyscan -T 10 -t ed25519 161.33.0.234 2>/dev/null > "$REPORT_DIR/known_hosts"
-          test "$(wc -l < "$REPORT_DIR/known_hosts")" -eq 1
-          ssh-keygen -lf "$REPORT_DIR/known_hosts" | grep -Fq 'SHA256:dgPOU/D+BElh/R4YW6p0K61ahx9NWe50stedT/pVQf0'
-          chmod 600 "$REPORT_DIR/known_hosts"
           python agent-publisher/analytics_collector.py \
             --site-url 'https://lifeinfo24.org/' \
             --ga4-property '554325332' \
             --output-dir "$REPORT_DIR"
-          test -s "$REPORT_DIR/google-analytics-"*.json
-          test -s "$REPORT_DIR/google-analytics-"*.md
-          ssh -T \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o IdentityAgent=none \
-            -o PasswordAuthentication=no \
-            -o KbdInteractiveAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$REPORT_DIR/known_hosts" \
-            -o ConnectTimeout=12 \
-            -i "$REPORT_DIR/ssh-key" \
-            ubuntu@161.33.0.234 < "$REPORT_DIR/google-analytics-"*.json
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          import requests
+
+          reports = list(Path(os.environ['REPORT_DIR']).glob('google-analytics-*.json'))
+          if len(reports) != 1:
+              sys.exit('analytics_delivery_failed:report_count')
+          try:
+              response = requests.post(
+                  'https://lifeinfo24.org/_bloguito/analytics-ingest',
+                  data=reports[0].read_bytes(),
+                  headers={'Authorization': 'Bearer ' + os.environ['BLOGUITO_ANALYTICS_TOKEN'],
+                           'Content-Type': 'application/json'},
+                  timeout=(10, 30), allow_redirects=False,
+              )
+          except requests.RequestException:
+              sys.exit('analytics_delivery_failed:https_transport')
+          if response.status_code != 200 or not response.text.startswith('analytics_ingest_ok end='):
+              sys.exit('analytics_delivery_failed:http_' + str(response.status_code))
+          print('analytics_delivery_ok')
+          PY

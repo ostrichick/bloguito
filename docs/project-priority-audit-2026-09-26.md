@@ -121,3 +121,70 @@ main.py의 미커밋 표시를 다시 조사한 결과 작업 파일의 Git blob
 통합 상태에서 표적 테스트 21개 OK, 전체 Python 517개 OK(skipped=1), git diff --check 통과. 로그는 tmp/main-integration-20260927/targeted-tests.log 및 full-tests.log에 있다. 로그 첫 줄 simulated transfer interruption은 기존 실패 주입 검사이며 전체 suite 실패가 아니다. publisher의 review 재기록 제거, main의 return stats/non-zero exit, 출처 fallback과 양쪽 편집 지침 보존을 대조했다.
 
 이번 작업은 Git main 통합·문서 상태 정정이다. 서버 재배포·공개 글 재저장·브라우저 QA는 수행하지 않았으며 9/26 운영 검증을 오늘 새로 수행한 것으로 표현하지 않는다. 두 편집 정책 변경이 함께 포함되므로 새 원고 수정 때는 통합된 최신 정책 fingerprint로 검토해야 하며, 과거 검토 digest를 다시 찍어 우회하지 않는다. 남은 운영 우선순위는 위 목록을 유지한다.
+
+## 2026-10-02 후속 감사 — 구조적 리팩터링과 효율 개선
+
+### 점검 기준과 현재 상태
+
+- 요청 범위는 최근 업데이트 확인, 프로젝트 구조 평가, 개선 우선순위 제안이다. 코드 리팩터링·서버 배포·글 변경·공개 전환은 수행하지 않았다.
+- 시작 기준은 clean `main` / `origin/main`의 `0e1d1c8`. 점검 도중 다른 작업에서 `fa463e2`(category display names)가 추가됐으므로 하나의 고정 snapshot으로 모든 결과를 설명하지 않는다. 해당 변경은 수정하거나 되돌리지 않았다.
+- 추적 파일 목록·Python AST·핵심 편집/출처/렌더/transport/저장/배포 코드, 정책 문서, CI 결과, Direct SSH 운영 조회, 공개 홈페이지 텍스트를 대조했다. 현재 inventory scan은 484 tracked files, Python 207개, Markdown 198개다. 모든 코드 줄·외부 서비스·공개 글의 사실관계를 전수 감사한 결과는 아니다.
+- Direct SSH로 WordPress 7.1.2, WordPress/MariaDB container running, 공개 62편·draft 7편을 확인했다. 공개 홈페이지에서도 최근 보건증·가족관계증명서·주택연금·세종 행사·모바일 주민등록증 글과 8개 현행 category menu를 확인했다. legacy `life-health`와 미분류 term은 count=0으로 남아 있다. 삭제 필요성은 별도 판단 대상이다.
+- 로컬 전체 Python: 822 tests, `OK (skipped=1)`, 20.872초. 증거: `scratch/tasks/project-efficiency-audit/python-tests.log`. 실행 중 일부 실패 주입/argparse 메시지는 실제 suite 실패와 구별했다.
+- 동일 시작 SHA의 GitHub Actions [37002368388](https://github.com/ostrichick/bloguito/actions/runs/37002368388): Python 822 tests / errors=10, WordPress PHP contract와 infrastructure job은 PASS. 10개 error entry 중 9개는 Designer font/generated-cover 관련, 1개는 event renderer의 `kakao_map_javascript_key_missing_or_invalid`. CI 실패가 곧 운영 이미지나 공개 지도 장애라는 증거는 아니다.
+- analytics 최근 3회(9/30, 10/1, 10/2)는 failure. 최신 [36984863152](https://github.com/ostrichick/bloguito/actions/runs/36984863152)는 private collect/deliver step에서 exit 1이다. 이 조사에서 구체적 원인은 확정하지 않았다. 로그에 출력된 `analytics_delivery_failed` 셸/파이썬 소스 문자열을 실제 오류 발생 증거로 취급하지 않았다.
+- 운영 `editorial.py`, `editorial_writer.py`, `temporal_validation.py`, `volatility.py`의 SHA256은 로컬과 일치했다. 운영에는 신규 `edit_orchestration.py`가 없고 구 `copywriter.py`가 남아 있다. policy JSON hash도 점검 중 로컬 값과 다르며, category 이름 변경이 동시에 있었으므로 개별 diff 확인 없이 잘못된 배포라고 단정하지 않는다. 운영 entrypoint/config의 차이와 구 파일의 실제 참조 여부도 추가 확인해야 한다.
+
+### 이미 이루어진 개선
+
+현행 코드·지침에서 확인한 개선은 정상 mutation 진입점 3개 통합, single change classifier, source/review 재사용, per-post reviewed manifest, 공유 edit bookkeeping, 정규 CLI parser를 재사용한 SSH request 정규화, General/Event schema 분리, policy exception registry, critical-fact registry pilot, volatility/current-value period 계약이다.
+
+과거 P12~P15 기록에는 legacy CLI/shim/WordPress 보정 플러그인 제거와 PHP runner/backup transport/DR validator 통합도 있다. 이를 새 개선으로 다시 제안하지 않는다. volatility legacy fallback 전체 제거와 critical-facts 전체 데이터화는 아직 완료된 상태가 아니다.
+
+### 우선순위와 완료 조건
+
+| 순서 | 확인한 근거 | 권장 변경 | 완료 판정 |
+| --- | --- | --- | --- |
+| 1 | 로컬 PASS / CI errors=10; 이미지 테스트가 설치 font·generator에 의존하고 event render test는 지도 key에 의존 | 단위 테스트용 image provider/font/config를 명시적으로 주입. 실제 브랜드 font 설치·검증은 별도 integration contract로 실행. 이미지 실패 시 보류하는 운영 정책은 유지 | 비밀 설정 없는 clean Windows/Linux 환경에서 동일 unit 결과, 필수 font contract PASS, GitHub 전체 green |
+| 2 | analytics 3회 실패; 로컬·운영 module 구성과 policy가 부분적으로 다름; installer는 config/main 문자열 patch와 import smoke 중심 | private analytics 실패 지점을 구별하는 비민감 진단 추가. release SHA/file hashes/필수 module/obsolete file 명시 목록과 entrypoint smoke 추가. 설정은 코드와 환경 파일로 분리하는 방향으로 점진 전환 | analytics 실제 private 전달 성공, 예정 실행 성공, release manifest와 설치 파일 일치. 유지할 환경 설정은 보존하고 구 파일은 참조 확인 후 제거 |
+| 3 | `editorial.py` 1,759줄, `render()` 455줄, `validate_bundle()`에 content/source/site/review 분기 집중 | policy loading/fingerprint, evidence validation, HTML rendering을 역할별 module로 추출. 기존 import와 함수 API는 초기 유지 | 같은 bundle의 HTML·reason code·review binding이 동등하고 기존 CAS/readback/public backup contract 유지 |
+| 4 | `editorial_writer.py` 1,311줄에 Pydantic schema·model 호출·HTTP/PDF·기관/게시물별 parser가 혼재 | schema, source fetch/extraction, model reviewer/writer로 분리. source adapter는 정확한 host/path/query matching을 유지 | 기존 source text/hash, source_id, date/amount preservation, redirect/size/HOLD behavior 동등 |
+| 5 | SSH `make_transport()` 410줄; runtime `patch('subprocess.run', ...)`로 process 전체 subprocess 경로 교체 | 명시적인 WordPress transport interface를 주입하고 실행 context의 권한·target allowlist를 집중. 한 번에 모든 호출자를 바꾸지 않고 thin adapter부터 도입 | 임의 post/field/command 거부, CAS/readback, 불명확한 media import 무재시도 유지; 일반 subprocess와 WP transport 분리 검증 |
+| 6 | catalog 유형은 title keyword로 추정하고 volatility는 reviewed lifecycle metadata로 판단. 예: 연도 있는 건강검진 title은 catalog에서 evergreen | category는 term ID/slug로 표시명과 분리; lifecycle은 reviewed manifest 우선, metadata 없는 글은 추정임을 표시. API 기반 저장 안전성 판단과 catalog용 표시를 구분 | catalog가 annual/seasonal/live 여부를 근거 수준과 함께 표시하고 운영 validation 판단을 덮어쓰지 않음 |
+| 7 | critical facts는 vaccination pilot만 data registry로 이동; legacy followup/reference 기간 검증이 남아 있음 | 단순 연도별 금액·날짜·명칭만 registry로 순차 이동. 의미·계산·조건 충돌은 Python 유지. fallback 종료는 검토 완료 metadata·운영 관찰 뒤 결정 | 같은 이유 코드/PASS/HOLD, 잘못된 registry fail closed, 기존 reviewed bundle 호환 |
+
+### 속도와 측정
+
+로컬 runtime metrics에서 2026-10-01 이후 성공 기록 129개를 action별로 집계했다. `ssh-edit-post` 13회 median 42.3초, `ssh-prepare-draft` 7회 63.6초, `ssh-replace-featured-image` 8회 60.8초(기록된 WP 왕복 평균 9회)다. `sources` 25회 median 1.28초, `check` 12회 17ms다. 워크플로 전체 소요시간에는 원고 작성·사람 승인·다른 UI 시간이 포함되지 않는다.
+
+이는 관측 표본이며 코드 버전/transport별로 분리된 최신 경로 벤치마크가 아니다. 이미 제거된 action이 일부 포함되고 `ssh-import-section-image`에 WP roundtrip=0으로 기록된 점은 미계측 가능성이 있다. median이나 phase 평균을 합산하여 전체 작업 시간을 만들지 않는다.
+
+따라서 module 분리만으로 실행이 빨라진다고 약속하지 않는다. metrics에 code/release SHA, route, transport, cache/review reuse, image upload/readback/catalog sync timing을 추가하고, 같은 최신 경로를 비교할 수 있는 표본을 먼저 만든다. 이후 WP 조회 snapshot 중복과 연결 재사용을 개선하되 저장 직전 CAS와 저장 뒤 readback은 유지한다.
+
+### 실행 권장 단위와 범위 제한
+
+1. 첫 변경은 CI 재현성 복구만 분리한다. 정책이나 HTML을 동시에 바꾸지 않는다.
+2. analytics 복구와 release 일치 검증은 운영 작업으로 별도 진행한다.
+3. 두 번째 코드 변경은 editorial renderer 추출로 제한한다. 그다음 schema/source adapter 분리와 transport interface를 독립 변경으로 진행한다.
+4. catalog metadata 정합성과 metrics version attribution을 맞춘 뒤 성능 최적화한다.
+5. 큰 신규 framework, DB 전환, 모든 파일의 재배치, 모든 legacy fallback 일괄 삭제는 현재 근거로 우선하지 않는다.
+
+일정·절감률·수익 상승은 측정하지 않았으므로 수치로 보장하지 않는다. full restore drill, 취약점 전체 감사, 모든 글의 공식 출처 재검토, 시각적 브라우저 QA는 이번 범위 밖이다. archive 안의 `attach_remaining_thumbs.py` AST syntax error는 역사 자료의 상태이며 현재 실행 경로의 결함으로 우선순위를 높이지 않았다.
+
+이번 변경은 이 기존 감사 문서에 후속 분석을 추가한 것뿐이다. 분석 도구/중간 JSON/로그는 Git 비추적 `scratch/tasks/project-efficiency-audit/`에 저장했다. 새 코드·Git commit/push·서버 배포·WordPress mutation은 수행하지 않았다.
+
+
+## 2026-10-02 권장 순서에 따른 개선 실행
+
+사용자의 후속 실행 요청에 따라 `codex/project-efficiency` worktree에서 변경을 분리했다. 앞의 감사 결과는 당시 관측이며, 이 절이 이후 실행 결과다. WordPress 본문·메타·공개 상태 변경은 수행하지 않았다.
+
+- **CI:** Linux CJK collection에서 Korean Black face를 찾아 검증하도록 수정하고 CI font package를 명시했다. event 단위 테스트는 공개 테스트용 map key를 주입한다. 운영의 font/map key 실패 시 보류 정책은 유지한다.
+- **배포/통계:** 설치 전 release inventory·SHA·필수 module을 검사하고 backup/rollback 및 설치 receipt를 기록한다. 환경 변수 config에 한해 main/config를 정확히 함께 배포하며 `.env`와 runtime data를 보존한다. 참조가 없는 allowlist의 `copywriter.py`만 retire한다. 실제 public SSH firewall 제한을 확인했고, 기존 제한을 유지한 채 인증된 HTTPS private-report receiver를 추가했다. 실제 Google 전달과 설치 hash의 최종 확인은 main 통합 후 아래 운영 검증에 기록한다.
+- **역할 분리:** HTML renderer를 `article_renderer.py`, 원고/검토 schema를 `editorial_schema.py`, HTTP/PDF 수집을 `source_collector.py`, 기관별 parser를 `source_extractors.py`로 추출했다. 기존 facade API를 유지하고 source/reviewer fingerprint에 추출 module을 포함했다. 원본과 추출 renderer의 general/event/no-FAQ fixture HTML이 byte-identical하다.
+- **명시적 transport:** process 전체 subprocess patch를 실행 context의 WordPress adapter로 교체했다. 일반 subprocess 분리, context 중첩/오류 복원, 병렬 context 전달, post/command allowlist, CAS/readback, 불명확한 media import 무재시도 계약을 확인했다.
+- **목록/측정:** category slug를 함께 조회하고 검토된 원고의 본문·review·lifecycle이 유효할 때만 저장 metadata를 표시한다. 나머지는 추정으로 표시한다. metrics schema 2에 code/release version과 실제 SSH 왕복을 추가하고 미계측은 unknown으로 유지한다.
+- **조회 최적화:** image-only 경로의 연속 post/thumbnail 읽기를 한 read-only snapshot으로 묶고 한 번만 소비한다. 다른 호출 후 재사용하지 않으며 import 전 확인과 저장 후 readback을 유지한다. 운영 post 844의 3회 교차 비교에서 결과 SHA/thumbnail 일치, SSH 2→1회, 중앙값 8.46→3.46초(약 59% 감소)를 확인했다. 이는 해당 조회 쌍만의 수치이며 이미지 교체 전체 시간을 뜻하지 않는다.
+
+로컬 전체 Python **843 tests, OK (skipped=1)**. 표적 renderer/source/review/transport/catalog/installer 검사와 rollback 실패 주입을 먼저 통과했다. GitHub [37009366350](https://github.com/ostrichick/bloguito/actions/runs/37009366350)의 Python·WordPress PHP·infrastructure 3 job PASS. 로그/비공개 probe는 Git 비추적 `scratch/tasks/project-efficiency-audit/`에 둔다.
+
+critical-fact 전체 registry 이관, 모든 legacy fallback 제거, 큰 framework/DB 전환은 이번 증거로 우선하지 않는다. 다음 예약 analytics run, 전체 이미지 교체 시간, 모든 공개 글의 최신 공식 정보, full restore drill은 이 코드 검사만으로 검증했다고 주장하지 않는다.

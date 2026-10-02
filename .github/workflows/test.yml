@@ -24,7 +24,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-nanum fonts-noto-cjk-extra
+          sudo apt-get install -y fonts-nanum fonts-noto-cjk fonts-noto-cjk-extra
 
       - name: Install Python dependencies
         run: |

@@ -52,10 +52,12 @@ def summarize(rows: list[dict], *, run_context: str = "live", status: str = "ok"
     for action, action_rows in sorted(actions.items()):
         totals = [float(row["total_ms"]) for row in action_rows if isinstance(row.get("total_ms"), (int, float))]
         wp = [
-            float((row.get("counters") or {}).get("wp_roundtrips", 0))
+            float(row["counters"]["wp_roundtrips"])
             for row in action_rows
-            if isinstance((row.get("counters") or {}).get("wp_roundtrips", 0), (int, float))
+            if isinstance((row.get("counters") or {}).get("wp_roundtrips"), (int, float))
         ]
+        ssh = [float(row['counters']['ssh_roundtrips']) for row in action_rows
+               if isinstance((row.get('counters') or {}).get('ssh_roundtrips'), (int, float))]
         timing_totals = defaultdict(float)
         timing_counts = Counter()
         for row in action_rows:
@@ -68,6 +70,7 @@ def summarize(rows: list[dict], *, run_context: str = "live", status: str = "ok"
             "total_ms_median": round(statistics.median(totals), 2) if totals else None,
             "total_ms_p90": round(percentile(totals, 0.90), 2) if totals else None,
             "wp_roundtrips_mean": round(statistics.mean(wp), 2) if wp else None,
+            "ssh_roundtrips_mean": round(statistics.mean(ssh), 2) if ssh else None,
             "timings_ms_mean": {
                 key: round(timing_totals[key] / timing_counts[key], 2)
                 for key in sorted(timing_totals)
@@ -77,6 +80,8 @@ def summarize(rows: list[dict], *, run_context: str = "live", status: str = "ok"
         "run_context": run_context,
         "status": status,
         "rows": len(selected),
+        "code_versions": dict(Counter(row['code_version'] for row in selected if row.get('code_version'))),
+        "unversioned_rows": sum(not row.get('code_version') for row in selected),
         "actions": action_summary,
     }
 
@@ -87,9 +92,17 @@ def main(argv=None) -> int:
     parser.add_argument("--context", choices=["live", "test"], default="live")
     parser.add_argument("--status", choices=["ok", "error", "any"], default="ok")
     parser.add_argument("--action", action="append", help="Limit output to one or more action names")
+    parser.add_argument('--code-version', help='Compare only one measured runtime code version')
+    parser.add_argument('--since', help='Include runs starting on or after YYYY-MM-DD')
     args = parser.parse_args(argv)
 
     rows = load_metrics(args.file)
+    if args.code_version:
+        rows = [row for row in rows if row.get('code_version') == args.code_version]
+    if args.since:
+        from datetime import date
+        date.fromisoformat(args.since)
+        rows = [row for row in rows if str(row.get('started_at', ''))[:10] >= args.since]
     if args.action:
         wanted = set(args.action)
         rows = [row for row in rows if row.get("action") in wanted]

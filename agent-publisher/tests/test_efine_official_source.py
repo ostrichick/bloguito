@@ -19,7 +19,7 @@ class EfineOfficialSourceTests(unittest.TestCase):
         session = Mock()
         session.get.side_effect = [first, second]
         session.cookies.get.return_value = 'challenge-cookie'
-        with patch('agents.editorial_writer.requests.Session', return_value=session):
+        with patch('agents.source_collector.requests.Session', return_value=session):
             source = fetch_sources({'official_urls': [URL], 'entity': '교통민원24 이파인'})[0]
         self.assertEqual(2, session.get.call_count)
         self.assertTrue(all(call.kwargs['allow_redirects'] is False for call in session.get.call_args_list))
@@ -34,7 +34,7 @@ class EfineOfficialSourceTests(unittest.TestCase):
         session = Mock()
         session.get.return_value = response
         session.cookies.get.return_value = 'challenge-cookie'
-        with patch('agents.editorial_writer.requests.Session', return_value=session):
+        with patch('agents.source_collector.requests.Session', return_value=session):
             with self.assertRaisesRegex(ValueError, 'official_source_http_307'):
                 fetch_sources({'official_urls': [URL], 'entity': '교통민원24 이파인'})
         self.assertEqual(1, session.get.call_count)

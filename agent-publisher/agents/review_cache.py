@@ -39,6 +39,7 @@ def reviewer_contract_digest() -> str:
     return digest({
         "version": REVIEW_CONTRACT_VERSION,
         "editorial_writer_sha256": code_digest,
+        "editorial_schema_sha256": hashlib.sha256((ROOT / 'agents' / 'editorial_schema.py').read_bytes()).hexdigest(),
     })
 
 

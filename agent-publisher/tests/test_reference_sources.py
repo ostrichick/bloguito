@@ -15,7 +15,7 @@ class ReferenceSourceTests(unittest.TestCase):
             'reference_urls': ['https://news.example.com/price'],
             'entity': '안전상비의약품',
         }
-        with patch('agents.editorial_writer.requests.get', return_value=response):
+        with patch('agents.source_collector.requests.get', return_value=response):
             sources = fetch_sources(brief)
         self.assertEqual([s['source_type'] for s in sources], ['official', 'reference'])
         self.assertEqual([s['id'] for s in sources], ['s0', 's1'])
@@ -49,7 +49,7 @@ class ReferenceSourceTests(unittest.TestCase):
             'reference_urls': [f'https://reference.example.com/{i}' for i in range(4)],
             'entity': '테스트',
         }
-        with patch('agents.editorial_writer.requests.get', return_value=response):
+        with patch('agents.source_collector.requests.get', return_value=response):
             self.assertEqual(8, len(fetch_sources(brief)))
             brief['reference_urls'].append('https://reference.example.com/4')
             with self.assertRaisesRegex(ValueError, 'too_many_editorial_sources'):

@@ -5,7 +5,7 @@ from agents.editorial_writer import fetch_sources
 
 
 class SourceLimitTests(unittest.TestCase):
-    @patch('agents.editorial_writer._official_get')
+    @patch('agents.source_collector._official_get')
     def test_seven_official_sources_are_supported(self, get):
         body = '<html><head><title>자료</title></head><body>' + ('근거 문장 ' * 30) + '</body></html>'
         get.return_value = MagicMock(status_code=200, content=body.encode('utf-8'))

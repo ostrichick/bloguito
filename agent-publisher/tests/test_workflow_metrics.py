@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.workflow_metrics import increment, timed, workflow_run
+from agents.workflow_metrics import annotate, increment, timed, workflow_run
 
 
 class WorkflowMetricsTests(unittest.TestCase):
@@ -14,6 +14,7 @@ class WorkflowMetricsTests(unittest.TestCase):
             target = Path(folder) / 'metrics.jsonl'
             with patch.dict(os.environ, {'EDITORIAL_METRICS_FILE': str(target)}):
                 with workflow_run('revise-draft'):
+                    annotate(route='fast', transport='direct')
                     with timed('source_fetch'):
                         pass
                     increment('wp_roundtrips', 2)
@@ -26,6 +27,13 @@ class WorkflowMetricsTests(unittest.TestCase):
             self.assertEqual(2, rows[0]['counters']['wp_roundtrips'])
             self.assertIn('source_fetch', rows[0]['timings_ms'])
             self.assertNotIn('bundle', rows[0])
+            self.assertEqual('fast', rows[0]['route'])
+            self.assertEqual('direct', rows[0]['transport'])
+            self.assertEqual(64, len(rows[0]['code_version']))
+
+    def test_article_and_secret_attributes_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'unsupported_workflow_metric_attribute'):
+            annotate(bundle={'private': 'article'})
 
     def test_failure_is_recorded_and_reraised(self):
         with tempfile.TemporaryDirectory() as folder:
