@@ -62,19 +62,20 @@ class PolicyProfileTests(unittest.TestCase):
     def test_only_matching_post_exception_is_bound(self):
         bundle = sample()
         bundle['brief']['id'] = 'target'
-        rules = editorial.policy()
-        rules = copy.deepcopy(rules)
-        rules['dated_post_exceptions'] = {
-            'target': {'existing_post_id': 1, 'useful_until': '2026-12-01'},
-            'other': {'existing_post_id': 2, 'useful_until': '2026-12-02'},
+        target = {
+            'id': 'target', 'status': 'active', 'existing_post_id': 1,
+            'useful_until': '2026-12-01', 'expires_on': '2026-12-01',
+            'approved_on': '2026-10-02', 'reason': 'target only',
         }
-        changed = copy.deepcopy(rules)
-        changed['dated_post_exceptions']['other']['useful_until'] = '2026-12-03'
+        def lookup(kind, exception_id, **kwargs):
+            return copy.deepcopy(target) if kind == 'dated_post' and exception_id == 'target' else None
         with patch('agents.editorial._policy_document_text', side_effect=lambda name: self.docs[name]), \
-             patch('agents.editorial.policy', return_value=rules):
+             patch('agents.editorial.get_policy_exception', side_effect=lookup):
             before = editorial.policy_fingerprint(bundle)
+        unrelated_changed = {'id': 'other', 'useful_until': '2026-12-03'}
+        self.assertNotEqual(target['id'], unrelated_changed['id'])
         with patch('agents.editorial._policy_document_text', side_effect=lambda name: self.docs[name]), \
-             patch('agents.editorial.policy', return_value=changed):
+             patch('agents.editorial.get_policy_exception', side_effect=lookup):
             after = editorial.policy_fingerprint(bundle)
         self.assertEqual(before, after)
 

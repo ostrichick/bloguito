@@ -19,6 +19,7 @@ from agents.temporal_validation import (KST, validate_availability, extract_evid
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 from agents.event_post_standard import overview_event_date_labels, validate_event_post_standard
+from agents.policy_exceptions import get_policy_exception
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -73,10 +74,10 @@ def applicable_policy_rules(bundle=None):
     bundle = bundle if isinstance(bundle, dict) else {}
     brief = bundle.get('brief') if isinstance(bundle.get('brief'), dict) else bundle
     brief_id = brief.get('id') if isinstance(brief, dict) else None
-    dated = rules.get('dated_post_exceptions', {}).get(brief_id)
+    dated = get_policy_exception('dated_post', brief_id, on_date=datetime.now(KST).date())
     if dated is not None:
         selected['dated_post_exception'] = {brief_id: dated}
-    legacy = rules.get('legacy_welfare_procedural_exceptions', {}).get(brief_id)
+    legacy = get_policy_exception('legacy_procedure', brief_id)
     if legacy is not None:
         selected['legacy_welfare_procedural_exception'] = {brief_id: legacy}
     return selected
@@ -119,7 +120,7 @@ def supported_counts(text, quote_text, candidates):
 
 def dated_post_exception(brief, today):
     """A narrowly scoped, expiring exception for an authorized existing post."""
-    exception = policy().get('dated_post_exceptions', {}).get(brief.get('id'), {})
+    exception = get_policy_exception('dated_post', brief.get('id'), on_date=today) or {}
     try:
         if exception.get('official_urls'):
             required_urls = exception['official_urls']
@@ -145,7 +146,7 @@ def legacy_85_welfare_navigation_exception(brief):
     """
     if not isinstance(brief, dict):
         return False
-    exception = policy().get('legacy_welfare_procedural_exceptions', {}).get(brief.get('id'))
+    exception = get_policy_exception('legacy_procedure', brief.get('id'))
     if not isinstance(exception, dict):
         return False
     return (type(brief.get('existing_post_id')) is int
@@ -165,7 +166,9 @@ def legacy_85_welfare_navigation_reasons(brief, sources, plan):
     """
     if not legacy_85_welfare_navigation_exception(brief):
         return ['legacy_85_welfare_exception_scope_invalid']
-    cfg = policy()['legacy_welfare_procedural_exceptions'][brief['id']]
+    cfg = get_policy_exception('legacy_procedure', brief['id'])
+    if cfg is None:
+        return ['legacy_85_welfare_exception_scope_invalid']
     reasons = []
     if (plan.get('title') != cfg['title']
             or plan.get('official_navigation') != cfg['official_navigation']
@@ -856,7 +859,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             available = [field for s in sources for field in extract_evidence(s['text'], s['url'])]
             seasonal_exception = dated_post_exception(brief, now.date())
             if seasonal_exception:
-                exception = rules['dated_post_exceptions'][brief['id']]
+                exception = get_policy_exception('dated_post', brief['id'], on_date=now.date())
+                if exception is None:
+                    reasons.append('specific_holiday_window_official_evidence_missing')
+                    exception = {}
                 if exception.get('official_urls'):
                     required_urls = exception['official_urls']
                 else:
