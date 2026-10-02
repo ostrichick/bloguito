@@ -89,13 +89,24 @@ class VolatilityTests(unittest.TestCase):
             'id', 'existing_content_type', 'suggested_volatility',
             'suggested_requires_live_state', 'confidence', 'signals',
             'conflicts', 'requires_review', 'review_until', 'approved',
-            'review_window_current',
+            'review_window_current', 'current_volatility',
+            'current_requires_live_state', 'explicit_metadata_present',
+            'suggestion_matches_current',
         } for row in report))
         self.assertEqual(
             [row.get('review_until') for row in briefs],
             [row.get('review_until') for row in report],
         )
         self.assertEqual(3, sum(row['review_window_current'] for row in report))
+
+        rows = {row['id']: row for row in report}
+        self.assertEqual('policy-current', rows['senior-implant-insurance-guide']['current_volatility'])
+        self.assertFalse(rows['senior-implant-insurance-guide']['current_requires_live_state'])
+        self.assertTrue(rows['senior-implant-insurance-guide']['suggestion_matches_current'])
+        self.assertEqual('policy-current', rows['national-pension-silver-loan']['current_volatility'])
+        self.assertTrue(rows['national-pension-silver-loan']['current_requires_live_state'])
+        self.assertTrue(rows['national-pension-silver-loan']['suggestion_matches_current'])
+        self.assertFalse(rows['long-term-care-grade-guide']['explicit_metadata_present'])
 
     def test_known_migration_shapes_are_conservative(self):
         timeless = migration_candidate({

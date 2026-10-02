@@ -188,6 +188,13 @@ def migration_candidate(brief: dict, *, today: date | None = None) -> dict:
         "id": brief.get("id"),
         "existing_content_type": content_type,
         "category_key": category,
+        "current_volatility": brief.get("volatility") if "volatility" in brief else None,
+        "current_requires_live_state": (
+            brief.get("requires_live_state") if "requires_live_state" in brief else None
+        ),
+        "explicit_metadata_present": (
+            "volatility" in brief or "requires_live_state" in brief
+        ),
         "suggested_volatility": candidate,
         "suggested_requires_live_state": requires_live,
         "confidence": confidence,
@@ -199,6 +206,11 @@ def migration_candidate(brief: dict, *, today: date | None = None) -> dict:
         "approved": brief.get("approved"),
         "review_window_current": review_window_current,
     }
+    result["suggestion_matches_current"] = (
+        result["current_volatility"] == candidate
+        and result["current_requires_live_state"] == requires_live
+        if result["explicit_metadata_present"] else None
+    )
     if brief != original:
         raise AssertionError("volatility_migration_must_not_mutate_input")
     return result

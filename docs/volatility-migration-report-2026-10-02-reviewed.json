@@ -1,0 +1,292 @@
+{
+  "source": "data/search_briefs.json",
+  "mode": "read-only-suggestion",
+  "rows": [
+    {
+      "id": "mumyeong-suwon-2026",
+      "existing_content_type": "dated",
+      "category_key": "concert",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "one-off",
+      "suggested_requires_live_state": true,
+      "confidence": "high",
+      "signals": [
+        "dated_concert",
+        "current_state_language"
+      ],
+      "conflicts": [],
+      "requires_review": false,
+      "reviewed_at": "2026-09-13",
+      "review_until": "2026-09-15",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "energy-voucher-deadline-2026",
+      "existing_content_type": "dated",
+      "category_key": "welfare",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "seasonal",
+      "suggested_requires_live_state": true,
+      "confidence": "high",
+      "signals": [
+        "seasonal_program_signal",
+        "current_state_language"
+      ],
+      "conflicts": [],
+      "requires_review": false,
+      "reviewed_at": "2026-09-13",
+      "review_until": "2026-09-20",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "passport-online-collection-0915",
+      "existing_content_type": "evergreen",
+      "category_key": "life-admin",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "timeless-procedure",
+      "suggested_requires_live_state": false,
+      "confidence": "high",
+      "signals": [
+        "evergreen_administrative_procedure"
+      ],
+      "conflicts": [],
+      "requires_review": false,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "postal-paid-forwarding-extension-0915",
+      "existing_content_type": "evergreen",
+      "category_key": "life-admin",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "timeless-procedure",
+      "suggested_requires_live_state": false,
+      "confidence": "high",
+      "signals": [
+        "evergreen_administrative_procedure"
+      ],
+      "conflicts": [],
+      "requires_review": false,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "climate-card-pass-transition-0915",
+      "existing_content_type": "evergreen",
+      "category_key": "transport",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "policy-current",
+      "suggested_requires_live_state": false,
+      "confidence": "medium",
+      "signals": [
+        "mutable_policy_domain"
+      ],
+      "conflicts": [],
+      "requires_review": true,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "resident-registration-certificate-gov24-0915",
+      "existing_content_type": "evergreen",
+      "category_key": "life-admin",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "timeless-procedure",
+      "suggested_requires_live_state": true,
+      "confidence": "high",
+      "signals": [
+        "evergreen_administrative_procedure",
+        "current_state_language"
+      ],
+      "conflicts": [
+        "timeless_procedure_contains_live_state_language"
+      ],
+      "requires_review": true,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "tax-points-discount-hometax-0915",
+      "existing_content_type": "evergreen",
+      "category_key": "tax",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "policy-current",
+      "suggested_requires_live_state": false,
+      "confidence": "medium",
+      "signals": [
+        "mutable_policy_domain"
+      ],
+      "conflicts": [],
+      "requires_review": true,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "national-tax-refund-inquiry-0915",
+      "existing_content_type": "evergreen",
+      "category_key": "tax",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "policy-current",
+      "suggested_requires_live_state": false,
+      "confidence": "medium",
+      "signals": [
+        "mutable_policy_domain"
+      ],
+      "conflicts": [],
+      "requires_review": true,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "earned-income-tax-credit-guide",
+      "existing_content_type": "evergreen",
+      "category_key": "tax",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "annual-policy",
+      "suggested_requires_live_state": false,
+      "confidence": "high",
+      "signals": [
+        "annual_recurrence_signal"
+      ],
+      "conflicts": [
+        "bounded_candidate_conflicts_with_content_type"
+      ],
+      "requires_review": true,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "car-tax-annual-payment-discount",
+      "existing_content_type": "evergreen",
+      "category_key": "tax",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "annual-policy",
+      "suggested_requires_live_state": false,
+      "confidence": "high",
+      "signals": [
+        "annual_recurrence_signal"
+      ],
+      "conflicts": [
+        "bounded_candidate_conflicts_with_content_type"
+      ],
+      "requires_review": true,
+      "reviewed_at": "2026-09-15",
+      "review_until": "2026-09-22",
+      "approved": true,
+      "review_window_current": false,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "senior-implant-insurance-guide",
+      "existing_content_type": "evergreen",
+      "category_key": "health",
+      "current_volatility": "policy-current",
+      "current_requires_live_state": false,
+      "explicit_metadata_present": true,
+      "suggested_volatility": "policy-current",
+      "suggested_requires_live_state": false,
+      "confidence": "medium",
+      "signals": [
+        "mutable_policy_domain"
+      ],
+      "conflicts": [],
+      "requires_review": true,
+      "reviewed_at": "2026-09-16",
+      "review_until": "2026-10-31",
+      "approved": true,
+      "review_window_current": true,
+      "suggestion_matches_current": true
+    },
+    {
+      "id": "long-term-care-grade-guide",
+      "existing_content_type": "evergreen",
+      "category_key": "welfare",
+      "current_volatility": null,
+      "current_requires_live_state": null,
+      "explicit_metadata_present": false,
+      "suggested_volatility": "policy-current",
+      "suggested_requires_live_state": true,
+      "confidence": "medium",
+      "signals": [
+        "mutable_policy_domain",
+        "current_state_language"
+      ],
+      "conflicts": [],
+      "requires_review": true,
+      "reviewed_at": "2026-09-16",
+      "review_until": "2026-10-31",
+      "approved": true,
+      "review_window_current": true,
+      "suggestion_matches_current": null
+    },
+    {
+      "id": "national-pension-silver-loan",
+      "existing_content_type": "dated",
+      "category_key": "welfare",
+      "current_volatility": "policy-current",
+      "current_requires_live_state": true,
+      "explicit_metadata_present": true,
+      "suggested_volatility": "policy-current",
+      "suggested_requires_live_state": true,
+      "confidence": "medium",
+      "signals": [
+        "mutable_policy_domain",
+        "current_state_language"
+      ],
+      "conflicts": [
+        "policy_current_keeps_legacy_dated_contract"
+      ],
+      "requires_review": true,
+      "reviewed_at": "2026-09-16",
+      "review_until": "2026-10-31",
+      "approved": true,
+      "review_window_current": true,
+      "suggestion_matches_current": true
+    }
+  ]
+}

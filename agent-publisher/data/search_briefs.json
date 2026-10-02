@@ -491,6 +491,8 @@
     "review_until": "2026-10-31",
     "content_type": "evergreen",
     "useful_until": null,
+    "volatility": "policy-current",
+    "requires_live_state": false,
     "evergreen_reason": "국민건강보험법에 따라 만 65세 이상 상시 보장되는 치과 임플란트 건강보험 급여 혜택",
     "reader_questions": [
       {
@@ -591,6 +593,8 @@
     "review_until": "2026-10-31",
     "content_type": "dated",
     "useful_until": "2026-12-31",
+    "volatility": "policy-current",
+    "requires_live_state": true,
     "reader_questions": [
       {
         "id": "q1",

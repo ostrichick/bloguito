@@ -223,3 +223,7 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 - **4.3C/4.3D: 최소 한 릴리스 fallback 데이터를 확보하기 전 NO-GO.** 기존 category/content_type 안전장치를 먼저 제거하지 않는다.
 
 2026-10-02 migration report는 13개 brief 중 현재 review window가 살아 있는 3개를 그대로 식별했고, 9개를 사람 검토가 필요한 후보로 남겼다. 기존 `search_briefs.json`, `approved`, `review_until`, reviewed manifest, WordPress 상태는 자동 변경하지 않았다. 4.3C/D는 explicit metadata를 실제 신규/수정 bundle에 적용한 뒤 한 릴리스 이상 관찰하고 진행한다.
+
+후속 수동 검토에서는 review window가 현재 유효한 3건을 `topic_reasons()`까지 대조했다. `senior-implant-insurance-guide`는 `policy-current` + `requires_live_state=false`, `national-pension-silver-loan`은 분기별 금리 확인 때문에 `policy-current` + `requires_live_state=true`로 로컬 reviewed brief에 명시했다. 두 항목 모두 기존 legacy gate 결과를 바꾸지 않는다. `long-term-care-grade-guide`는 기존 `welfare + evergreen` 조합이 `dated_category_cannot_bypass_time_check`에 이미 걸리므로 metadata만 덧붙여 관찰 가능한 것처럼 만들지 않고 다음 재검토 대상으로 남겼다. 만료된 10건의 `approved`/`review_until`은 변경하지 않았다.
+
+이 수동 확정은 **로컬 repository의 reviewed brief 데이터만** 변경한다. `scripts/install_editorial_release.py`는 운영 서버에 기존 `data/search_briefs.json`이 있으면 그 파일을 덮어쓰지 않으므로 코드 릴리스만으로 이 2건의 metadata가 운영에 적용되지는 않는다. 따라서 실제 4.3C/D 관찰기간은 별도의 reviewed data 적용 및 릴리스가 이루어진 뒤부터 계산해야 하며, 로컬 커밋 시점을 관찰 시작으로 간주하지 않는다.
