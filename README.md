@@ -21,7 +21,7 @@
 | --- | --- |
 | `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher 자동 임시글 생성 |
 | `agent-publisher/editorial_cli.py` | 공식 출처 수집, 검토·검사, 임시글 생성/갱신, 사람 확인 후 공개 전환 |
-| `agent-publisher/agents/` | 주제 후보·원문·검증·썸네일·WP 처리. `copywriter.py`는 레거시이며 활성 파이프라인은 `editorial_writer.py` 사용 |
+| `agent-publisher/agents/` | 주제 후보·원문·검증·썸네일·WP 처리. 원고 작성 경로는 `editorial_writer.py` 사용 |
 | `wordpress/` | WordPress·MariaDB Compose와 자체 MU 플러그인. 기존 사이트에서 `setup.sh` 재실행 금지 |
 | `scripts/` | 백업 동기화, 감사 및 제한된 운영 작업 도구 |
 | `docs/` | 정본 편집·운영 규약, 제안, 날짜별 검증·배포·콘텐츠 근거 |
