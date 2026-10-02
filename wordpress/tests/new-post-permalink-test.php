@@ -2,7 +2,7 @@
 /** Standalone regression test: php wordpress/tests/new-post-permalink-test.php */
 define('ABSPATH', __DIR__ . '/');
 
-$registered_filters = []; $registered_actions = []; $removed_actions = []; $rewrite = null; $meta = []; $query_vars = []; $queried = null; $status = null; $no_cache = false;
+$registered_filters = []; $registered_actions = []; $removed_actions = []; $rewrite = null; $meta = []; $query_vars = []; $queried = null; $status = null; $no_cache = false; $preview = false; $can_edit = [];
 $wp_query = new class { public $is_404 = false; public function set_404() { $this->is_404 = true; } };
 class WP_Post {
     public $ID; public $post_type; public $post_name; public $post_status;
@@ -19,6 +19,8 @@ function user_trailingslashit($path) { return rtrim($path, '/') . '/'; }
 function add_rewrite_rule($regex, $query, $position) { global $rewrite; $rewrite=[$regex,$query,$position]; }
 function get_query_var($key) { global $query_vars; return $query_vars[$key] ?? ''; }
 function get_queried_object() { global $queried; return $queried; }
+function is_preview() { global $preview; return $preview; }
+function current_user_can($capability, $post_id) { global $can_edit; return $capability === 'edit_post' && !empty($can_edit[$post_id]); }
 function status_header($code) { global $status; $status=$code; }
 function nocache_headers() { global $no_cache; $no_cache=true; }
 function get_permalink($post) { return 'https://lifeinfo24.org/' . $post->post_name . '/'; }
@@ -35,6 +37,7 @@ check(isset($registered_actions['template_redirect:1']), 'request handler regist
 $legacy = new WP_Post(648, 'busan-october-festivals-2026');
 $new = new WP_Post(901, 'wordpress-internal-slug');
 $draft = new WP_Post(902, 'draft-internal-slug', 'post', 'draft');
+$legacy_draft = new WP_Post(904, 'legacy-draft', 'post', 'draft');
 $page = new WP_Post(903, 'sample-page', 'page', 'publish');
 $meta[901][BLOGUITO_PERMALINK_META] = BLOGUITO_PERMALINK_SCHEME;
 $meta[902][BLOGUITO_PERMALINK_META] = BLOGUITO_PERMALINK_SCHEME;
@@ -62,12 +65,32 @@ try {
 }
 
 $wp_query->is_404=false; $status=null; $no_cache=false;
-$queried = $draft; $query_vars = ['bloguito_post_id_route'=>'1'];
+$queried = $draft; $query_vars = ['bloguito_post_id_route'=>'1']; $preview=false; $can_edit=[];
 bloguito_handle_post_id_request();
 check($wp_query->is_404 && $status === 404 && $no_cache, 'draft /p/ID/ is not publicly exposed');
 
 $wp_query->is_404=false; $status=null; $no_cache=false;
-$queried = $page; $query_vars = ['bloguito_post_id_route'=>'1'];
+$queried = $draft; $query_vars = ['bloguito_post_id_route'=>'1']; $preview=true; $can_edit=[902=>true];
+bloguito_handle_post_id_request();
+check(!$wp_query->is_404 && $status === null && !$no_cache, 'authorized draft preview resolves /p/ID/ normally');
+
+$wp_query->is_404=false; $status=null; $no_cache=false;
+$queried = $draft; $query_vars = ['bloguito_post_id_route'=>'1']; $preview=true; $can_edit=[];
+bloguito_handle_post_id_request();
+check($wp_query->is_404 && $status === 404 && $no_cache, 'draft preview without edit capability remains 404');
+
+$wp_query->is_404=false; $status=null; $no_cache=false;
+$queried = $draft; $query_vars = ['bloguito_post_id_route'=>'1']; $preview=false; $can_edit=[902=>true];
+bloguito_handle_post_id_request();
+check($wp_query->is_404 && $status === 404 && $no_cache, 'authorized direct draft request without preview remains 404');
+
+$wp_query->is_404=false; $status=null; $no_cache=false;
+$queried = $legacy_draft; $query_vars = ['bloguito_post_id_route'=>'1']; $preview=true; $can_edit=[904=>true];
+bloguito_handle_post_id_request();
+check($wp_query->is_404 && $status === 404 && $no_cache, 'legacy draft is not exposed through new-policy preview route');
+
+$wp_query->is_404=false; $status=null; $no_cache=false;
+$queried = $page; $query_vars = ['bloguito_post_id_route'=>'1']; $preview=true; $can_edit=[903=>true];
 bloguito_handle_post_id_request();
 check($wp_query->is_404 && $status === 404, 'page ID is not exposed through post route');
 

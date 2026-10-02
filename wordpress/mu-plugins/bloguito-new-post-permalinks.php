@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Post ID Permalinks
  * Description: New posts use /p/ID/ while legacy public posts keep their existing canonical URLs and expose /p/ID/ as a 301 compatibility route.
- * Version: 2.0.1
+ * Version: 2.0.2
  */
 
 if (!defined('ABSPATH')) {
@@ -50,6 +50,12 @@ function bloguito_mark_404() {
     nocache_headers();
 }
 
+function bloguito_can_preview_post_id_route($post) {
+    return bloguito_uses_post_id_permalink($post)
+        && is_preview()
+        && current_user_can('edit_post', $post->ID);
+}
+
 add_action('template_redirect', 'bloguito_reject_malformed_post_id_path', 0);
 function bloguito_reject_malformed_post_id_path() {
     $uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
@@ -72,9 +78,17 @@ function bloguito_handle_post_id_request() {
     }
 
     $post = get_queried_object();
-    if (!($post instanceof WP_Post)
-            || $post->post_type !== 'post'
-            || $post->post_status !== 'publish') {
+    if (!($post instanceof WP_Post) || $post->post_type !== 'post') {
+        bloguito_mark_404();
+        return;
+    }
+
+    // Keep non-public posts private, while preserving WordPress's authenticated
+    // preview flow for editors of new-policy posts.
+    if ($post->post_status !== 'publish') {
+        if (bloguito_can_preview_post_id_route($post)) {
+            return;
+        }
         bloguito_mark_404();
         return;
     }
