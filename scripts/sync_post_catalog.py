@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Synchronize WordPress posts with local docs/POST_CATALOG.md via Direct SSH."""
 import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -47,6 +48,8 @@ foreach ($q->posts as $p) {
         'post_status' => (string)$p->post_status,
         'post_name' => (string)$p->post_name,
         'post_date' => (string)$p->post_date,
+        'content_sha256' => hash('sha256', (string)$p->post_content),
+        'category_slugs' => wp_get_post_terms($id, 'category', array('fields' => 'slugs')),
         'categories' => array_values($categories),
         'rank_math_focus_keyword' => (string)get_post_meta($id, 'rank_math_focus_keyword', true),
         'rank_math_seo_score' => (string)get_post_meta($id, 'rank_math_seo_score', true)
@@ -76,13 +79,14 @@ def run_ssh_inventory() -> list:
     temp_php.unlink(missing_ok=True)
     return json.loads((res.stdout or "").lstrip("\ufeff"))
 
-def determine_type_and_category(title: str, categories=None):
+def determine_type_and_category(title: str, categories=None, category_slugs=None):
     """Classify post into category and Evergreen vs Seasonal."""
     clean_categories = [str(c).strip() for c in (categories or []) if str(c).strip()]
     seasonal_keywords = ["추석", "9월", "10월", "콘서트", "예매", "독감", "축제"]
     seasonal_categories = {"지역 축제/행사", "공연/콘서트"}
     is_seasonal = (any(k in title for k in seasonal_keywords)
-                   or bool(set(clean_categories) & seasonal_categories))
+                   or bool(set(clean_categories) & seasonal_categories)
+                   or bool(set(category_slugs or []) & {'local-events', 'concert'}))
     post_type = "시즌형" if is_seasonal else "에버그린"
 
     if clean_categories:
@@ -107,6 +111,52 @@ def determine_type_and_category(title: str, categories=None):
         category = "행정/생활서비스"
 
     return post_type, category
+
+
+def catalog_type(post, reviewed_bundle=None):
+    """Use lifecycle metadata only when its reviewed HTML matches the live post."""
+    if isinstance(reviewed_bundle, dict) and isinstance(reviewed_bundle.get('review'), dict):
+        try:
+            from agents.editorial import digest, render
+            body = {key: reviewed_bundle[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in reviewed_bundle}
+            review = reviewed_bundle['review']
+            if review.get('digest') != digest(body) or review.get('issues') != []:
+                raise ValueError('catalog_review_not_bound')
+            content = render(reviewed_bundle['plan'], reviewed_bundle['sources'])
+            if hashlib.sha256(content.encode('utf-8')).hexdigest() == post.get('content_sha256'):
+                brief = reviewed_bundle['brief']
+                labels = {'timeless-procedure': '상시 절차', 'policy-current': '현행 제도',
+                          'annual-policy': '연간 기준', 'seasonal': '시즌형', 'one-off': '단일 행사'}
+                if brief.get('volatility') in labels:
+                    return labels[brief['volatility']] + ' (저장 원고 기준)'
+                if brief.get('content_type') in {'evergreen', 'dated'}:
+                    return ('에버그린' if brief['content_type'] == 'evergreen' else '기간형') + ' (저장 원고 기준)'
+        except (KeyError, TypeError, ValueError):
+            pass
+    inferred, _ = determine_type_and_category(post['post_title'], post.get('categories'), post.get('category_slugs'))
+    return inferred + ' (추정)'
+
+
+def load_reviewed_bundles():
+    agent_root = ROOT / 'agent-publisher'
+    if str(agent_root) not in sys.path:
+        sys.path.insert(0, str(agent_root))
+    from agents.post_manifest_store import load_records
+    bundles = {}
+    for name in ('published_posts.json', 'draft_posts.json'):
+        index = agent_root / 'data' / name
+        if not index.is_file():
+            continue
+        try:
+            rows = load_records(index)
+        except (OSError, ValueError):
+            print('[Sync Catalog] WARNING: reviewed state unavailable; use explicitly labeled estimates.')
+            continue
+        for row in rows:
+            bundle = (row.get('fact_manifest') or {}).get('editorial_bundle')
+            if isinstance(bundle, dict):
+                bundles[int(row['id'])] = bundle
+    return bundles
 
 def _markdown_cells(row: str) -> list[str]:
     return [cell.strip() for cell in row.strip().strip("|").split("|")]
@@ -179,7 +229,8 @@ def filter_backlog_rows(backlog_rows: list[str], posts: list) -> list[str]:
     return remaining
 
 
-def generate_catalog_markdown(posts: list, backlog_rows=None) -> str:
+def generate_catalog_markdown(posts: list, backlog_rows=None, reviewed_bundles=None) -> str:
+    reviewed_bundles = reviewed_bundles or {}
     published_posts = [p for p in posts if p.get("post_status") == "publish"]
     draft_posts = [p for p in posts if p.get("post_status") == "draft"]
 
@@ -194,7 +245,8 @@ def generate_catalog_markdown(posts: list, backlog_rows=None) -> str:
     for p in published_posts:
         pid = str(p["ID"])
         title = p["post_title"].replace("|", "/")
-        p_type, category = determine_type_and_category(title, p.get("categories"))
+        p_type, category = determine_type_and_category(title, p.get("categories"), p.get('category_slugs'))
+        type_label = catalog_type(p, reviewed_bundles.get(int(p['ID'])))
         if p_type == "에버그린":
             evergreen_count += 1
         else:
@@ -207,14 +259,14 @@ def generate_catalog_markdown(posts: list, backlog_rows=None) -> str:
         # Link to permalink
         link = f"https://lifeinfo24.org/?p={pid}"
         pub_rows.append(
-            f"| #{pid} | [{title}]({link}) | {category} | {p_type} | {kw} | {score_str} |"
+            f"| #{pid} | [{title}]({link}) | {category} | {type_label} | {kw} | {score_str} |"
         )
 
     draft_rows = []
     for p in draft_posts:
         pid = str(p["ID"])
         title = p["post_title"].replace("|", "/")
-        p_type, category = determine_type_and_category(title, p.get("categories"))
+        p_type, category = determine_type_and_category(title, p.get("categories"), p.get('category_slugs'))
         kw = p.get("rank_math_focus_keyword", "").strip() or "-"
         draft_rows.append(
             f"| #{pid} | {title} | {category} | Draft 보존 | {kw} |"
@@ -248,7 +300,8 @@ def generate_catalog_markdown(posts: list, backlog_rows=None) -> str:
 
 > **최종 동기화**: {now_str} (Direct SSH)
 > **총 포스트**: {len(posts)}편 ({status_summary})
-> **공개글 자동 분류 비중**: 에버그린 {eg_ratio}% ({evergreen_count}편) / 시즌형 {100 - eg_ratio}% ({seasonal_count}편)
+> **공개글 제목/카테고리 추정 비중**: 에버그린 {eg_ratio}% ({evergreen_count}편) / 시즌형 {100 - eg_ratio}% ({seasonal_count}편)
+> 유형의 `저장 원고 기준`은 검토 digest와 현재 본문 SHA가 맞는 로컬 metadata이며, 현재 사실·출처의 재검증을 뜻하지 않습니다. metadata가 없거나 본문이 다르면 `추정`으로 표시합니다.
 
 ---
 
@@ -296,7 +349,7 @@ def sync_catalog():
     existing_backlog = None
     if CATALOG_MD.exists():
         existing_backlog = extract_backlog_rows(CATALOG_MD.read_text(encoding="utf-8"))
-    md = generate_catalog_markdown(posts, existing_backlog)
+    md = generate_catalog_markdown(posts, existing_backlog, load_reviewed_bundles())
 
     CATALOG_MD.parent.mkdir(parents=True, exist_ok=True)
     CATALOG_MD.write_text(md, encoding="utf-8")

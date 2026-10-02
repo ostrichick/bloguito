@@ -1,5 +1,6 @@
 import json
 import subprocess
+from agents.wordpress_transport import run_wordpress
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -33,7 +34,7 @@ class PublisherAgent:
             "wp", "eval", f"echo get_permalink({int(post_id)});",
             "--allow-root"
         ]
-        res = subprocess.run(
+        res = run_wordpress(
             url_cmd, capture_output=True, text=True, encoding="utf-8", errors="strict")
         post_url = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"{SITE_URL}/?p={post_id}"
 
@@ -96,17 +97,17 @@ class PublisherAgent:
             local = Path(f.name)
         remote = f'/tmp/editorial_{local.stem}.html'
         try:
-            subprocess.run(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'], check=True, capture_output=True)
-            result = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'create', remote,
+            run_wordpress(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'], check=True, capture_output=True)
+            result = run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'create', remote,
                 '--post_type=post', '--post_status=draft', f'--post_title={title}',
                 f'--post_category={category["id"]}', '--post_excerpt=' + excerpt,
                 '--comment_status=closed', '--allow-root', '--porcelain'],
                 check=True, capture_output=True, text=True, encoding='utf-8', errors='strict')
             post_id = int(result.stdout.strip())
-            subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+            run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                 str(post_id), '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'],
                 check=True, capture_output=True)
-            actual = subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
+            actual = run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
                 '--fields=post_status,post_content', '--format=json', '--allow-root'], check=True,
                 capture_output=True, text=True, encoding='utf-8', errors='strict')
             saved = json.loads(actual.stdout)
@@ -122,13 +123,13 @@ class PublisherAgent:
             seo_title = (reviewed_seo.get('title') or title).strip()
             meta_desc = (reviewed_seo.get('description') or bundle['plan']['lead']['text'][:160]).strip()
             if focus_keyword:
-                subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                     str(post_id), 'rank_math_focus_keyword', focus_keyword, '--allow-root'], check=False, capture_output=True)
             if seo_title:
-                subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                     str(post_id), 'rank_math_title', seo_title, '--allow-root'], check=False, capture_output=True)
             if meta_desc:
-                subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
+                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                     str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=False, capture_output=True)
             # The saved draft was reread above. Mark the full-site snapshot stale
             # instead of downloading every post again at the end of this command.
@@ -136,15 +137,15 @@ class PublisherAgent:
             if image_path and image_path.exists():
                 remote_image = f'/tmp/editorial_cover_{post_id}{image_path.suffix}'
                 try:
-                    subprocess.run(['sudo', 'docker', 'cp', str(image_path), f'{self.container_name}:{remote_image}'], check=True, capture_output=True)
-                    subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'wp', 'media', 'import', remote_image,
+                    run_wordpress(['sudo', 'docker', 'cp', str(image_path), f'{self.container_name}:{remote_image}'], check=True, capture_output=True)
+                    run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'media', 'import', remote_image,
                         f'--post_id={post_id}', '--featured_image', '--allow-root'], check=True, capture_output=True)
                 finally:
-                    subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote_image], capture_output=True)
+                    run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote_image], capture_output=True)
             return post_id
         finally:
             local.unlink(missing_ok=True)
-            subprocess.run(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote], capture_output=True)
+            run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote], capture_output=True)
 
     def reformat_draft(self, post_id):
         """Only migrate a stored reviewed draft whose body still equals our renderer."""
@@ -185,7 +186,7 @@ class PublisherAgent:
             verify_explicit_live_sources(bundle)
             base = ['sudo', 'docker', 'exec', self.container_name, 'wp']
             # Re-read immediately before mutation to detect edits during validation.
-            current = json.loads(subprocess.run(
+            current = json.loads(run_wordpress(
                 base + ['post','get',str(post_id),'--format=json','--allow-root'],
                 check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
             if current['post_content'] != old or current['post_status'] != 'draft' or current['post_title'] != existing['post_title']:
@@ -194,10 +195,10 @@ class PublisherAgent:
             backup.mkdir(parents=True, exist_ok=True)
             (backup / f'reformat-{post_id}-{datetime.now().strftime("%Y%m%dT%H%M%S")}.json').write_text(json.dumps(current,ensure_ascii=False),encoding='utf-8')
             # Only the content field changes; ID, title, status, category and media persist.
-            subprocess.run(
+            run_wordpress(
                 base + ['post','update',str(post_id),'--post_content='+content,'--allow-root'],
                 check=True, capture_output=True, text=True, encoding='utf-8', errors='strict')
-            saved = json.loads(subprocess.run(
+            saved = json.loads(run_wordpress(
                 base + ['post','get',str(post_id),'--format=json','--allow-root'],
                 check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
             if saved['post_content'] != content or saved['post_status'] != 'draft':
@@ -215,7 +216,7 @@ class PublisherAgent:
         args = ['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'list',
                 '--post_type=post', '--post_status=draft',
                 '--fields=ID,post_title,post_date,post_status', '--format=json', '--allow-root']
-        rows = json.loads(subprocess.run(
+        rows = json.loads(run_wordpress(
             args, check=True, capture_output=True, text=True,
             encoding='utf-8', errors='strict').stdout)
         if not isinstance(rows, list) or any(not isinstance(p, dict) or p.get('post_status') != 'draft' for p in rows):
@@ -278,15 +279,15 @@ class PublisherAgent:
             if orig != observed:
                 raise ValueError('official_source_changed_since_review: fresh review required')
             base = ['sudo','docker','exec',self.container_name,'wp']
-            final = json.loads(subprocess.run(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
+            final = json.loads(run_wordpress(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
                                               check=True, capture_output=True, text=True,
                                               encoding='utf-8', errors='strict').stdout)
             if final['post_status'] != 'draft' or final['post_title'] != title or not same(final['post_content'],expected):
                 raise ValueError('draft_changed_during_review')
-            subprocess.run(base+['post','update',str(int(post_id)),'--post_status=publish','--allow-root'],
+            run_wordpress(base+['post','update',str(int(post_id)),'--post_status=publish','--allow-root'],
                            check=True, capture_output=True, text=True,
                            encoding='utf-8', errors='strict')
-            saved = json.loads(subprocess.run(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
+            saved = json.loads(run_wordpress(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
                                               check=True, capture_output=True, text=True,
                                               encoding='utf-8', errors='strict').stdout)
             if saved['post_status'] != 'publish' or saved['post_title'] != title or not same(saved['post_content'],expected):

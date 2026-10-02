@@ -3,6 +3,7 @@ import json
 import hashlib
 import re
 import subprocess
+from agents.wordpress_transport import run_wordpress
 from datetime import datetime
 from agents.temporal_validation import KST
 from agents.search_intent import INVENTORY
@@ -37,7 +38,7 @@ def inventory_content_sha(row):
 def sync_inventory():
     with timed('inventory_sync'):
         increment('wp_roundtrips')
-        result = subprocess.run(_WP_BASE + LIGHTWEIGHT_INVENTORY_ARGS,
+        result = run_wordpress(_WP_BASE + LIGHTWEIGHT_INVENTORY_ARGS,
                                 check=True, capture_output=True, text=True,
                                 encoding='utf-8', errors='strict', timeout=60)
     posts = json.loads(result.stdout)

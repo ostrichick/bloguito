@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+from agents.wordpress_transport import run_wordpress
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from datetime import datetime
@@ -369,20 +370,20 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         featured_attachment_id = None
         if image_path is not None:
             remote_image = f"/tmp/editorial_cover_{post_id}{image_path.suffix.lower()}"
-            subprocess.run(["sudo", "docker", "cp", str(image_path),
+            run_wordpress(["sudo", "docker", "cp", str(image_path),
                             f"wordpress_app:{remote_image}"], capture_output=True, check=True)
             try:
-                imported = subprocess.run(
+                imported = run_wordpress(
                     base + ["media", "import", remote_image, f"--post_id={post_id}",
                             "--featured_image", "--porcelain", "--allow-root"],
                     capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
                 featured_attachment_id = imported.stdout.strip()
             finally:
-                subprocess.run(["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
+                run_wordpress(["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
                                capture_output=True, check=False)
             if not featured_attachment_id.isdigit():
                 raise ValueError("featured_image_attachment_id_missing")
-            observed_thumb = subprocess.run(
+            observed_thumb = run_wordpress(
                 base + ["post", "meta", "get", str(post_id), "_thumbnail_id", "--allow-root"],
                 capture_output=True, text=True, encoding="utf-8", errors="strict", check=True).stdout.strip()
             if observed_thumb != featured_attachment_id:

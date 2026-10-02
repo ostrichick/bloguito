@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 import editorial_cli  # noqa: E402
 from agents.editorial_updater import rank_math_meta_from_brief  # noqa: E402
+from agents.wordpress_transport import wordpress_transport
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
@@ -787,12 +788,12 @@ def _main():
         if action == 'edit-post' else nullcontext()
     )
     with timed('remote_editorial_cli'):
-        with decision_context, patch('subprocess.run', side_effect=transport), \
+        with decision_context, wordpress_transport(transport), \
                 patch.object(sys, 'argv', ['editorial_cli.py', *request.cli_args]):
             editorial_cli.main()
 
     # prepare-draft is the user-facing one-shot path. Keep the catalog follow-up
-    # outside the patched WordPress transport so it uses the normal Direct SSH
+    # outside the WordPress transport context so it uses the normal Direct SSH
     # sync script. A catalog failure must not make callers retry the already
     # successful post create and accidentally produce a duplicate draft.
     if action == 'prepare-draft':

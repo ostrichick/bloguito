@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import subprocess
+from agents.wordpress_transport import run_wordpress
 from pathlib import Path
 
 from PIL import Image
@@ -31,7 +32,7 @@ echo wp_json_encode($out);'''
 
 def _read_section_image_snapshot(base, post_id: int, attachment_id: int | None = None) -> dict:
     payload = {"protocol": 1, "post_id": int(post_id), "attachment_id": attachment_id}
-    result = subprocess.run(
+    result = run_wordpress(
         list(base) + ["eval", SECTION_IMAGE_SNAPSHOT_SCRIPT, "--allow-root"],
         input=json.dumps(payload, separators=(",", ":")),
         capture_output=True,
@@ -124,19 +125,19 @@ def import_section_image(
 
         token = image_info["sha256"][:12]
         remote_image = f"/tmp/editorial_section_{post_id}_{token}{image_path.suffix.lower()}"
-        subprocess.run(
+        run_wordpress(
             ["sudo", "docker", "cp", str(image_path), f"wordpress_app:{remote_image}"],
             capture_output=True, check=True,
         )
         try:
-            imported = subprocess.run(
+            imported = run_wordpress(
                 base + ["media", "import", remote_image, f"--post_id={post_id}",
                         f"--title={media_title}", f"--alt={alt_text}",
                         "--porcelain", "--allow-root"],
                 capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
             )
         finally:
-            subprocess.run(
+            run_wordpress(
                 ["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
                 capture_output=True, check=False,
             )
