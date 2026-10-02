@@ -108,24 +108,25 @@ def install(release, app):
             if not source.is_file():
                 raise ValueError('required_policy_document_missing:' + name)
             put(app.parent/'docs'/name, source.read_bytes())
-        text=(app/'config.py').read_text(encoding='utf-8')
-        names={node.id for node in ast.walk(ast.parse(text)) if isinstance(node,ast.Name) and isinstance(node.ctx,ast.Store)}
-        if 'DRAFTS_INDEX_FILE' not in names:
-            text+='\nDRAFTS_INDEX_FILE = DATA_DIR / "draft_posts.json"\n'
-        if 'SITE_URL' not in names:
-            text+='\nSITE_URL = "http://localhost"  # Fallback only; actual permalinks are read from WordPress.\n'
-        put(app/'config.py',text.encode('utf-8'))
-        text=(app/'main.py').read_text(encoding='utf-8')
-        old='from agents.copywriter import CopywriterAgent'
-        new='from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent'
-        if old not in text and new not in text:
-            raise ValueError('unknown_main_entry_point')
-        text=text.replace(old,new)
-        if 'from sync_wordpress_inventory import sync_inventory' not in text:
-            text=text.replace(new,new+'\nfrom sync_wordpress_inventory import sync_inventory')
-        if '    sync_inventory()' not in text:
-            text=text.replace('    radar = RadarAgent()', '    sync_inventory()\n    radar = RadarAgent()')
-        put(app/'main.py',text.encode('utf-8'))
+        if not replace_entrypoints:
+            text=(app/'config.py').read_text(encoding='utf-8')
+            names={node.id for node in ast.walk(ast.parse(text)) if isinstance(node,ast.Name) and isinstance(node.ctx,ast.Store)}
+            if 'DRAFTS_INDEX_FILE' not in names:
+                text+='\nDRAFTS_INDEX_FILE = DATA_DIR / "draft_posts.json"\n'
+            if 'SITE_URL' not in names:
+                text+='\nSITE_URL = "http://localhost"  # Fallback only; actual permalinks are read from WordPress.\n'
+            put(app/'config.py',text.encode('utf-8'))
+            text=(app/'main.py').read_text(encoding='utf-8')
+            old='from agents.copywriter import CopywriterAgent'
+            new='from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent'
+            if old not in text and new not in text:
+                raise ValueError('unknown_main_entry_point')
+            text=text.replace(old,new)
+            if 'from sync_wordpress_inventory import sync_inventory' not in text:
+                text=text.replace(new,new+'\nfrom sync_wordpress_inventory import sync_inventory')
+            if '    sync_inventory()' not in text:
+                text=text.replace('    radar = RadarAgent()', '    sync_inventory()\n    radar = RadarAgent()')
+            put(app/'main.py',text.encode('utf-8'))
         for relative in release_manifest.get('retired_files', []):
             target = app / relative
             if target.exists():

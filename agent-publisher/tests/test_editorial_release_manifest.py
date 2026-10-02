@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('release_installer', ROOT / 'scripts/install_editorial_release.py')
@@ -58,3 +59,39 @@ class ReleaseManifestTests(unittest.TestCase):
         self.write_manifest()
         with self.assertRaisesRegex(ValueError, 'retirement_scope'):
             installer.verify_release_manifest(self.root)
+
+    def entrypoint_release(self):
+        app = self.root / 'existing-app'
+        app.mkdir()
+        config = "import os\nGEMINI_API_KEY=os.getenv('GEMINI_API_KEY', '')\nKAKAO_MAP_JAVASCRIPT_KEY=os.getenv('KAKAO_MAP_JAVASCRIPT_KEY', '')\nSITE_URL=os.getenv('SITE_URL', 'http://localhost')\n"
+        (app / 'config.py').write_text(config)
+        (app / 'main.py').write_text('old main')
+        (app / '.env').write_text('GEMINI_API_KEY=private-environment-value')
+        for name, text in {'agent-publisher/config.py': config, 'agent-publisher/main.py': '# exact new entrypoint\n'}.items():
+            (self.root / name).write_text(text)
+            self.files[name] = hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+        (self.root / 'docs').mkdir()
+        for name in ('EDITORIAL_SYSTEM.md', 'GENERAL_POST_STANDARD.md', 'EVENT_POST_STANDARD.md', 'FEATURED_IMAGE_STANDARD.md'):
+            path = self.root / 'docs' / name
+            path.write_text('policy document')
+            self.files['docs/' + name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.write_manifest()
+        return app
+
+    def test_entrypoint_install_is_exact_and_does_not_replace_environment(self):
+        app = self.entrypoint_release()
+        with patch.object(installer.subprocess, 'run'):
+            installer.install(self.root, app)
+        self.assertEqual((self.root / 'agent-publisher/main.py').read_bytes(), (app / 'main.py').read_bytes())
+        self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
+        self.assertEqual('a' * 40, json.loads((app / 'data/editorial-release.json').read_text())['revision'])
+
+    def test_failed_entrypoint_smoke_restores_original_files(self):
+        app = self.entrypoint_release()
+        with patch.object(installer.subprocess, 'run', side_effect=RuntimeError('import failed')):
+            with self.assertRaisesRegex(RuntimeError, 'import failed'):
+                installer.install(self.root, app)
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'agents/edit_post.py').exists())
+        self.assertFalse((app / 'data/editorial-release.json').exists())
+        self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
