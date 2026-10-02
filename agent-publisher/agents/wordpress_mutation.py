@@ -67,7 +67,8 @@ def get_post(base, post_id, *, fields=None):
     command += ["--format=json", "--allow-root"]
     with timed("wp_target_read"):
         increment("wp_roundtrips")
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
     return json.loads((result.stdout or "").lstrip("\ufeff"))
 
 
@@ -82,7 +83,9 @@ def update_post(base, post_id, fields: dict[str, str]):
     args.append("--allow-root")
     with timed("wp_update"):
         increment("wp_roundtrips")
-        return subprocess.run(list(base) + args, capture_output=True, text=True, check=True)
+        return subprocess.run(
+            list(base) + args, capture_output=True, text=True,
+            encoding="utf-8", errors="strict", check=True)
 
 
 def _guarded_payload(post_id: int, expected: dict[str, str], updates: dict[str, str]) -> dict:
@@ -164,6 +167,8 @@ def guarded_update_post(base, post_id, *, expected: dict[str, str], updates: dic
             input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             check=True,
         )
     observed = _guarded_result(result.stdout)

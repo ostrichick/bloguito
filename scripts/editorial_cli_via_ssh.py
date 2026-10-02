@@ -187,7 +187,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             ['wsl.exe', '-d', wsl_distro, '--', 'tailscale', 'ping', '-c', '1', host],
         ):
             try:
-                _RUN(command, capture_output=True, text=True, timeout=12, check=False)
+                _RUN(command, capture_output=True, text=True, encoding='utf-8', errors='strict',
+                     timeout=12, check=False)
             except (OSError, subprocess.SubprocessError):
                 pass
 
@@ -681,7 +682,8 @@ def _main():
         with timed('catalog_sync'):
             for attempt in range(2):
                 attempts = attempt + 1
-                last = _RUN(sync_cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+                last = _RUN(sync_cmd, cwd=str(ROOT), capture_output=True, text=True,
+                            encoding='utf-8', errors='strict', check=False)
                 if last.returncode == 0:
                     if last.stdout:
                         print(last.stdout.rstrip())

@@ -1,7 +1,17 @@
-* text=auto
+* text=auto eol=lf
 *.sh text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.php text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
 *.ini text eol=lf
 *.cnf text eol=lf
 *.example text eol=lf
