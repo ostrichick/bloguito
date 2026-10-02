@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 define('ABSPATH', __DIR__ . '/');
 $front = true;
 function add_action($hook, $callback, $priority = 10) {}

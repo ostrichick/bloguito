@@ -72,7 +72,7 @@ def rank_math_meta_from_brief(brief):
 def _read_post_meta(base, post_id, key):
     result = subprocess.run(
         list(base) + ['post', 'meta', 'get', str(post_id), key, '--allow-root'],
-        capture_output=True, text=True, check=False)
+        capture_output=True, text=True, encoding='utf-8', errors='strict', check=False)
     if result.returncode == 0:
         return (result.stdout or '').rstrip('\r\n')
     stderr = (result.stderr or '').lower()
@@ -90,7 +90,7 @@ def _set_rank_math_meta(base, post_id, values):
     for key in RANK_MATH_META_KEYS:
         subprocess.run(
             list(base) + ['post', 'meta', 'set', str(post_id), key, values[key], '--allow-root'],
-            capture_output=True, text=True, check=True)
+            capture_output=True, text=True, encoding='utf-8', errors='strict', check=True)
 
 
 def _update_reviewed_public_manifest(post_id, bundle):

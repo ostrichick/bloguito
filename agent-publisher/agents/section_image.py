@@ -36,6 +36,8 @@ def _read_section_image_snapshot(base, post_id: int, attachment_id: int | None =
         input=json.dumps(payload, separators=(",", ":")),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="strict",
         check=True,
     )
     try:
@@ -131,7 +133,7 @@ def import_section_image(
                 base + ["media", "import", remote_image, f"--post_id={post_id}",
                         f"--title={media_title}", f"--alt={alt_text}",
                         "--porcelain", "--allow-root"],
-                capture_output=True, text=True, check=True,
+                capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
             )
         finally:
             subprocess.run(

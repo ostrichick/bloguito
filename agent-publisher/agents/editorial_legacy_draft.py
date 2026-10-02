@@ -88,7 +88,7 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         current = json.loads(subprocess.run(
             base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
-            check=True, capture_output=True, text=True).stdout)
+            check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
         if (current['post_status'] != 'draft'
                 or current['post_title'] != matching[0]['post_title']
                 or hashlib.sha256(current['post_content'].encode()).hexdigest() != expected_content_sha256
@@ -115,12 +115,13 @@ def upgrade_legacy_draft(post_id, bundle, expected_content_sha256, *, confirmed=
         subprocess.run(base + ['post', 'update', str(post_id),
                                '--post_content=' + target_html,
                                '--post_excerpt=' + excerpt, '--allow-root'],
-                       check=True, capture_output=True, text=True)
+                       check=True, capture_output=True, text=True,
+                       encoding='utf-8', errors='strict')
         if update_meta:
             _set_rank_math_meta(base, post_id, reviewed_meta)
         saved = json.loads(subprocess.run(
             base + ['post', 'get', str(post_id), '--format=json', '--allow-root'],
-            check=True, capture_output=True, text=True).stdout)
+            check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
         if (saved['post_status'] != 'draft' or saved['post_title'] != current['post_title']
                 or saved['post_name'] != current['post_name']
                 or saved['post_content'] != target_html or saved['post_excerpt'] != excerpt):

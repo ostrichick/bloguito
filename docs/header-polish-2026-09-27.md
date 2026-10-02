@@ -1,4 +1,4 @@
-﻿# Header polish follow-up — 2026-09-27
+# Header polish follow-up — 2026-09-27
 
 ## Scope
 

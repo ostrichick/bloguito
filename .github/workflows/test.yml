@@ -31,6 +31,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r agent-publisher/requirements.txt
 
+      - name: Check repository text encoding
+        run: python scripts/check_text_encoding.py
+
       - name: Run test suite
         env:
           PYTHONPATH: agent-publisher

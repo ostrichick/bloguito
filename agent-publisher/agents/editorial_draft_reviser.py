@@ -334,7 +334,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 imported = subprocess.run(
                     base + ["media", "import", remote_image, f"--post_id={post_id}",
                             "--featured_image", "--porcelain", "--allow-root"],
-                    capture_output=True, text=True, check=True)
+                    capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
                 featured_attachment_id = imported.stdout.strip()
             finally:
                 subprocess.run(["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
@@ -343,7 +343,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 raise ValueError("featured_image_attachment_id_missing")
             observed_thumb = subprocess.run(
                 base + ["post", "meta", "get", str(post_id), "_thumbnail_id", "--allow-root"],
-                capture_output=True, text=True, check=True).stdout.strip()
+                capture_output=True, text=True, encoding="utf-8", errors="strict", check=True).stdout.strip()
             if observed_thumb != featured_attachment_id:
                 raise ValueError("featured_image_save_verification_failed")
 

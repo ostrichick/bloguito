@@ -65,12 +65,12 @@ def repair_reviewed_draft_category(post_id, expected_content_sha256, *, confirme
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         live = json.loads(subprocess.run(
             base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         ).stdout)
         terms = json.loads(subprocess.run(
             base + ["post", "term", "list", str(post_id), "category",
                     "--fields=term_id,name,slug", "--format=json", "--allow-root"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         ).stdout)
         if (live["post_status"] != "draft"
                 or live["post_title"] != current["post_title"]
@@ -93,16 +93,16 @@ def repair_reviewed_draft_category(post_id, expected_content_sha256, *, confirme
 
         subprocess.run(
             base + ["post", "update", str(post_id), f"--post_category={target_id}", "--allow-root"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         )
         saved = json.loads(subprocess.run(
             base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         ).stdout)
         saved_terms = json.loads(subprocess.run(
             base + ["post", "term", "list", str(post_id), "category",
                     "--fields=term_id,name,slug", "--format=json", "--allow-root"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
         ).stdout)
         if (saved["post_status"] != "draft"
                 or saved["post_title"] != live["post_title"]
