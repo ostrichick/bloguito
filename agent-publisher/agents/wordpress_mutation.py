@@ -13,6 +13,16 @@ from agents.workflow_metrics import increment, timed
 
 
 GUARDED_POST_MUTATION_PROTOCOL = 1
+POST_THUMBNAIL_SNAPSHOT_SCRIPT = (
+    '$p=json_decode(file_get_contents("php://stdin"),true);'
+    '$post=get_post((int)($p["post_id"]??0));'
+    'if(!$post){echo wp_json_encode(["status"=>"missing"]);return;}'
+    '$row=[];foreach(["post_status","post_title","post_name","post_content","post_excerpt"] as $key)'
+    '{$row[$key]=(string)$post->$key;}'
+    '$thumb=metadata_exists("post",$post->ID,"_thumbnail_id")'
+    '?(string)get_post_meta($post->ID,"_thumbnail_id",true):null;'
+    'echo wp_json_encode(["post"=>$row,"thumbnail_id"=>$thumb],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);'
+)
 GUARDED_POST_MUTATION_SCRIPT = (
     '$raw=file_get_contents("php://stdin");'
     '$p=json_decode($raw,true);'

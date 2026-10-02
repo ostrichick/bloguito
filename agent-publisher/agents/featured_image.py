@@ -306,8 +306,8 @@ def replace_featured_image(
         }
         record_outcome(outcome)
 
-        observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         saved = get_post(base, post_id, fields=fields)
+        observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         attachment = get_post(
             base,
             int(attachment_id),

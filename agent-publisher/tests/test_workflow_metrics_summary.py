@@ -10,6 +10,13 @@ from scripts.summarize_workflow_metrics import summarize
 
 
 class WorkflowMetricsSummaryTests(unittest.TestCase):
+    def test_missing_counters_are_unknown_and_versions_are_visible(self):
+        result = summarize([{'action': 'image', 'run_context': 'live', 'status': 'ok',
+                             'code_version': 'version-a', 'total_ms': 100, 'counters': {}}])
+        self.assertIsNone(result['actions']['image']['wp_roundtrips_mean'])
+        self.assertIsNone(result['actions']['image']['ssh_roundtrips_mean'])
+        self.assertEqual({'version-a': 1}, result['code_versions'])
+        self.assertEqual(0, result['unversioned_rows'])
     def test_groups_successful_live_runs_and_ignores_test_rows(self):
         rows = [
             {"action": "edit-post", "run_context": "live", "status": "ok", "total_ms": 100,

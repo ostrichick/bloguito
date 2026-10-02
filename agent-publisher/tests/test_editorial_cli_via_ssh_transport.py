@@ -19,6 +19,37 @@ def load_module():
 
 
 class EditorialCliViaSshTransportTests(unittest.TestCase):
+    def test_image_snapshot_batches_only_the_immediately_following_thumbnail_read(self):
+        module = load_module()
+        calls = []
+        post = {'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+                'post_content': 'body', 'post_excerpt': 'summary'}
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            remote = args[-1]
+            data = json.dumps({'post': post, 'thumbnail_id': '700'}) if ' wp eval ' in remote else '701'
+            return subprocess.CompletedProcess(args, 0, stdout=data, stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        get = module._WP_PREFIX + ['post', 'get', '463',
+            '--fields=post_status,post_title,post_name,post_content,post_excerpt', '--format=json', '--allow-root']
+        meta = module._WP_PREFIX + ['post', 'meta', 'get', '463', '_thumbnail_id', '--allow-root']
+        result = transport(get, capture_output=True, text=True, check=True)
+        self.assertEqual(post, json.loads(result.stdout))
+        self.assertEqual('700', transport(meta, capture_output=True, text=True).stdout)
+        self.assertEqual(1, len(calls))
+        self.assertEqual('701', transport(meta, capture_output=True, text=True).stdout)
+        self.assertEqual(2, len(calls))
+        transport(get, capture_output=True, text=True)
+        transport(module._WP_PREFIX + ['post', 'meta', 'get', '463', 'rank_math_title', '--allow-root'],
+                  capture_output=True, text=True)
+        self.assertEqual('701', transport(meta, capture_output=True, text=True).stdout)
+        self.assertEqual(5, len(calls))
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_get_target'):
+            transport(module._WP_PREFIX + ['post', 'get', '999', *get[8:]], text=True)
+
     def test_section_image_import_allows_non_featured_media_only_for_target(self):
         module = load_module()
         calls = []
