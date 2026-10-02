@@ -10,7 +10,7 @@ class ReferencePeriodTests(unittest.TestCase):
         self.quote = "적용연도\n'27.01.01\n~'27.12.31\n10,700"
         self.brief = {
             'content_type': 'dated',
-            'category_key': 'life-health',
+            'category_key': 'finance',
             'useful_until': '2027-12-31',
             'official_urls': [self.url],
         }

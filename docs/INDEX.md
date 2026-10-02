@@ -13,6 +13,7 @@
 | 검증 임계값과 모델 설정 | [editorial_policy.json](../agent-publisher/editorial_policy.json) | 코드가 읽는 설정값의 유일한 정본 |
 | 명령어·백업·배포 체크리스트 | [OPERATIONS](OPERATIONS.md) | 현재 저장소의 코드와 확인 날짜를 구분한 운영 가이드 |
 | 콘텐츠 목록과 주제 대시보드 | [POST_CATALOG](POST_CATALOG.md) | 발행·임시글 현황 및 백로그 로컬 단일 정본 |
+| 카테고리 구조와 61편 이관표 | [2026-10-02 카테고리 개편](category-reorganization-2026-10-02.md) | 8개 현행 카테고리, 운영 term, 글별 이동표와 마이그레이션 원칙 |
 | 다른 AI로 인계 | [PROJECT_HANDOVER](../PROJECT_HANDOVER.md) | 최소 맥락과 정본 링크; 과거 370줄 이력의 재복제 없음 |
 | 콘텐츠 구조·수요 실험 | [CONTENT_STRATEGY](CONTENT_STRATEGY_2026-09-20.md) | **제안**이며 현재 구현이나 배포 규약이 아님 |
 
@@ -45,6 +46,7 @@
 
 ## 최근 추가 점검
 
+- [2026-10-02 카테고리 8분류 개편](category-reorganization-2026-10-02.md): `생활/건강 정보`의 과밀과 지역 행사 분산을 해소하기 위한 8개 평면 taxonomy, 실서버 61편 전수 재분류표, WordPress term/메뉴 마이그레이션 원칙을 기록.
 - [2026-10-01 프로젝트 간소화 P9~P11 및 WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md): validation registry 제거, per-post reviewed manifest 저장 구조, WSL SSH 연결 재사용, section-image 왕복 축소, 운영 WhatsApp service 제거와 전체 회귀 검증 기록.
 
 - [2026-09-29 #598 임플란트 건강보험 대표 이미지 문구 정정](post-598-cover-text-fix-2026-09-29.md): 대표 이미지 좌측 하단 알약 배지의 '팩트' 단어를 제거하고 '안내'로 수정한 WebP를 재생성하여 운영 WordPress의 대표 이미지(_thumbnail_id=679)로 교체 및 실서비스 검증을 완료한 기록.

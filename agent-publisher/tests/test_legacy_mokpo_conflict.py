@@ -30,7 +30,7 @@ class MokpoMunicipalAgeConflictTests(unittest.TestCase):
             '지원대상: 15세~65세 목포시민 중 취약계층')
         self.press = official('p', PRESS,
             '목포시 자체사업: 15~64세 취약계층은 10월 12일 보건소에서 접종')
-        self.brief = {'existing_post_id': 103, 'category_key': 'life-health',
+        self.brief = {'existing_post_id': 103, 'category_key': 'health',
                       'official_urls': [HEALTH, PRESS], 'entity': '목포 독감',
                       'primary_keyword': '2026 목포 독감'}
         self.plan = {'title': '목포시 자체사업 인플루엔자', 'lead': {'text': '근거 검토 전'},
@@ -79,10 +79,14 @@ class MokpoMunicipalAgeConflictTests(unittest.TestCase):
         self.assertIn(REASON, self.reasons([self.health, unrelated]))
 
     def test_no_other_post_or_category_is_affected(self):
-        for post_id, category in ((104, 'life-health'), (103, 'tax'), (None, 'life-health')):
+        for post_id, category in ((104, 'health'), (103, 'tax'), (None, 'health')):
             with self.subTest(post_id=post_id, category=category):
                 brief = {**self.brief, 'existing_post_id': post_id, 'category_key': category}
                 self.assertNotIn(REASON, self.reasons([self.health, self.press], brief))
+
+    def test_legacy_life_health_bundle_keeps_the_same_narrow_guard(self):
+        legacy = {**self.brief, 'category_key': 'life-health'}
+        self.assertIn(REASON, self.reasons(brief=legacy))
 
     def test_national_season_only_article_without_city_claim_is_unaffected(self):
         national_plan = {'title': '목포 독감 국가접종 일정',

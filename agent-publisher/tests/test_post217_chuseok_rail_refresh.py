@@ -22,7 +22,7 @@ class Post217ChuseokRailRefreshTests(unittest.TestCase):
             'approved': True,
             'reviewed_at': '2026-09-24',
             'review_until': '2026-09-27',
-            'category_key': 'life-health',
+            'category_key': 'transport',
             'entity': '2026 추석 KTX 취소표',
             'primary_keyword': '2026 추석 KTX 취소표',
             'question': '추석 KTX가 매진일 때 공식 잔여석과 반환 좌석을 어디서 확인하고 어떤 대안을 순서대로 볼 수 있나요?',

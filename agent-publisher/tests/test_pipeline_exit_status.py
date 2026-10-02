@@ -27,7 +27,7 @@ class PipelineExitTests(unittest.TestCase):
                 publisher.publish.side_effect = RuntimeError('storage unavailable')
             if notification_failed:
                 summary.side_effect = RuntimeError('notification unavailable')
-            stats = pipeline.run_pipeline(['life-health'])
+            stats = pipeline.run_pipeline(['health'])
             return stats
 
     def test_processing_failure_is_counted_and_returned(self):
@@ -77,13 +77,13 @@ class PipelineExitTests(unittest.TestCase):
     def test_cli_returns_failure_after_partial_success(self):
         stats = {'candidates': 2, 'published': 1, 'held': 0, 'errors': 1, 'notification_errors': 0}
         with patch.object(pipeline, 'run_pipeline', return_value=stats), redirect_stdout(io.StringIO()) as out:
-            self.assertEqual(1, pipeline.main(['--category', 'life-health']))
+            self.assertEqual(1, pipeline.main(['--category', 'health']))
         self.assertIn('"status": "failed"', out.getvalue())
 
     def test_cli_returns_success_for_holds(self):
         stats = {'candidates': 2, 'published': 0, 'held': 2, 'errors': 0, 'notification_errors': 0}
         with patch.object(pipeline, 'run_pipeline', return_value=stats), redirect_stdout(io.StringIO()):
-            self.assertEqual(0, pipeline.main(['--category', 'life-health']))
+            self.assertEqual(0, pipeline.main(['--category', 'health']))
 
 
 if __name__ == '__main__':

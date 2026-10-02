@@ -61,7 +61,7 @@ def repair_reviewed_draft_category(post_id, expected_content_sha256, *, confirme
         if expected_sources != observed_sources:
             raise ValueError("official_sources_changed_since_review")
 
-        category = resolve_category(bundle["brief"].get("category_key", ""))
+        category = resolve_category(bundle["brief"].get("category_key", ""), allow_legacy=False)
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         live = json.loads(subprocess.run(
             base + ["post", "get", str(post_id), "--format=json", "--allow-root"],

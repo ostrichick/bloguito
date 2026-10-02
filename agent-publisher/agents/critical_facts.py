@@ -53,7 +53,7 @@ def _mokpo_city_flu_age_conflict(brief, sources, plan):
     source fetch, independent semantic review or the usual publication gates.
     """
     if (brief.get('existing_post_id') != 103
-            or brief.get('category_key') != 'life-health'):
+            or brief.get('category_key') not in {'health', 'life-health'}):
         return []
     # A national-season-only article may cite the city's notice for the season
     # dates without making any claim about the separate city-funded scheme.

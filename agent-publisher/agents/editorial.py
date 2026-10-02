@@ -9,7 +9,7 @@ from datetime import datetime, date
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote
 
-from config import KAKAO_MAP_JAVASCRIPT_KEY
+from config import CATEGORIES, KAKAO_MAP_JAVASCRIPT_KEY
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
                                         validate_multi_event_schedule,
@@ -188,7 +188,7 @@ def topic_reasons(brief, today=None):
         if brief.get('content_type') == 'evergreen':
             if brief.get('useful_until') is not None or not brief.get('evergreen_reason'):
                 reasons.append('evergreen_reason_missing_or_deadline_present')
-            if (brief.get('category_key') in {'concert', 'welfare'}
+            if (brief.get('category_key') in {'events', 'concert', 'welfare'}
                     and not (brief.get('category_key') == 'welfare'
                              and legacy_85_welfare_navigation_exception(brief))):
                 reasons.append('dated_category_cannot_bypass_time_check')
@@ -1641,21 +1641,40 @@ def render(plan, sources, category_key=None):
             posts = json.loads(posts_file.read_text(encoding='utf-8'))
             today = datetime.now(KST).date()
 
-            # 현재 글의 카테고리 결정
+            # 현재 글의 카테고리 결정. Renderer callers do not always carry the
+            # brief, so retain a narrow title inference for legacy bundles while
+            # matching candidates against the active eight-category taxonomy.
             cur_cat = category_key or plan.get('category_key')
             if not cur_cat:
                 t = plan.get('title', '')
                 if any(w in t for w in ['콘서트', '티켓', '앵콜', '뮤지컬', '공연', '페스티벌']):
                     cur_cat = 'concert'
+                elif any(w in t for w in ['축제', '지역 행사', '나들이']):
+                    cur_cat = 'events'
                 elif any(w in t for w in ['세금', '연말정산', '종합소득세', '자동차세', '취득세']):
                     cur_cat = 'tax'
-                elif any(w in t for w in ['지원금', '기초연금', '바우처', '장려금', '환급금']):
+                elif any(w in t for w in ['건강검진', '예방접종', '독감', '병원', '약국', '의료', '임플란트', '본인부담상한제']):
+                    cur_cat = 'health'
+                elif any(w in t for w in ['KTX', '버스', '공항', '하이패스', '자동차검사', '운전면허', '교통', '통행료', '주차장', '전기차 충전']):
+                    cur_cat = 'transport'
+                elif any(w in t for w in ['주민등록', '전입신고', '여권', '우편물', '폐가전', '배출', '수거', '쓰레기', '버리', '안심상속']):
+                    cur_cat = 'life-admin'
+                elif any(w in t for w in ['보험', '계좌', '카드포인트', '은행', '주택연금', '최저시급', '통신 미환급']):
+                    cur_cat = 'finance'
+                elif any(w in t for w in ['지원금', '기초연금', '국민연금', '실업급여', '바우처', '요금 경감']):
                     cur_cat = 'welfare'
                 else:
                     cur_cat = 'life-health'
 
-            # 카테고리 상호 호환 그룹 정의 (공연/콘서트와 생활/복지/세무 철저 분리)
-            is_concert = (cur_cat == 'concert' or cur_cat == 2 or cur_cat == '공연/콘서트 예매')
+            def active_key(value, category_id=None, category_name=''):
+                for key, meta in CATEGORIES.items():
+                    if (value == key or value == meta['id'] or value == meta['name']
+                            or category_id == meta['id'] or category_name == meta['name']):
+                        return key
+                return None
+
+            current_key = active_key(cur_cat)
+            is_concert = current_key == 'concert'
 
             candidates = []
             for p in posts:
@@ -1690,27 +1709,13 @@ def render(plan, sources, category_key=None):
                 p_cat_id = p.get('category_id')
                 p_cat_name = p.get('category_name', '')
 
-                # 공연 글 여부 판별
-                p_is_concert = (p_cat_id == 2 or '공연' in p_cat_name or '콘서트' in p_cat_name)
-
-                # 상호 배타성 검사: 공연 글은 공연 글끼리만, 비공연(생활/복지/세무) 글은 비공연 글끼리만 추천!
-                if is_concert != p_is_concert:
+                candidate_key = active_key(None, p_cat_id, p_cat_name)
+                # Category is a relevance boundary. If either side cannot be
+                # mapped to the active taxonomy, do not manufacture a cross-topic link.
+                if current_key is None or candidate_key != current_key:
                     continue
 
-                # 점수 부여 (동일 카테고리 최우선)
-                score = 0
-                if cur_cat in {'life-health', 4, '생활/건강 정보'} and (p_cat_id == 4 or '생활' in p_cat_name or '건강' in p_cat_name):
-                    score = 2
-                elif cur_cat in {'welfare', 3, '정부 복지/지원금'} and (p_cat_id == 3 or '복지' in p_cat_name or '지원금' in p_cat_name):
-                    score = 2
-                elif cur_cat in {'tax', 102, '생활 세금/절세 정보'} and (p_cat_id == 102 or '세금' in p_cat_name or '절세' in p_cat_name):
-                    score = 2
-                elif is_concert and p_is_concert:
-                    score = 2
-                else:
-                    score = 1
-
-                candidates.append((score, p))
+                candidates.append((2, p))
 
             if candidates:
                 # 점수 높은 순(동일 카테고리 우선) 정렬 후 최대 2개 선택

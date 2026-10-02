@@ -56,7 +56,7 @@ def event_bundle():
     ]
     brief = {
         'id': 'seocho-october-events-2026',
-        'category_key': 'life-health',
+        'category_key': 'events',
         'approved': True,
         'entity': '2026년 10월 서초 지역 행사',
         'primary_keyword': '10월 서초 행사',

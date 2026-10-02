@@ -17,7 +17,7 @@ class Post229ChuseokSeoulWastePublishTests(unittest.TestCase):
             'approved': True,
             'reviewed_at': '2026-09-24',
             'review_until': '2026-09-28',
-            'category_key': 'life-health',
+            'category_key': 'life-admin',
             'entity': '2026 추석 서울 생활폐기물 배출 일정',
             'primary_keyword': '2026 추석 서울 쓰레기 배출일',
             'question': '2026 추석 서울에서 날짜별로 어느 자치구가 쓰레기를 배출할 수 있나요?',

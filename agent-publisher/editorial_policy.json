@@ -285,10 +285,15 @@
       "prefer_size_spacing_over_extra_accent_colors": true
     },
     "topic_profiles": {
+      "events": "Show one recognizable local outing or festival scene with people naturally enjoying the place. Avoid concert-poster composition unless the article is actually about one ticketed performance.",
       "life_admin": "Use a coherent scene tied to the task, such as a person, home, laptop or smartphone, document or service action. Avoid icon grids and government-pamphlet layouts.",
       "price_compare": "Use one real product or service context with a receipt, card, price tag or comparison cue. At most one representative number may be used when separately reviewed; do not list prices.",
       "welfare": "Show the applicant, application action or everyday life context. Avoid cash piles, gold coins and money-first clichés.",
       "concert": "Prefer a separately reviewed official promotional image. Preserve artist face, full head/chin, performance title and atmosphere; use fit/background extension instead of destructive center crop.",
+      "health": "Use a calm, credible Korean healthcare or wellness scene tied to the task, such as a checkup, clinic, pharmacy or vaccination context. Avoid alarming medical imagery.",
+      "transport": "Use one clear mobility scene tied to the task, such as a train, bus, airport, road, vehicle inspection or parking context. Avoid generic vehicle collages.",
+      "finance": "Use an everyday household-finance scene such as a card, account, insurance document, payslip or calculator in context. Avoid cash piles, investment-trading clichés and exaggerated wealth imagery.",
+      "tax": "Use a practical tax-payment, filing or refund context with a laptop, document or calculator. Avoid government-pamphlet layouts and money-first clichés.",
       "life_service": "Use one clear everyday subject directly connected to the topic in a natural Korean home, desk, shop, health or service setting."
     },
     "prompt_order": [

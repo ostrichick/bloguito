@@ -52,10 +52,12 @@ def _source_evidence_signature(bundle: dict) -> list[dict]:
 def _event_domain(bundle: dict | None) -> bool:
     if not isinstance(bundle, dict):
         return False
+    brief = bundle.get("brief") or {}
+    if brief.get("category_key") == "events":
+        return True
     temporal = bundle.get("temporal_source") or {}
     if temporal.get("multi_event_schedule") or temporal.get("event_entries"):
         return True
-    brief = bundle.get("brief") or {}
     text = " ".join(str(brief.get(key) or "") for key in ("entity", "primary_keyword", "question"))
     return any(token in text for token in ("행사", "축제", "페어"))
 

@@ -417,16 +417,35 @@ def derive_cover_copy(title: str, keyword: str = "") -> tuple[str, str | None]:
 
 def _cover_profile(title: str, category_key: str, category_name: str) -> str:
     combined = f"{title} {category_name}"
-    if category_key == "concert" or any(w in combined for w in ["콘서트", "공연", "뮤지컬", "페스티벌", "예매"]):
+    category_profiles = {
+        "events": "events",
+        "concert": "concert",
+        "welfare": "welfare",
+        "tax": "tax",
+        "health": "health",
+        "transport": "transport",
+        "life-admin": "life_admin",
+        "finance": "finance",
+    }
+    if category_key in category_profiles:
+        return category_profiles[category_key]
+    if any(w in combined for w in ["콘서트", "공연", "뮤지컬", "예매"]):
         return "concert"
     if any(w in combined for w in ["가격", "비용", "보험료", "검사비", "약값", "수수료", "요금", "비교"]):
         return "price_compare"
-    if category_key == "welfare" or any(w in combined for w in ["복지", "지원금", "연금", "바우처", "장려금", "돌봄"]):
+    if any(w in combined for w in ["축제", "지역 행사", "나들이"]):
+        return "events"
+    if any(w in combined for w in ["복지", "지원금", "연금", "바우처", "장려금", "돌봄"]):
         return "welfare"
-    if category_key == "tax" or any(
-        w in combined
-        for w in ["전입신고", "주민등록", "운전면허", "민원", "정부24", "신고", "증명서", "세금", "재산세", "연말정산", "소득공제", "세액공제"]
-    ):
+    if any(w in combined for w in ["건강검진", "예방접종", "병원", "약국", "의료", "임플란트"]):
+        return "health"
+    if any(w in combined for w in ["KTX", "버스", "공항", "하이패스", "자동차", "운전면허", "교통", "주차"]):
+        return "transport"
+    if any(w in combined for w in ["보험", "계좌", "카드", "은행", "주택연금", "최저임금"]):
+        return "finance"
+    if any(w in combined for w in ["세금", "재산세", "연말정산", "소득공제", "세액공제"]):
+        return "tax"
+    if any(w in combined for w in ["전입신고", "주민등록", "민원", "정부24", "신고", "증명서", "여권"]):
         return "life_admin"
     return "life_service"
 

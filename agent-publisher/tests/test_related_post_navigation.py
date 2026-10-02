@@ -22,7 +22,7 @@ class RelatedPostNavigationTests(unittest.TestCase):
         self.now = datetime(2026, 9, 23, 12, tzinfo=KST)
         text = '공식 안내 원문은 실제 출생 대상과 접종 일정의 기준을 안내합니다.'
         self.bundle = {
-            'brief': {'id': 'related-test', 'existing_post_id': 81, 'category_key': 'life-health',
+            'brief': {'id': 'related-test', 'existing_post_id': 81, 'category_key': 'health',
                       'approved': True, 'entity': '접종', 'primary_keyword': '예방접종 일정',
                       'question': '접종 일정은?', 'angle': '접종 대상별 일정',
                       'official_urls': ['https://www.kdca.go.kr/example'],

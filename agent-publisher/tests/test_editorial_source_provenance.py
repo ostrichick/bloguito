@@ -440,7 +440,7 @@ class BeartreeVisualOfficialSourceTests(unittest.TestCase):
         }
         source['id'] = 's0'
         brief = {
-            'content_type': 'dated', 'category_key': 'life',
+            'content_type': 'dated', 'category_key': 'events',
             'official_urls': [self.URL, other_url], 'useful_until': '2026-11-22',
         }
         plan = {

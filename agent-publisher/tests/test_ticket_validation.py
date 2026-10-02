@@ -232,7 +232,7 @@ class NetworkAndPipelineTests(unittest.TestCase):
             return_value=("일반 생활 기사 본문입니다. 충분한 길이를 위해 같은 문장을 반복합니다. " * 20, "https://example.com/news")
         )
         result = curator.curate(
-            {"title": "생활 정보 안내", "keyword": "생활 정보", "category_key": "life-health", "link": "https://example.com/news"}
+            {"title": "생활 정보 안내", "keyword": "생활 정보", "category_key": "life-admin", "link": "https://example.com/news"}
         )
         self.assertEqual(result["poster_url"], "https://news.example/article.jpg")
         self.assertIsNone(result["reviewed_poster_url"])

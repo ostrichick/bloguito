@@ -20,7 +20,7 @@ class Post237ChuseokFreeParkingPublishTests(unittest.TestCase):
             'approved': True,
             'reviewed_at': '2026-09-24',
             'review_until': '2026-09-27',
-            'category_key': 'life-health',
+            'category_key': 'transport',
             'entity': '2026 추석 무료 공공주차장 검색과 이용 조건',
             'primary_keyword': '2026 추석 무료 공공주차장 공유누리',
             'question': '2026 추석 무료 공공주차장을 어디서 찾고 운영시간은 어떻게 확인하나요?',

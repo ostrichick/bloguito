@@ -147,7 +147,7 @@ def validate_multi_event_schedule(brief: dict, sources: list[dict], temporal: di
     reasons = []
     if (temporal.get('multi_event_schedule') is not True
             or brief.get('content_type') != 'dated'
-            or brief.get('category_key') == 'concert'):
+            or brief.get('category_key') != 'events'):
         return ['multi_event_schedule_not_for_this_topic']
     if any(temporal.get(key) is not None for key in (
             'reference_period', 'legacy_reference_period', 'legacy_followup')):
@@ -336,13 +336,21 @@ def validate_legacy_reference_period(brief: dict, sources: list[dict], temporal:
     allowed = {55: ('welfare', 'annual_pension'),
                79: ('welfare', 'annual_pension'),
                101: ('welfare', 'annual_pension'),
-               220: ('welfare', 'annual_health_ceiling'),
-               103: ('life-health', 'flu_season'),
-               63: ('life-health', 'national_flu_season'),
-               81: ('life-health', 'national_flu_season')}
+               220: ('health', 'annual_health_ceiling'),
+               103: ('health', 'flu_season'),
+               63: ('health', 'national_flu_season'),
+               81: ('health', 'national_flu_season')}
     post_id = brief.get('existing_post_id')
-    if (type(post_id) is not int or allowed.get(post_id) !=
-            (brief.get('category_key'), info.get('kind'))
+    expected = allowed.get(post_id) if type(post_id) is int else None
+    category_key = brief.get('category_key')
+    legacy_health = (
+        category_key == 'life-health'
+        and isinstance(expected, tuple)
+        and expected[0] == 'health'
+    )
+    if (type(post_id) is not int or expected is None
+            or (expected != (category_key, info.get('kind'))
+                and not (legacy_health and expected[1] == info.get('kind')))
             or brief.get('content_type') != 'dated'):
         return ['legacy_reference_period_not_for_this_existing_post']
     reasons = []

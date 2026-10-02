@@ -29,7 +29,7 @@ class EditorialDraftCategoryTest(unittest.TestCase):
             index.write_text(json.dumps([{
                 'id': 239,
                 'fact_manifest': {'editorial_bundle': {
-                    'brief': {'category_key': 'life-health'},
+                    'brief': {'category_key': 'events'},
                     'plan': {'title': 'title'},
                     'sources': [],
                 }},

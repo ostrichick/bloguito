@@ -20,7 +20,7 @@ def roundup_bundle():
     brief = bundle['brief']
     brief.update(
         id='daejeon-october-roundup-test',
-        category_key='life',
+        category_key='events',
         entity='2026년 10월 대전 행사',
         primary_keyword='대전 10월 행사',
         question='10월 대전 행사는 언제 열리나요?',

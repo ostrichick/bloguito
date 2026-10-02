@@ -19,7 +19,7 @@ class Post145ChuseokTollRefreshTests(unittest.TestCase):
             'approved': True,
             'reviewed_at': '2026-09-24',
             'review_until': '2026-09-27',
-            'category_key': 'life-health',
+            'category_key': 'transport',
             'entity': '2026 추석 고속도로 통행료',
             'primary_keyword': '2026 추석 고속도로 통행료 무료 기간',
             'question': '2026 추석 고속도로 통행료는 언제부터 언제까지 무료이고 하이패스와 일반차로는 어떻게 이용하나요?',

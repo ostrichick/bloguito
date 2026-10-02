@@ -32,7 +32,7 @@ class DraftCommandSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path=Path(root)/'drafts.json'
             bundle={'plan':{'title':'검토 대기'},'sources':[{'url':'https://example.org/official','sha256':'hash'}],
-                    'brief':{'category_key':'life-health','official_urls':['https://example.org/official']}}
+                    'brief':{'category_key':'life-admin','official_urls':['https://example.org/official']}}
             path.write_text(json.dumps([{'id':243,'fact_manifest':{'editorial_bundle':bundle}}]),encoding='utf-8')
             inventory={'posts':[{'ID':243,'post_status':'draft','post_title':'검토 대기','post_content':'human changed body'}]}
             with (patch('agents.editorial.ROOT',Path(root)),patch('agents.publisher.DRAFTS_INDEX_FILE',path),
@@ -48,7 +48,7 @@ class DraftCommandSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path=Path(root)/'drafts.json'
             bundle={'plan':{'title':'검토 대기'},'sources':[{'url':'https://example.org/official','sha256':'old'}],
-                    'brief':{'category_key':'life-health','official_urls':['https://example.org/official']}}
+                    'brief':{'category_key':'life-admin','official_urls':['https://example.org/official']}}
             path.write_text(json.dumps([{'id':243,'fact_manifest':{'editorial_bundle':bundle}}]),encoding='utf-8')
             inventory={'posts':[{'ID':243,'post_status':'draft','post_title':'검토 대기','post_content':'original reviewed body'}]}
             with (patch('agents.editorial.ROOT',Path(root)),patch('agents.publisher.DRAFTS_INDEX_FILE',path),

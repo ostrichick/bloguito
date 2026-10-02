@@ -534,7 +534,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             'eval', 'echo get_permalink(648);', '--allow-root'])
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
             transport(module._WP_PREFIX + [
-                'post', 'update', '648', '--post_category=life-health', '--allow-root'])
+                'post', 'update', '648', '--post_category=local-events', '--allow-root'])
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'term', 'list', '649', 'category',

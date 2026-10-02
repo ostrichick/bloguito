@@ -93,9 +93,13 @@ class SystemImprovementsTest(unittest.TestCase):
 
     def test_resolve_category_aliases(self):
         """다양한 카테고리 alias가 올바른 표준 카테고리로 안전 매핑되는지 검증"""
-        self.assertEqual(resolve_category('life')['id'], CATEGORIES['life-health']['id'])
-        self.assertEqual(resolve_category('health')['id'], CATEGORIES['life-health']['id'])
-        self.assertEqual(resolve_category('life_health')['id'], CATEGORIES['life-health']['id'])
+        self.assertEqual(resolve_category('life')['id'], CATEGORIES['life-admin']['id'])
+        self.assertEqual(resolve_category('health')['id'], CATEGORIES['health']['id'])
+        self.assertEqual(resolve_category('medical')['id'], CATEGORIES['health']['id'])
+        self.assertEqual(resolve_category('traffic')['id'], CATEGORIES['transport']['id'])
+        self.assertEqual(resolve_category('financial')['id'], CATEGORIES['finance']['id'])
+        self.assertEqual(resolve_category('festival')['id'], CATEGORIES['events']['id'])
+        self.assertEqual(resolve_category('life_health')['id'], 4)
         self.assertEqual(resolve_category('welfare-benefit')['id'], CATEGORIES['welfare']['id'])
         self.assertEqual(resolve_category('benefit')['id'], CATEGORIES['welfare']['id'])
         self.assertEqual(resolve_category('taxes')['id'], CATEGORIES['tax']['id'])
@@ -104,18 +108,23 @@ class SystemImprovementsTest(unittest.TestCase):
         self.assertEqual(resolve_category('tickets')['id'], CATEGORIES['concert']['id'])
 
     def test_resolve_category_fallback(self):
-        """알 수 없는 키 또는 빈 문자열 입력 시 기본 카테고리로 안전 폴백되는지 검증"""
-        fallback_cat = resolve_category('unknown_random_category')
-        self.assertEqual(fallback_cat['id'], CATEGORIES['life-health']['id'])
-
-        empty_cat = resolve_category('')
-        self.assertEqual(empty_cat['id'], CATEGORIES['life-health']['id'])
+        """알 수 없는 키 또는 빈 문자열은 임의 카테고리로 폴백하지 않는다."""
+        self.assertEqual(
+            set(CATEGORIES),
+            {'events', 'concert', 'welfare', 'tax', 'health', 'transport', 'life-admin', 'finance'},
+        )
+        with self.assertRaisesRegex(ValueError, 'unknown_category'):
+            resolve_category('unknown_random_category')
+        with self.assertRaisesRegex(ValueError, 'unknown_category'):
+            resolve_category('')
+        with self.assertRaisesRegex(ValueError, 'unknown_category'):
+            resolve_category('life-health', allow_legacy=False)
 
     def test_interlink_category_isolation(self):
-        """생활/건강 글에는 무관한 콘서트 글이 추천되지 않고 생활/복지 글만 추천되는지 검증"""
-        html = render(self.plan, self.sources, category_key='life-health')
+        """건강 글에는 다른 카테고리 글이 자동 추천되지 않는지 검증"""
+        html = render(self.plan, self.sources, category_key='health')
         self.assertNotIn('무명전설 크리스마스 콘서트', html)
-        self.assertNotIn('공연/콘서트 예매', html)
+        self.assertNotIn('공연·콘서트 예매', html)
         self.assertNotIn('bloguito-interlink', html)  # No topical match; unrelated flu posts are not useful.
 
     def test_interlink_concert_isolation(self):

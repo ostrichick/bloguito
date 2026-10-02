@@ -82,7 +82,7 @@
   },
   {
     "id": "passport-online-collection-0915",
-    "category_key": "life-health",
+    "category_key": "life-admin",
     "approved": true,
     "entity": "여권",
     "primary_keyword": "온라인 여권 재발급 수령 준비물 대리수령",
@@ -130,7 +130,7 @@
   },
   {
     "id": "postal-paid-forwarding-extension-0915",
-    "category_key": "life-health",
+    "category_key": "life-admin",
     "approved": true,
     "entity": "우체국",
     "primary_keyword": "우체국 주거이전 서비스 연장 방법",
@@ -174,7 +174,7 @@
   },
   {
     "id": "climate-card-pass-transition-0915",
-    "category_key": "life-health",
+    "category_key": "transport",
     "approved": true,
     "entity": "기후동행패스",
     "primary_keyword": "기후동행패스 청년할인 등록방법",
@@ -222,7 +222,7 @@
   },
   {
     "id": "resident-registration-certificate-gov24-0915",
-    "category_key": "life-health",
+    "category_key": "life-admin",
     "approved": true,
     "entity": "주민등록등본",
     "primary_keyword": "주민등록등본 인터넷 무료 발급",
@@ -464,7 +464,7 @@
   },
   {
     "id": "senior-implant-insurance-guide",
-    "category_key": "life-health",
+    "category_key": "health",
     "approved": true,
     "entity": "임플란트",
     "primary_keyword": "65세 이상 임플란트 건강보험 본인부담금 기준",
@@ -514,7 +514,7 @@
   },
   {
     "id": "long-term-care-grade-guide",
-    "category_key": "life-health",
+    "category_key": "welfare",
     "approved": true,
     "entity": "노인장기요양보험",
     "primary_keyword": "노인장기요양보험 등급 신청 방법 및 혜택",

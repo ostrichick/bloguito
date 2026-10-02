@@ -92,7 +92,7 @@ class PublisherAgent:
         excerpt = excerpt_from_lead(bundle['plan']['lead'])
         if article.get('content') != content or article.get('title') != title:
             raise ValueError('editorial_content_changed_after_review')
-        category = resolve_category(bundle['brief'].get('category_key', ''))
+        category = resolve_category(bundle['brief'].get('category_key', ''), allow_legacy=False)
         with tempfile.NamedTemporaryFile('w', encoding='utf-8', delete=False, suffix='.html') as f:
             f.write(content)
             local = Path(f.name)
@@ -202,7 +202,8 @@ class PublisherAgent:
                 check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
             if saved['post_content'] != content or saved['post_status'] != 'draft':
                 raise ValueError('reformat_saved_content_mismatch')
-            category = __import__('config', fromlist=['CATEGORIES']).CATEGORIES[bundle['brief']['category_key']]
+            category = __import__('config', fromlist=['resolve_category']).resolve_category(
+                bundle['brief']['category_key'])
             self._record_post(post_id, bundle['plan']['title'], category['id'], category['name'], status='draft', fact_manifest={'editorial_bundle': bundle})
             invalidate_inventory()
             return post_id

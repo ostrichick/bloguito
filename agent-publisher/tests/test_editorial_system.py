@@ -15,7 +15,7 @@ NOW = datetime(2026, 9, 14, 12, tzinfo=KST)
 
 def sample():
     text = '서초구 가정용 선풍기는 배출수수료 면제 대상입니다. 아파트 단지 수집 거치대에 배출합니다.'
-    brief = {'id':'test', 'category_key':'life-health', 'approved':True, 'entity':'서초구',
+    brief = {'id':'test', 'category_key':'life-admin', 'approved':True, 'entity':'서초구',
         'primary_keyword':'서초구 선풍기 버리는 법', 'question':'어디에 버리나?', 'angle':'1개 배출',
         'official_urls':['https://www.seocho.go.kr/guide'], 'required_title_terms':['서초구','선풍기'],
         'content_type':'evergreen', 'useful_until':None, 'evergreen_reason':'반복 배출 절차',
@@ -86,10 +86,10 @@ class EditorialTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         posts_data = [
-            {'title': '서초구 선풍기 배출 상세 안내', 'url': 'https://lifeinfo24.org/p1', 'category_name': '생활/건강', 'status': 'publish'},
-            {'title': '기초연금 안내', 'url': 'https://lifeinfo24.org/p3', 'category_name': '정부 복지/지원금', 'status': 'publish'},
-            {'title': '서초구 선풍기 오래된 글', 'url': 'http://161.33.0.234/p4', 'category_name': '생활/건강', 'status': 'publish'},
-            {'title': self.b['plan']['title'], 'url': 'https://lifeinfo24.org/p2', 'category_name': '생활/건강', 'status': 'publish'},
+            {'title': '서초구 선풍기 배출 상세 안내', 'url': 'https://lifeinfo24.org/p1', 'category_name': '생활 행정·서비스', 'status': 'publish'},
+            {'title': '기초연금 안내', 'url': 'https://lifeinfo24.org/p3', 'category_name': '정부 복지·지원금', 'status': 'publish'},
+            {'title': '서초구 선풍기 오래된 글', 'url': 'http://161.33.0.234/p4', 'category_name': '생활 행정·서비스', 'status': 'publish'},
+            {'title': self.b['plan']['title'], 'url': 'https://lifeinfo24.org/p2', 'category_name': '생활 행정·서비스', 'status': 'publish'},
         ]
         with tempfile.TemporaryDirectory() as folder:
             data_folder = Path(folder) / 'data'
@@ -348,7 +348,7 @@ class EditorialTests(unittest.TestCase):
         from agents.radar import RadarAgent
         with patch('agents.radar.load_briefs',return_value=[self.b['brief']]), patch('agents.radar.feedparser.parse') as rss:
             radar=object.__new__(RadarAgent);radar.history=set()
-            items=radar.search_news('life-health')
+            items=radar.search_news('life-admin')
             self.assertTrue(items[0]['editorial_direct'])
             rss.assert_not_called()
 

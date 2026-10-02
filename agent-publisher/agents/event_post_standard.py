@@ -305,6 +305,7 @@ def validate_event_post_standard(bundle: dict) -> list[str]:
 
     if (not event_post_standard_enabled(bundle)
             or brief.get("content_type") != "dated"
+            or brief.get("category_key") != "events"
             or temporal.get("multi_event_schedule") is not True):
         reasons.append("event_standard_contract_invalid")
         return reasons
@@ -514,6 +515,8 @@ def event_writer_instruction(brief: dict, temporal_source: dict | None = None) -
     """Extra writer contract only for explicitly standardized event roundups."""
     if brief.get("event_post_standard_version") != EVENT_POST_STANDARD_VERSION:
         return ""
+    if brief.get("category_key") != "events":
+        return ""
     if (temporal_source or {}).get("multi_event_schedule") is not True:
         return ""
     return (
@@ -531,6 +534,8 @@ def event_writer_instruction(brief: dict, temporal_source: dict | None = None) -
 def event_review_instruction(bundle: dict) -> str:
     """Extra semantic-review checklist for standardized event roundups."""
     if not event_post_standard_enabled(bundle):
+        return ""
+    if (bundle.get("brief") or {}).get("category_key") != "events":
         return ""
     return (
         " 행사 일정형 v1 의미 검토: 각 행사 설명이 실제 볼거리·체험과 방문 판단에 필요한 확인된 조건을 충분히 설명하는지, "

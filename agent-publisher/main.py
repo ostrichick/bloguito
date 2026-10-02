@@ -13,7 +13,7 @@ from notifier import notify_published, notify_error, notify_pipeline_summary
 
 def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     print("=" * 60)
-    print("📢 [생활정보 24] 5대 멀티 에이전트 자율 발행 파이프라인 가동")
+    print("📢 [생활정보 24] 멀티 에이전트 자율 발행 파이프라인 가동")
     print("=" * 60)
 
     sync_inventory()
@@ -129,7 +129,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="생활정보 24 멀티 에이전트 발행기")
     parser.add_argument(
         "--category",
-        choices=["concert", "welfare", "life-health", "tax", "all"],
+        choices=[*CATEGORIES.keys(), "all"],
         default="all",
         help="발행할 카테고리 선택 (기본: all)",
     )

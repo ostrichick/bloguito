@@ -19,6 +19,7 @@
 ### MUST
 
 - 한 도시·지역의 서로 다른 행사 2개 이상을 한 글에서 비교한다.
+- `brief.category_key = "events"`를 사용한다. 다른 카테고리의 기간 검증을 우회하는 용도로 행사 표준을 선언하지 않는다.
 - `brief.content_type = "dated"`와 `temporal_source.multi_event_schedule = true`를 사용한다.
 - 각 `event_entries[].name`은 상세 section 하나의 `event_name`과 정확히 1:1로 연결한다.
 - 콘서트 한 공연의 지역별 회차 목록이 아니라 **지역 행사·축제·전시·공공 체험을 묶은 월간 일정 가이드**에 적용한다.

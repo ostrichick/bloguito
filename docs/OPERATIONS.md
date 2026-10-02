@@ -77,6 +77,14 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 
 ## 원고 경로: 기본은 draft
 
+### 카테고리 taxonomy 운영
+
+현행 신규 분류는 `events`, `concert`, `welfare`, `tax`, `health`, `transport`, `life-admin`, `finance` 8개다. 표시명·WordPress term ID·slug의 코드 정본은 `agent-publisher/config.py`의 `CATEGORIES`이며, 신규 파이프라인은 이 목록 밖의 값을 자동 생활 카테고리로 폴백하지 않는다.
+
+운영 WordPress에서 카테고리를 추가·이동할 때에는 먼저 category term, primary menu, 대상 post의 status/title/post_name/content SHA/category/get_permalink를 스냅샷하고, 여러 글을 옮길 때에는 `post_id → target term` 명시적 매핑을 사용한다. 각 글은 `wp post term set ... category ... --by=id`처럼 기존 카테고리를 교체하고 즉시 정확히 한 category만 남았는지 readback한다. 완료 뒤에는 title, slug, status, 본문 SHA와 permalink가 작업 전과 같은지 전수 비교하고 `wp term recount category`, cache flush, category archive/menu 확인 후 `python scripts/sync_post_catalog.py`를 실행한다.
+
+과거 `life-health` term은 서로 다른 새 카테고리로 분할되므로 하나의 alias나 새 term으로 일괄 치환하지 않는다. 글 수가 0이 되고 메뉴·신규 코드에서 제거된 뒤에도 초기 cutover/rollback 기간에는 term을 바로 삭제하지 않는다. 삭제 전에는 기존 `/category/life-health/` archive의 처리 방침과 rollback 필요성을 별도로 확인한다.
+
 ### 글쓰기·수정 시작과 묶음 처리
 
 작업 시작 시 대상과 요청을 아래 표로 분류한다. 진행 설명은 “이번에는 [대상]의 [수정 범위]를 처리합니다. [근거 확인] → [전체/변경 부분 검토] → [임시글 저장/승인된 기존 글 수정] → 저장·화면 확인 순서로 진행합니다”처럼 1~2문장으로 한다. 대상이나 공개 의도가 실제로 불명확한 경우에만 필요한 정보를 확인하며, 이미 받은 같은 변경안의 적용 승인을 다시 묻지 않는다.

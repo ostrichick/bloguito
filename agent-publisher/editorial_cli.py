@@ -354,14 +354,16 @@ def _main():
             if args.image_path:
                 return args.image_path
             from agents.designer import DesignerAgent
-            from config import resolve_category
-            category = resolve_category(data.get('brief', {}).get('category_key', ''))
+            from config import resolve_category, resolve_category_key
+            raw_category_key = data.get('brief', {}).get('category_key', '')
+            category = resolve_category(raw_category_key)
+            category_key = resolve_category_key(raw_category_key)
             with timed('cover_generation'):
                 return DesignerAgent().generate_image(
                     title=data['plan']['title'],
                     category_name=category['name'],
                     keyword=data['brief'].get('primary_keyword', ''),
-                    category_key=data['brief'].get('category_key', ''),
+                    category_key=category_key,
                 )
 
         # Semantic review and representative-image generation are independent once

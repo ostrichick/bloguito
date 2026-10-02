@@ -22,7 +22,7 @@ def sample(post_id=63):
               'text': '작성일 2026.08.25\n' + PERIOD}
     latest = {'id': 's0', 'url': CHANGE_URL, 'source_type': 'official',
               'text': '보도시점 2026. 9. 16.\n' + CHILD + '\n' + ELDER}
-    brief = {'existing_post_id': post_id, 'category_key': 'life-health',
+    brief = {'existing_post_id': post_id, 'category_key': 'health',
              'content_type': 'dated', 'official_urls': [CHANGE_URL, PERIOD_URL],
              'useful_until': '2027-04-30'}
     plan = {'title': '독감 무료 예방접종 안내',

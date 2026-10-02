@@ -24,7 +24,7 @@ def case(post_id=55):
     flu = post_id == 103
     quote = FLU_QUOTE if flu else PENSION_QUOTE
     url = MOKPO_URL if flu else PENSION_URL
-    category = 'life-health' if flu else 'welfare'
+    category = 'health' if flu else 'welfare'
     until = '2027-04-30' if flu else '2026-12-31'
     start = '2026-09-21' if flu else '2026-01-01'
     source_text = (('목포 2026-2027절기 어린이 임신부 어르신 접종 안내. ' * 2)
@@ -63,7 +63,7 @@ def health_case():
     period = {'source_id': 's0', 'quote': HEALTH_PERIOD_QUOTE}
     values = {'source_id': 's0', 'quote': HEALTH_VALUES_QUOTE}
     brief = {'id': 'legacy-health-220', 'existing_post_id': 220,
-             'category_key': 'welfare', 'approved': True,
+             'category_key': 'health', 'approved': True,
              'entity': '국민건강보험 본인부담상한제',
              'primary_keyword': '2026 본인부담상한제 환급금',
              'question': '2026년 진료분 상한액은 얼마인가요?',

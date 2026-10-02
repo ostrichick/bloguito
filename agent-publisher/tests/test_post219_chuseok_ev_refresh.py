@@ -21,7 +21,7 @@ class Post219ChuseokEvRefreshTests(unittest.TestCase):
             'approved': True,
             'reviewed_at': '2026-09-24',
             'review_until': '2026-09-27',
-            'category_key': 'life-health',
+            'category_key': 'transport',
             'entity': '2026 추석 전기차 충전 할인·고속도로 휴게소 충전 계획',
             'primary_keyword': '2026 추석 전기차 충전 할인 휴게소 충전소',
             'question': '2026 추석 고속도로에서 전기차 충전 할인은 언제 어디에 적용되나?',

@@ -82,14 +82,14 @@ check(strpos($formatted_title, '생활정보 24') !== false, 'Header brand text 
 check(strpos($formatted_title, '정부 지원금, 절세, 복지 생활 백과') !== false, 'Header descriptor text is preserved');
 
 $menu_items = [
-    (object) ['title' => '공연/콘서트 예매', 'url' => 'https://lifeinfo24.org/category/concert/'],
+    (object) ['title' => '공연·콘서트 예매', 'url' => 'https://lifeinfo24.org/category/concert/'],
     (object) ['title' => '사이트 소개', 'url' => 'https://lifeinfo24.org/about/'],
-    (object) ['title' => '정부 복지/지원금', 'url' => 'https://lifeinfo24.org/category/welfare/'],
+    (object) ['title' => '정부 복지·지원금', 'url' => 'https://lifeinfo24.org/category/welfare/'],
 ];
 $primary_args = (object) ['theme_location' => 'primary'];
 $primary_menu = bloguito_remove_primary_about_menu_item($menu_items, $primary_args);
 check(count($primary_menu) === 2, 'Duplicate About item is removed from primary menu');
-check($primary_menu[0]->title === '공연/콘서트 예매' && $primary_menu[1]->title === '정부 복지/지원금', 'Other primary items keep order');
+check($primary_menu[0]->title === '공연·콘서트 예매' && $primary_menu[1]->title === '정부 복지·지원금', 'Other primary items keep order');
 $footer_args = (object) ['theme_location' => 'footer'];
 check(count(bloguito_remove_primary_about_menu_item($menu_items, $footer_args)) === 3, 'Other menu locations keep About item');
 

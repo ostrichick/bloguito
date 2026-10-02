@@ -15,7 +15,7 @@ class Post225PublicationTests(unittest.TestCase):
                 'https://fsc.go.kr/comm/getFile?srvcId=BBSTY1&upperNo=87706&fileTy=ATTACH&fileNo=2',
             ],
             'approved': True, 'reviewed_at': '2026-09-22',
-            'review_until': '2026-09-27', 'category_key': 'life-health',
+            'review_until': '2026-09-27', 'category_key': 'finance',
             'entity': '추석 은행', 'primary_keyword': '추석 은행',
             'question': '어디서 이용할 수 있나?', 'angle': '공식 일정',
             'required_title_terms': ['추석', '은행'],

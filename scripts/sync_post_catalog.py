@@ -78,27 +78,33 @@ def run_ssh_inventory() -> list:
 
 def determine_type_and_category(title: str, categories=None):
     """Classify post into category and Evergreen vs Seasonal."""
-    seasonal_keywords = ["추석", "9월", "콘서트", "예매", "독감"]
-    is_seasonal = any(k in title for k in seasonal_keywords)
+    clean_categories = [str(c).strip() for c in (categories or []) if str(c).strip()]
+    seasonal_keywords = ["추석", "9월", "10월", "콘서트", "예매", "독감", "축제"]
+    seasonal_categories = {"지역 축제·행사", "공연·콘서트 예매"}
+    is_seasonal = (any(k in title for k in seasonal_keywords)
+                   or bool(set(clean_categories) & seasonal_categories))
     post_type = "시즌형" if is_seasonal else "에버그린"
 
-    clean_categories = [str(c).strip() for c in (categories or []) if str(c).strip()]
     if clean_categories:
         category = ", ".join(clean_categories)
     elif any(k in title for k in ["상속", "주민등록", "여권", "전입", "폐가전", "우편물"]):
-        category = "생활행정"
+        category = "생활 행정·서비스"
     elif any(k in title for k in ["약국", "병원", "독감", "의약품", "건강", "본인부담상한제"]):
-        category = "보건의료"
+        category = "건강·의료"
     elif any(k in title for k in ["기초연금", "복지", "도시가스", "경감", "지원"]):
-        category = "복지혜택"
-    elif any(k in title for k in ["계좌", "환급", "세금", "보험금", "포인트"]):
-        category = "금융세무"
+        category = "정부 복지·지원금"
+    elif any(k in title for k in ["세금", "재산세", "연말정산", "소득공제", "세액공제"]):
+        category = "생활 세금·절세"
+    elif any(k in title for k in ["계좌", "보험", "포인트", "은행", "주택연금", "최저시급"]):
+        category = "생활경제·금융"
     elif any(k in title for k in ["고속도로", "교통", "통행료", "KTX", "기후동행패스", "전기차"]):
-        category = "교통이동"
-    elif "콘서트" in title:
-        category = "공연문화"
+        category = "교통·자동차"
+    elif any(k in title for k in ["축제", "지역 행사"]):
+        category = "지역 축제·행사"
+    elif any(k in title for k in ["콘서트", "공연", "뮤지컬", "예매"]):
+        category = "공연·콘서트 예매"
     else:
-        category = "일반생활"
+        category = "생활 행정·서비스"
 
     return post_type, category
 
