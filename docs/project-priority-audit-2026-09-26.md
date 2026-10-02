@@ -188,3 +188,15 @@ main.py의 미커밋 표시를 다시 조사한 결과 작업 파일의 Git blob
 로컬 전체 Python **843 tests, OK (skipped=1)**. 표적 renderer/source/review/transport/catalog/installer 검사와 rollback 실패 주입을 먼저 통과했다. GitHub [37009366350](https://github.com/ostrichick/bloguito/actions/runs/37009366350)의 Python·WordPress PHP·infrastructure 3 job PASS. 로그/비공개 probe는 Git 비추적 `scratch/tasks/project-efficiency-audit/`에 둔다.
 
 critical-fact 전체 registry 이관, 모든 legacy fallback 제거, 큰 framework/DB 전환은 이번 증거로 우선하지 않는다. 다음 예약 analytics run, 전체 이미지 교체 시간, 모든 공개 글의 최신 공식 정보, full restore drill은 이 코드 검사만으로 검증했다고 주장하지 않는다.
+
+### main 통합 및 운영 검증
+
+[PR #2](https://github.com/ostrichick/bloguito/pull/2)를 merge하여 main `ea36c6d`에 반영했다. main CI [37009885241](https://github.com/ostrichick/bloguito/actions/runs/37009885241)의 Python·WordPress PHP·infrastructure가 모두 PASS다. 기존 로컬 감사 addendum은 scoped stash로 보관한 뒤 통합 문서의 prefix와 완전히 일치하는지 확인했다.
+
+해당 revision의 코드·policy/document **66 files**를 운영에 설치했다. 원본 release와 실제 설치 파일 SHA256 불일치 0개, runtime receipt와 설치 파일 불일치 0개를 독립 조회했다. entrypoint/registry import와 운영 Korean Black font (`Noto Serif CJK KR`, `Black`)가 정상이다. rollback manifest는 `/home/ubuntu/agent-publisher/backups/editorial-20261002T125804Z/manifest.json`이다. env/runtime state를 release에서 제외했고 retired copywriter가 없는 것을 확인했다.
+
+실제 main 수동 analytics [37009904788](https://github.com/ostrichick/bloguito/actions/runs/37009904788)에서 Google 인증·수집·HTTPS 전달이 성공했다. 서버 `google-analytics-2026-09-29.json`은 schema 2, collected_at `2026-10-02T12:58:13.053328+00:00`, SHA256 `6a56b8d3077b354264a924ebb858411c9ccb737ac60c47350eefb9b911f2e1f3`, mode 600이며 freshness/schema validation PASS다. 보고기간 종료일은 Google 데이터 지연을 반영하며 수집 시각과 구분한다. 보고서 원문은 Git/log/artifact에 올리지 않았다. receiver restart 후 active, nginx 검사 PASS, live GET/unauthorized POST/invalid authorized snapshot이 각각 405/401/400임을 확인했다. root token file 600, stage directory 700이며 전달용 token 복사본은 제거했다. 다음 예약 실행(KST 10/3 11:17, GitHub 지연 가능)은 아직 발생하지 않았다.
+
+실제 inventory 69편(공개 62·draft 7)을 다시 읽어 POST_CATALOG를 동기화했다. 본문/review/lifecycle이 맞는 7편은 저장 원고 근거, 나머지는 추정으로 표시했다. 기존 curated backlog를 보존했다. 공개 홈페이지 HTTP 200과 최근 글 제목을 다시 확인했다. 이는 전체 글 내용·출처 최신성이나 시각적 QA를 검증한 것은 아니다. 공개 전환·본문·thumbnail/meta 수정은 이번 작업에 없다.
+
+GitHub main 코드 통합, 운영 release 설치, 실제 private report 수신, 공개 HTTP smoke를 각각 확인했다. 후속 catalog/운영 증거 문서 commit은 배포 대상 코드에 영향을 주지 않으므로 runtime revision은 `ea36c6d`로 유지한다.
