@@ -69,6 +69,7 @@ class PipelineExitTests(unittest.TestCase):
             writer.write_article.return_value = {'title': '테스트 콘서트'}
             publisher.publish.return_value = 500
             pipeline.run_pipeline(['concert'])
+            designer.generate_image.assert_called_once()
             self.assertEqual(
                 designer.generate_image.call_args.kwargs['reviewed_poster_url'],
                 'https://ticket.example/official.jpg',

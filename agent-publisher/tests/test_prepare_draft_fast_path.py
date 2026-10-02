@@ -60,30 +60,27 @@ class PrepareDraftFastPathTests(unittest.TestCase):
         cleanup.assert_not_called()
         self.assertGreaterEqual(validate.call_count, 2)
 
-    def test_prepare_draft_reuses_current_review_and_generates_cover_without_new_review(self):
+    def test_prepare_draft_reuses_current_review_but_requires_provided_image(self):
         bundle = sample()
 
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             bundle_path = root / "bundle.json"
-            generated_image = root / "generated.jpg"
             bundle_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
-            generated_image.write_bytes(b"generated-image")
 
             argv = ["editorial_cli.py", "prepare-draft", str(bundle_path)]
             with patch("sys.argv", argv), \
                     patch("editorial_cli.validate_bundle", return_value=READY), \
                     patch("editorial_cli.EditorialWriterAgent.review") as review, \
-                    patch("agents.designer.DesignerAgent.generate_image", return_value=generated_image) as generate, \
-                    patch("agents.designer.cleanup_generated_cover") as cleanup, \
+                    patch("agents.designer.DesignerAgent.generate_image") as generate, \
                     patch("agents.publisher.PublisherAgent.publish", return_value=902) as publish:
-                editorial_cli.main()
+                with self.assertRaises(SystemExit) as error:
+                    editorial_cli.main()
 
+        self.assertEqual(2, error.exception.code)
         review.assert_not_called()
-        generate.assert_called_once()
-        publish.assert_called_once()
-        self.assertEqual(generated_image, publish.call_args.kwargs["image_path"])
-        cleanup.assert_called_once_with(generated_image)
+        generate.assert_not_called()
+        publish.assert_not_called()
 
     def test_prepare_draft_blocks_before_review_image_or_wordpress_when_local_preflight_fails(self):
         bundle = sample()
