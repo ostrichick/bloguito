@@ -258,7 +258,7 @@
       ],
       "conflicts": [],
       "requires_review": true,
-      "reviewed_at": "2026-09-16",
+      "reviewed_at": "2026-10-02",
       "review_until": "2026-10-31",
       "approved": true,
       "review_window_current": true,
@@ -266,7 +266,7 @@
     },
     {
       "id": "national-pension-silver-loan",
-      "existing_content_type": "dated",
+      "existing_content_type": "evergreen",
       "category_key": "welfare",
       "current_volatility": "policy-current",
       "current_requires_live_state": true,
@@ -278,11 +278,9 @@
         "mutable_policy_domain",
         "current_state_language"
       ],
-      "conflicts": [
-        "policy_current_keeps_legacy_dated_contract"
-      ],
+      "conflicts": [],
       "requires_review": true,
-      "reviewed_at": "2026-09-16",
+      "reviewed_at": "2026-10-02",
       "review_until": "2026-10-31",
       "approved": true,
       "review_window_current": true,

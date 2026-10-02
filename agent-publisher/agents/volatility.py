@@ -41,6 +41,9 @@ def metadata_reasons(brief: dict) -> list[str]:
         reasons.append("invalid_volatility")
     if "requires_live_state" in brief and type(brief.get("requires_live_state")) is not bool:
         reasons.append("invalid_requires_live_state")
+    if ("requires_current_value_period" in brief
+            and type(brief.get("requires_current_value_period")) is not bool):
+        reasons.append("invalid_requires_current_value_period")
     return reasons
 
 
@@ -68,6 +71,12 @@ def lifecycle_reasons(brief: dict) -> list[str]:
     ))
     if _LIVE_TEXT.search(combined) and brief.get("requires_live_state") is not True:
         reasons.append("live_state_claim_requires_live_refresh")
+    if brief.get("requires_current_value_period") is True:
+        if (volatility != "policy-current" or content_type != "evergreen"
+                or useful_until is not None):
+            reasons.append("current_value_period_requires_policy_current_evergreen")
+        if brief.get("requires_live_state") is not True:
+            reasons.append("current_value_period_requires_live_refresh")
     # policy-current intentionally adds no deadline exemption. The legacy
     # content_type/category rules remain authoritative during the fallback
     # release, so either current legacy shape may coexist with this label.
@@ -97,6 +106,13 @@ def temporal_contract_reasons(bundle: dict) -> list[str]:
         )
         if any(temporal.get(key) for key in dated_modes) or bool(temporal.get("evidence")):
             reasons.append("timeless_procedure_temporal_contract_conflict")
+    if temporal.get("current_value_period") is not None:
+        if (volatility != "policy-current"
+                or brief.get("content_type") != "evergreen"
+                or brief.get("useful_until") is not None):
+            reasons.append("current_value_period_requires_policy_current_evergreen")
+        if brief.get("requires_live_state") is not True:
+            reasons.append("current_value_period_requires_live_refresh")
     return reasons
 
 
@@ -104,12 +120,14 @@ def explicit_contract(brief: dict) -> dict | None:
     """Return the fingerprint payload only when metadata was explicitly set."""
     if not isinstance(brief, dict):
         return None
-    if "volatility" not in brief and "requires_live_state" not in brief:
+    if ("volatility" not in brief and "requires_live_state" not in brief
+            and "requires_current_value_period" not in brief):
         return None
     return {
         "version": VOLATILITY_CONTRACT_VERSION,
         "volatility": brief.get("volatility"),
         "requires_live_state": brief.get("requires_live_state", False),
+        "requires_current_value_period": brief.get("requires_current_value_period", False),
         "allowed_volatility": sorted(VOLATILITY_VALUES),
     }
 

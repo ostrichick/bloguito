@@ -15,7 +15,8 @@ from agents.temporal_validation import (KST, validate_availability, extract_evid
                                         validate_multi_event_schedule,
                                         validate_legacy_followup,
                                         validate_legacy_reference_period,
-                                        validate_reference_period)
+                                        validate_reference_period,
+                                        validate_current_value_period)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 from agents.event_post_standard import overview_event_date_labels, validate_event_post_standard
@@ -84,6 +85,9 @@ def applicable_policy_rules(bundle=None):
     volatility_contract = explicit_contract(brief)
     if volatility_contract is not None:
         selected['volatility_contract'] = volatility_contract
+    temporal = bundle.get('temporal_source') if isinstance(bundle.get('temporal_source'), dict) else {}
+    if temporal.get('current_value_period') is not None:
+        selected['current_value_period_contract_version'] = 1
     return selected
 
 
@@ -771,6 +775,8 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
         if 'content' in scopes:
             reasons.extend(topic_reasons(brief, now.date()))
             reasons.extend(temporal_contract_reasons(bundle))
+            reasons.extend(validate_current_value_period(
+                brief, sources, bundle.get('temporal_source', {}), now))
             if any('·' in value for value in reader_visible_strings(plan, sources)):
                 reasons.append('reader_middle_dot_disallowed')
                 details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')

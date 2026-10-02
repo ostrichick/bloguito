@@ -85,7 +85,7 @@ agent-publisher/data/policy_exceptions/
 
 ## 4.3 category 중심 freshness를 volatility 중심으로 전환
 
-**진행 상태:** 4.3A/B 완료. 4.3C는 첫 제한적 전환으로, 명시적으로 검토된 `welfare + evergreen + policy-current` brief만 legacy category blanket gate를 대체한다. metadata가 없는 welfare와 모든 dated temporal 검증은 계속 fallback으로 유지한다. 4.3D는 아직 시작하지 않는다.
+**진행 상태:** 4.3A/B 완료. 4.3C는 명시적으로 검토된 `welfare + evergreen + policy-current` brief의 legacy category blanket gate를 대체하고, 상시 제도 안의 bounded 현재값은 별도 `current_value_period` claim 계약으로 분리했다. metadata가 없는 welfare와 실제 dated temporal 검증은 계속 fallback으로 유지한다. 4.3D는 아직 시작하지 않는다.
 
 ### 목표
 
@@ -114,7 +114,7 @@ agent-publisher/data/policy_exceptions/
 - `requires_live_state=true`: 저장 직전 항상 관련 source를 network recheck. receipt로 현재 상태 검증을 생략하지 않는다.
 - `annual-policy`, `seasonal`, `one-off`: useful_until과 적용 연도/기간을 강하게 검증한다.
 - `timeless-procedure`: useful_until을 강제하지 않되 source·메뉴 경로가 바뀌면 새 검토가 필요하다.
-- `policy-current`: useful_until을 일괄 강제하지 않는다. explicit metadata가 모두 검토된 welfare evergreen은 category blanket gate 대신 lifecycle 계약을 사용하되, dated shape를 가진 policy-current는 기존 temporal 검증을 계속 적용한다.
+- `policy-current`: useful_until을 일괄 강제하지 않는다. explicit metadata가 모두 검토된 welfare evergreen은 category blanket gate 대신 lifecycle 계약을 사용한다. 분기 금리처럼 특정 기간에만 맞는 현재값을 본문에 넣는 경우 `current_value_period`로 그 값만 공식 기간에 바인딩하고, 기간 종료 시 해당 claim을 재검토한다. 이 claim 기간에는 30일 최소수명이나 WordPress 글 전체 만료를 적용하지 않는다.
 
 ### 완료 기준
 

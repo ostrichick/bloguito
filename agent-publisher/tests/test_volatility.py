@@ -20,9 +20,11 @@ class VolatilityTests(unittest.TestCase):
         brief = sample()['brief']
         brief['volatility'] = 'sometimes-current'
         brief['requires_live_state'] = 'yes'
+        brief['requires_current_value_period'] = 'yes'
         reasons = topic_reasons(brief, NOW.date())
         self.assertIn('invalid_volatility', reasons)
         self.assertIn('invalid_requires_live_state', reasons)
+        self.assertIn('invalid_requires_current_value_period', reasons)
 
     def test_bounded_lifecycle_cannot_use_evergreen_shape(self):
         for volatility in ('annual-policy', 'seasonal', 'one-off'):
@@ -140,10 +142,9 @@ class VolatilityTests(unittest.TestCase):
         briefs_by_id = {row['id']: row for row in briefs}
         self.assertEqual([], topic_reasons(
             briefs_by_id['long-term-care-grade-guide'], date(2026, 10, 2)))
-        self.assertIn(
-            'policy_current_keeps_legacy_dated_contract',
-            rows['national-pension-silver-loan']['conflicts'],
-        )
+        self.assertEqual([], rows['national-pension-silver-loan']['conflicts'])
+        self.assertEqual([], topic_reasons(
+            briefs_by_id['national-pension-silver-loan'], date(2026, 10, 2)))
 
     def test_known_migration_shapes_are_conservative(self):
         timeless = migration_candidate({

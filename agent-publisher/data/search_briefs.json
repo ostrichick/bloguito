@@ -521,15 +521,16 @@
     "entity": "노인장기요양보험",
     "primary_keyword": "노인장기요양보험 등급 신청 방법 및 혜택",
     "question": "노인장기요양보험 인정 등급 판정 신청 자격, 방문 인정조사 절차, 1~5등급별 지원 혜택은 무엇인가?",
-    "angle": "65세 이상 또는 65세 미만 노인성 질환자 대상 장기요양인정 신청(공단 지사/온라인), 국민건강보험공단 직원의 가정 방문 인정조사, 의사소견서 발급, 1~5등급 및 인지지원등급별 재가급여(방문요양·주야간보호)·시설급여(요양원)·복지용구(연 160만원 한도) 혜택을 명확히 설명한다.",
+    "angle": "65세 이상 또는 65세 미만 노인성 질환자의 장기요양인정 신청, 국민건강보험공단 직원의 가정 방문 인정조사, 의사소견서 제출, 1~5등급 및 인지지원등급별 재가급여·시설급여·복지용구 혜택을 설명한다. 온라인 신청은 공단이 안내하는 65세 이상 또는 65세 미만 갱신 신청 등의 범위만 안내한다.",
     "required_title_terms": [
       "노인장기요양보험",
       "등급",
       "신청"
     ],
     "official_urls": [
-      "https://www.longtermcare.or.kr",
-      "https://www.nhis.or.kr"
+      "https://www.nhis.or.kr/static/html/wbda/c/wbdac02.html",
+      "https://www.nhis.or.kr/static/html/wbda/c/wbdac04.html",
+      "https://www.nhis.or.kr/lm/lmxsrv/law/lawFullContent.do?SEQ=96&SEQ_HISTORY=595747"
     ],
     "queries": [
       "노인장기요양보험 등급 신청 방법 및 혜택",
@@ -539,7 +540,7 @@
       "https://www.longtermcare.or.kr",
       "https://www.korea.kr"
     ],
-    "reviewed_at": "2026-09-16",
+    "reviewed_at": "2026-10-02",
     "review_until": "2026-10-31",
     "content_type": "evergreen",
     "useful_until": null,
@@ -580,8 +581,10 @@
       "대출"
     ],
     "official_urls": [
-      "https://www.nps.or.kr",
-      "https://www.korea.kr"
+      "https://pensioner.nps.or.kr/iaopsrvc/silverloan/getOHDD0001M0.do",
+      "https://pensioner.nps.or.kr/iaopsrvc/silverloan/getOHDD0002M0.do",
+      "https://pensioner.nps.or.kr/iaopsrvc/silverloan/getOHDD0003M0.do",
+      "https://pensioner.nps.or.kr/iaopsrvc/silverloan/getOHDD0004M0.do"
     ],
     "queries": [
       "국민연금 실버론 긴급자금 대출 신청 자격 및 금리",
@@ -591,12 +594,14 @@
       "https://www.nps.or.kr",
       "https://www.korea.kr"
     ],
-    "reviewed_at": "2026-09-16",
+    "reviewed_at": "2026-10-02",
     "review_until": "2026-10-31",
-    "content_type": "dated",
-    "useful_until": "2026-12-31",
+    "content_type": "evergreen",
+    "useful_until": null,
     "volatility": "policy-current",
     "requires_live_state": true,
+    "requires_current_value_period": true,
+    "evergreen_reason": "실버론 제도 신청은 연중 가능하고 현재 금리만 분기별로 변경되는 상시 대부 제도",
     "reader_questions": [
       {
         "id": "q1",

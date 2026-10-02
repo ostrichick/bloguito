@@ -1,4 +1,5 @@
 """Deterministic KST availability policy using labelled source evidence only."""
+import calendar
 import re
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -133,6 +134,174 @@ def validate_reference_period(brief: dict, sources: list[dict], temporal: dict,
     ])
     if re.search(r'현재\s*(?:신청|접수|예매|판매)\s*(?:가능|중)|(?:신청|접수|예매|판매)\s*진행\s*중', visible):
         reasons.append('reference_period_misleading_live_status_claim')
+    return sorted(set(reasons))
+
+
+def _current_value_period_in_quote(start: date, end: date, quote: str) -> bool:
+    """Return whether an official quote proves the exact bounded value period.
+
+    This deliberately accepts only deterministic month ranges and quarter labels.
+    It does not infer a period from publication dates or from a user-supplied
+    ``useful_until`` value.
+    """
+    if not isinstance(quote, str):
+        return False
+
+    for match in re.finditer(
+            r'(?<!\d)(\d{4})\s*년\s*(\d{1,2})\s*월\s*'
+            r'(?:~|∼|～|–|—|-)\s*(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월',
+            quote):
+        first_year, first_month, second_year, second_month = match.groups()
+        first_year = int(first_year)
+        first_month = int(first_month)
+        second_month = int(second_month)
+        second_year_explicit = second_year
+        second_year = int(second_year) if second_year else first_year
+        if second_year_explicit is None and second_month < first_month:
+            second_year += 1
+        try:
+            parsed_start = date(first_year, first_month, 1)
+            parsed_end = date(
+                second_year, second_month,
+                calendar.monthrange(second_year, second_month)[1])
+        except ValueError:
+            continue
+        if parsed_start == start and parsed_end == end:
+            return True
+
+    for year, quarter in re.findall(r'(?<!\d)(\d{4})\s*년\s*([1-4])\s*분기', quote):
+        year, quarter = int(year), int(quarter)
+        first_month = (quarter - 1) * 3 + 1
+        last_month = first_month + 2
+        parsed_start = date(year, first_month, 1)
+        parsed_end = date(year, last_month, calendar.monthrange(year, last_month)[1])
+        if parsed_start == start and parsed_end == end:
+            return True
+    return False
+
+
+def infer_current_value_period(sources: list[dict], now: datetime | None = None) -> dict | None:
+    """Infer one active bounded current-value period from explicit official text.
+
+    Only year-qualified month ranges and quarter labels are eligible. Recurring
+    yearless bands such as ``12~3월`` are intentionally ignored because choosing
+    a year would be an inference rather than source evidence.
+    """
+    now = now or datetime.now(KST)
+    if now.tzinfo is None:
+        raise ValueError('reference time must be timezone-aware')
+    today = now.astimezone(KST).date()
+    candidates: dict[tuple[date, date], list[dict]] = {}
+
+    def add_candidate(start: date, end: date, source_id: str, quote: str):
+        if start <= today <= end:
+            evidence = {'source_id': source_id, 'quote': quote}
+            bucket = candidates.setdefault((start, end), [])
+            if evidence not in bucket:
+                bucket.append(evidence)
+
+    for source in sources:
+        if source.get('source_type') != 'official' or not source.get('id'):
+            continue
+        text = source.get('text', '')
+        if not isinstance(text, str):
+            continue
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not 12 <= len(line) <= 1200:
+                continue
+            for match in re.finditer(
+                    r'(?<!\d)(\d{4})\s*년\s*(\d{1,2})\s*월\s*'
+                    r'(?:~|∼|～|–|—|-)\s*(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월',
+                    line):
+                first_year, first_month, second_year, second_month = match.groups()
+                first_year, first_month, second_month = int(first_year), int(first_month), int(second_month)
+                explicit_second_year = second_year
+                second_year = int(second_year) if second_year else first_year
+                if explicit_second_year is None and second_month < first_month:
+                    second_year += 1
+                try:
+                    start = date(first_year, first_month, 1)
+                    end = date(second_year, second_month,
+                               calendar.monthrange(second_year, second_month)[1])
+                except ValueError:
+                    continue
+                add_candidate(start, end, source['id'], line)
+            for year, quarter in re.findall(r'(?<!\d)(\d{4})\s*년\s*([1-4])\s*분기', line):
+                year, quarter = int(year), int(quarter)
+                first_month = (quarter - 1) * 3 + 1
+                last_month = first_month + 2
+                start = date(year, first_month, 1)
+                end = date(year, last_month, calendar.monthrange(year, last_month)[1])
+                add_candidate(start, end, source['id'], line)
+
+    if len(candidates) != 1:
+        return None
+    (start, end), evidence = next(iter(candidates.items()))
+    return {
+        'start_date': start.isoformat(),
+        'end_date': end.isoformat(),
+        'evidence': evidence[:8],
+    }
+
+
+def validate_current_value_period(brief: dict, sources: list[dict], temporal: dict,
+                                  now: datetime) -> list[str]:
+    """Validate a bounded *claim* inside an otherwise ongoing policy guide.
+
+    Examples are a quarterly loan rate or another current policy value with an
+    official validity window. The period is a re-review deadline for that value,
+    not a whole-post expiry, so it deliberately does not use the 30-day minimum
+    lifetime rule or WordPress ``expires_at``.
+    """
+    info = temporal.get('current_value_period') if isinstance(temporal, dict) else None
+    if info is None:
+        return ['current_value_period_required'] if brief.get('requires_current_value_period') is True else []
+
+    reasons = []
+    if (brief.get('volatility') != 'policy-current'
+            or brief.get('content_type') != 'evergreen'
+            or brief.get('useful_until') is not None):
+        reasons.append('current_value_period_requires_policy_current_evergreen')
+    if brief.get('requires_live_state') is not True:
+        reasons.append('current_value_period_requires_live_refresh')
+
+    if (not isinstance(info, dict)
+            or set(info) != {'start_date', 'end_date', 'evidence'}
+            or not isinstance(info.get('evidence'), list)
+            or not 1 <= len(info['evidence']) <= 8):
+        return sorted(set([*reasons, 'current_value_period_invalid']))
+    try:
+        start = date.fromisoformat(info['start_date'])
+        end = date.fromisoformat(info['end_date'])
+    except (TypeError, ValueError, KeyError):
+        return sorted(set([*reasons, 'current_value_period_invalid']))
+    if start > end or (end - start).days > 370:
+        reasons.append('current_value_period_invalid')
+
+    source_map = {s.get('id'): s for s in sources if isinstance(s, dict)}
+    official_urls = set(brief.get('official_urls') or [])
+    period_bound = False
+    for item in info['evidence']:
+        if (not isinstance(item, dict) or set(item) != {'source_id', 'quote'}
+                or not isinstance(item.get('quote'), str)
+                or not 12 <= len(item['quote']) <= 1200):
+            reasons.append('current_value_period_evidence_unverified')
+            continue
+        source = source_map.get(item['source_id'])
+        if (not source or source.get('source_type') != 'official'
+                or source.get('url') not in official_urls
+                or item['quote'] not in source.get('text', '')):
+            reasons.append('current_value_period_evidence_unverified')
+            continue
+        if _current_value_period_in_quote(start, end, item['quote']):
+            period_bound = True
+    if not period_bound:
+        reasons.append('current_value_period_dates_not_in_official_quote')
+    if now.date() < start:
+        reasons.append('current_value_period_not_started')
+    elif now.date() > end:
+        reasons.append('current_value_period_expired')
     return sorted(set(reasons))
 
 

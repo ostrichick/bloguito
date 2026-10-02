@@ -22,7 +22,7 @@ from agents.event_post_standard import event_review_instruction, event_writer_in
 from agents.fact_validation import snapshot
 from agents.review_cache import load_cached_review, store_cached_review
 from agents.search_intent import INVENTORY
-from agents.temporal_validation import KST, extract_evidence
+from agents.temporal_validation import KST, extract_evidence, infer_current_value_period
 from agents.workflow_metrics import increment, timed
 
 
@@ -1289,6 +1289,11 @@ class EditorialWriterAgent:
             sources = fetch_sources(brief)
             temporal = {**curated_item.get('temporal_source', {}),
                         'evidence': [e for s in sources for e in extract_evidence(s['text'], s['url'])]}
+            if brief.get('requires_current_value_period') is True:
+                current_period = infer_current_value_period(sources)
+                if current_period is None:
+                    raise ValueError('current_value_period_unverified')
+                temporal['current_value_period'] = current_period
             bundle = self.prepare(brief, sources, load_inventory(), temporal)
         except Exception as exc:
             save_report({'brief': brief}, {'status': 'needs_review', 'reasons': ['generation_or_review_unavailable'], 'error_type': type(exc).__name__})

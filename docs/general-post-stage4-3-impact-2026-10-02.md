@@ -288,12 +288,13 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 운영 표본 이후 `long-term-care-grade-guide`와 `national-pension-silver-loan`을 같은 문제로 취급하지 않고 계약을 다시 분리했다.
 
 - **장기요양보험:** 2026-09-20 원본 brief는 `life-health + evergreen`이었고, 2026-10-02 taxonomy 개편에서 내용에 맞춰 `welfare`로 이동했다. 제도에는 글 전체에 적용할 보편적 신청 마감일이 없고, 등급 신청·판정·급여 이용은 상시 제도인 반면 법·급여 기준은 개정될 수 있다. 따라서 `evergreen + policy-current + requires_live_state=true`가 맞다. 기존 `dated_category_cannot_bypass_time_check`는 이 경우 lifecycle 의미가 아니라 옛 category blanket rule 때문에 발생한 false HOLD다.
-- **실버론:** 제도 신청 자체는 공식 안내상 상시 신청 가능하되 매년 대부금 예산 범위 내에서 접수하며, 금리는 분기별로 바뀐다. 따라서 `policy-current + requires_live_state=true`는 맞지만, 글이 현재 적용 금리를 숫자로 답하는 동안에는 그 금리의 적용기간이라는 bounded temporal 의미도 남는다. `content_type=dated`와 `useful_until=2026-12-31`을 단순히 evergreen으로 바꾸지 않는다. 현재 validator가 이 bounded current-policy period를 일반 신청기간으로 해석해 `temporal_source_not_bound` / `availability_not_verified`를 내는 문제는 별도 계약 과제이며, 한 사례 때문에 `quarterly-policy` 예외를 추가하거나 dated 검증을 우회하지 않는다.
-- **13개 brief 비교:** 2026-10-02에 review window가 살아 있는 세 건 중 임플란트는 legacy/volatility가 이미 일치하고, 장기요양은 category blanket gate만 충돌하며, 실버론은 brief-level legacy topic check는 통과하지만 실제 bundle의 dated temporal 검증이 HOLD다. 만료된 10건은 migration 후보일 뿐 fallback 제거의 승인 근거로 사용하지 않는다.
+- **실버론:** 제도 신청 자체는 공식 안내상 `상시 신청 가능(매년 대부금 예산범위 내에서 접수)`이고 현재 대부이자율만 분기별로 바뀐다. 따라서 글 전체는 `evergreen + policy-current + requires_live_state=true`가 맞고, 현재 금리 주장만 별도 bounded claim으로 다뤄야 한다. 독립적인 실제 사례를 찾기 전까지는 이 한 건을 위해 범용 기능을 추가하지 않았다.
+- **독립 사례 #474 도시가스 요금 경감:** 한국가스공사 현행 공식 페이지는 상시 신청 가능한 요금 경감 제도의 지원금액을 취사난방용 `동절기(12~3월)`와 `동절기제외(4월~11월)`로 나눠 월 한도를 제공한다. 제도 전체가 종료되는 것이 아니라 적용값만 주기별로 달라지는 두 번째 실제 사례가 확인됐으므로, 실버론 전용 `quarterly-policy` 예외가 아니라 claim-level 공통 temporal contract를 설계할 근거가 생겼다. 연도가 없는 반복 월 구간은 특정 연도의 exact current period로 자동 변환하지 않는다.
+- **13개 brief 비교:** 2026-10-02에 review window가 살아 있는 세 건 중 임플란트는 legacy/volatility가 이미 일치하고, 장기요양은 category blanket gate 충돌을 해소했으며, 실버론은 새 claim-level current-value contract로 dated 신청기간 오해를 제거했다. 만료된 10건은 migration 후보일 뿐 fallback 제거의 승인 근거로 사용하지 않는다.
 
-따라서 이번 4.3C 변경은 `welfare + evergreen`을 일반 허용하지 않는다. `volatility=policy-current`와 boolean `requires_live_state`가 **둘 다 명시된** reviewed brief에 한해서만 `dated_category_cannot_bypass_time_check`를 대체한다. metadata가 없는 welfare evergreen, `timeless-procedure`, events/concert, dated 글의 temporal 검증, 30일 minimum lifetime, `useful_until → expires_at`, 기존 #85 exact exception은 모두 그대로 유지한다. 이 변경으로 장기요양은 `topic_reasons()==[]`가 되지만, 실버론 합성 regression은 계속 `temporal_source_not_bound`와 `availability_not_verified`를 반환한다.
+따라서 4.3C의 category 전환은 `welfare + evergreen`을 일반 허용하지 않는다. `volatility=policy-current`와 boolean `requires_live_state`가 **둘 다 명시된** reviewed brief에 한해서만 `dated_category_cannot_bypass_time_check`를 대체한다. metadata가 없는 welfare evergreen, `timeless-procedure`, events/concert, 실제 dated 글의 temporal 검증, 30일 minimum lifetime, `useful_until → expires_at`, 기존 #85 exact exception은 모두 그대로 유지한다.
 
-이 단계는 **4.3C 전체 완료가 아니다.** policy-current welfare evergreen의 category fallback만 제한적으로 제거한 것이며, 실버론의 bounded current-policy temporal contract와 나머지 `content_type` compatibility 제거는 추가 근거가 생길 때까지 보류한다. 4.3D는 계속 NO-GO다.
+이 단계는 **4.3C 전체 완료가 아니다.** policy-current welfare evergreen의 category fallback과 current-value claim의 시간 계약까지 분리했지만, 만료된 기존 brief 전체를 재검토하지 않았고 모든 category/content_type compatibility를 제거한 것도 아니다. 4.3D는 계속 별도 단계로 보류한다.
 
 ### 제한적 4.3C 운영 배포 — 2026-10-02 17:56 KST
 
@@ -311,3 +312,17 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 - 전체 로컬 회귀는 테스트용 Kakao key를 사용한 격리 worktree에서 **824 tests OK, skipped=1**이었다. 첫 전체 실행의 단일 오류는 worktree에 로컬 `.env`가 없어 event renderer가 Kakao JS key를 읽지 못한 환경 오류였고, 테스트용 key를 명시해 재실행하면 전부 통과했다.
 
 이 배포로 4.3C의 **첫 제한적 코드 전환과 운영 데이터 적용**은 완료됐다. 다만 장기요양을 실제 `prepare-draft` 저장 경로에 태운 운영 작성 표본은 아직 만들지 않았으므로, 이 단계를 전체 category/content-type fallback 제거의 승인으로 확대하지 않는다. 4.3D도 계속 보류한다.
+
+### 장기요양 실제 저장과 periodic current-value 계약 — 2026-10-02 20:14~20:29 KST
+
+제한적 4.3C 배포 이후 지금 실행 가능한 운영 검증을 추가로 완료했다.
+
+- **장기요양보험 실제 draft #856:** 기존 root 홈페이지 대신 국민건강보험공단의 장기요양 신청절차, 급여 이용안내, 복지용구 급여기준 세 공식 페이지를 직접 source로 사용했다. 수동 GPT-5.6 Sol 작성 bundle의 deterministic preflight와 동일 6항 semantic review가 `ready`였고, `prepare-draft` 저장 직전 `source_fetch_requests=3`, `source_receipt_refetch=3`으로 세 source를 모두 network refetch했다. 수동 작성이므로 Gemini 이미지 생성은 호출하지 않고 기존 로컬 JPEG를 `--image-path`로 전달했다.
+- #856의 첫 Rank Math title/description은 bundle 준비 과정의 PowerShell 한글 입력 인코딩 문제로 `?`가 저장된 것을 즉시 readback에서 발견했다. live 본문 SHA `efa33d7310c38c607c328cd0a68302ad2884ea007ed7489a0a62304815b2d3a6`를 CAS 조건으로 `edit-post`를 실행해 **본문·제목·카테고리·대표이미지는 바꾸지 않고 SEO 두 필드만 정상 한글로 복구**했다. 수정 전후 content SHA는 동일하고, 수정 run도 live-state source 3/3을 다시 refetch했다.
+- **독립 periodic-current 사례 #474:** 한국가스공사 현행 `사회적 배려대상자` 페이지에서 산업통상부고시 제2025-024호 기준 월 경감 한도가 `동절기(12~3월)`와 `동절기제외(4월~11월)`로 반복 구분되는 것을 fresh source로 확인했다. 이 값은 상시 제도 안에서 기간별로 달라지는 현재값이므로 실버론의 분기 금리와 같은 상위 문제 유형이다. 다만 공식 문구에 연도가 없는 반복 구간은 자동으로 특정 연도에 귀속시키지 않는다.
+- 이 두 번째 실제 사례를 근거로 `temporal_source.current_value_period` 계약을 추가했다. 이 계약은 `policy-current + evergreen` 글 안의 현재값만 `{start_date, end_date, evidence}`에 묶으며, exact 공식 인용에 연도+월 범위 또는 분기 표기가 있어야 한다. 기간 종료는 **현재값 재검토 기한**이지 글 전체의 만료가 아니므로 30일 최소 lifetime이나 WordPress `expires_at`을 적용하지 않는다. 사용자가 만든 날짜, publication date, 연도 없는 반복 구간으로 기간을 추정하지 않는다.
+- **실버론 재판정:** 국민연금공단 신청방법 원문은 `상시 신청 가능(매년 대부금 예산범위 내에서 접수)`이라고 명시하고, 금리 원문은 `연 3.21%(2026년 10월 ~ 12월)` 및 `2026년 4분기 기준이며, 매 분기 변경`이라고 명시한다. 따라서 brief를 `evergreen + policy-current + requires_live_state=true`, `useful_until=null`로 바꾸고 현재 금리만 `2026-10-01~2026-12-31` current-value period에 묶었다. 기존의 `temporal_source_not_bound` / `availability_not_verified`는 예외 없이 사라졌다.
+- **실버론 실제 draft #858:** 새 계약의 실제 `prepare-draft`가 `ready`로 저장됐고 save-time counters는 `source_fetch_requests=4`, `source_receipt_refetch=4`였다. draft는 welfare(term 3), 대표이미지 #859, Rank Math 한글 메타 정상이며 `expires_at` 계열 WordPress meta는 없다. 즉 글 전체를 12월 31일에 만료시키지 않으면서 현재 4분기 금리만 기간 바인딩하는 구조가 실제 저장에서도 유지됐다.
+- 자동 스케줄러를 위해 실버론 brief에 `requires_current_value_period=true`를 명시하고, writer가 source fetch 직후 현재 날짜를 포함하는 exact 연도+월 범위 또는 분기를 결정론적으로 추출해 temporal contract에 주입하도록 했다. exact period가 없거나 서로 다른 active period가 충돌하면 `current_value_period_unverified`로 HOLD한다. 연도 없는 `12~3월` 같은 반복 구간만으로는 자동 기간을 만들지 않는다.
+
+이 후속 작업으로 **장기요양 category false HOLD와 실버론 current-value false HOLD는 모두 의미를 보존한 일반 계약으로 해소**됐다. 다만 4.3C의 나머지 fallback 전체 제거는 만료된 기존 brief까지 재검토한 결과가 없으므로 아직 확대하지 않는다. 다음 정규 scheduler 표본은 2026-10-03 08:00 KST 이후에만 확인할 수 있고, 4.3D discovery 전환은 이 정규 표본과 4.3C 결과를 분리해 검토한다.
