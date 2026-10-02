@@ -294,3 +294,20 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 따라서 이번 4.3C 변경은 `welfare + evergreen`을 일반 허용하지 않는다. `volatility=policy-current`와 boolean `requires_live_state`가 **둘 다 명시된** reviewed brief에 한해서만 `dated_category_cannot_bypass_time_check`를 대체한다. metadata가 없는 welfare evergreen, `timeless-procedure`, events/concert, dated 글의 temporal 검증, 30일 minimum lifetime, `useful_until → expires_at`, 기존 #85 exact exception은 모두 그대로 유지한다. 이 변경으로 장기요양은 `topic_reasons()==[]`가 되지만, 실버론 합성 regression은 계속 `temporal_source_not_bound`와 `availability_not_verified`를 반환한다.
 
 이 단계는 **4.3C 전체 완료가 아니다.** policy-current welfare evergreen의 category fallback만 제한적으로 제거한 것이며, 실버론의 bounded current-policy temporal contract와 나머지 `content_type` compatibility 제거는 추가 근거가 생길 때까지 보류한다. 4.3D는 계속 NO-GO다.
+
+### 제한적 4.3C 운영 배포 — 2026-10-02 17:56 KST
+
+제한적 category fallback 제거는 Git `8ca823e` (`policy: narrow welfare policy-current fallback`)로 `main`/`origin/main`에 반영한 뒤 운영 `/home/ubuntu/agent-publisher`에 배포했다.
+
+- 배포 release: `/home/ubuntu/releases/editorial-stage4-3c-20261002-175550`
+- 코드 rollback manifest: `/home/ubuntu/agent-publisher/backups/editorial-20261002T085617Z/manifest.json`
+- 운영 `agents/editorial.py` SHA256: `ddc2b0e4af430c458bc0edf5a1bebdedd4e550b0601b49452ac9385ad763bc37`, 로컬 release와 일치
+- 배포 smoke: `Editorial imports and critical-fact registry ready; minimum days: 30`
+- 기존 운영 `search_briefs.json`은 12행, SHA `277d6fe726a9ed58ac0505c8bf7dcb631e4744d1a02c09efea2e16e6508d88be`였고 코드 installer가 이 파일을 덮어쓰지 않았다.
+- 데이터 백업: `/home/ubuntu/agent-publisher/backups/volatility-briefs-20261002T085650Z`
+- 장기요양 reviewed row **한 건만** 추가했고 기존 12행이 구조적으로 동일함을 비교한 뒤 13행으로 저장했다. 적용 후 SHA는 `5b9329af4e9ffb35232dc49245493a668f578597aa7b9e5eb58bc24ad6e6dea4`다.
+- 운영 readback에서 장기요양은 `topic_reasons(..., 2026-10-02) == []`, `evergreen + policy-current + requires_live_state=true`, migration 제안과 현재 값이 일치했다. 동일 row에서 volatility/live metadata만 제거한 복사본은 다시 `dated_category_cannot_bypass_time_check`로 HOLD되어 metadata 없는 welfare fallback이 유지됨을 확인했다.
+- 실버론은 `topic_reasons()==[]`이지만 migration conflict `policy_current_keeps_legacy_dated_contract`를 그대로 유지한다. 이번 배포는 dated temporal path를 수정하지 않았다.
+- 전체 로컬 회귀는 테스트용 Kakao key를 사용한 격리 worktree에서 **824 tests OK, skipped=1**이었다. 첫 전체 실행의 단일 오류는 worktree에 로컬 `.env`가 없어 event renderer가 Kakao JS key를 읽지 못한 환경 오류였고, 테스트용 key를 명시해 재실행하면 전부 통과했다.
+
+이 배포로 4.3C의 **첫 제한적 코드 전환과 운영 데이터 적용**은 완료됐다. 다만 장기요양을 실제 `prepare-draft` 저장 경로에 태운 운영 작성 표본은 아직 만들지 않았으므로, 이 단계를 전체 category/content-type fallback 제거의 승인으로 확대하지 않는다. 4.3D도 계속 보류한다.
