@@ -124,7 +124,7 @@ class SystemImprovementsTest(unittest.TestCase):
         """건강 글에는 다른 카테고리 글이 자동 추천되지 않는지 검증"""
         html = render(self.plan, self.sources, category_key='health')
         self.assertNotIn('무명전설 크리스마스 콘서트', html)
-        self.assertNotIn('공연·콘서트 예매', html)
+        self.assertNotIn('공연/콘서트', html)
         self.assertNotIn('bloguito-interlink', html)  # No topical match; unrelated flu posts are not useful.
 
     def test_interlink_concert_isolation(self):

@@ -31,7 +31,7 @@ KNOWN_ENTITIES = [
 CATEGORIES = {
     "events": {
         "id": 274,
-        "name": "지역 축제·행사",
+        "name": "지역 축제/행사",
         "slug": "local-events",
         "keywords": [
             "전국 지역 축제 일정",
@@ -42,7 +42,7 @@ CATEGORIES = {
     },
     "concert": {
         "id": 2,
-        "name": "공연·콘서트 예매",
+        "name": "공연/콘서트",
         "slug": "concert",
         "keywords": [
             "2026 하반기 트로트 콘서트 티켓 예매",
@@ -57,7 +57,7 @@ CATEGORIES = {
     },
     "welfare": {
         "id": 3,
-        "name": "정부 복지·지원금",
+        "name": "복지/지원금",
         "slug": "welfare",
         "keywords": [
             "기초연금 신청 자격 방법 2026",
@@ -71,7 +71,7 @@ CATEGORIES = {
     },
     "tax": {
         "id": 102,
-        "name": "생활 세금·절세",
+        "name": "세금/절세",
         "slug": "tax",
         "keywords": [
             "2026 연말정산 환급금 조회 및 소득공제",
@@ -85,7 +85,7 @@ CATEGORIES = {
     },
     "health": {
         "id": 275,
-        "name": "건강·의료",
+        "name": "건강/의료",
         "slug": "health",
         "keywords": [
             "국가건강검진 대상자 조회",
@@ -97,7 +97,7 @@ CATEGORIES = {
     },
     "transport": {
         "id": 276,
-        "name": "교통·자동차",
+        "name": "교통/자동차",
         "slug": "transport",
         "keywords": [
             "KTX 고속버스 취소표 예매",
@@ -110,7 +110,7 @@ CATEGORIES = {
     },
     "life-admin": {
         "id": 277,
-        "name": "생활 행정·서비스",
+        "name": "행정/생활서비스",
         "slug": "life-admin",
         "keywords": [
             "주민등록등본 인터넷 발급",
@@ -124,7 +124,7 @@ CATEGORIES = {
     },
     "finance": {
         "id": 278,
-        "name": "생활경제·금융",
+        "name": "금융/경제",
         "slug": "finance",
         "keywords": [
             "숨은 보험금 조회 청구",

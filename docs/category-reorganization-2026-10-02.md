@@ -195,3 +195,33 @@ WordPress taxonomy는 평면으로 유지하고 메인 메뉴에서만 두 그�
 - 추가 회귀 수정 후 source provenance, renderer/interlink, resolver 표적 66개 통과.
 - `git diff --check`, strict UTF-8 검사, 변경 Python `py_compile` 통과.
 - 전체 Python suite는 786개 중 3 failures, 8 errors, 1 skipped였다. 이번 개편에서 발견한 행사 category fixture와 생활행정 관련글 추론 회귀 2건은 수정 후 사라졌다. 남은 8 designer-safety 오류와 public-fast 3 failures는 작업 전 clean `origin/main`에서도 확인된 기존 baseline 계열이다.
+
+## 2026-10-02 표시명 2차 정리
+
+초기 8개 분류의 범위와 term ID, slug, 글 배치는 유지하면서 중복되는 `생활` 접두어와 `·` 구분자를 정리한다. 이번 후속 작업에서는 글을 다른 term으로 이동하지 않는다.
+
+| key | 기존 표시명 | 새 표시명 | term ID | slug |
+|---|---|---|---:|---|
+| `events` | 지역 축제·행사 | 지역 축제/행사 | 274 | `local-events` |
+| `concert` | 공연·콘서트 예매 | 공연/콘서트 | 2 | `concert` |
+| `welfare` | 정부 복지·지원금 | 복지/지원금 | 3 | `welfare` |
+| `tax` | 생활 세금·절세 | 세금/절세 | 102 | `tax` |
+| `health` | 건강·의료 | 건강/의료 | 275 | `health` |
+| `transport` | 교통·자동차 | 교통/자동차 | 276 | `transport` |
+| `life-admin` | 생활 행정·서비스 | 행정/생활서비스 | 277 | `life-admin` |
+| `finance` | 생활경제·금융 | 금융/경제 | 278 | `finance` |
+
+`행정/생활서비스`는 주민등록·여권 같은 행정 글뿐 아니라 폐가전 수거, 쓰레기 배출, 우편물 전송 같은 현재 글도 함께 포괄하기 위해 선택했다. `행정/민원`으로 좁히지 않는다.
+
+적용 전에는 운영 WordPress의 term, 메뉴, 운영 `config.py`, 전체 post-category 매핑과 각 글의 상태·제목·slug·본문 SHA256·permalink를 다시 스냅샷한다. 적용 후에는 동일 범위를 재조회해 term ID, slug, 글 배치와 글 자체가 보존됐는지 비교한다.
+
+### 표시명 2차 정리 적용 결과
+
+- cutover 직전 운영 글은 총 63편으로 공개 61편, 임시글 2편이었다. 임시글은 #592(`finance`)와 #841(`welfare`)였고 모든 글이 카테고리 하나만 갖고 있었다.
+- WordPress term ID와 slug는 그대로 유지하고 8개 표시명과 설명만 갱신했다. 공개글 term count는 `events=7`, `concert=7`, `welfare=7`, `tax=5`, `health=7`, `transport=11`, `life-admin=10`, `finance=7`로 cutover 전후 동일했다.
+- 운영 `/home/ubuntu/agent-publisher/config.py`는 전체 파일 교체 없이 8개 표시명만 치환했다. 적용 전 파일은 `/home/ubuntu/agent-publisher/backups/category-name-refresh-20261002T083311Z/config.py`에 보관했다.
+- 적용 전후 63편의 `post_status`, 제목, `post_name`, 본문 SHA256, permalink, category term ID/slug를 비교한 결과 변경 0건이었다. 글 이동도 없었다.
+- 메인 메뉴의 category taxonomy 항목은 term 이름을 자동 반영해 별도 menu item 수정 없이 새 표시명으로 바뀌었다. 상위 그룹 `생활정보`, `문화·행사` 구조는 유지했다.
+- WP Super Cache를 비운 뒤 기본 홈 URL의 실제 HTML에서 새 8개 이름을 모두 확인했고 이전 8개 표시명은 0건이었다. 8개 category archive URL은 모두 HTTP 200이었다.
+- `python scripts/sync_post_catalog.py`로 최신 63편을 다시 동기화했고 `docs/POST_CATALOG.md`에서 이전 표시명은 0건이다.
+- 최신 `main` 위로 rebase한 최종 상태에서 카테고리 mapping, catalog fallback, editorial/indexing, designer routing 표적 테스트와 `git diff --check`, strict UTF-8, `py_compile`은 통과했다. 유효 형식의 Kakao 테스트 키를 주고 실행한 전체 suite는 822개 전부 통과했고 1개가 skip됐다.

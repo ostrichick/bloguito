@@ -44,11 +44,11 @@ class DesignerSafetyTests(unittest.TestCase):
 
     def test_policy_subjects_do_not_generate_claims_or_trust_curated_fields(self):
         cases = [
-            ("2026 추석 고속도로 통행료 적용 조건", "교통·자동차", "transport"),
-            ("정부 미환급금 신청 방법", "생활경제·금융", "finance"),
-            ("재산세 분할납부 대상", "생활 세금·절세", "tax"),
-            ("기초연금 노인 수급 자격", "정부 복지·지원금", "welfare"),
-            ("콘서트 예매 정보", "공연·콘서트 예매", "concert"),
+            ("2026 추석 고속도로 통행료 적용 조건", "교통/자동차", "transport"),
+            ("정부 미환급금 신청 방법", "금융/경제", "finance"),
+            ("재산세 분할납부 대상", "세금/절세", "tax"),
+            ("기초연금 노인 수급 자격", "복지/지원금", "welfare"),
+            ("콘서트 예매 정보", "공연/콘서트", "concert"),
         ]
         curated = {
             "title": "검토되지 않은 별도 제목",
@@ -92,7 +92,7 @@ class DesignerSafetyTests(unittest.TestCase):
 
     def test_hybrid_uses_reviewed_poster_without_unsourced_overlays(self):
         title = "공연 일정 안내"
-        category = "공연·콘서트 예매"
+        category = "공연/콘서트"
         self.designer.client = MagicMock()
         self.designer.client.models.generate_content.return_value = MagicMock(
             text='{"pass": true, "issues": []}'
@@ -119,7 +119,7 @@ class DesignerSafetyTests(unittest.TestCase):
 
     def test_reviewed_poster_network_failure_falls_back_without_curator_claims(self):
         title = "콘서트 티켓 예매"
-        category = "공연·콘서트 예매"
+        category = "공연/콘서트"
         with patch("urllib.request.urlopen", side_effect=OSError("offline")), \
              patch.object(self.designer, "_generated_scene", return_value=Image.new("RGB", (1200, 675), "white")), \
              patch.object(self.designer, "_vision_review_cover", return_value=(True, [])):
@@ -147,7 +147,7 @@ class DesignerSafetyTests(unittest.TestCase):
             drawn = self.capture_text(
                 lambda: self.designer.generate_image(
                     title,
-                    "공연·콘서트 예매",
+                    "공연/콘서트",
                     "테스트가수 서울 콘서트",
                     curated={},
                     category_key="concert",

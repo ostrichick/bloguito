@@ -45,7 +45,7 @@ class DesignerRoutingTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "render failed"):
                 self.designer.generate_image(
                     title="실패 테스트",
-                    category_name="생활 행정·서비스",
+                    category_name="행정/생활서비스",
                     keyword="실패",
                     category_key="life-admin",
                 )
@@ -88,12 +88,12 @@ class DesignerRoutingTests(unittest.TestCase):
         self.assertEqual(mode, 5)
 
     def test_active_categories_have_distinct_cover_profiles(self):
-        self.assertEqual(_cover_profile("재산세 납부 방법", "tax", "생활 세금·절세"), "tax")
-        self.assertEqual(_cover_profile("전입신고 온라인 신청", "life-admin", "생활 행정·서비스"), "life_admin")
-        self.assertEqual(_cover_profile("국가건강검진 대상자 조회", "health", "건강·의료"), "health")
-        self.assertEqual(_cover_profile("KTX 취소표", "transport", "교통·자동차"), "transport")
-        self.assertEqual(_cover_profile("카드포인트 조회", "finance", "생활경제·금융"), "finance")
-        self.assertEqual(_cover_profile("전주 10월 축제", "events", "지역 축제·행사"), "events")
+        self.assertEqual(_cover_profile("재산세 납부 방법", "tax", "세금/절세"), "tax")
+        self.assertEqual(_cover_profile("전입신고 온라인 신청", "life-admin", "행정/생활서비스"), "life_admin")
+        self.assertEqual(_cover_profile("국가건강검진 대상자 조회", "health", "건강/의료"), "health")
+        self.assertEqual(_cover_profile("KTX 취소표", "transport", "교통/자동차"), "transport")
+        self.assertEqual(_cover_profile("카드포인트 조회", "finance", "금융/경제"), "finance")
+        self.assertEqual(_cover_profile("전주 10월 축제", "events", "지역 축제/행사"), "events")
 
     def test_movein_benchmark_copy_is_shorter_than_article_title(self):
         title = "전입신고 온라인 신청과 세대주 확인: 필요한 경우, 8일 기한, 정부24 방법"
@@ -138,7 +138,7 @@ class DesignerRoutingTests(unittest.TestCase):
             "전입신고 온라인 신청과 세대주 확인",
             "전입신고 온라인 신청",
             "life-admin",
-            "생활 행정·서비스",
+            "행정/생활서비스",
             "전입신고 온라인 신청",
             "세대주 확인",
         )
@@ -256,7 +256,7 @@ class DesignerRoutingTests(unittest.TestCase):
             title="전입신고 온라인 신청과 세대주 확인",
             keyword="전입신고 온라인 신청",
             category_key="life-admin",
-            category_name="생활 행정·서비스",
+            category_name="행정/생활서비스",
             output_path=out_path,
         )
         generation_call = self.designer.client.models.generate_content.call_args_list[0]
@@ -286,7 +286,7 @@ class DesignerRoutingTests(unittest.TestCase):
             title="전입신고 온라인 신청과 세대주 확인",
             keyword="전입신고 온라인 신청",
             category_key="life-admin",
-            category_name="생활 행정·서비스",
+            category_name="행정/생활서비스",
             output_path=out_path,
         )
         self.assertEqual(self.designer.client.models.generate_content.call_count, 4)
@@ -310,7 +310,7 @@ class DesignerRoutingTests(unittest.TestCase):
             self.designer._render_hybrid_poster(
                 poster_url="https://example.com/poster.jpg",
                 title="2026 임영웅 서울 앵콜 콘서트 예매",
-                category_name="공연·콘서트 예매",
+                category_name="공연/콘서트",
                 curated={"ticket_prices": "R석 154,000원", "temporal_verification": {"expires_at": "2026-12-25"}},
                 output_path=out_path,
             )
@@ -324,7 +324,7 @@ class DesignerRoutingTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
                 self.designer.generate_image(
                     title="2026 단독 콘서트 예매",
-                    category_name="공연·콘서트 예매",
+                    category_name="공연/콘서트",
                     keyword="콘서트",
                     curated={"poster_url": "https://example.com/unreviewed.jpg"},
                     category_key="concert",
@@ -336,7 +336,7 @@ class DesignerRoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
             self.designer.generate_image(
                 title="기초연금 신청 자격 안내",
-                category_name="정부 복지·지원금",
+                category_name="복지/지원금",
                 keyword="기초연금",
             )
 
