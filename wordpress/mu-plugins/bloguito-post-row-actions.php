@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Bloguito Post Row Actions
- * Description: Add guarded publish/draft status actions to the built-in Posts list.
- * Version: 1.0.0
+ * Description: Add guarded publish/draft status actions to the Posts list and draft preview admin bar.
+ * Version: 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -36,16 +36,7 @@ function bloguito_add_post_status_row_action($actions, $post) {
         return $actions;
     }
 
-    $url = add_query_arg([
-        'action' => 'bloguito_set_post_status',
-        'post' => $post_id,
-        'target' => $target_status,
-    ], admin_url('admin-post.php'));
-    $url = wp_nonce_url(
-        $url,
-        bloguito_post_status_nonce_action($post_id, $target_status),
-        '_bloguito_nonce'
-    );
+    $url = bloguito_post_status_action_url($post_id, $target_status);
 
     $action_html = sprintf(
         '<a href="%1$s" aria-label="%2$s">%3$s</a>',
@@ -68,6 +59,48 @@ function bloguito_add_post_status_row_action($actions, $post) {
     }
 
     return $ordered_actions;
+}
+
+function bloguito_post_status_action_url($post_id, $target_status, $return_mode = 'referer') {
+    $args = [
+        'action' => 'bloguito_set_post_status',
+        'post' => (int) $post_id,
+        'target' => (string) $target_status,
+        '_bloguito_nonce' => wp_create_nonce(
+            bloguito_post_status_nonce_action($post_id, $target_status)
+        ),
+    ];
+    if ($return_mode === 'permalink') {
+        $args['bloguito_return'] = 'permalink';
+    }
+
+    return add_query_arg($args, admin_url('admin-post.php'));
+}
+
+add_action('admin_bar_menu', 'bloguito_add_preview_publish_admin_bar', 82);
+function bloguito_add_preview_publish_admin_bar($wp_admin_bar) {
+    if (is_admin() || !is_singular('post') || !is_preview()) {
+        return;
+    }
+
+    $post_id = (int) get_queried_object_id();
+    $post = $post_id > 0 ? get_post($post_id) : null;
+    if (!$post || $post->post_type !== 'post' || $post->post_status !== 'draft') {
+        return;
+    }
+    if (!bloguito_can_change_post_status($post_id, 'publish')) {
+        return;
+    }
+
+    $wp_admin_bar->add_node([
+        'id' => 'bloguito-preview-publish',
+        'title' => '발행',
+        'href' => bloguito_post_status_action_url($post_id, 'publish', 'permalink'),
+        'meta' => [
+            'title' => sprintf('글 #%d을 바로 발행', $post_id),
+            'class' => 'bloguito-preview-publish',
+        ],
+    ]);
 }
 
 function bloguito_post_status_nonce_action($post_id, $target_status) {
@@ -122,8 +155,14 @@ add_action('admin_post_bloguito_set_post_status', 'bloguito_handle_post_status_a
 function bloguito_handle_post_status_action() {
     $post_id = isset($_GET['post']) ? absint($_GET['post']) : 0;
     $target_status = isset($_GET['target']) ? sanitize_key(wp_unslash($_GET['target'])) : '';
+    $return_mode = isset($_GET['bloguito_return'])
+        ? sanitize_key(wp_unslash($_GET['bloguito_return']))
+        : 'referer';
 
-    if ($post_id <= 0 || !in_array($target_status, ['publish', 'draft'], true)) {
+    if ($post_id <= 0
+            || !in_array($target_status, ['publish', 'draft'], true)
+            || !in_array($return_mode, ['referer', 'permalink'], true)
+            || ($return_mode === 'permalink' && $target_status !== 'publish')) {
         wp_die('잘못된 글 상태 변경 요청입니다.', '잘못된 요청', ['response' => 400]);
     }
 
@@ -141,18 +180,25 @@ function bloguito_handle_post_status_action() {
         wp_die(esc_html($result->get_error_message()), '상태 변경 실패', ['response' => 409]);
     }
 
-    $redirect = wp_get_referer();
-    if (!$redirect) {
-        $redirect = admin_url('edit.php');
+    if ($return_mode === 'permalink') {
+        $redirect = get_permalink($post_id);
+        if (!$redirect) {
+            $redirect = admin_url('edit.php');
+        }
+    } else {
+        $redirect = wp_get_referer();
+        if (!$redirect) {
+            $redirect = admin_url('edit.php');
+        }
+        $redirect = remove_query_arg([
+            'bloguito_status_changed',
+            'bloguito_post_id',
+        ], $redirect);
+        $redirect = add_query_arg([
+            'bloguito_status_changed' => $target_status,
+            'bloguito_post_id' => $post_id,
+        ], $redirect);
     }
-    $redirect = remove_query_arg([
-        'bloguito_status_changed',
-        'bloguito_post_id',
-    ], $redirect);
-    $redirect = add_query_arg([
-        'bloguito_status_changed' => $target_status,
-        'bloguito_post_id' => $post_id,
-    ], $redirect);
 
     wp_safe_redirect($redirect);
     exit;

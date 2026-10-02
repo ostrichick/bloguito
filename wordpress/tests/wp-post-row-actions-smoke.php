@@ -13,6 +13,10 @@ if (!has_action('admin_post_bloguito_set_post_status', 'bloguito_handle_post_sta
     fwrite(STDERR, 'Guarded post-status handler is not registered' . PHP_EOL);
     exit(1);
 }
+if (!has_action('admin_bar_menu', 'bloguito_add_preview_publish_admin_bar')) {
+    fwrite(STDERR, 'Draft preview publish admin-bar hook is not registered' . PHP_EOL);
+    exit(1);
+}
 
 $admins = get_users(['role' => 'administrator', 'number' => 1, 'fields' => 'ID']);
 if (!$admins) {
@@ -50,4 +54,20 @@ if (!isset($published_actions['bloguito-to-draft']) || strpos($published_actions
     exit(1);
 }
 
-echo 'PASS: live WordPress post row-action hooks' . PHP_EOL;
+$preview_publish_url = bloguito_post_status_action_url($post_id, 'publish', 'permalink');
+$query = [];
+parse_str((string) wp_parse_url($preview_publish_url, PHP_URL_QUERY), $query);
+if (($query['action'] ?? '') !== 'bloguito_set_post_status'
+        || (int) ($query['post'] ?? 0) !== $post_id
+        || ($query['target'] ?? '') !== 'publish'
+        || ($query['bloguito_return'] ?? '') !== 'permalink'
+        || !isset($query['_bloguito_nonce'])
+        || !wp_verify_nonce(
+            $query['_bloguito_nonce'],
+            bloguito_post_status_nonce_action($post_id, 'publish')
+        )) {
+    fwrite(STDERR, 'Preview publish URL is missing guarded publish parameters' . PHP_EOL);
+    exit(1);
+}
+
+echo 'PASS: live WordPress post row-action and preview publish hooks' . PHP_EOL;

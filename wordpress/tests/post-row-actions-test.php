@@ -7,6 +7,10 @@ $registered_actions = [];
 $test_caps = ['edit_post' => true, 'publish_posts' => true];
 $test_post = (object) ['ID' => 837, 'post_type' => 'post', 'post_status' => 'draft'];
 $test_updated = null;
+$test_is_admin = false;
+$test_is_singular_post = true;
+$test_is_preview = true;
+$test_post_id = 837;
 
 class WP_Error {
     private $code;
@@ -28,9 +32,25 @@ function current_user_can($capability, ...$args) {
     global $test_caps;
     return $test_caps[$capability] ?? false;
 }
+function is_admin() {
+    global $test_is_admin;
+    return $test_is_admin;
+}
+function is_singular($post_type = '') {
+    global $test_is_singular_post;
+    return $post_type === 'post' && $test_is_singular_post;
+}
+function is_preview() {
+    global $test_is_preview;
+    return $test_is_preview;
+}
+function get_queried_object_id() {
+    global $test_post_id;
+    return $test_post_id;
+}
 function admin_url($path) { return 'https://example.test/wp-admin/' . $path; }
 function add_query_arg($args, $url) { return $url . (strpos($url, '?') === false ? '?' : '&') . http_build_query($args); }
-function wp_nonce_url($url, $action, $name) { return add_query_arg([$name => 'nonce-for-' . $action], $url); }
+function wp_create_nonce($action) { return 'nonce-for-' . $action; }
 function esc_url($value) { return $value; }
 function esc_attr($value) { return htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); }
 function esc_html($value) { return htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); }
@@ -48,6 +68,10 @@ function wp_update_post($data, $wp_error = false) {
     return $test_post->ID;
 }
 function is_wp_error($value) { return $value instanceof WP_Error; }
+class TestAdminBar {
+    public $nodes = [];
+    public function add_node($node) { $this->nodes[$node['id']] = $node; }
+}
 function check($condition, $message) {
     if (!$condition) {
         fwrite(STDERR, 'FAIL: ' . $message . PHP_EOL);
@@ -61,6 +85,8 @@ check(isset($registered_filters['post_row_actions']), 'Row action filter registe
 check($registered_filters['post_row_actions'][2] === 2, 'Row action filter receives post object');
 check(isset($registered_actions['admin_post_bloguito_set_post_status']), 'Guarded admin-post handler registered');
 check(isset($registered_actions['admin_notices']), 'Success notice hook registered');
+check(isset($registered_actions['admin_bar_menu']), 'Preview publish admin-bar hook registered');
+check($registered_actions['admin_bar_menu'][1] === 82, 'Preview publish button follows the post ID admin-bar item');
 
 $base_actions = [
     'edit' => '<a>Edit</a>',
@@ -102,6 +128,45 @@ $test_post->post_status = 'draft';
 $test_caps['edit_post'] = false;
 check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Users without edit permission see no status action');
 $test_caps['edit_post'] = true;
+
+$test_post->post_status = 'draft';
+$admin_bar = new TestAdminBar();
+bloguito_add_preview_publish_admin_bar($admin_bar);
+check(isset($admin_bar->nodes['bloguito-preview-publish']), 'Draft preview gets publish admin-bar button');
+check($admin_bar->nodes['bloguito-preview-publish']['title'] === '발행', 'Preview admin-bar button label is publish');
+check(strpos($admin_bar->nodes['bloguito-preview-publish']['href'], 'target=publish') !== false, 'Preview button targets publish');
+check(strpos($admin_bar->nodes['bloguito-preview-publish']['href'], 'bloguito_return=permalink') !== false, 'Preview publish returns to public permalink');
+check(strpos($admin_bar->nodes['bloguito-preview-publish']['href'], '_bloguito_nonce=nonce-for-bloguito-post-status-837-publish') !== false, 'Preview publish button is nonce protected');
+
+$test_post->post_status = 'publish';
+$admin_bar = new TestAdminBar();
+bloguito_add_preview_publish_admin_bar($admin_bar);
+check($admin_bar->nodes === [], 'Published post preview does not show publish button');
+
+$test_post->post_status = 'draft';
+$test_is_preview = false;
+$admin_bar = new TestAdminBar();
+bloguito_add_preview_publish_admin_bar($admin_bar);
+check($admin_bar->nodes === [], 'Normal front-end view does not show preview publish button');
+$test_is_preview = true;
+
+$test_caps['publish_posts'] = false;
+$admin_bar = new TestAdminBar();
+bloguito_add_preview_publish_admin_bar($admin_bar);
+check($admin_bar->nodes === [], 'Users without publish permission see no preview publish button');
+$test_caps['publish_posts'] = true;
+
+$test_is_admin = true;
+$admin_bar = new TestAdminBar();
+bloguito_add_preview_publish_admin_bar($admin_bar);
+check($admin_bar->nodes === [], 'WordPress admin screens do not show preview publish button');
+$test_is_admin = false;
+
+$test_is_singular_post = false;
+$admin_bar = new TestAdminBar();
+bloguito_add_preview_publish_admin_bar($admin_bar);
+check($admin_bar->nodes === [], 'Non-post preview screens do not show preview publish button');
+$test_is_singular_post = true;
 
 $test_updated = null;
 $result = bloguito_change_post_status(837, 'publish');
