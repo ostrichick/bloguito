@@ -1619,8 +1619,9 @@ def render(plan, sources, category_key=None):
                        '<div style="display:flex;align-items:flex-start;padding-left:2px"><span style="background:#059669;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">A</span>'
                        f'<div style="flex-grow:1;color:#334155;line-height:1.8">{inline_text(faq["answer"])}</div></div></div>')
 
-    # 5. Explicit, reviewed related-post links take precedence over volatile
-    # local recommendations. Never promote an internal article to an official CTA.
+    # 5. Render only explicitly reviewed related-post links.  A reviewed bundle
+    # must determine its HTML without consulting a mutable local recommendation
+    # index at render time; candidate discovery belongs before semantic review.
     interlink_html = ''
     related = plan.get('related_posts', [])
     if related:
@@ -1634,101 +1635,6 @@ def render(plan, sources, category_key=None):
             'background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:10px">'
             '<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;font-weight:700">관련 글</h3>'
             '<ul style="margin:0;padding-left:22px;line-height:1.8">' + items + '</ul></div>')
-    else:
-      try:
-        posts_file = ROOT / 'data' / 'published_posts.json'
-        if posts_file.exists():
-            posts = json.loads(posts_file.read_text(encoding='utf-8'))
-            today = datetime.now(KST).date()
-
-            # 현재 글의 카테고리 결정
-            cur_cat = category_key or plan.get('category_key')
-            if not cur_cat:
-                t = plan.get('title', '')
-                if any(w in t for w in ['콘서트', '티켓', '앵콜', '뮤지컬', '공연', '페스티벌']):
-                    cur_cat = 'concert'
-                elif any(w in t for w in ['세금', '연말정산', '종합소득세', '자동차세', '취득세']):
-                    cur_cat = 'tax'
-                elif any(w in t for w in ['지원금', '기초연금', '바우처', '장려금', '환급금']):
-                    cur_cat = 'welfare'
-                else:
-                    cur_cat = 'life-health'
-
-            # 카테고리 상호 호환 그룹 정의 (공연/콘서트와 생활/복지/세무 철저 분리)
-            is_concert = (cur_cat == 'concert' or cur_cat == 2 or cur_cat == '공연/콘서트 예매')
-
-            candidates = []
-            for p in posts:
-                if not p.get('url') or p.get('title') == plan.get('title'):
-                    continue
-                # The local post index may contain legacy IP/HTTP links. Only link
-                # canonical public HTTPS posts, and never treat category alone as relevance.
-                parsed = urlparse(p['url'])
-                if parsed.scheme != 'https' or parsed.hostname != 'lifeinfo24.org':
-                    continue
-                generic = {'2026', '2027', '안내', '정보', '방법', '총정리', '가이드',
-                           '무료', '신청', '조회', '기간', '혜택', '이용', '확인',
-                           '전국', '서울', '2026년', '2027년', '기준', '절차',
-                           '관련', '대상', '공식', '받는', '찾기', '오늘', '예약'}
-                words = lambda title: {t for t in re.findall(r'[가-힣a-zA-Z]{2,}', title.casefold())
-                                       if t not in generic and not t.endswith('년')}
-                current_terms = words(plan.get('title', ''))
-                candidate_terms = words(p.get('title', ''))
-                if not any(len(a) >= 3 and (a in b or b in a) for a in current_terms for b in candidate_terms):
-                    continue
-                if p.get('status') == 'draft' or p.get('is_closed') is True:
-                    continue
-                exp_str = p.get('expires_at')
-                if exp_str:
-                    try:
-                        exp_date = datetime.strptime(str(exp_str)[:10], '%Y-%m-%d').date()
-                        if exp_date < today:
-                            continue
-                    except Exception:
-                        pass
-
-                p_cat_id = p.get('category_id')
-                p_cat_name = p.get('category_name', '')
-
-                # 공연 글 여부 판별
-                p_is_concert = (p_cat_id == 2 or '공연' in p_cat_name or '콘서트' in p_cat_name)
-
-                # 상호 배타성 검사: 공연 글은 공연 글끼리만, 비공연(생활/복지/세무) 글은 비공연 글끼리만 추천!
-                if is_concert != p_is_concert:
-                    continue
-
-                # 점수 부여 (동일 카테고리 최우선)
-                score = 0
-                if cur_cat in {'life-health', 4, '생활/건강 정보'} and (p_cat_id == 4 or '생활' in p_cat_name or '건강' in p_cat_name):
-                    score = 2
-                elif cur_cat in {'welfare', 3, '정부 복지/지원금'} and (p_cat_id == 3 or '복지' in p_cat_name or '지원금' in p_cat_name):
-                    score = 2
-                elif cur_cat in {'tax', 102, '생활 세금/절세 정보'} and (p_cat_id == 102 or '세금' in p_cat_name or '절세' in p_cat_name):
-                    score = 2
-                elif is_concert and p_is_concert:
-                    score = 2
-                else:
-                    score = 1
-
-                candidates.append((score, p))
-
-            if candidates:
-                # 점수 높은 순(동일 카테고리 우선) 정렬 후 최대 2개 선택
-                candidates.sort(key=lambda x: x[0], reverse=True)
-                selected = [x[1] for x in candidates[:2]]
-
-                header_title = '함께 보면 좋은 추천 공연·티켓 정보' if is_concert else '함께 보면 유익한 생활 정보 추천'
-                items = ''.join(
-                    f'<li style="margin-bottom:10px"><a href="{html.escape(item["url"], quote=True)}" target="_blank" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;font-weight:600;font-size:15.5px">👉 [{html.escape(item.get("category_name", "생활정보"))}] {html.escape(item["title"])}</a></li>'
-                    for item in selected
-                )
-                interlink_html = (
-                    '<div class="bloguito-interlink" style="padding:20px 24px;margin:40px 0 20px;background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:10px">'
-                    f'<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;display:flex;align-items:center"><span style="margin-right:8px">{"🎵" if is_concert else "🔗"}</span>{header_title}</h3>'
-                    f'<ul style="margin:0;padding-left:22px;line-height:1.8">{items}</ul></div>'
-                )
-      except Exception:
-          interlink_html = ''
 
     # 6. 공식 출처 및 사실 검증 자료.
     # Exact action destinations already have a prominent reader-facing CTA, so

@@ -61,6 +61,25 @@ class RelatedPostNavigationTests(unittest.TestCase):
         self.assertFalse(soup.select('.bloguito-cta a'))
         self.assertEqual([63], sorted(internal_post_ids(str(soup))))
 
+    def test_renderer_never_invents_related_posts_from_mutable_local_index(self):
+        bundle = copy.deepcopy(self.bundle)
+        bundle['plan']['related_posts'] = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'data').mkdir()
+            (root / 'data' / 'published_posts.json').write_text(json.dumps([{
+                'ID': 63,
+                'title': '예방접종 일정 종합 안내',
+                'url': 'https://lifeinfo24.org/?p=63',
+                'status': 'publish',
+                'category_id': 4,
+                'category_name': '생활/건강 정보',
+            }], ensure_ascii=False), encoding='utf-8')
+            with patch('agents.editorial.ROOT', root):
+                markup = render(bundle['plan'], bundle['sources'])
+        self.assertNotIn('bloguito-interlink', markup)
+        self.assertNotIn('https://lifeinfo24.org/?p=63', markup)
+
     def test_missing_unpublished_self_wrong_url_or_unreviewed_link_fails_closed(self):
         for bad in ({'post_id': 64, 'label': '다른 글 링크', 'url': 'https://lifeinfo24.org/?p=64'},
                     {'post_id': 81, 'label': '자기 글 링크', 'url': 'https://lifeinfo24.org/?p=81'},

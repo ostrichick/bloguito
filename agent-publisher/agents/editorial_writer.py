@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 import requests
@@ -29,16 +30,84 @@ class Evidence(BaseModel):
     quote: str
 
 
+class SumCalculation(BaseModel):
+    operation: Literal['sum']
+    unit: Literal['원']
+    operands: list[int]
+    result: int
+
+
+class IllustrativeInputCalculation(BaseModel):
+    operation: Literal['illustrative_input']
+    age: int
+    monthly_salary: int
+    employment_months: int
+
+
+class DaysToMonthsCalculation(BaseModel):
+    operation: Literal['days_to_months']
+    days: int
+    months: int
+
+
+class PensionProjectionHorizon(BaseModel):
+    years_after_normal: int
+    cumulative_result: int
+
+
+class PensionProjectionCalculation(BaseModel):
+    operation: Literal['pension_projection']
+    unit: Literal['원']
+    base_monthly: int
+    direction: Literal['decrease', 'none', 'increase']
+    change_percent: int
+    start_offset_years: int
+    monthly_result: int
+    horizons: list[PensionProjectionHorizon]
+
+
+class MonthlyFromTotalDaysCalculation(BaseModel):
+    operation: Literal['monthly_from_total_days']
+    total: int
+    days: int
+    monthly: int
+
+
+class AddDurationCalculation(BaseModel):
+    operation: Literal['add_duration']
+    unit: Literal['분']
+    start: str
+    duration: int
+    result: str
+
+
+DerivedCalculation = (
+    SumCalculation
+    | IllustrativeInputCalculation
+    | DaysToMonthsCalculation
+    | PensionProjectionCalculation
+    | MonthlyFromTotalDaysCalculation
+    | AddDurationCalculation
+)
+
+
 class Paragraph(BaseModel):
     text: str
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
+    emphasis: list[str] = Field(default_factory=list, description=(
+        'Optional reviewed phrases already present verbatim in text; renderer only adds emphasis.'
+    ))
+    calculations: list[DerivedCalculation] = Field(default_factory=list, description=(
+        'Optional deterministic calculations; the validator still enforces operation-specific evidence rules.'
+    ))
 
 
 class InformationTableRow(BaseModel):
     cells: list[str]
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
+    calculations: list[DerivedCalculation] = Field(default_factory=list)
 
 
 class InformationTable(BaseModel):
@@ -55,6 +124,7 @@ class SectionFact(BaseModel):
     value: str
     evidence: list[Evidence]
     answers: list[str] = Field(default_factory=list)
+    calculations: list[DerivedCalculation] = Field(default_factory=list)
 
 
 class SectionImage(BaseModel):
@@ -131,11 +201,28 @@ class RelatedPost(BaseModel):
     url: str
 
 
+class LeadImage(BaseModel):
+    url: str
+    alt: str
+    width: int
+    height: int
+
+
+class OfficialNavigation(BaseModel):
+    label: str
+    url: str
+    note: str
+
+
 class Plan(BaseModel):
     title: str
     lead: Paragraph
     sections: list[Section]
     faq: list[FAQ] = Field(default_factory=list)
+    lead_image: LeadImage | None = None
+    official_navigation: list[OfficialNavigation] = Field(default_factory=list, description=(
+        'Optional reviewed official-site/menu navigation; never a direct action CTA.'
+    ))
     related_posts: list[RelatedPost] = Field(default_factory=list, description=(
         'Optional, at most two already-published articles on the same site, '
         'with verified https://lifeinfo24.org/?p=ID URLs; never official CTA or evidence.'
