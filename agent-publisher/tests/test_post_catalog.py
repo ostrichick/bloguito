@@ -18,6 +18,8 @@ class TestPostCatalog(unittest.TestCase):
         from tests.test_editorial_system import sample, sign
         bundle = sample()
         bundle['brief']['volatility'] = 'annual-policy'
+        bundle['brief']['content_type'] = 'dated'
+        bundle['brief']['useful_until'] = '2026-12-31'
         sign(bundle)
         post = {'post_title': '2026 국가건강검진 대상자 조회', 'categories': ['건강/의료'],
                 'content_sha256': hashlib.sha256(b'rendered').hexdigest()}

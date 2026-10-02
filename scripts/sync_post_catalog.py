@@ -118,9 +118,12 @@ def catalog_type(post, reviewed_bundle=None):
     if isinstance(reviewed_bundle, dict) and isinstance(reviewed_bundle.get('review'), dict):
         try:
             from agents.editorial import digest, render
+            from agents.volatility import lifecycle_reasons
             body = {key: reviewed_bundle[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in reviewed_bundle}
             review = reviewed_bundle['review']
-            if review.get('digest') != digest(body) or review.get('issues') != []:
+            if (review.get('digest') != digest(body) or review.get('issues') != []
+                    or not review.get('checks') or any(value is not True for value in review['checks'].values())
+                    or lifecycle_reasons(reviewed_bundle['brief'])):
                 raise ValueError('catalog_review_not_bound')
             content = render(reviewed_bundle['plan'], reviewed_bundle['sources'])
             if hashlib.sha256(content.encode('utf-8')).hexdigest() == post.get('content_sha256'):
