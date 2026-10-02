@@ -242,3 +242,17 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 8. 4.3C와 4.3D는 같은 변경으로 묶지 않는다. fallback 제거 결과를 먼저 관찰한 뒤 discovery 전환을 별도 변경·회귀검증으로 진행한다.
 
 현재 `radar.py`는 `content_type == 'evergreen'`인 brief만 RSS 없이 `editorial_direct`로 보내고, `curator.py` 역시 `editorial_direct`를 evergreen에 한해 허용한다. 이는 아직 의도적인 legacy fallback이며 이번 단계에서는 수정하지 않는다.
+
+## 운영 릴리스와 관찰 시작 상태 — 2026-10-02
+
+2026-10-02 15:21 KST까지 다음 운영 적용을 완료했다.
+
+- Git `main`/`origin/main`을 `7dcefc32a6bca6bc8aa6d22b76a9d992243239a9`로 맞춘 뒤, 운영 `/home/ubuntu/agent-publisher`에 현재 agents 패키지, `editorial_cli.py`, `editorial_policy.json`, critical-fact/policy-exception registry와 4개 활성 정책 문서를 release installer 경로로 배포했다.
+- installer는 운영 `config.py`, `main.py`, 기존 `data/search_briefs.json`을 통째로 교체하지 않았다. 배포 전 파일별 롤백 manifest는 `/home/ubuntu/agent-publisher/backups/editorial-20261002T061701Z/manifest.json`이다.
+- 배포 직후 `agents/volatility.py`, `agents/critical_facts.py`, `agents/event_post_standard.py`, `editorial_policy.json`, `data/critical_facts/registry.json`의 운영 SHA가 release 파일과 일치했고 `validate_critical_fact_registry()`가 `True`를 반환했다. `main.py --help`도 현행 8개 category를 정상 노출했다.
+- 코드 배포 전후 기존 운영 `search_briefs.json` SHA는 `cc2973ff683875c822812c4fca1e1b7d8121c39cc99830281eb863de00e57c37`로 동일했다. 운영에는 과거 10개 brief만 있었고 수동 확정한 3개 신규 reviewed brief는 아직 없었다.
+- 관찰 대상으로 확정한 `senior-implant-insurance-guide`와 `national-pension-silver-loan` 두 reviewed row만 운영 데이터에 추가했다. 기존 10개 row는 byte-level 원본 백업과 구조 비교로 보존했고 `approved`, `reviewed_at`, `review_until`, `useful_until` 값을 변경하지 않았다. `long-term-care-grade-guide`는 `dated_category_cannot_bypass_time_check` legacy 충돌 때문에 추가하지 않았다.
+- 운영 data backup은 `/home/ubuntu/agent-publisher/backups/volatility-briefs-20261002T062027Z`이며, 적용 후 `search_briefs.json`은 12개 row, SHA `277d6fe726a9ed58ac0505c8bf7dcb631e4744d1a02c09efea2e16e6508d88be`다.
+- readback에서 두 대상 모두 `topic_reasons(..., 2026-10-02) == []`, migration 제안과 explicit metadata가 일치했다. 정적 source text를 넣은 smoke에서도 implant brief는 live refresh를 강제하지 않고, silver-loan brief는 `requires_live_state=true` 때문에 source 문구와 무관하게 live refresh를 강제했다.
+
+운영 cron은 `0 8 * * * /home/ubuntu/agent-publisher/run_daily.sh`로 확인됐다. 이번 코드/data 적용은 2026-10-02 15:21 KST에 끝났으므로 그날 08:00 정규 실행은 관찰 표본이 아니다. **다음 정규 실행에서 explicit metadata를 사용하는 실제 신규/수정 bundle의 legacy/volatility 결과와 save-time live recheck를 확인하기 전까지 4.3C/4.3D는 계속 NO-GO**다. 테스트·readback만으로 최소 한 릴리스 관찰 조건을 충족했다고 간주하지 않는다.
