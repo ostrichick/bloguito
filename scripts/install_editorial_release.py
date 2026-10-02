@@ -1,5 +1,6 @@
 """Run on OCI with a reviewed release folder; preserve secrets and the cron schedule."""
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
@@ -7,10 +8,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def verify_release_manifest(release):
+    """Verify an explicit release inventory before touching operational files."""
+    manifest = json.loads((release / 'release-manifest.json').read_text(encoding='utf-8'))
+    if (manifest.get('schema_version') != 1
+            or not isinstance(manifest.get('revision'), str)
+            or len(manifest['revision']) != 40
+            or any(char not in '0123456789abcdef' for char in manifest['revision'])
+            or not isinstance(manifest.get('files'), dict)):
+        raise ValueError('invalid_release_manifest')
+    expected = manifest['files']
+    actual = {p.relative_to(release).as_posix() for folder in ('agent-publisher', 'docs')
+              for p in (release / folder).rglob('*') if p.is_file()}
+    if set(expected) != actual:
+        raise ValueError('release_inventory_mismatch')
+    for name, digest in expected.items():
+        path = (release / name).resolve()
+        if not path.is_relative_to(release.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError('release_file_hash_mismatch')
+    required = {'agent-publisher/agents/edit_post.py', 'agent-publisher/editorial_cli.py',
+                'agent-publisher/agents/edit_orchestration.py', 'agent-publisher/editorial_policy.json'}
+    if not required.issubset(expected):
+        raise ValueError('required_release_module_missing')
+    return manifest
+
+
 def install(release, app):
     release, app = release.resolve(), app.resolve()
     if not (app/'main.py').is_file() or not (app/'config.py').is_file():
         raise ValueError('existing_publisher_required')
+    release_manifest = verify_release_manifest(release)
     files = [p for p in (release/'agent-publisher').rglob('*') if p.is_file()]
     for p in files:
         if p.suffix not in {'.py', '.json'} or '.env' in p.parts or '__pycache__' in p.parts:
@@ -74,7 +101,13 @@ def install(release, app):
             text=text.replace('    radar = RadarAgent()', '    sync_inventory()\n    radar = RadarAgent()')
         put(app/'main.py',text.encode('utf-8'))
         python=app/'venv'/'bin'/'python'
-        subprocess.run([str(python),'-c','import main; from agents.editorial_writer import Plan; from agents.editorial import policy; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); print("Editorial imports and critical-fact registry ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; from agents.editorial_writer import Plan; from agents.editorial import policy; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); print("Editorial entrypoints and critical-fact registry ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes}
+        put(app/'data'/'editorial-release.json', json.dumps({
+            'schema_version': 1, 'revision': release_manifest['revision'],
+            'installed_at_utc': datetime.now(timezone.utc).isoformat(),
+            'files': installed_hashes,
+        }, indent=2).encode('utf-8'))
         print('Installed. Rollback manifest:',backup/'manifest.json')
     except Exception:
         for change in reversed(changes):
