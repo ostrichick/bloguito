@@ -5,8 +5,56 @@ module checks years, official publisher domains, canonical current-year facts,
 and a handful of known misleading claims before Gemini review or WP draft.
 It is intentionally narrow; it does not certify the rest of an article.
 """
+import json
 import re
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+
+CRITICAL_FACTS_DIR = Path(__file__).resolve().parents[1] / "data" / "critical_facts"
+CRITICAL_FACT_SCHEMA_VERSION = 1
+
+
+def _string_list(value):
+    return (isinstance(value, list) and bool(value)
+            and all(isinstance(item, str) and item for item in value))
+
+
+def _string_groups(value):
+    return (isinstance(value, list) and bool(value)
+            and all(_string_list(group) for group in value))
+
+
+def _load_influenza_rule():
+    """Load the pilot annual rule; malformed/missing data fails closed."""
+    path = CRITICAL_FACTS_DIR / "vaccination-2026.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    required_keys = {
+        "schema_version", "rule_id", "year", "official_hosts",
+        "required_source_tokens", "required_source_any_groups",
+        "stale_vaccine_tokens", "stale_schedule_tokens", "reason_codes",
+    }
+    if set(payload) != required_keys:
+        return None
+    reasons = payload.get("reason_codes")
+    if (payload.get("schema_version") != CRITICAL_FACT_SCHEMA_VERSION
+            or payload.get("rule_id") != "influenza-2026"
+            or payload.get("year") != 2026
+            or not _string_list(payload.get("official_hosts"))
+            or not _string_list(payload.get("required_source_tokens"))
+            or not _string_groups(payload.get("required_source_any_groups"))
+            or not _string_list(payload.get("stale_vaccine_tokens"))
+            or not _string_list(payload.get("stale_schedule_tokens"))
+            or not isinstance(reasons, dict)
+            or set(reasons) != {"source_missing", "outdated_vaccine", "outdated_schedule"}
+            or not all(isinstance(value, str) and value for value in reasons.values())):
+        return None
+    return payload
 
 
 def _flat(value):
@@ -128,13 +176,22 @@ def critical_fact_reasons(brief, sources, plan):
         if "환급금" in body and re.search(r"세금포인트.{0,30}(?:현금환급|현금으로환급)", t):
             reasons.append("tax_points_misclassified_as_cash_refund")
     if "2026" in name and any(w in name for w in ("인플루엔자", "독감")):
-        source = _flat(_official(sources, {"kdca.go.kr", "korea.kr"}))
-        if not ("2026" in source and "3가" in source and any(d in source for d in ("9월21", "9.21")) and any(d in source for d in ("10월6", "10.6"))):
-            reasons.append("influenza_2026_revised_schedule_source_missing")
-        if "4가백신" in t or "4가백신" in t.replace("(4가)", "4가"):
-            reasons.append("influenza_2026_outdated_vaccine_type")
-        if any(v in t for v in ("9월20일부터", "10월2일부터", "10월11일부터", "10월18일부터", "2026.09.20", "2026.10.02", "2026.10.11", "2026.10.18")):
-            reasons.append("influenza_2026_outdated_schedule")
+        rule = _load_influenza_rule()
+        if rule is None:
+            reasons.append("critical_fact_registry_invalid")
+        else:
+            source = _flat(_official(sources, set(rule["official_hosts"])))
+            source_ok = (
+                all(token in source for token in rule["required_source_tokens"])
+                and all(any(alias in source for alias in group)
+                        for group in rule["required_source_any_groups"])
+            )
+            if not source_ok:
+                reasons.append(rule["reason_codes"]["source_missing"])
+            if any(token in t for token in rule["stale_vaccine_tokens"]):
+                reasons.append(rule["reason_codes"]["outdated_vaccine"])
+            if any(token in t for token in rule["stale_schedule_tokens"]):
+                reasons.append(rule["reason_codes"]["outdated_schedule"])
     # Financial/medical claims found in the 2026-09-20 live-publication audit.
     # These guards deliberately stop unsupported sales-like guarantees, rather
     # than claiming comprehensive natural-language truth verification.

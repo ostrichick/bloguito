@@ -1,7 +1,11 @@
 """Regression tests for known stale-source failures in Bloguito, with no network calls."""
 import hashlib
+import json
+import tempfile
 import unittest
 from datetime import date
+from pathlib import Path
+from unittest.mock import patch
 from agents.critical_facts import critical_fact_reasons, published_content_risks
 from agents.editorial import validate_bundle
 from test_editorial_system import sample, NOW
@@ -53,13 +57,55 @@ class CriticalPolicyRegressionTests(unittest.TestCase):
         s=[{'source_type':'official','url':'https://www.kdca.go.kr/2026','text':'2026년 독감 9월 20일 시작, 4가 백신'}]
         plan={'title':'2026 독감 안내','lead':{'text':'4가 백신, 9월 20일부터 접종'},'sections':[],'faq':[]}
         r=critical_fact_reasons(b,s,plan)
-        self.assertEqual(len(r),3)
+        self.assertEqual(r,[
+            'influenza_2026_outdated_schedule',
+            'influenza_2026_outdated_vaccine_type',
+            'influenza_2026_revised_schedule_source_missing',
+        ])
 
     def test_influenza_latest_2026_version_accepted(self):
         b={'entity':'독감','primary_keyword':'2026 독감 백신'}
         s=[{'source_type':'official','url':'https://www.kdca.go.kr/latest','text':'2026년 9월 16일 조정. 3가 백신. 9월 21일 어린이, 10월 6일 75세 이상.'}]
         plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 21일부터'},'sections':[],'faq':[]}
         self.assertEqual(critical_fact_reasons(b,s,plan),[])
+
+    def test_influenza_parenthesized_quad_vaccine_still_blocks(self):
+        b={'entity':'독감','primary_keyword':'2026 독감 백신'}
+        source='2026년 3가 백신. 9월 21일 어린이, 10월 6일 75세 이상.'
+        s=[{'source_type':'official','url':'https://www.kdca.go.kr/latest','text':source}]
+        plan={'title':'2026 독감 안내','lead':{'text':'(4가) 백신으로 접종합니다.'},'sections':[],'faq':[]}
+        self.assertIn('influenza_2026_outdated_vaccine_type', critical_fact_reasons(b,s,plan))
+
+    def test_influenza_registry_failure_is_fail_closed(self):
+        b={'entity':'독감','primary_keyword':'2026 독감 백신'}
+        s=[{'source_type':'official','url':'https://www.kdca.go.kr/latest','text':'2026년 3가 백신. 9월 21일 어린이, 10월 6일 75세 이상.'}]
+        plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 21일부터'},'sections':[],'faq':[]}
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, 'vaccination-2026.json').write_text('{"schema_version": 999}', encoding='utf-8')
+            with patch('agents.critical_facts.CRITICAL_FACTS_DIR', Path(tmp)):
+                self.assertEqual(critical_fact_reasons(b,s,plan),['critical_fact_registry_invalid'])
+
+    def test_influenza_registry_non_object_is_fail_closed(self):
+        b={'entity':'독감','primary_keyword':'2026 독감 백신'}
+        s=[{'source_type':'official','url':'https://www.kdca.go.kr/latest','text':'2026년 3가 백신. 9월 21일 어린이, 10월 6일 75세 이상.'}]
+        plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 21일부터'},'sections':[],'faq':[]}
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, 'vaccination-2026.json').write_text('[{}]', encoding='utf-8')
+            with patch('agents.critical_facts.CRITICAL_FACTS_DIR', Path(tmp)):
+                self.assertEqual(critical_fact_reasons(b,s,plan),['critical_fact_registry_invalid'])
+
+    def test_influenza_annual_values_can_change_in_data_without_engine_change(self):
+        b={'entity':'독감','primary_keyword':'2026 독감 백신'}
+        plan={'title':'2026 독감 안내','lead':{'text':'3가 백신, 어린이는 9월 22일부터'},'sections':[],'faq':[]}
+        data_path = Path(__file__).resolve().parents[1] / 'data' / 'critical_facts' / 'vaccination-2026.json'
+        payload = json.loads(data_path.read_text(encoding='utf-8'))
+        payload['required_source_any_groups'][0] = ['9월22', '9.22']
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, 'vaccination-2026.json').write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+            source='2026년 3가 백신. 9월 22일 어린이, 10월 6일 75세 이상.'
+            s=[{'source_type':'official','url':'https://www.kdca.go.kr/latest','text':source}]
+            with patch('agents.critical_facts.CRITICAL_FACTS_DIR', Path(tmp)):
+                self.assertEqual(critical_fact_reasons(b,s,plan),[])
 
     def test_correction_note_is_not_mistaken_for_active_old_claim(self):
         markup = '<div><strong>정정 안내 (2026년 9월 20일)</strong><p>연간 최대 50점 안내를 수정했습니다.</p></div><p>2025년 부여분부터 연간 1,000포인트입니다.</p>'

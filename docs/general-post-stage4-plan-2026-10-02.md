@@ -1,6 +1,6 @@
 # 일반 정보 포스트 정책 최적화 4단계 후속 계획
 
-**상태 (2026-10-02):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 카테고리 8분류 개편과 병합 및 기존 회귀 문제 정리 후 4.3A/B까지 구현했다. 기존 brief 자동 변환은 하지 않았고 [volatility migration report](volatility-migration-report-2026-10-02.json)를 별도로 생성했다. 4.3C/D는 최소 한 릴리스 관찰 뒤 검토하며, 4.4는 계획 상태다.
+**상태 (2026-10-02):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 카테고리 8분류 개편과 병합 및 기존 회귀 문제 정리 후 4.3A/B까지 구현했다. 기존 brief 자동 변환은 하지 않았고 [volatility migration report](volatility-migration-report-2026-10-02.json)를 별도로 생성했다. 4.3C/D는 최소 한 릴리스 관찰 뒤 검토한다. 4.4는 2026 인플루엔자 규칙을 첫 파일럿으로 데이터/엔진 분리를 시작했다.
 
 1~3단계에서 일반 정보글의 writer/validator/renderer 계약을 맞추고, 정책 문서를 글 유형별로 분리했으며, bundle에 실제 적용되는 정책만 semantic review fingerprint와 모델 지침에 포함하도록 변경했다. Standard 수정의 source recheck도 draft/public 공용 planner로 통합했다.
 
@@ -125,6 +125,8 @@ agent-publisher/data/policy_exceptions/
 
 ## 4.4 critical facts의 데이터와 엔진 분리
 
+**진행 상태:** 파일럿 구현. `vaccination-2026.json`에서 2026 인플루엔자 공식 도메인, 현행 백신 유형/일정 토큰, 알려진 구 일정 토큰을 관리하고 `critical_facts.py`는 검증 흐름과 fail-closed 제어를 유지한다. registry 누락·형식 오류는 `critical_fact_registry_invalid`로 보류한다. 다른 주제는 아직 코드에서 제거하지 않았다.
+
 ### 목표
 
 `critical_facts.py`는 검증 엔진으로 유지하고 연도별·주제별 고정값을 versioned data로 분리한다. 복잡한 의미 판단까지 억지로 JSON 규칙으로 바꾸지는 않는다.
@@ -145,6 +147,19 @@ agent-publisher/data/critical_facts/
 - 허용된 명칭과 단위
 - 정확한 공식 source ID/URL 요구
 - 적용 시작·종료 연도
+
+### 현재 규칙 분류
+
+| 규칙 | 분류 | 현재 처리 |
+| --- | --- | --- |
+| 2026 인플루엔자 | 선언형 중심 | **파일럿 데이터화 완료.** 공식 host, 필수 source 토큰/날짜 별칭, 구 백신·구 일정 토큰을 `data/critical_facts/vaccination-2026.json`으로 이동 |
+| 2026 기초연금 | 혼합형 | 금액·연도 값은 향후 데이터화 후보지만, 근로소득 문맥과 수급 보장 표현 검사는 Python 유지 |
+| 2026 세금포인트 | 혼합형 | 연도·한도·소멸기간은 데이터화 후보지만 축약연도 해석, 부여 코호트 문맥, 현금환급 오분류 검사는 Python 유지 |
+| 목포시 #103 접종 연령 상충 | 절차형 | 두 특정 공식 URL의 동일 대상 연령 범위를 상호 대조하므로 Python 유지 |
+| 숨은 보험금 과장 표현 | 절차형 | 문맥상 보장·즉시지급성 표현 차단이므로 Python 유지 |
+| 본인부담상한제 | 혼합형 | 연도별 값은 후보지만 진료연도/귀속연도 의미 확인은 Python 유지 |
+| 전기차 무료충전 | 절차형 | 행사 사실 존재와 kWh 단위 문맥을 함께 검사하므로 Python 유지 |
+| `published_content_risks()` | 절차형 감사 | 과거 공개 HTML의 정정문구·오래된 표현을 보수적으로 탐지하므로 데이터 registry로 이전하지 않음 |
 
 ### 코드에 남길 대상
 

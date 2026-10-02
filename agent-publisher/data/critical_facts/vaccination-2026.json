@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "rule_id": "influenza-2026",
+  "year": 2026,
+  "official_hosts": ["kdca.go.kr", "korea.kr"],
+  "required_source_tokens": ["2026", "3가"],
+  "required_source_any_groups": [
+    ["9월21", "9.21"],
+    ["10월6", "10.6"]
+  ],
+  "stale_vaccine_tokens": ["4가백신", "(4가)백신"],
+  "stale_schedule_tokens": [
+    "9월20일부터",
+    "10월2일부터",
+    "10월11일부터",
+    "10월18일부터",
+    "2026.09.20",
+    "2026.10.02",
+    "2026.10.11",
+    "2026.10.18"
+  ],
+  "reason_codes": {
+    "source_missing": "influenza_2026_revised_schedule_source_missing",
+    "outdated_vaccine": "influenza_2026_outdated_vaccine_type",
+    "outdated_schedule": "influenza_2026_outdated_schedule"
+  }
+}
