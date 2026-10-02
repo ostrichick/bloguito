@@ -220,23 +220,24 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 
 - **4.3A: 완료.** optional lifecycle/live metadata, fail-closed validation, explicit bundle fingerprint binding, read-only migration reporter를 구현했다.
 - **4.3B: 완료.** 기존 gate를 제거하지 않고 annual/timeless 추가 계약과 save-time live source network recheck를 구현했다.
-- **4.3C/4.3D: 최소 한 릴리스 fallback 데이터를 확보하기 전 NO-GO.** 기존 category/content_type 안전장치를 먼저 제거하지 않는다.
+- **4.3C: 부분 진행.** 실제 운영 표본으로 live-state 재조회가 확인된 뒤, `welfare + evergreen` blanket gate 중 사람이 명시적으로 `policy-current`와 `requires_live_state`를 확정한 brief에 한해서만 legacy category fallback을 제거한다. `dated` temporal 검증과 metadata가 없는 welfare fallback은 유지한다.
+- **4.3D: NO-GO.** 4.3C의 제한적 전환 결과를 먼저 관찰하고 discovery 전환은 별도 변경으로 진행한다.
 
 2026-10-02 migration report는 13개 brief 중 현재 review window가 살아 있는 3개를 그대로 식별했고, 9개를 사람 검토가 필요한 후보로 남겼다. 기존 `search_briefs.json`, `approved`, `review_until`, reviewed manifest, WordPress 상태는 자동 변경하지 않았다. 4.3C/D는 explicit metadata를 실제 신규/수정 bundle에 적용한 뒤 한 릴리스 이상 관찰하고 진행한다.
 
-후속 수동 검토에서는 review window가 현재 유효한 3건을 `topic_reasons()`까지 대조했다. `senior-implant-insurance-guide`는 `policy-current` + `requires_live_state=false`, `national-pension-silver-loan`은 분기별 금리 확인 때문에 `policy-current` + `requires_live_state=true`로 로컬 reviewed brief에 명시했다. 두 항목 모두 기존 legacy gate 결과를 바꾸지 않는다. `long-term-care-grade-guide`는 기존 `welfare + evergreen` 조합이 `dated_category_cannot_bypass_time_check`에 이미 걸리므로 metadata만 덧붙여 관찰 가능한 것처럼 만들지 않고 다음 재검토 대상으로 남겼다. 만료된 10건의 `approved`/`review_until`은 변경하지 않았다.
+후속 수동 검토에서는 review window가 현재 유효한 3건을 `topic_reasons()`까지 대조했다. `senior-implant-insurance-guide`는 `policy-current` + `requires_live_state=false`, `national-pension-silver-loan`은 분기별 금리 확인 때문에 `policy-current` + `requires_live_state=true`로 확정했다. 이후 `long-term-care-grade-guide`를 다시 검토한 결과, 원래 `life-health + evergreen`으로 작성된 상시 장기요양보험 제도 안내가 2026-10-02 카테고리 개편에서 `welfare`로 이동하면서 blanket `welfare + evergreen` 차단과 충돌한 사례임을 확인했다. 장기요양은 종료일을 임의로 만들 dated 주제가 아니라 현행 법·급여 기준이 개정될 수 있는 상시 제도이므로 `policy-current + requires_live_state=true`를 명시하고, 이 explicit 계약에 한해서 legacy category gate를 대체하도록 4.3C를 좁게 진행한다. 만료된 10건의 `approved`/`review_until`은 변경하지 않는다.
 
 이 수동 확정은 **로컬 repository의 reviewed brief 데이터만** 변경한다. `scripts/install_editorial_release.py`는 운영 서버에 기존 `data/search_briefs.json`이 있으면 그 파일을 덮어쓰지 않으므로 코드 릴리스만으로 이 2건의 metadata가 운영에 적용되지는 않는다. 따라서 실제 4.3C/D 관찰기간은 별도의 reviewed data 적용 및 릴리스가 이루어진 뒤부터 계산해야 하며, 로컬 커밋 시점을 관찰 시작으로 간주하지 않는다.
 
 ### 4.3C/D 실행 readiness 체크리스트
 
-현재 판정은 **NO-GO**다. 아래 조건을 모두 실제 운영 관찰로 충족하기 전에는 `content_type`/category fallback을 제거하거나 `radar.py`·`curator.py`의 discovery 분기를 volatility 기준으로 전환하지 않는다.
+현재 판정은 **제한적 GO**다. `policy-current`로 사람이 확정한 welfare evergreen만 category blanket fallback을 대체할 수 있고, 그 밖의 `content_type`/dated temporal fallback 제거와 `radar.py`·`curator.py` discovery 전환은 계속 NO-GO다.
 
 1. 운영의 reviewed `search_briefs.json`에 사람이 확정한 explicit volatility metadata가 실제 적용되어야 한다. 코드 저장소의 로컬 값만으로는 관찰을 시작한 것으로 보지 않는다.
 2. 그 metadata를 사용하는 실제 릴리스를 최소 한 번 운영하고, 신규 또는 수정 bundle에서 legacy gate와 volatility gate의 결과를 함께 기록한다.
-3. legacy gate가 HOLD인데 volatility만 PASS하는 사례가 생기면 fallback 제거를 중단하고 원인을 먼저 해결한다. 안전 기준을 맞추기 위해 기존 gate를 자동 완화하지 않는다.
+3. legacy gate가 HOLD인데 volatility만 PASS하는 사례는 원인을 분리한다. 장기요양처럼 category 재분류 때문에 blanket gate만 잘못 막는 경우에는 explicit reviewed lifecycle로 그 gate만 대체할 수 있다. 실버론처럼 실제 temporal 의미가 미해결인 경우에는 기존 dated 검증을 그대로 유지한다.
 4. `requires_live_state=true`인 실제 케이스에서 저장 직전 network recheck와 receipt bypass가 동작했는지 확인한다. 테스트 fixture만으로 이 조건을 충족했다고 보지 않는다.
-5. `long-term-care-grade-guide`처럼 현재 legacy shape 자체가 충돌하는 brief는 새 review에서 `content_type`/lifetime을 함께 재판단한다. volatility 필드만 추가해 우회하지 않는다.
+5. `long-term-care-grade-guide`는 `evergreen + policy-current + requires_live_state=true`가 맞는 것으로 재판정했다. `useful_until`을 만들거나 다른 카테고리로 위장하지 않고, explicit metadata가 모두 존재하는 경우에만 welfare evergreen blanket gate를 대체한다.
 6. 4.3C 검토 시 `useful_until → WordPress expires_at`, 30일 최소 lifetime, category fail-closed, legacy exception 범위가 기존보다 약해지지 않았음을 비교한다.
 7. 4.3D 전에는 discovery fixture를 최소 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`별로 만든다. 상시 절차·현행 정책은 공식 source 직행 여부를, annual/seasonal은 최신 공고 탐색 필요성을 각각 검증한다.
 8. 4.3C와 4.3D는 같은 변경으로 묶지 않는다. fallback 제거 결과를 먼저 관찰한 뒤 discovery 전환을 별도 변경·회귀검증으로 진행한다.
@@ -281,3 +282,15 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 - draft manifest의 `expires_at`은 `2026-12-31`로 저장돼 `brief.useful_until`과 일치했고 category는 `정부 복지·지원금`(ID 3)으로 유지됐다. 30일 최소 lifetime, dated/seasonal temporal gate, category fail-closed, 기존 exception 범위를 완화하지 않았다.
 
 이 표본으로 readiness 체크리스트 4번의 핵심인 **실제 `requires_live_state=true` save-time network recheck**는 운영에서 충족됐다. receipt 재사용 차단은 동일 save 경로의 `force_refresh_ids` 계약과 실제 3/3 refetch가 일치함을 확인했지만, pre-seeded fresh receipt가 있는 상태의 운영 A/B까지 별도로 만들지는 않았다. 또한 16:27 KST `national-pension-silver-loan`에서 확인된 **legacy gate HOLD / volatility metadata PASS 불일치**가 아직 해소되지 않았으므로 4.3C fallback 제거는 계속 **NO-GO**다. 에너지바우처의 성공은 호환 가능한 `seasonal` 경로가 정상 동작한다는 증거이지, 기존 `content_type`/category fallback을 제거해도 된다는 증거는 아니다. 4.3D discovery 전환도 4.3C와 분리해 그대로 보류한다.
+
+### 4.3C 계약 재판정과 제한적 category fallback 제거 — 2026-10-02
+
+운영 표본 이후 `long-term-care-grade-guide`와 `national-pension-silver-loan`을 같은 문제로 취급하지 않고 계약을 다시 분리했다.
+
+- **장기요양보험:** 2026-09-20 원본 brief는 `life-health + evergreen`이었고, 2026-10-02 taxonomy 개편에서 내용에 맞춰 `welfare`로 이동했다. 제도에는 글 전체에 적용할 보편적 신청 마감일이 없고, 등급 신청·판정·급여 이용은 상시 제도인 반면 법·급여 기준은 개정될 수 있다. 따라서 `evergreen + policy-current + requires_live_state=true`가 맞다. 기존 `dated_category_cannot_bypass_time_check`는 이 경우 lifecycle 의미가 아니라 옛 category blanket rule 때문에 발생한 false HOLD다.
+- **실버론:** 제도 신청 자체는 공식 안내상 상시 신청 가능하되 매년 대부금 예산 범위 내에서 접수하며, 금리는 분기별로 바뀐다. 따라서 `policy-current + requires_live_state=true`는 맞지만, 글이 현재 적용 금리를 숫자로 답하는 동안에는 그 금리의 적용기간이라는 bounded temporal 의미도 남는다. `content_type=dated`와 `useful_until=2026-12-31`을 단순히 evergreen으로 바꾸지 않는다. 현재 validator가 이 bounded current-policy period를 일반 신청기간으로 해석해 `temporal_source_not_bound` / `availability_not_verified`를 내는 문제는 별도 계약 과제이며, 한 사례 때문에 `quarterly-policy` 예외를 추가하거나 dated 검증을 우회하지 않는다.
+- **13개 brief 비교:** 2026-10-02에 review window가 살아 있는 세 건 중 임플란트는 legacy/volatility가 이미 일치하고, 장기요양은 category blanket gate만 충돌하며, 실버론은 brief-level legacy topic check는 통과하지만 실제 bundle의 dated temporal 검증이 HOLD다. 만료된 10건은 migration 후보일 뿐 fallback 제거의 승인 근거로 사용하지 않는다.
+
+따라서 이번 4.3C 변경은 `welfare + evergreen`을 일반 허용하지 않는다. `volatility=policy-current`와 boolean `requires_live_state`가 **둘 다 명시된** reviewed brief에 한해서만 `dated_category_cannot_bypass_time_check`를 대체한다. metadata가 없는 welfare evergreen, `timeless-procedure`, events/concert, dated 글의 temporal 검증, 30일 minimum lifetime, `useful_until → expires_at`, 기존 #85 exact exception은 모두 그대로 유지한다. 이 변경으로 장기요양은 `topic_reasons()==[]`가 되지만, 실버론 합성 regression은 계속 `temporal_source_not_bound`와 `availability_not_verified`를 반환한다.
+
+이 단계는 **4.3C 전체 완료가 아니다.** policy-current welfare evergreen의 category fallback만 제한적으로 제거한 것이며, 실버론의 bounded current-policy temporal contract와 나머지 `content_type` compatibility 제거는 추가 근거가 생길 때까지 보류한다. 4.3D는 계속 NO-GO다.

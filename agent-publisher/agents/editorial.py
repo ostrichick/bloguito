@@ -254,9 +254,16 @@ def topic_reasons(brief, today=None):
         if brief.get('content_type') == 'evergreen':
             if brief.get('useful_until') is not None or not brief.get('evergreen_reason'):
                 reasons.append('evergreen_reason_missing_or_deadline_present')
+            explicit_policy_current_welfare = (
+                brief.get('category_key') == 'welfare'
+                and brief.get('volatility') == 'policy-current'
+                and 'requires_live_state' in brief
+                and type(brief.get('requires_live_state')) is bool
+            )
             if (brief.get('category_key') in {'events', 'concert', 'welfare'}
                     and not (brief.get('category_key') == 'welfare'
-                             and legacy_85_welfare_navigation_exception(brief))):
+                             and (legacy_85_welfare_navigation_exception(brief)
+                                  or explicit_policy_current_welfare))):
                 reasons.append('dated_category_cannot_bypass_time_check')
         elif brief.get('content_type') == 'dated':
             if ((date.fromisoformat(brief['useful_until']) - today).days < policy()['min_remaining_days']

@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from agents.editorial import policy_fingerprint, topic_reasons
+from agents.editorial import policy_fingerprint, topic_reasons, validate_bundle
 from agents.volatility import migration_candidate, migration_report, temporal_contract_reasons
 from tests.test_editorial_system import NOW, sample
 
@@ -42,11 +42,38 @@ class VolatilityTests(unittest.TestCase):
         brief['useful_until'] = '2026-12-31'
         self.assertIn('timeless_procedure_requires_evergreen', topic_reasons(brief, NOW.date()))
 
-    def test_policy_current_does_not_override_legacy_category_gate(self):
+    def test_unmigrated_welfare_evergreen_keeps_legacy_category_gate(self):
         brief = sample()['brief']
         brief['category_key'] = 'welfare'
-        brief['volatility'] = 'policy-current'
         self.assertIn('dated_category_cannot_bypass_time_check', topic_reasons(brief, NOW.date()))
+
+    def test_explicit_policy_current_welfare_can_replace_legacy_category_gate(self):
+        brief = sample()['brief']
+        brief.update(
+            category_key='welfare',
+            volatility='policy-current',
+            requires_live_state=False,
+        )
+        self.assertNotIn(
+            'dated_category_cannot_bypass_time_check',
+            topic_reasons(brief, NOW.date()),
+        )
+
+    def test_policy_current_dated_still_requires_legacy_temporal_evidence(self):
+        bundle = sample()
+        bundle['brief'].update(
+            category_key='welfare',
+            content_type='dated',
+            useful_until='2026-12-31',
+            volatility='policy-current',
+            requires_live_state=False,
+        )
+        bundle['brief'].pop('evergreen_reason', None)
+        bundle['temporal_source'] = {'evidence': []}
+        reasons = validate_bundle(
+            bundle, {}, now=NOW, require_review=False, scopes={'content'})['reasons']
+        self.assertIn('temporal_source_not_bound', reasons)
+        self.assertIn('availability_not_verified', reasons)
 
     def test_explicit_live_language_requires_live_refresh_flag(self):
         brief = sample()['brief']
@@ -106,7 +133,17 @@ class VolatilityTests(unittest.TestCase):
         self.assertEqual('policy-current', rows['national-pension-silver-loan']['current_volatility'])
         self.assertTrue(rows['national-pension-silver-loan']['current_requires_live_state'])
         self.assertTrue(rows['national-pension-silver-loan']['suggestion_matches_current'])
-        self.assertFalse(rows['long-term-care-grade-guide']['explicit_metadata_present'])
+        self.assertEqual('policy-current', rows['long-term-care-grade-guide']['current_volatility'])
+        self.assertTrue(rows['long-term-care-grade-guide']['current_requires_live_state'])
+        self.assertTrue(rows['long-term-care-grade-guide']['suggestion_matches_current'])
+
+        briefs_by_id = {row['id']: row for row in briefs}
+        self.assertEqual([], topic_reasons(
+            briefs_by_id['long-term-care-grade-guide'], date(2026, 10, 2)))
+        self.assertIn(
+            'policy_current_keeps_legacy_dated_contract',
+            rows['national-pension-silver-loan']['conflicts'],
+        )
 
     def test_known_migration_shapes_are_conservative(self):
         timeless = migration_candidate({

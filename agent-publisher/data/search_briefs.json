@@ -543,6 +543,8 @@
     "review_until": "2026-10-31",
     "content_type": "evergreen",
     "useful_until": null,
+    "volatility": "policy-current",
+    "requires_live_state": true,
     "evergreen_reason": "국민건강보험공단에서 연중 상시 접수 및 판정하는 노인장기요양보험 등급 인정 제도",
     "reader_questions": [
       {

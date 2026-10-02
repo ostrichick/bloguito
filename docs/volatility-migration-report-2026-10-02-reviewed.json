@@ -246,9 +246,9 @@
       "id": "long-term-care-grade-guide",
       "existing_content_type": "evergreen",
       "category_key": "welfare",
-      "current_volatility": null,
-      "current_requires_live_state": null,
-      "explicit_metadata_present": false,
+      "current_volatility": "policy-current",
+      "current_requires_live_state": true,
+      "explicit_metadata_present": true,
       "suggested_volatility": "policy-current",
       "suggested_requires_live_state": true,
       "confidence": "medium",
@@ -262,7 +262,7 @@
       "review_until": "2026-10-31",
       "approved": true,
       "review_window_current": true,
-      "suggestion_matches_current": null
+      "suggestion_matches_current": true
     },
     {
       "id": "national-pension-silver-loan",

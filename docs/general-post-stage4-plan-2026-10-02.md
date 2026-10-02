@@ -85,7 +85,7 @@ agent-publisher/data/policy_exceptions/
 
 ## 4.3 category 중심 freshness를 volatility 중심으로 전환
 
-**진행 상태:** 4.3A/B 완료. lifecycle은 `timeless-procedure`, `policy-current`, `annual-policy`, `seasonal`, `one-off` 5종이며, 현재 상태 검증은 별도 `requires_live_state`로 분리한다. 기존 category/content-type fallback은 그대로 유지한다.
+**진행 상태:** 4.3A/B 완료. 4.3C는 첫 제한적 전환으로, 명시적으로 검토된 `welfare + evergreen + policy-current` brief만 legacy category blanket gate를 대체한다. metadata가 없는 welfare와 모든 dated temporal 검증은 계속 fallback으로 유지한다. 4.3D는 아직 시작하지 않는다.
 
 ### 목표
 
@@ -107,14 +107,14 @@ agent-publisher/data/policy_exceptions/
 2. explicit metadata가 있는 bundle만 volatility contract를 policy fingerprint에 추가 결합한다. **완료**
 3. 기존 글은 deterministic migration report로 후보값만 제안하고 자동 저장하지 않는다. **완료**
 4. `requires_live_state=true`와 기존 live-state regex는 저장 전 network recheck를 강제하고 receipt reuse를 허용하지 않는다. **완료**
-5. category 기반 규칙은 최소 한 릴리스 동안 fallback으로 유지한 뒤 제거 여부를 결정한다. **보류**
+5. category 기반 규칙은 최소 한 릴리스 동안 fallback으로 유지한 뒤 제거 여부를 결정한다. **부분 진행 — explicit `policy-current` welfare evergreen만 제한적으로 전환**
 
 ### 기본 정책 방향
 
 - `requires_live_state=true`: 저장 직전 항상 관련 source를 network recheck. receipt로 현재 상태 검증을 생략하지 않는다.
 - `annual-policy`, `seasonal`, `one-off`: useful_until과 적용 연도/기간을 강하게 검증한다.
 - `timeless-procedure`: useful_until을 강제하지 않되 source·메뉴 경로가 바뀌면 새 검토가 필요하다.
-- `policy-current`: useful_until을 새로 강제하지 않고 기존 source/review freshness와 category/content-type 안전 규칙을 계속 적용한다.
+- `policy-current`: useful_until을 일괄 강제하지 않는다. explicit metadata가 모두 검토된 welfare evergreen은 category blanket gate 대신 lifecycle 계약을 사용하되, dated shape를 가진 policy-current는 기존 temporal 검증을 계속 적용한다.
 
 ### 완료 기준
 
