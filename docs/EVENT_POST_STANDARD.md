@@ -1,6 +1,6 @@
 # Bloguito 도시별 월간 행사 포스트 표준
 
-이 문서는 **한 도시·지역의 여러 행사, 축제, 공연, 전시, 체험을 한 달 단위로 비교하는 일정형 포스트**에만 적용하는 전용 규약이다. 출처 신선도, SEO, CTA 일반 원칙, WordPress CAS 저장, 공통 문체, 공통 QA처럼 모든 글에 적용되는 규칙은 [EDITORIAL_SYSTEM.md](EDITORIAL_SYSTEM.md)를 따른다. 이 문서는 그 공통 규칙을 반복하지 않고 **행사 포스트에서 달라지는 부분만** 정의한다.
+이 문서는 **한 도시·지역의 여러 행사, 축제, 공연, 전시, 체험을 한 달 단위로 비교하는 일정형 포스트**에만 적용하는 전용 규약이다. 출처 신선도, WordPress CAS 저장, 공통 검토·QA처럼 모든 글에 적용되는 규칙은 [EDITORIAL_SYSTEM.md](EDITORIAL_SYSTEM.md)를 따른다. 대표이미지의 공통 품질 기준은 [FEATURED_IMAGE_STANDARD.md](FEATURED_IMAGE_STANDARD.md)를 적용한다. 이 문서는 행사 포스트에서 달라지는 부분만 정의한다.
 
 현재 자동 검증 호환성을 위해 bundle의 `brief.event_post_standard_version` 값은 계속 `1`을 사용한다. 이 문서의 편집 규칙 개정은 해당 숫자를 임의로 올리는 마이그레이션을 의미하지 않는다.
 
@@ -176,7 +176,7 @@
 
 ## 9. 대표이미지
 
-공통 대표이미지의 텍스트 정확성, 안전 여백, 한글 깨짐 방지, 업로드 전 시각 검수는 `EDITORIAL_SYSTEM.md`와 `editorial_policy.json`을 따른다. 도시 행사 글에는 다음 추가 규칙을 적용한다.
+공통 대표이미지의 텍스트 정확성, 안전 여백, 한글 깨짐 방지, 업로드 전 시각 검수는 `FEATURED_IMAGE_STANDARD.md`와 `editorial_policy.json`을 따른다. 도시 행사 글에는 다음 추가 규칙을 적용한다.
 
 ### MUST
 
