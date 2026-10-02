@@ -1,12 +1,15 @@
 """Shared editorial contract. Deterministic checks are not semantic fact proof."""
+import base64
 import hashlib
 import html
 import json
+import math
 import re
 from datetime import datetime, date
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote
 
+from config import KAKAO_MAP_JAVASCRIPT_KEY
 from agents.temporal_validation import (KST, validate_availability, extract_evidence,
                                         extract_yes24_schedule, extract_ticketlink_bridge_schedule,
                                         validate_multi_event_schedule,
@@ -15,7 +18,7 @@ from agents.temporal_validation import (KST, validate_availability, extract_evid
                                         validate_reference_period)
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
-from agents.event_post_standard import validate_event_post_standard
+from agents.event_post_standard import overview_event_date_labels, validate_event_post_standard
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -515,7 +518,7 @@ def validated_section_assets(plan, sources):
                     or re.search(r'[<>\r\n]', caption)
                     or (image.get('rights') is not None
                         and image.get('rights') not in {
-                            'generated_original', 'site_owned', 'open_license', 'permission_granted'})
+                            'generated_original', 'site_owned', 'open_license', 'permission_granted', 'source_attributed'})
                     or (image.get('rights_url') is not None and (
                         not isinstance(image.get('rights_url'), str)
                         or not image['rights_url'].startswith('https://')
@@ -528,15 +531,22 @@ def validated_section_assets(plan, sources):
         location = section.get('location')
         if location is not None:
             if (not isinstance(location, dict)
-                    or set(location) != {'venue', 'address', 'query', 'evidence'}):
+                    or set(location) - {'venue', 'address', 'query', 'evidence', 'latitude', 'longitude'}
+                    or not {'venue', 'address', 'query', 'evidence'}.issubset(location)):
                 raise ValueError('invalid_section_location')
             venue, address, query, evidence = (
                 location.get('venue'), location.get('address'), location.get('query'), location.get('evidence'))
+            latitude, longitude = location.get('latitude'), location.get('longitude')
             if (not all(isinstance(value, str) for value in (venue, address, query))
                     or not 2 <= len(venue.strip()) <= 120
                     or (address.strip() and not 4 <= len(address.strip()) <= 180)
                     or not 2 <= len(query.strip()) <= 180
                     or re.search(r'[<>\r\n]', venue + address + query)
+                    or ((latitude is None) != (longitude is None))
+                    or (latitude is not None and (
+                        type(latitude) not in {int, float} or type(longitude) not in {int, float}
+                        or not math.isfinite(float(latitude)) or not math.isfinite(float(longitude))
+                        or not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180))
                     or not isinstance(evidence, list) or not 1 <= len(evidence) <= 4):
                 raise ValueError('invalid_section_location')
             for item in evidence:
@@ -604,6 +614,45 @@ def validated_section_action_links(plan, sources):
             seen.add(url)
             section_actions.append(actions_by_url[url])
         scoped.append(section_actions)
+    return scoped, seen
+
+
+def validated_section_official_links(plan, sources):
+    """Bind section-level informational links only to reviewed official sources.
+
+    These links intentionally remain separate from ``actions``: an event detail
+    page can be useful to readers without pretending to be a booking/apply
+    destination.
+    """
+    official_by_url = {
+        source['url']: source
+        for source in sources
+        if isinstance(source, dict) and source.get('source_type') == 'official'
+        and isinstance(source.get('url'), str)
+    }
+    scoped = []
+    seen = set()
+    for section in plan.get('sections', []):
+        entries = section.get('official_links', [])
+        if not isinstance(entries, list) or len(entries) > 2:
+            raise ValueError('invalid_section_official_links')
+        section_links = []
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {'label', 'url'}:
+                raise ValueError('invalid_section_official_links')
+            label = entry.get('label')
+            url = entry.get('url')
+            if (not isinstance(label, str) or not 6 <= len(label.strip()) <= 80
+                    or re.search(r'[<>\r\n]', label)
+                    or not isinstance(url, str) or url not in official_by_url
+                    or url in seen):
+                raise ValueError('invalid_section_official_links')
+            normalized_label = normalized(label).casefold()
+            if normalized_label in {'공식 홈페이지', '공식 사이트', '홈페이지', '공식 페이지'}:
+                raise ValueError('invalid_section_official_links')
+            seen.add(url)
+            section_links.append({'label': label.strip(), 'url': url})
+        scoped.append(section_links)
     return scoped, seen
 
 
@@ -711,6 +760,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                 validated_section_action_links(plan, sources)
             except (KeyError, TypeError, ValueError):
                 reasons.append('invalid_section_actions')
+            try:
+                validated_section_official_links(plan, sources)
+            except (KeyError, TypeError, ValueError):
+                reasons.append('invalid_section_official_links')
             reasons.extend(validate_event_post_standard(bundle))
         if 'content' in scopes and legacy_85_welfare_navigation_exception(brief):
             reasons.extend(legacy_85_welfare_navigation_reasons(brief, sources, plan))
@@ -753,7 +806,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                         required_urls.append(exception['required_attachment_url'])
                 event_source = next((source for source in sources
                                      if source['url'] == exception.get('source_event_url', required_urls[0])), None)
-                if ([source['url'] for source in sources] != required_urls
+                if ([source['url'] for source in sources if source.get('source_type') == 'official'] != required_urls
                         or not event_source
                         or exception['source_event_phrase'] not in event_source['text']
                         or (exception.get('source_date_phrase')
@@ -774,7 +827,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             if multi_event:
                 reasons.extend(validate_multi_event_schedule(
                     brief, sources, temporal, plan, now,
-                    minimum_days=rules['min_remaining_days']))
+                    minimum_days=0 if seasonal_exception else rules['min_remaining_days']))
             elif listing_only:
                 # For an event schedule and booking *destinations*, evidence of an
                 # actual sale deadline is not available from the public listing.
@@ -903,9 +956,15 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             if table is None:
                 continue
             headers, rows = table.get('headers'), table.get('rows')
+            mobile_title_index = next(
+                (idx for idx, header in enumerate(headers or [])
+                 if isinstance(header, str)
+                 and any(token in header for token in ('행사', '축제'))),
+                1 if isinstance(headers, list) and len(headers) > 1 else 0,
+            )
             if (not isinstance(table.get('caption'), str) or not table['caption'].strip()
                     or table.get('mobile_cards', False) not in {True, False}
-                    or not isinstance(headers, list) or not 2 <= len(headers) <= 5
+                    or not isinstance(headers, list) or not 2 <= len(headers) <= 6
                     or not isinstance(rows, list) or not 1 <= len(rows) <= 20
                     or any(not isinstance(h, str) or not 1 <= len(h.strip()) <= 60 for h in headers)
                     or any(not isinstance(row, dict) or not isinstance(row.get('cells'), list)
@@ -913,7 +972,9 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                            or any(not isinstance(cell, str) or len(cell.strip()) > 160
                                   for cell in row['cells'])
                            or not row['cells'][0].strip()
-                           or (table.get('mobile_cards', False) and not row['cells'][1].strip())
+                           or (table.get('mobile_cards', False)
+                               and (mobile_title_index >= len(row['cells'])
+                                    or not row['cells'][mobile_title_index].strip()))
                            for row in rows)):
                 reasons.append('invalid_information_table')
         blocks = all_blocks(plan) if 'content' in scopes else []
@@ -1068,6 +1129,37 @@ def supported_official_number_notations(text, quote_text, candidates):
                 r'(?<!\d)0?' + re.escape(month_number) + r'\s*/\s*0?'
                 + re.escape(day_number) + r'(?!\d)', text):
             supported.update({month_number, day_number} & candidates)
+    # Event sources frequently use compact ``10.9.(금)`` or ISO dates while
+    # reader copy deliberately expands them to ``10월 9일(금)``. Treat only
+    # the exact month/day pair present in the evidence as equivalent; this is
+    # notation normalization, not inference of an unquoted date range.
+    for month, day in re.findall(
+            r"(?<!\d)(\d{1,2})\s*[./-]\s*(\d{1,2})(?:\s*\.)?(?:\s*\([월화수목금토일]\))?",
+            quote_text):
+        month_number = str(int(month))
+        day_number = str(int(day))
+        if (re.search(
+                r'(?<!\d)0?' + re.escape(month_number) + r'월\s*0?'
+                + re.escape(day_number) + r'일', text)
+                or re.search(
+                    r'(?<!\d)0?' + re.escape(month_number) + r'\s*/\s*0?'
+                    + re.escape(day_number) + r'(?:\s*\([월화수목금토일]\))?(?!\d)', text)):
+            supported.update({month_number, day_number} & candidates)
+    # Likewise, official prose may say ``오후 2시`` while a schedule table
+    # normalizes that exact clock time to ``14:00``. Accept only whole-hour
+    # conversions whose AM/PM token is explicitly present in the evidence.
+    for time_match in re.finditer(
+            r'(오전|오후)\s*(\d{1,2})\s*시(?:\s*(?:와|과|및|,)\s*(\d{1,2})\s*시)?',
+            quote_text):
+        meridiem = time_match.group(1)
+        for raw_hour in filter(None, time_match.groups()[1:]):
+            hour = int(raw_hour)
+            if not 1 <= hour <= 12:
+                continue
+            hour24 = hour % 12 + (12 if meridiem == '오후' else 0)
+            hour_text = str(hour24)
+            if re.search(r'(?<!\d)0?' + re.escape(hour_text) + r':00(?!\d)', text):
+                supported.update({hour_text, '00'} & candidates)
     for quantity in re.findall(r'(?<!\d)(\d+)\s*천\s*원', quote_text):
         amount = str(int(quantity) * 1000)
         if amount in candidates and re.search(r'(?<!\d)' + amount + r'\s*원', text.replace(',', '')):
@@ -1192,6 +1284,7 @@ def render(plan, sources, category_key=None):
 
     actions = actionable_links(sources)
     section_actions, scoped_action_urls = validated_section_action_links(plan, sources)
+    section_official_links, _ = validated_section_official_links(plan, sources)
 
     def action_button(action, *, block=False):
         display = 'flex' if block else 'inline-flex'
@@ -1207,6 +1300,7 @@ def render(plan, sources, category_key=None):
 
     def section_markup(number, section):
         nonlocal procedure_number
+        event_section = isinstance(section.get('event_name'), str) and bool(section['event_name'].strip())
         clean_heading = re.sub(r'^\s*(\d+[.)]\s*)?(STEP\s*\d+[.)]?\s*)?', '', section['heading'], flags=re.IGNORECASE).strip()
         procedural = numbered_procedures and section_kind(section) == 'procedure'
         if procedural:
@@ -1218,7 +1312,7 @@ def render(plan, sources, category_key=None):
                 f'line-height:1.45;margin:32px 0 14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0;color:#1a202c">'
                 f'{badge}{html.escape(clean_heading)}</h2>')
         facts = section.get('facts') or []
-        if facts:
+        if facts and not event_section:
             items = ''.join(
                 '<div style="padding:10px 12px;background:#ffffff;border:1px solid #dbe5e1;border-radius:8px">'
                 f'<div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:3px">{html.escape(fact["label"])}</div>'
@@ -1230,16 +1324,27 @@ def render(plan, sources, category_key=None):
         image = section.get('image')
         if image:
             source = source_map[image['source_id']]
+            photo_source_url = image.get('rights_url') or source['url']
+            show_photo_source = (
+                not event_section
+                or image.get('rights') in {'open_license', 'permission_granted', 'source_attributed'}
+            )
+            photo_source = (
+                ', '
+                f'<a href="{html.escape(photo_source_url, quote=True)}" target="_blank" rel="noopener noreferrer" '
+                'style="color:#0d7d59;text-decoration:underline">사진 출처</a>'
+                if show_photo_source else ''
+            )
             body += (
                 '<figure class="bloguito-event-image" style="margin:4px 0 18px">'
                 f'<img src="{html.escape(image["url"], quote=True)}" '
                 f'alt="{html.escape(image["alt"], quote=True)}" loading="lazy" decoding="async" '
                 'style="display:block;width:100%;max-width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:10px" />'
                 '<figcaption style="margin-top:7px;font-size:13px;line-height:1.55;color:#64748b">'
-                f'{html.escape(image["caption"])}, '
-                f'<a href="{html.escape(source["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
-                'style="color:#0d7d59;text-decoration:underline">공식 자료</a></figcaption></figure>'
+                f'{html.escape(image["caption"])}{photo_source}</figcaption></figure>'
             )
+        if event_section:
+            body += ''.join(paragraph(b) for b in section['paragraphs'])
         table = section.get('table')
         if table:
             headers = ''.join(f'<th scope="col" style="padding:10px;border-bottom:2px solid #cbd5e1;text-align:left">{html.escape(h)}</th>'
@@ -1267,23 +1372,47 @@ def render(plan, sources, category_key=None):
                      + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
             if mobile_cards:
                 cards = []
+                mobile_title_index = next(
+                    (idx for idx, header in enumerate(table['headers'])
+                     if isinstance(header, str)
+                     and any(token in header for token in ('행사', '축제'))),
+                    1 if len(table['headers']) > 1 else 0,
+                )
                 for row in table['rows']:
                     pairs = ''.join(
                         '<div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;padding:4px 0">'
                         f'<span style="font-size:12px;font-weight:700;color:#64748b">{html.escape(table["headers"][idx])}</span>'
                         f'<span style="font-size:14px;color:#334155;line-height:1.5">{html.escape(cell)}</span></div>'
-                        for idx, cell in enumerate(row['cells']) if idx != 1 and cell.strip())
+                        for idx, cell in enumerate(row['cells']) if idx != mobile_title_index and cell.strip())
                     cards.append(
                         '<article style="padding:14px 15px;background:#ffffff;border:1px solid #dbe5e1;border-left:4px solid #0d7d59;border-radius:10px">'
-                        f'<div style="font-size:16px;font-weight:800;color:#1f2937;margin-bottom:7px">{mobile_event_name(row["cells"][1])}</div>'
+                        f'<div style="font-size:16px;font-weight:800;color:#1f2937;margin-bottom:7px">{mobile_event_name(row["cells"][mobile_title_index])}</div>'
                         + pairs + '</article>')
                 body += (
                     '<style>.bloguito-overview-mobile{display:none}@media(max-width:640px){.bloguito-overview-desktop{display:none!important}.bloguito-overview-mobile{display:grid!important}}</style>'
                     '<div class="bloguito-overview-mobile" style="grid-template-columns:1fr;gap:10px;margin:8px 0 24px">'
                     + ''.join(cards) + '</div>')
-        body += ''.join(paragraph(b) for b in section['paragraphs'])
+        if not event_section:
+            body += ''.join(paragraph(b) for b in section['paragraphs'])
         scoped = section_actions[number - 1]
-        if scoped:
+        official_links = section_official_links[number - 1]
+        if official_links:
+            body += (
+                '<div class="bloguito-section-official-links" style="margin:4px 0 20px;padding:12px 14px;'
+                'background:#f8fafc;border:1px solid #dbe5e1;border-left:4px solid #0d7d59;border-radius:8px">'
+                '<div style="display:flex;flex-direction:column;gap:8px">'
+                + ''.join(
+                    f'<a href="{html.escape(link["url"], quote=True)}" target="_blank" rel="noopener noreferrer" '
+                    'style="color:#0d7d59 !important;text-decoration:underline;font-size:14px;font-weight:700;line-height:1.6">'
+                    f'{html.escape(link["label"])} <span aria-hidden="true">↗</span></a>'
+                    for link in official_links
+                )
+                + ('<div class="bloguito-section-cta" style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:4px">'
+                   + ''.join(action_button(action, block=True) for action in scoped)
+                   + '</div>' if event_section and scoped else '')
+                + '</div></div>'
+            )
+        if scoped and not event_section:
             body += (
                 '<div class="bloguito-section-cta" style="margin:4px 0 20px;padding:14px;background:#f8fafc;'
                 'border:1px solid #cbd5e1;border-radius:10px">'
@@ -1321,8 +1450,98 @@ def render(plan, sources, category_key=None):
             )
         return body
 
+    def event_map_markup():
+        event_sections = [
+            (number, section) for number, section in enumerate(sections, 1)
+            if isinstance(section.get('event_name'), str) and section['event_name'].strip()
+        ]
+        if len(event_sections) < 2 or not overview_first:
+            return ''
+        try:
+            date_labels = overview_event_date_labels(sections[0])
+        except (TypeError, ValueError):
+            return ''
+
+        spots = []
+        for number, section in event_sections:
+            location = section.get('location') or {}
+            latitude, longitude = location.get('latitude'), location.get('longitude')
+            event_name = section['event_name'].strip()
+            if (type(latitude) not in {int, float} or type(longitude) not in {int, float}
+                    or not math.isfinite(float(latitude)) or not math.isfinite(float(longitude))
+                    or not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180
+                    or event_name not in date_labels):
+                return ''
+            spots.append({
+                'event_name': event_name,
+                'date': date_labels[event_name],
+                'venue': location.get('venue', '').strip(),
+                'lat': float(latitude),
+                'lng': float(longitude),
+                'anchor': f'#step-{number}',
+            })
+
+        key = KAKAO_MAP_JAVASCRIPT_KEY.strip() if isinstance(KAKAO_MAP_JAVASCRIPT_KEY, str) else ''
+        if not re.fullmatch(r'[A-Za-z0-9_-]{16,128}', key):
+            raise ValueError('kakao_map_javascript_key_missing_or_invalid')
+
+        grouped = {}
+        for spot in spots:
+            grouped.setdefault((spot['lat'], spot['lng']), []).append(spot)
+        marker_groups = []
+        for (latitude, longitude), members in grouped.items():
+            info_rows = ''.join(
+                '<div style="padding:8px 0;border-bottom:1px solid #e2e8f0">'
+                f'<div style="font-weight:700;color:#0d7d59;font-size:13.5px;margin-bottom:4px">{html.escape(member["event_name"])}</div>'
+                f'<div style="color:#475569;font-size:12px;margin-bottom:2px">📅 {html.escape(member["date"])}</div>'
+                f'<div style="color:#64748b;font-size:11.5px;margin-bottom:8px">📍 {html.escape(member["venue"])}</div>'
+                f'<a href="{member["anchor"]}" style="display:inline-block;padding:4px 10px;background:#0d7d59;color:#ffffff !important;border-radius:4px;text-decoration:none !important;font-size:11.5px;font-weight:700">본문 행사 상세 보기 →</a>'
+                '</div>'
+                for member in members
+            )
+            marker_groups.append({
+                'lat': latitude,
+                'lng': longitude,
+                'title': ' / '.join(member['event_name'] for member in members),
+                'content': '<div style="padding:6px 14px;min-width:220px;max-width:300px;font-family:-apple-system,BlinkMacSystemFont,Malgun Gothic,sans-serif;line-height:1.5;color:#1e293b">' + info_rows + '</div>',
+            })
+
+        # Keep this JSON ASCII before Base64. atob() returns a byte-valued string;
+        # JSON \u escapes let JSON.parse restore Korean text without mojibake.
+        payload = json.dumps(marker_groups, ensure_ascii=True, separators=(',', ':'))
+        # Keep HTML for InfoWindow content out of the literal post body. WordPress
+        # wpautop can otherwise interpret <div>/<a> inside an inline JS string and
+        # inject <p> tags into the script, which breaks the map at runtime.
+        payload_b64 = base64.b64encode(payload.encode('utf-8')).decode('ascii')
+        map_title = f'{len(spots)}개 행사장 위치 한눈에 보기'
+        return (
+            '<section class="bloguito-kakao-map-container" aria-label="행사장 위치 지도" '
+            'style="margin:28px 0;padding:20px 22px;background:#ffffff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">'
+            '<div style="font-size:17.5px;font-weight:700;color:#0f172a;margin-bottom:8px">🗺️ '
+            + html.escape(map_title) + '</div>'
+            '<p style="margin:0 0 12px;font-size:13.5px;line-height:1.6;color:#475569">'
+            '마커를 누르면 행사 일정과 장소를 확인하고 본문의 상세 안내로 바로 이동할 수 있습니다.</p>'
+            '<div id="bloguito-kakao-map" class="bloguito-kakao-map" '
+            'style="width:100%;height:clamp(320px,52vw,440px);border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;position:relative;touch-action:pan-y pinch-zoom"></div>'
+            f'<script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={html.escape(key, quote=True)}"></script>'
+            '<script type="text/javascript">(function(){var groups=JSON.parse(atob("' + payload_b64 + '"));'
+            'function initBloguitoMap(){if(typeof kakao==="undefined"||!kakao.maps){setTimeout(initBloguitoMap,150);return;}'
+            'var container=document.getElementById("bloguito-kakao-map");if(!container||container.dataset.mapReady==="1")return;container.dataset.mapReady="1";'
+            'var first=groups[0];var map=new kakao.maps.Map(container,{center:new kakao.maps.LatLng(first.lat,first.lng),level:7});'
+            'var zoomControl=new kakao.maps.ZoomControl();map.addControl(zoomControl,kakao.maps.ControlPosition.RIGHT);'
+            'var bounds=new kakao.maps.LatLngBounds();var activeInfoWindow=null;'
+            'groups.forEach(function(group){var pos=new kakao.maps.LatLng(group.lat,group.lng);bounds.extend(pos);'
+            'var marker=new kakao.maps.Marker({position:pos,map:map,title:group.title});'
+            'var info=new kakao.maps.InfoWindow({content:group.content,removable:true});'
+            'kakao.maps.event.addListener(marker,"click",function(){if(activeInfoWindow)activeInfoWindow.close();info.open(map,marker);activeInfoWindow=info;});});'
+            'if(groups.length===1){map.setCenter(new kakao.maps.LatLng(first.lat,first.lng));map.setLevel(5);}else{map.setBounds(bounds);}'
+            '}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",initBloguitoMap);}else{initBloguitoMap();}})();</script>'
+            '</section>'
+        )
+
     if overview_first:
         result += section_markup(1, sections[0])
+        result += event_map_markup()
 
     # 2. Only confirmed booking/apply/lookup/purchase/install destinations are actions.
     # Informational sources remain in the citations below, never in the CTA.

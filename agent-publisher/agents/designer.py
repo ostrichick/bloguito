@@ -60,9 +60,24 @@ DEFAULT_FEATURED_IMAGE_POLICY = {
         "max_blocks": 3,
         "primary_max_chars": 22,
         "secondary_max_chars": 28,
+        "line_break_strategy": "fixed_semantic_plan",
+        "font_metrics_may_not_change_line_breaks": True,
+        "primary_line_target_chars": 10,
+        "primary_max_lines": 2,
+        "primary_line_slot_px": 96,
+        "primary_baseline_offset_px": 82,
+        "secondary_line_slot_px": 36,
+        "secondary_baseline_offset_px": 30,
+        "primary_min_font_size_px": 52,
+        "secondary_min_font_size_px": 22,
+        "chip_min_font_size_px": 16,
+        "overflow_behavior": "shrink_same_lines_then_reject",
         "display_font_required": True,
+        "generic_system_fonts_prohibited_for_all_visible_copy": True,
         "avoid_generic_system_font_for_primary": True,
-        "brand_primary_font_family": "HYPMokGak-Bold",
+        "brand_primary_font_family": "NotoSerifKR-900",
+        "brand_secondary_font_family": "NotoSerifKR-900",
+        "brand_chip_font_family": "NotoSerifKR-900",
         "brand_primary_font_rotation": False,
     },
     "composition": {
@@ -152,17 +167,46 @@ def _load_font(size: int = 24, bold: bool = True) -> ImageFont.FreeTypeFont:
     raise RuntimeError("Hangul-capable font unavailable; refusing to render broken Korean text")
 
 
-def _load_display_font(size: int = 24) -> ImageFont.FreeTypeFont:
-    """Load the fixed Bloguito Hangul display face for featured-image primary copy."""
-    family = FEATURED_IMAGE_POLICY.get("text", {}).get("brand_primary_font_family", "HYPMokGak-Bold")
-    family_paths = {
-        "HYPMokGak-Bold": ["C:/Windows/Fonts/H2MKPB.TTF"],
+def _load_display_font(size: int = 24, *, role: str = "primary") -> ImageFont.FreeTypeFont:
+    """Load the fixed Bloguito Hangul display face for visible featured-image copy.
+
+    Featured-image text is branding, not body typography.  Do not silently fall
+    back to Malgun/Nanum/Noto Sans or another generic system gothic for any
+    visible cover text (title, subtitle, or chip).
+    """
+    family_key = {
+        "primary": "brand_primary_font_family",
+        "secondary": "brand_secondary_font_family",
+        "chip": "brand_chip_font_family",
+    }.get(role)
+    if family_key is None:
+        raise ValueError(f"unknown_featured_font_role:{role}")
+    family = FEATURED_IMAGE_POLICY.get("text", {}).get(family_key, "NotoSerifKR-900")
+    family_specs = {
+        "NotoSerifKR-900": {
+            "paths": [
+                "C:/Windows/Fonts/NotoSerifKR-VF.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSerifKR-VF.ttf",
+                "/usr/share/fonts/opentype/noto/NotoSerifCJK-Black.ttc",
+            ],
+            "expected_families": {"Noto Serif KR", "Noto Serif CJK KR"},
+            "variation": "Black",
+        },
     }
-    candidates = family_paths.get(family, [])
+    spec = family_specs.get(family, {})
+    candidates = spec.get("paths", [])
     for path in candidates:
         try:
             font = ImageFont.truetype(path, size)
-            if _font_has_hangul(font) and font.getname()[0] == family:
+            family_name, style_name = font.getname()
+            variation = spec.get("variation")
+            if variation and family_name == "Noto Serif KR" and hasattr(font, "set_variation_by_name"):
+                font.set_variation_by_name(variation)
+                family_name, style_name = font.getname()
+            expected_families = spec.get("expected_families") or set()
+            if (_font_has_hangul(font)
+                    and (not expected_families or family_name in expected_families)
+                    and (not variation or style_name == variation)):
                 return font
         except Exception:
             continue
@@ -230,6 +274,43 @@ def split_title(text: str, max_first_line: int = 22) -> list[str]:
     l1 = " ".join(words[:best_split])
     l2 = " ".join(words[best_split:])
     return [l1, l2] if l2 else [l1]
+
+
+def build_cover_line_plan(primary_text: str) -> list[str]:
+    """Return the canonical featured-cover title lines before any font is loaded.
+
+    The line plan is deliberately font-independent. Font metrics may only reduce
+    the font size to fit these exact lines; they must never trigger a different
+    wrap point. This keeps a cover's composition stable when the display face is
+    changed during design review.
+    """
+    text_policy = FEATURED_IMAGE_POLICY.get("text", {})
+    normalized = _clean_cover_text(primary_text)
+    if not normalized:
+        raise ValueError("cover_primary_text_required")
+    target_chars = max(4, int(text_policy.get("primary_line_target_chars", 10)))
+    lines = split_title(normalized, max_first_line=target_chars)
+    max_lines = max(1, int(text_policy.get("primary_max_lines", 2)))
+    if len(lines) > max_lines:
+        raise ValueError("cover_primary_text_exceeds_fixed_line_plan")
+    return lines
+
+
+def _fit_display_font_to_fixed_lines(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    *,
+    max_width: int,
+    initial_size: int,
+    min_size: int,
+    role: str,
+) -> ImageFont.FreeTypeFont:
+    """Shrink a font to fit an existing line plan without ever reflowing it."""
+    for size in range(initial_size, min_size - 1, -2):
+        font = _load_display_font(size, role=role)
+        if all(draw.textbbox((0, 0), line, font=font)[2] <= max_width for line in lines):
+            return font
+    raise ValueError(f"cover_{role}_text_does_not_fit_fixed_line_plan")
 
 
 def _clean_cover_text(text: str) -> str:
@@ -576,36 +657,59 @@ class DesignerAgent:
         left = int(composition.get("text_start_px", round(width * safe_margin)))
         text_right = int(round(width * text_area_percent)) - 18
         max_text_width = max(240, text_right - left)
-        text_width_chars = max(8, min(10, int(FEATURED_IMAGE_POLICY["text"].get("primary_max_chars", 22))))
-        lines = split_title(primary_text, max_first_line=text_width_chars)
+        text_policy = FEATURED_IMAGE_POLICY.get("text", {})
+        lines = build_cover_line_plan(primary_text)
         longest = max(map(len, lines)) if lines else 1
         font_size = 88 if longest <= 7 else 80 if longest <= 10 else 70
         if len(lines) > 1:
             font_size = min(font_size, 72)
-        while font_size >= 52:
-            title_font = _load_display_font(font_size)
-            if all(draw.textbbox((0, 0), line, font=title_font)[2] <= max_text_width for line in lines):
-                break
-            font_size -= 2
-        else:
-            raise ValueError("cover_primary_text_does_not_fit_left_text_area")
+        title_font = _fit_display_font_to_fixed_lines(
+            draw,
+            lines,
+            max_width=max_text_width,
+            initial_size=font_size,
+            min_size=int(text_policy.get("primary_min_font_size_px", 52)),
+            role="primary",
+        )
 
         chip_text = _clean_cover_text(chip_text or "") or None
-        chip_font = _load_font(20, bold=True)
-        subtitle_font = _load_font(28, bold=True)
-        line_gap = 10
-        title_boxes = [draw.textbbox((0, 0), line, font=title_font) for line in lines]
-        title_heights = [box[3] - box[1] for box in title_boxes]
-        title_height = sum(title_heights) + line_gap * max(0, len(lines) - 1)
+        chip_font = (
+            _fit_display_font_to_fixed_lines(
+                draw,
+                [chip_text],
+                max_width=max_text_width - 28,
+                initial_size=20,
+                min_size=int(text_policy.get("chip_min_font_size_px", 16)),
+                role="chip",
+            )
+            if chip_text
+            else None
+        )
+        subtitle_font = (
+            _fit_display_font_to_fixed_lines(
+                draw,
+                [secondary_text],
+                max_width=max_text_width,
+                initial_size=28,
+                min_size=int(text_policy.get("secondary_min_font_size_px", 22)),
+                role="secondary",
+            )
+            if secondary_text
+            else None
+        )
+        title_line_slot = int(text_policy.get("primary_line_slot_px", 96))
+        title_baseline_offset = int(text_policy.get("primary_baseline_offset_px", 82))
+        title_height = title_line_slot * len(lines)
         chip_height = 36 if chip_text else 0
         chip_gap = 18 if chip_text else 0
-        subtitle_box = draw.textbbox((0, 0), secondary_text, font=subtitle_font) if secondary_text else None
-        subtitle_height = (subtitle_box[3] - subtitle_box[1]) if subtitle_box else 0
+        subtitle_height = int(text_policy.get("secondary_line_slot_px", 36)) if secondary_text else 0
+        subtitle_baseline_offset = int(text_policy.get("secondary_baseline_offset_px", 30))
         subtitle_gap = 22 if secondary_text else 0
         block_height = chip_height + chip_gap + title_height + subtitle_gap + subtitle_height
         start_y = _centered_block_top(height, block_height, safe_margin_px)
 
         if chip_text:
+            assert chip_font is not None
             chip_box = draw.textbbox((0, 0), chip_text, font=chip_font)
             chip_w = chip_box[2] - chip_box[0]
             if chip_w + 28 > max_text_width:
@@ -615,28 +719,34 @@ class DesignerAgent:
                 radius=18,
                 fill=(226, 244, 238, 246),
             )
-            draw.text((left + 14, start_y + 7), chip_text, font=chip_font, fill=(0, 116, 87, 255))
+            draw.text(
+                (left + 14, start_y + (chip_height // 2)),
+                chip_text,
+                font=chip_font,
+                fill=(0, 116, 87, 255),
+                anchor="lm",
+            )
 
         title_y = start_y + chip_height + chip_gap
         title_color = (18, 53, 96, 255)
         for index, line in enumerate(lines):
             draw.text(
-                (left, title_y),
+                (left, title_y + title_baseline_offset + (index * title_line_slot)),
                 line,
                 font=title_font,
                 fill=title_color,
+                anchor="ls",
             )
-            title_y += title_heights[index] + line_gap
 
         if secondary_text:
-            subtitle_y = title_y - line_gap + subtitle_gap
-            if subtitle_box and subtitle_box[2] - subtitle_box[0] > max_text_width:
-                raise ValueError("cover_secondary_text_does_not_fit_left_text_area")
+            assert subtitle_font is not None
+            subtitle_y = title_y + title_height + subtitle_gap + subtitle_baseline_offset
             draw.text(
                 (left, subtitle_y),
                 secondary_text,
                 font=subtitle_font,
                 fill=(0, 126, 96, 255),
+                anchor="ls",
             )
         return base.convert("RGB")
 

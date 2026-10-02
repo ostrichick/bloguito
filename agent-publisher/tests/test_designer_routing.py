@@ -10,6 +10,7 @@ from agents.designer import (
     _cover_profile,
     _load_display_font,
     _load_font,
+    build_cover_line_plan,
     build_editorial_cover_prompt,
     cleanup_generated_cover,
     derive_cover_copy,
@@ -160,11 +161,25 @@ class DesignerRoutingTests(unittest.TestCase):
                 _load_font(24, bold=True)
 
     def test_featured_primary_font_uses_verified_display_face(self):
-        font = _load_display_font(32)
-        self.assertIsNotNone(font)
-        family, style = font.getname()
-        self.assertEqual(family, 'HYPMokGak-Bold')
-        self.assertNotIn('Malgun', family)
+        for role in ('primary', 'secondary', 'chip'):
+            with self.subTest(role=role):
+                font = _load_display_font(32, role=role)
+                self.assertIsNotNone(font)
+                family, style = font.getname()
+                self.assertIn(family, {'Noto Serif KR', 'Noto Serif CJK KR'})
+                self.assertEqual(style, 'Black')
+                self.assertNotIn('Malgun', family)
+
+    def test_cover_overlay_never_uses_generic_font_loader_for_visible_copy(self):
+        image = Image.new('RGB', (1200, 675), color=(240, 246, 243))
+        with patch('agents.designer._load_font', side_effect=AssertionError('generic cover font used')):
+            rendered = self.designer._overlay_cover_copy(
+                image,
+                primary_text='광주 10월 축제',
+                secondary_text='공연과 체험 일정',
+                chip_text='2026',
+            )
+        self.assertEqual((1200, 675), rendered.size)
 
     def test_display_font_fails_closed_instead_of_using_generic_gothic(self):
         with patch("agents.designer.ImageFont.truetype", side_effect=OSError("display font missing")):
@@ -188,6 +203,28 @@ class DesignerRoutingTests(unittest.TestCase):
         ):
             rendered = "\n".join(split_title(title))
             self.assertNotRegex(rendered, r"(?:10만원|3개월|2시간)\n(?:미만|이하|이내)")
+
+    def test_cover_line_plan_is_determined_before_font_metrics(self):
+        title = "2026~2027 65세 이상 독감 무료접종 일정"
+        with patch("agents.designer._load_display_font", side_effect=AssertionError("font loaded during line planning")):
+            lines = build_cover_line_plan(title)
+        self.assertEqual(lines, ["2026~2027 65세 이상", "독감 무료접종 일정"])
+
+    def test_cover_overlay_does_not_reflow_when_font_size_changes(self):
+        image = Image.new("RGB", (1200, 675), color=(240, 246, 243))
+        title = "세종 10월 축제 일정 안내"
+        expected = build_cover_line_plan(title)
+        with patch("agents.designer.build_cover_line_plan", wraps=build_cover_line_plan) as planner:
+            rendered = self.designer._overlay_cover_copy(
+                image,
+                primary_text=title,
+                secondary_text="접종 일정 확인",
+                chip_text="2026",
+            )
+        self.assertEqual((1200, 675), rendered.size)
+        self.assertEqual(planner.call_count, 1)
+        self.assertEqual(planner.call_args.args[0], title)
+        self.assertEqual(expected, build_cover_line_plan(title))
 
     def test_low_quality_local_fallback_is_not_publishable(self):
         out_path = Path(self.temp_dir.name) / "test_editorial_fallback_output.jpg"

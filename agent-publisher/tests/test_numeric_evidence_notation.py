@@ -24,6 +24,33 @@ class NumericEvidenceNotationTests(unittest.TestCase):
         self.assertEqual({'2026', '9'}, supported_official_number_notations(
             '2026년 9월 18일', quote, {'2026', '9', '18'}))
 
+    def test_compact_source_date_supports_reader_friendly_korean_date_without_year(self):
+        quote = '기간 10.9.(금)~10.11.(일) / 2026-10-17 / 2026.11.01'
+        body = '10월 9일(금)~10월 11일(일), 10월 17일(토), 11월 1일(일)'
+        candidates = {'10', '9', '11', '17', '1'}
+        self.assertEqual(
+            candidates,
+            supported_official_number_notations(body, quote, candidates),
+        )
+
+    def test_compact_source_date_supports_short_slash_table_date(self):
+        quote = '기간 10.9.(금)~10.11.(일) / 2026-10-17 / 2026.11.01'
+        body = '10/9(금)~10/11(일), 10/17(토), 11/1(일)'
+        candidates = {'10', '9', '11', '17', '1'}
+        self.assertEqual(
+            candidates,
+            supported_official_number_notations(body, quote, candidates),
+        )
+
+    def test_korean_ampm_source_time_supports_exact_24_hour_table_notation(self):
+        quote = '매주 토요일 오후 2시, 10월 31일에는 오후 1시와 3시 두 차례'
+        body = '14:00 / 13:00, 15:00'
+        candidates = {'14', '13', '15', '00'}
+        self.assertEqual(
+            candidates,
+            supported_official_number_notations(body, quote, candidates),
+        )
+
     def test_won_equivalence_only_when_unit_and_amount_match(self):
         quote = '입장료 1천원 할인(1포인트 사용)'
         self.assertEqual({'1000'}, supported_official_number_notations(

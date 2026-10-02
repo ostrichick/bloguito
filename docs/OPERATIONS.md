@@ -135,7 +135,7 @@ ChatGPT native image generation처럼 도구 특성상 이미지 생성 호출�
 
 **묶음 처리:** 같은 글·같은 승인 범위의 문구·중복 제거·기존 사실 재배치는 한 후보 bundle에 모아 한 번 저장한다. Fast 수정은 최초 full review를 trust anchor로 두고 `fast_edit_chain`을 검증하며 최대 5개 delta까지만 이어간다. 새 사실·근거·제목·CTA 또는 chain 단절은 Standard로 올린다.
 
-**행사 일정형 글:** 한 도시의 여러 행사·축제를 월간 가이드로 작성하거나 기존 Gemini draft를 개선할 때에는 [EVENT_POST_STANDARD.md](EVENT_POST_STANDARD.md)를 적용한다. Gemini 초안은 행사 후보·레이아웃·공식 URL·미디어 후보를 재사용할 수 있는 scaffold로 취급하고, 현재 연도 날짜·시간·비용·신청·프로그램을 공식 source로 다시 검증한 뒤 필요한 행사 section을 통째로 재작성한다. 새 표준 bundle은 `event_post_standard_version=1`, `multi_event_schedule=true`, 행사별 `event_name` binding을 사용한다. 기존 draft는 다음 Standard revision에서 이관하며, 도시별 고정 행사 수·1,200단어 기준·인터랙티브 지도·`test_<city>_festival_post.py` 같은 one-off 테스트를 새 품질 게이트로 만들지 않는다. 행사 사실·source·CTA·SEO가 바뀌는 수정은 `standard-event` 검증과 full semantic review를 거치고, actual image relevance/quality와 desktop/mobile 배치는 browser/visual QA로 확인한다.
+**행사 일정형 글:** [EVENT_POST_STANDARD.md](EVENT_POST_STANDARD.md)를 적용하는 bundle은 `event_post_standard_version=1`, `multi_event_schedule=true`, 행사별 `event_name` binding을 사용한다. 행사 사실·source·CTA·SEO가 바뀌는 수정은 `standard-event` 검증과 full semantic review를 거치고, 이미지 적합성·화질과 desktop/mobile 배치는 browser/visual QA로 확인한다. 행사 선정·본문 구조·지도·이미지·대표이미지의 편집 규칙은 이 운영 문서에 복제하지 않고 행사 전용 표준을 따른다.
 
 **재사용과 task-state:** 같은 bundle/source/policy/reviewer fingerprint의 current review와 짧은 source receipt는 재사용한다. 예매·판매·신청·재고처럼 상태가 빠르게 변하는 source는 live refresh한다. Standard·복합 이미지·중단 가능 작업만 `task-state`를 사용하고, Simple one-shot은 state machine 없이 CAS/readback으로 끝낸다. media import 결과가 불명확한 경우 attachment checkpoint가 있을 때만 reconcile하며 자동 재import하지 않는다.
 
