@@ -255,4 +255,29 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 - 운영 data backup은 `/home/ubuntu/agent-publisher/backups/volatility-briefs-20261002T062027Z`이며, 적용 후 `search_briefs.json`은 12개 row, SHA `277d6fe726a9ed58ac0505c8bf7dcb631e4744d1a02c09efea2e16e6508d88be`다.
 - readback에서 두 대상 모두 `topic_reasons(..., 2026-10-02) == []`, migration 제안과 explicit metadata가 일치했다. 정적 source text를 넣은 smoke에서도 implant brief는 live refresh를 강제하지 않고, silver-loan brief는 `requires_live_state=true` 때문에 source 문구와 무관하게 live refresh를 강제했다.
 
-운영 cron은 `0 8 * * * /home/ubuntu/agent-publisher/run_daily.sh`로 확인됐다. 이번 코드/data 적용은 2026-10-02 15:21 KST에 끝났으므로 그날 08:00 정규 실행은 관찰 표본이 아니다. **다음 정규 실행에서 explicit metadata를 사용하는 실제 신규/수정 bundle의 legacy/volatility 결과와 save-time live recheck를 확인하기 전까지 4.3C/4.3D는 계속 NO-GO**다. 테스트·readback만으로 최소 한 릴리스 관찰 조건을 충족했다고 간주하지 않는다.
+운영 cron은 `0 8 * * * /home/ubuntu/agent-publisher/run_daily.sh`로 확인됐다. 이번 코드/data 적용은 2026-10-02 15:21 KST에 끝났으므로 그날 08:00 정규 실행은 관찰 표본이 아니다. 이 시점에는 테스트·readback만으로 최소 한 릴리스 관찰 조건을 충족했다고 간주하지 않았고 4.3C/4.3D를 계속 NO-GO로 유지했다. 이후 같은 날 17:06 KST 수동 운영 `prepare-draft`에서 explicit live-state의 실제 save-time recheck를 별도로 관찰했으며, 다음 정규 실행은 추가 운영 표본으로 본다.
+
+### 첫 explicit live-state 운영 표본 — 2026-10-02 16:27 KST
+
+`national-pension-silver-loan`을 `volatility=policy-current`, `requires_live_state=true`인 실제 신규 draft 후보로 준비해 운영 `prepare-draft` 경로를 실행했다. 관찰용 bundle은 국민연금공단의 실버론 지원내용, 신청방법, 상환, 이자 모의계산 4개 공식 페이지를 2026-10-02 16:19 KST에 새로 조회했다. 현재 공식 원문은 2026년 4분기 대부이자율 `연 3.21%`, 연체이자율 `연 6.42%`를 표시하고 있었고, 이자율이 매 분기 변경된다는 문구도 함께 확인됐다.
+
+- explicit volatility metadata 자체는 유효했고 `topic_reasons() == []`, `temporal_contract_reasons() == []`였다.
+- migration 결과는 기존 검토값과 일치했지만 `policy_current_keeps_legacy_dated_contract` 충돌 신호를 그대로 유지했다. 이는 `policy-current`가 기존 `content_type=dated` 계약을 면제하지 않는다는 의도된 상태다.
+- 원고의 evidence, 숫자 근거, 문장부호, 공식 링크 형식 오류를 제거한 뒤 deterministic preflight에서 남은 사유는 정확히 `temporal_source_not_bound`, `availability_not_verified` 두 개뿐이었다.
+- 16:27 KST에 실제 `scripts/editorial_cli_via_ssh.py ... prepare-draft` 경로로 재실행해도 같은 두 사유로 `SystemExit` HOLD가 발생했다. local/remote WordPress write 전에 중단됐고 receipt도 생성되지 않았다.
+- 직후 WordPress draft 목록은 기존 `#837`, `#592` 두 건뿐으로 확인되어 이 관찰 시도에서 새 draft가 만들어지지 않았음을 검증했다.
+
+이 표본은 readiness 체크리스트의 **legacy gate HOLD / volatility metadata PASS 불일치 사례**에 해당한다. 따라서 4.3C fallback 제거는 계속 **NO-GO**다. 또한 저장 단계까지 도달하지 못했으므로 `requires_live_state=true`가 save-time에 모든 reviewed source의 receipt를 우회하고 network recheck를 강제하는 운영 조건은 아직 충족되지 않았다. 이 한 사례를 통과시키기 위해 별도의 범용 quarterly-policy 예외나 temporal bypass를 즉시 추가하지 않고, 기존 dated lifetime/temporal 의미를 별도 재검토 대상으로 남긴다.
+
+### explicit seasonal live-state 저장 성공 표본 — 2026-10-02 17:06 KST
+
+사용자가 선택한 `energy-voucher-deadline-2026`을 `content_type=dated`, `volatility=seasonal`, `requires_live_state=true`, `useful_until=2026-12-31`로 준비했다. reviewed window는 `2026-10-02`부터 `2026-10-31`까지이며 deterministic preflight와 semantic review가 모두 `ready`였다. 공식 source 3개는 에너지바우처 지원안내, 신청안내, parser가 직접 읽을 수 있는 공식 영상 상세 페이지이며, 전체 신청기간 `2026-06-15 ~ 2026-12-31`과 별개로 `2026-10-01 ~ 2026-10-02` 신청·재신청 일시중단을 원고에 명시했다.
+
+- `scripts/editorial_cli_via_ssh.py ... prepare-draft`의 17:05:54~17:06:57 KST 실제 운영 run이 `status=ok`로 끝났다.
+- 성공 run의 workflow metrics는 `source_fetch_requests=3`, `source_receipt_refetch=3`, `source_recheck=415.69ms`, `wp_roundtrips=1`이었다. `source_receipt_hit`은 없었다.
+- `requires_live_state=true`이면 `source_requires_live_refresh()`가 모든 reviewed source에 `True`를 반환하고, `verify_explicit_live_sources()`가 세 source ID를 모두 `force_refresh_ids`로 넘긴다. 이 경로에서는 `_load_reusable_receipt()`보다 `force_refresh_ids`가 우선하므로 receipt hit로 network fetch를 생략할 수 없다. 실제 성공 run에서도 세 source가 모두 refetch됐고 receipt 3개가 `2026-10-02T17:06:02+09:00`에 새로 기록됐으며 각 observed SHA가 reviewed SHA와 일치했다. 다만 성공 run 직전에 이 세 URL의 유효한 receipt가 이미 존재했다는 별도 로그는 없으므로, 운영 표본 자체가 증명하는 것은 **save-time 3/3 강제 refetch**이고 receipt 선점 상태의 A/B 비교는 코드 경로 검증에 의존한다.
+- 대표 이미지는 생성 API를 호출하지 않고 로컬 reviewed JPEG를 `--image-path`로 전달했다. WordPress attachment `#842`의 SHA256은 `energy-cover-couple.jpg`와 일치했고, 성공 run metrics에도 `cover_generation` timing이 없다. 사용자가 ChatGPT/CoS에서 명시적으로 포스트 작성을 지시한 경로에서는 Gemini 이미지를 사용하지 않는 운영 기준을 유지했다.
+- WordPress에는 `#841` `2026 에너지바우처 신청기간: 10월 2일 일시중단, 12월 31일 마감`이 `draft`로 저장됐다. 기존 `#837`, `#592` draft는 유지됐고 과거 에너지바우처 `#90`은 계속 `trash`다. 이후 같은 bundle의 재실행은 `duplicate_topic`에서 WordPress write 전에 차단돼 두 번째 draft를 만들지 않았다.
+- draft manifest의 `expires_at`은 `2026-12-31`로 저장돼 `brief.useful_until`과 일치했고 category는 `정부 복지·지원금`(ID 3)으로 유지됐다. 30일 최소 lifetime, dated/seasonal temporal gate, category fail-closed, 기존 exception 범위를 완화하지 않았다.
+
+이 표본으로 readiness 체크리스트 4번의 핵심인 **실제 `requires_live_state=true` save-time network recheck**는 운영에서 충족됐다. receipt 재사용 차단은 동일 save 경로의 `force_refresh_ids` 계약과 실제 3/3 refetch가 일치함을 확인했지만, pre-seeded fresh receipt가 있는 상태의 운영 A/B까지 별도로 만들지는 않았다. 또한 16:27 KST `national-pension-silver-loan`에서 확인된 **legacy gate HOLD / volatility metadata PASS 불일치**가 아직 해소되지 않았으므로 4.3C fallback 제거는 계속 **NO-GO**다. 에너지바우처의 성공은 호환 가능한 `seasonal` 경로가 정상 동작한다는 증거이지, 기존 `content_type`/category fallback을 제거해도 된다는 증거는 아니다. 4.3D discovery 전환도 4.3C와 분리해 그대로 보류한다.
