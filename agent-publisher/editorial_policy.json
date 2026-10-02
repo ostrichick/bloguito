@@ -17,9 +17,17 @@
     "rank_math_is_publish_gate": false
   },
   "featured_image_policy": {
-    "version": 4,
+    "version": 5,
     "purpose": "modern_editorial_cover",
     "benchmark": "post-475-movein-cover-2026-09-27",
+    "manual_generation": {
+      "provider": "chatgpt",
+      "candidate_count": 5,
+      "user_selection_required": true,
+      "gemini_generation_allowed": false,
+      "fixed_layout_constraints": false,
+      "candidate_variation_required": true
+    },
     "scope": {
       "applies_to": [
         "lookup",
@@ -175,7 +183,9 @@
       "style",
       "prohibited"
     ],
-    "generation": {
+    "scheduled_generation": {
+      "scheduler_only": true,
+      "provider": "gemini",
       "scene_without_text": true,
       "overlay_korean_text_locally": true,
       "default_model": "gemini-3.1-flash-image",

@@ -85,7 +85,9 @@ DEFAULT_FEATURED_IMAGE_POLICY = {
         "text_start_px": 96,
         "text_block_center_y_percent": 50,
     },
-    "generation": {
+    "scheduled_generation": {
+        "scheduler_only": True,
+        "provider": "gemini",
         "default_model": "gemini-3.1-flash-image",
         "image_size": "1K",
         "max_generation_attempts": 2,
@@ -111,7 +113,10 @@ def _load_featured_image_policy() -> dict:
         "canvas": {**DEFAULT_FEATURED_IMAGE_POLICY["canvas"], **policy.get("canvas", {})},
         "text": {**DEFAULT_FEATURED_IMAGE_POLICY["text"], **policy.get("text", {})},
         "composition": {**DEFAULT_FEATURED_IMAGE_POLICY["composition"], **policy.get("composition", {})},
-        "generation": {**DEFAULT_FEATURED_IMAGE_POLICY["generation"], **policy.get("generation", {})},
+        "scheduled_generation": {
+            **DEFAULT_FEATURED_IMAGE_POLICY["scheduled_generation"],
+            **policy.get("scheduled_generation", {}),
+        },
     }
     return merged
 
@@ -553,9 +558,9 @@ class DesignerAgent:
 
         model = os.getenv(
             "BLOGUITO_IMAGE_MODEL",
-            FEATURED_IMAGE_POLICY["generation"].get("default_model", "gemini-3.1-flash-image"),
+            FEATURED_IMAGE_POLICY["scheduled_generation"].get("default_model", "gemini-3.1-flash-image"),
         )
-        image_size = FEATURED_IMAGE_POLICY["generation"].get("image_size", "1K")
+        image_size = FEATURED_IMAGE_POLICY["scheduled_generation"].get("image_size", "1K")
         result = self.client.models.generate_content(
             model=model,
             contents=prompt,
@@ -794,7 +799,7 @@ class DesignerAgent:
             primary_text,
             secondary_text,
         )
-        max_attempts = max(1, int(FEATURED_IMAGE_POLICY["generation"].get("max_generation_attempts", 2)))
+        max_attempts = max(1, int(FEATURED_IMAGE_POLICY["scheduled_generation"].get("max_generation_attempts", 2)))
         review_issues: list[str] = []
         for attempt in range(1, max_attempts + 1):
             attempt_prompt = prompt
