@@ -6,6 +6,7 @@ import json
 import hashlib
 import re
 import subprocess
+from agents.wordpress_transport import run_wordpress
 from pathlib import Path
 
 from PIL import Image
@@ -67,7 +68,7 @@ def validate_featured_image_file(image_path: Path | str) -> dict:
 def _read_post_meta(base, post_id: int, key: str) -> str | None:
     with timed("wp_meta_read"):
         increment("wp_roundtrips")
-        result = subprocess.run(
+        result = run_wordpress(
             list(base) + ["post", "meta", "get", str(int(post_id)), key, "--allow-root"],
             capture_output=True,
             text=True,
@@ -247,7 +248,7 @@ def replace_featured_image(
             raise ValueError(f"featured_image_changed_before_import: backup {backup}")
 
         remote_image = f"/tmp/editorial_cover_{post_id}{image_path.suffix.lower()}"
-        subprocess.run(
+        run_wordpress(
             ["sudo", "docker", "cp", str(image_path), f"wordpress_app:{remote_image}"],
             capture_output=True,
             check=True,
@@ -263,7 +264,7 @@ def replace_featured_image(
                     }},
                 )
             with timed("image_upload"):
-                imported = subprocess.run(
+                imported = run_wordpress(
                     base + [
                         "media",
                         "import",
@@ -283,7 +284,7 @@ def replace_featured_image(
                 )
             attachment_id = (imported.stdout or "").lstrip("\ufeff").strip()
         finally:
-            subprocess.run(
+            run_wordpress(
                 ["sudo", "docker", "exec", "wordpress_app", "rm", "-f", remote_image],
                 capture_output=True,
                 check=False,
@@ -306,8 +307,8 @@ def replace_featured_image(
         }
         record_outcome(outcome)
 
-        observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         saved = get_post(base, post_id, fields=fields)
+        observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         attachment = get_post(
             base,
             int(attachment_id),

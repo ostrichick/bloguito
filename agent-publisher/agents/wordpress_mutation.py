@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+from agents.wordpress_transport import run_wordpress
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,16 @@ from agents.workflow_metrics import increment, timed
 
 
 GUARDED_POST_MUTATION_PROTOCOL = 1
+POST_THUMBNAIL_SNAPSHOT_SCRIPT = (
+    '$p=json_decode(file_get_contents("php://stdin"),true);'
+    '$post=get_post((int)($p["post_id"]??0));'
+    'if(!$post){echo wp_json_encode(["status"=>"missing"]);return;}'
+    '$row=[];foreach(["post_status","post_title","post_name","post_content","post_excerpt"] as $key)'
+    '{$row[$key]=(string)$post->$key;}'
+    '$thumb=metadata_exists("post",$post->ID,"_thumbnail_id")'
+    '?(string)get_post_meta($post->ID,"_thumbnail_id",true):null;'
+    'echo wp_json_encode(["post"=>$row,"thumbnail_id"=>$thumb],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);'
+)
 GUARDED_POST_MUTATION_SCRIPT = (
     '$raw=file_get_contents("php://stdin");'
     '$p=json_decode($raw,true);'
@@ -67,7 +78,7 @@ def get_post(base, post_id, *, fields=None):
     command += ["--format=json", "--allow-root"]
     with timed("wp_target_read"):
         increment("wp_roundtrips")
-        result = subprocess.run(
+        result = run_wordpress(
             command, capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
     return json.loads((result.stdout or "").lstrip("\ufeff"))
 
@@ -83,7 +94,7 @@ def update_post(base, post_id, fields: dict[str, str]):
     args.append("--allow-root")
     with timed("wp_update"):
         increment("wp_roundtrips")
-        return subprocess.run(
+        return run_wordpress(
             list(base) + args, capture_output=True, text=True,
             encoding="utf-8", errors="strict", check=True)
 
@@ -162,7 +173,7 @@ def guarded_update_post(base, post_id, *, expected: dict[str, str], updates: dic
     with timed("wp_guarded_mutation"):
         increment("wp_roundtrips")
         increment("wp_guarded_mutations")
-        result = subprocess.run(
+        result = run_wordpress(
             command,
             input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             capture_output=True,

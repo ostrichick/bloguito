@@ -50,7 +50,7 @@ def page(*, title="원클릭 환급 서비스", date='2025.03.31', author='국�
 
 
 def fetch_one(markup, url=URL):
-    with patch('agents.editorial_writer.requests.get', return_value=Response(markup)):
+    with patch('agents.source_collector.requests.get', return_value=Response(markup)):
         return fetch_sources({'official_urls': [url], 'entity': '국세 환급금'})[0]
 
 

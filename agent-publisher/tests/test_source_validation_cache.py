@@ -14,6 +14,17 @@ from test_editorial_system import NOW, sample
 
 
 class SourceValidationCacheTests(unittest.TestCase):
+    def test_source_adapter_change_invalidates_receipt_fingerprint(self):
+        from agents.source_validation_cache import _fetcher_fingerprint
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'agents').mkdir()
+            for name in ('source_collector.py', 'source_extractors.py', 'fact_validation.py', 'temporal_validation.py'):
+                (root / 'agents' / name).write_bytes(b'original')
+            before = _fetcher_fingerprint(root)
+            (root / 'agents/source_extractors.py').write_bytes(b'changed adapter')
+            self.assertNotEqual(before, _fetcher_fingerprint(root))
+
     def test_standard_recheck_plan_reuses_only_unchanged_fresh_nonlive_sources(self):
         old = sample()
         new = copy.deepcopy(old)

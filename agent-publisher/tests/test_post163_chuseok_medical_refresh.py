@@ -53,7 +53,7 @@ class Post163ChuseokMedicalRefreshTests(unittest.TestCase):
                 ).encode('utf-8')
 
         url = self.brief['official_urls'][0]
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('14:07', '8,294'),
             Response('14:12', '8,294'),
             Response('14:17', '8,295'),

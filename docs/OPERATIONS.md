@@ -2,6 +2,22 @@
 
 **적용 범위:** 저장소의 코드·설정에 근거한 작업 경로를 설명한다. 이 문서 자체는 현재 서버 배포 상태나 복구 성공을 보증하지 않는다. 실서비스 수정 전에는 실제 서버 이미지/구성, 백업, 실행 프로세스, 콘텐츠 상태를 다시 조회한다. 편집 기준과 기한·검토 설정을 복제하지 않고 [EDITORIAL_SYSTEM](EDITORIAL_SYSTEM.md) / [`editorial_policy.json`](../agent-publisher/editorial_policy.json)을 따른다.
 
+## 코드 릴리스와 비공개 통계 전달
+
+편집 코드 배포는 `scripts/install_editorial_release.py`에 검토한 release directory와 기존 app directory를 전달한다. release root의 `release-manifest.json`은 `schema_version=1`, Git commit SHA인 `revision`, 상대 경로별 SHA256인 `files`, 선택적인 `retired_files`를 포함해야 한다. `files`는 release의 `agent-publisher/`·`docs/` 파일 목록과 정확히 일치해야 한다. 신규 renderer/schema/source modules 누락이나 파일 hash 불일치는 쓰기 전에 차단한다. `.env`, runtime manifest/index, source receipt는 코드 release에 넣지 않는다.
+
+환경 설정을 `os.getenv()`로 읽는 현행 config일 때만 `main.py`·`config.py`를 함께 갱신할 수 있다. inline credentials가 있는 구 config는 먼저 별도 이관해야 하며 installer가 자동 변환하지 않는다. 기존 `data/search_briefs.json`은 덮어쓰지 않는다. 변경 파일 backup과 rollback manifest를 유지하고, 설치 뒤 editorial CLI·edit orchestration·registry import를 확인한 후 `data/editorial-release.json`에 실제 설치 hash와 revision을 기록한다. obsolete 파일은 참조가 없고 retirement allowlist에 포함된 것만 명시적으로 제거한다.
+
+비공개 Google 보고서는 GitHub Workload Identity로 읽기 전용 수집한 뒤 `https://lifeinfo24.org/_bloguito/analytics-ingest`에 전달한다. GitHub secret `BLOGUITO_ANALYTICS_TOKEN`과 서버의 root-only `/etc/bloguito-analytics.env`를 같은 token으로 설정한다. `wordpress/analytics/`의 systemd unit과 nginx snippets가 실행/HTTPS proxy의 정본이다. 수신기는 localhost에만 bind하고 POST 인증·4MiB 상한·기존 snapshot schema/freshness 검증 뒤 private analytics directory에만 저장한다. 보고서·인증 header는 응답과 access log에 노출하지 않는다. 공개 SSH allowlist는 이 전달 경로와 별개로 유지한다.
+
+통계 전달 검증은 workflow success만으로 끝내지 않는다. 서버의 해당 날짜 JSON 생성 시각·SHA·schema validation을 확인한다. 다음 예약 실행의 실제 성공 여부는 별도로 기록한다. 기존 restricted SSH receiver는 rollback용이며 신규 workflow는 사용하지 않는다.
+
+워크플로 metrics는 runtime code fingerprint·release revision·route·transport를 기록한다. `summarize_workflow_metrics.py --since YYYY-MM-DD --code-version <fingerprint>`로 같은 code version의 측정을 비교한다. `wp_roundtrips`는 논리적인 WP 호출, `ssh_roundtrips`는 adapter가 실제 수행한 SSH 호출이다. 없는 counter는 0으로 해석하지 않는다. image-only adapter는 바로 이어지는 post/thumbnail 조회만 한 snapshot으로 합치고, 다른 호출이 끼거나 값을 한 번 소비하면 snapshot을 재사용하지 않는다. import 전 확인과 저장 뒤 readback, media import 무재시도는 유지한다.
+
+WordPress 호출은 `agents/wordpress_transport.py`의 실행 context로 adapter를 주입한다. 일반 subprocess 호출은 가로채지 않는다. 병렬 작업이 필요하면 기존 호출자의 `copy_context()`를 통해 해당 실행 권한을 명시적으로 전달한다.
+
+글 목록 동기화는 본문 SHA와 검토 digest·checks·lifecycle metadata가 유효한 저장 원고에만 `(저장 원고 기준)`을 붙인다. 이는 출처의 현재 유효성을 새로 검토했다는 뜻이 아니다. 일치하는 원고가 없는 글은 제목/category slug로 분류한 `(추정)` 표시를 유지한다.
+
 ## 구조와 실행 위치
 
 | 경로 | 역할 |

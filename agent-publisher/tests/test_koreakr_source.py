@@ -34,7 +34,7 @@ def article_page(*, article=ARTICLE, rail='실시간 인기뉴스 오늘의 뉴�
 
 
 def fetch_one(url, html):
-    with patch('agents.editorial_writer.requests.get', return_value=Response(html)):
+    with patch('agents.source_collector.requests.get', return_value=Response(html)):
         return fetch_sources({'official_urls': [url], 'entity': '폐가전'})[0]
 
 

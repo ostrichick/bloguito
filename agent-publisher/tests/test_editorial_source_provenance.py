@@ -25,7 +25,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
 
         url = 'https://cc.newdaily.co.kr/site/data/html/2026/09/30/2026093000102.html'
         brief = {'official_urls': [], 'reference_urls': [url], 'entity': '베어트리파크 시간의 정원'}
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('A-B-C', 1), Response('B-A-C', 1), Response('B-A-C', 2),
         ]):
             first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
@@ -50,7 +50,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
 
         url = 'https://www.science.go.kr/mps/0/bbs/431/moveBbsNttDetail.do?nttSn=49259'
         brief = {'official_urls': [url], 'entity': '테크콘E'}
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response(568, 15), Response(570, 15), Response(571, 16),
         ]):
             first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
@@ -73,7 +73,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
             ).encode('utf-8')
 
         url = 'https://www.science.go.kr/mps/0/bbs/163/moveBbsNttDetail.do?nttSn=49261'
-        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+        with patch('agents.source_collector.requests.get', return_value=Response()):
             source = fetch_sources({'official_urls': [url], 'entity': '생물다양성 탐사'})[0]
         self.assertIn('\n612\n', '\n' + source['text'] + '\n')
         self.assertIn('모집인원 75명', source['text'])
@@ -96,7 +96,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
 
         url = 'https://daejeontour.co.kr/festival_djt/46'
         brief = {'official_urls': [url], 'entity': '대전 빵축제'}
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('4,488', 18), Response('4,491', 18), Response('4,492', 19),
         ]):
             first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
@@ -117,7 +117,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
             ).encode('utf-8')
 
         url = 'https://daejeontour.co.kr/festival_djt/47'
-        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+        with patch('agents.source_collector.requests.get', return_value=Response()):
             source = fetch_sources({'official_urls': [url], 'entity': '다른 행사'})[0]
         self.assertIn('\n123\n', '\n' + source['text'] + '\n')
 
@@ -139,7 +139,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
 
         url = 'https://daejeontour.co.kr/festival_djt/49'
         brief = {'official_urls': [url], 'entity': '대청호 오백리길 걷기대회'}
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('798', '모집마감'), Response('804', '모집마감'), Response('805', '모집중'),
         ]):
             first, same, changed = (fetch_sources(brief)[0] for _ in range(3))
@@ -165,7 +165,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         same_fact = ('<p>2027년 3월 1일부터 15일까지 신청할 수 있습니다. '
                      '신청 가능 가구는 소득 종류와 가구별 요건을 확인합니다.</p>' * 2)
         changed_fact = same_fact.replace('3월 1일부터', '3월 2일부터')
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response(65288, same_fact),
             Response(65289, same_fact),
             Response(65290, changed_fact),
@@ -191,7 +191,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
                     '</body></html>').encode('utf-8')
 
         url = 'https://nts.go.kr/nts/na/ntt/selectNttInfo.do?bbsId=1028&mi=2201&nttSn=1355091'
-        with patch('agents.editorial_writer.requests.get',
+        with patch('agents.source_collector.requests.get',
                    side_effect=[Response(6709), Response(6710)]):
             first = fetch_sources({'official_urls': [url], 'entity': '세금포인트'})[0]
             second = fetch_sources({'official_urls': [url], 'entity': '세금포인트'})[0]
@@ -211,7 +211,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
 
         url = 'https://www.fsc.go.kr/po010103/example'
         brief = {'official_urls': [url], 'entity': 'test'}
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response(100, '확인된 조건과 지급 절차 안내입니다. ' * 5),
             Response(101, '확인된 조건과 지급 절차 안내입니다. ' * 5),
             Response(102, '변경된 조건과 지급 절차 안내입니다. ' * 5),
@@ -241,7 +241,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
 
         url = 'https://www.mohw.go.kr/board.es?act=view&bid=0027&list_no=1488478&mid=a10503010100'
         brief = {'official_urls': [url], 'entity': '기초연금'}
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('163,944', '기초연금 단독가구 기준은 월 247만 원입니다.'),
             Response('163,951', '기초연금 단독가구 기준은 월 247만 원입니다.'),
             Response('163,953', '기초연금 단독가구 기준은 월 248만 원입니다.'),
@@ -263,7 +263,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
             ).encode('utf-8')
 
         url = 'https://www.mohw.go.kr/board.es?act=view&bid=0027&list_no=1488478'
-        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+        with patch('agents.source_collector.requests.get', return_value=Response()):
             result = fetch_sources({'official_urls': [url], 'entity': '기초연금'})[0]
         self.assertIn('총 지급인원', result['text'])
         self.assertIn('12,345명', result['text'])
@@ -291,7 +291,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         url = 'https://www.mokpo.go.kr/health/citizen_participation/notice?idx=548678&mode=view'
         brief = {'official_urls': [url], 'entity': '목포 독감'}
         claim = '2026년 9월 21일부터 어린이 접종을 실시하고 2027년 4월 30일까지 운영합니다.'
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('336', '270', '221.5 KB', claim),
             Response('338', '276', '221.5 KB', claim),
             Response('339', '279', '223.0 KB', claim),
@@ -315,7 +315,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
                        '<p>정책에 관한 원문은 여기에서 그대로 제공됩니다. ' * 5
                        + '</p></body></html>').encode('utf-8')
 
-        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+        with patch('agents.source_collector.requests.get', return_value=Response()):
             result = fetch_sources({'official_urls': [
                 'https://example.org/health/citizen_participation/notice'],
                 'entity': '다른 사이트'})[0]
@@ -344,7 +344,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
         same = ('모두의카드는 일반 20%, 청년 30% 환급 기준을 적용하고 '
                 '서울시 청년 기준은 만 19~39세입니다. ' * 3)
         changed = same.replace('청년 30%', '청년 31%', 1)
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             Response('100,472', same),
             Response('100,478', same),
             Response('100,479', changed),
@@ -362,7 +362,7 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
             content = ('<html><body><p>조회수 : 120은 이번 공고의 조건입니다.</p>'
                        '<p>다른 관련 안내와 조회 조건을 보존합니다. ' * 5 + '</p></body></html>').encode('utf-8')
 
-        with patch('agents.editorial_writer.requests.get', return_value=Response()):
+        with patch('agents.source_collector.requests.get', return_value=Response()):
             result = fetch_sources({'official_urls': ['https://example.org/notice'], 'entity': 'test'})[0]
         self.assertIn('조회수 : 120은 이번 공고의 조건입니다.', result['text'])
 
@@ -402,7 +402,7 @@ class BeartreeVisualOfficialSourceTests(unittest.TestCase):
         ).encode('utf-8'))
 
     def test_visual_only_official_card_is_bound_to_pinned_hash(self):
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             self.page(), self.Response(self.ASSET_BYTES, 'image/png'),
         ]):
             source = fetch_sources(self.brief())[0]
@@ -411,21 +411,21 @@ class BeartreeVisualOfficialSourceTests(unittest.TestCase):
         self.assertIn('official_visual_asset_sha256:', source['text'])
 
     def test_visual_transcript_rejects_asset_sha_mismatch(self):
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             self.page(), self.Response(b'replaced-official-image', 'image/png'),
         ]):
             with self.assertRaisesRegex(ValueError, 'official_visual_asset_sha256_mismatch'):
                 fetch_sources(self.brief())
 
     def test_visual_transcript_rejects_unbound_asset(self):
-        with patch('agents.editorial_writer.requests.get', return_value=self.page('https://cdn.imweb.me/upload/other.png')):
+        with patch('agents.source_collector.requests.get', return_value=self.page('https://cdn.imweb.me/upload/other.png')):
             with self.assertRaisesRegex(ValueError, 'official_visual_asset_missing_or_ambiguous'):
                 fetch_sources(self.brief())
 
     def test_visual_transcript_supports_multi_event_temporal_entry(self):
         from datetime import datetime
         from agents.temporal_validation import KST, validate_multi_event_schedule
-        with patch('agents.editorial_writer.requests.get', side_effect=[
+        with patch('agents.source_collector.requests.get', side_effect=[
             self.page(), self.Response(self.ASSET_BYTES, 'image/png'),
         ]):
             source = fetch_sources(self.brief())[0]

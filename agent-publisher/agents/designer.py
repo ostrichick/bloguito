@@ -199,20 +199,23 @@ def _load_display_font(size: int = 24, *, role: str = "primary") -> ImageFont.Fr
     spec = family_specs.get(family, {})
     candidates = spec.get("paths", [])
     for path in candidates:
-        try:
-            font = ImageFont.truetype(path, size)
-            family_name, style_name = font.getname()
-            variation = spec.get("variation")
-            if variation and family_name == "Noto Serif KR" and hasattr(font, "set_variation_by_name"):
-                font.set_variation_by_name(variation)
+        # Debian's CJK collection defaults to the Japanese face. Select the
+        # verified Korean face instead of assuming collection index zero.
+        for index in range(5) if path.endswith('.ttc') else (0,):
+            try:
+                font = ImageFont.truetype(path, size, index=index)
                 family_name, style_name = font.getname()
-            expected_families = spec.get("expected_families") or set()
-            if (_font_has_hangul(font)
-                    and (not expected_families or family_name in expected_families)
-                    and (not variation or style_name == variation)):
-                return font
-        except Exception:
-            continue
+                variation = spec.get("variation")
+                if variation and family_name == "Noto Serif KR" and hasattr(font, "set_variation_by_name"):
+                    font.set_variation_by_name(variation)
+                    family_name, style_name = font.getname()
+                expected_families = spec.get("expected_families") or set()
+                if (_font_has_hangul(font)
+                        and (not expected_families or family_name in expected_families)
+                        and (not variation or style_name == variation)):
+                    return font
+            except (OSError, ValueError):
+                continue
     raise RuntimeError(f"Brand Hangul display font unavailable: {family}")
 
 
