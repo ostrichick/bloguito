@@ -120,6 +120,31 @@ def _section_support_text(section: dict) -> tuple[str, str]:
     return body, " ".join(value for value in support if isinstance(value, str))
 
 
+def _closing_summary_valid(sections: list[dict], bound: dict[str, dict]) -> bool:
+    """Require one non-event synthesis section after all event sections."""
+    if not sections or not bound:
+        return False
+    positions = {
+        id(section): index
+        for index, section in enumerate(sections)
+        if isinstance(section, dict)
+    }
+    try:
+        last_event_index = max(positions[id(section)] for section in bound.values())
+    except (KeyError, ValueError):
+        return False
+    return any(
+        isinstance(section, dict)
+        and section.get("event_name") is None
+        and section.get("kind") == "general"
+        and any(
+            isinstance(paragraph, dict) and paragraph.get("text", "").strip()
+            for paragraph in section.get("paragraphs", []) or []
+        )
+        for section in sections[last_event_index + 1:]
+    )
+
+
 def _overview_contract(section: dict | None, entries: list[dict]) -> tuple[bool, bool]:
     """Return (overview_semantically_present, exact_layout_valid)."""
     if not isinstance(section, dict) or section.get("kind") != "overview":
@@ -367,6 +392,9 @@ def validate_event_post_standard(bundle: dict) -> list[str]:
         if invalid_binding or set(bound) != set(entry_names):
             reasons.append("event_standard_event_section_binding_invalid")
 
+    if not _closing_summary_valid(sections, bound):
+        reasons.append("event_standard_closing_summary_missing")
+
     map_invalid = False
     try:
         overview_dates = overview_event_date_labels(sections[0])
@@ -524,10 +552,14 @@ def event_writer_instruction(brief: dict, temporal_source: dict | None = None) -
         "열은 '날짜, 행사, 주요 볼거리, 장소' 순서로 고정하라. 같은 달 기간은 '10/9(금)~11(일)'처럼 짧게 쓴다. "
         "temporal_source.event_entries의 각 name마다 상세 section 하나를 만들고 section.event_name에 정확히 넣어라. "
         "행사 section은 '제목 → 이미지 → 필요한 경우 사진 출처 → 본문 → 필요한 경우 작은 일정표 → 공식 안내 링크 박스 → 위치' 순서로 구성하고 facts 카드는 넣지 마라. "
-        "본문은 날짜·장소 반복이 아니라 실제 볼거리·체험과 확인된 비용·예약·운영 조건처럼 방문 판단에 필요한 내용을 설명하라. 작은 표는 실제 비교 가치가 있을 때만 쓴다. "
+        "본문은 날짜·장소 반복이 아니라 실제 볼거리·체험과 확인된 비용·예약·운영 조건처럼 방문 판단에 필요한 내용을 설명하라. "
+        "공식 자료에 실제 작품명·출연자·공연명·프로그램명이 있으면 '다양한 공연', '여러 작품'처럼 범주나 개수만 적지 말고 대표 예시를 이름까지 제시하라. "
+        "공식 하위 공지·첨부·공식 SNS에 공개된 세부 정보를 독자에게 다시 찾아보라고 넘기지 마라. 가수 대표곡은 공식 세트리스트가 아니면 공연 예정곡처럼 단정하지 마라. 작은 표는 실제 비교 가치가 있을 때만 쓴다. "
         "각 event section에는 재사용 권리를 기록한 실제 행사 사진을 우선한 대표 이미지, 검증된 위치·좌표, 직접 공식 안내페이지를 section.official_links에 최소 1개 넣어라. "
+        "사진은 행사의 핵심 활동과 의미적으로 맞아야 하며 공연 행사에 강변 풍경·빈 공연장·연습실처럼 활동이 보이지 않는 이미지를 쓰지 마라. "
         "적합한 실제 사진이 없을 때만 공식 포스터를 쓰고 행사 본문용 AI/Pillow 대체 이미지는 만들지 마라. 이전 회차 사진은 연도와 참고 성격을 caption에 명시하라. "
-        "booking/apply/purchase action은 해당 section.actions에만 두고 정보성 공식 링크와 구분하라. 마지막 행사 뒤에는 짧은 마무리 문단을 둔다."
+        "booking/apply/purchase action은 해당 section.actions에만 두고 정보성 공식 링크와 구분하라. "
+        "모든 행사 section 뒤에는 event_name이 없는 kind=general 마무리 section을 두고 일정이 몰리는 시기, 하루/다일 행사 차이, 프로그램 성격 차이 등 본문에서 확인한 정보를 종합하라. 단순히 '방문 전 공식 일정을 확인하세요'로 끝내지 마라."
     )
 
 
@@ -539,7 +571,9 @@ def event_review_instruction(bundle: dict) -> str:
         return ""
     return (
         " 행사 일정형 v1 의미 검토: 각 행사 설명이 실제 볼거리·체험과 방문 판단에 필요한 확인된 조건을 충분히 설명하는지, "
-        "문장이 날짜·장소를 되풀이하거나 같은 내용을 overview·상세·FAQ에서 중복하지 않는지 확인하라. 공식 자료로 뒷받침되지 않는 연령·가족·커플 등 추천 대상이나 주차 팁을 일반화하지 마라. "
+        "문장이 날짜·장소를 되풀이하거나 같은 내용을 overview·상세·FAQ에서 중복하지 않는지 확인하라. 공식 자료에 작품명·출연자·공연명·세부 프로그램이 있는데도 수량·범주만 남겼거나 공개된 하위 자료 확인을 독자에게 떠넘기면 실패시켜라. "
+        "가수 대표곡을 공식 세트리스트처럼 오인하게 쓰지 않았는지 확인하고, 공식 자료로 뒷받침되지 않는 연령·가족·커플 등 추천 대상이나 주차 팁을 일반화하지 마라. "
         "이전 회차 사진·프로그램을 현재 회차로 오인하게 만들지 않았는지, 이미지가 해당 행사 활동을 실제로 보여 주는지, 포스터보다 적절한 실제 사진을 놓치지 않았는지 검토하라. "
+        "마지막 마무리 section이 일정 분포·행사 성격 등 본문 정보를 실제로 종합하는지 확인하고 재확인 안내만 반복하면 실패시켜라. "
         "소개·홍보 페이지를 예약·신청·구매 행동으로 오인시키지 않았는지 확인하라. 이미지 화질·crop과 지도/section 실제 배치는 최종 browser/visual QA에서 확인한다."
     )

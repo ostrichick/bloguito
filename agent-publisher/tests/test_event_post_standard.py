@@ -182,6 +182,21 @@ def event_bundle():
                     'url': 'https://www.seocho.go.kr/event/city',
                 }],
             },
+            {
+                'heading': '10월 서초 행사 일정 정리',
+                'kind': 'general',
+                'paragraphs': [{
+                    'text': (
+                        '10월 중순에는 이틀간 체험과 공연을 함께 즐기는 가을 체험축제가 있고, '
+                        '20일에는 전시와 버스킹, 체험 부스를 하루에 둘러보는 도심 문화행사가 열립니다.'
+                    ),
+                    'evidence': [
+                        {'source_id': 's0', 'quote': source0_text},
+                        {'source_id': 's1', 'quote': source1_text},
+                    ],
+                    'answers': ['q1'],
+                }],
+            },
         ],
         'faq': [],
         'related_posts': [],
@@ -243,6 +258,13 @@ class EventPostStandardTests(unittest.TestCase):
         )
         self.assertIn(
             'event_standard_decision_support_missing',
+            validate_event_post_standard(self.bundle),
+        )
+
+    def test_closing_summary_is_required_after_all_event_sections(self):
+        self.bundle['plan']['sections'].pop()
+        self.assertIn(
+            'event_standard_closing_summary_missing',
             validate_event_post_standard(self.bundle),
         )
 
@@ -509,6 +531,8 @@ class EventPostStandardTests(unittest.TestCase):
         self.assertIn('사진 출처', content)
 
         for section in self.bundle['plan']['sections'][1:]:
+            if not section.get('event_name'):
+                continue
             section['image']['rights'] = 'site_owned'
             section['image'].pop('rights_url', None)
         with patch('agents.editorial.KAKAO_MAP_JAVASCRIPT_KEY', 'public_test_key_1234567890'):
@@ -553,8 +577,11 @@ class EventPostStandardTests(unittest.TestCase):
         self.assertIn('section.official_links', writer)
         self.assertIn('날짜, 행사, 주요 볼거리, 장소', writer)
         self.assertIn('10/9(금)~11(일)', writer)
+        self.assertIn('마무리 section', writer)
+        self.assertIn('작품명·출연자', writer)
         self.assertIn('실제 볼거리·체험', reviewer)
         self.assertIn('중복하지 않는지', reviewer)
+        self.assertIn('마무리 section', reviewer)
 
     def test_event_generation_schema_exposes_event_only_fields(self):
         schema = EventPlan.model_json_schema()
