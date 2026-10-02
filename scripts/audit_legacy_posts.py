@@ -361,7 +361,7 @@ def markdown_report(rows, base_url, audited_at, changes=None):
                   '1. 글별 공식 발표·개정·시행 연도, 첨부자료의 실제 표와 본문 수치 대조.',
                   '2. 독자 질문에 대한 즉답·대상별 차이·제외·실제 메뉴/행동 링크 제공 여부.',
                   '3. 최신 구조 미적용 글의 서식을 새 원고로 이관할 때 사실 근거와 조건 재검증.',
-                  '4. 백업·원본 WordPress 본문 해시·검토 bundle·글별 승인 후 전용 update-existing 사용.',
+                  '4. 백업·원본 WordPress 본문 해시·검토 bundle·글별 승인 후 정규 edit-post 사용.',
                   '5. 모바일 360/390px·200% 확대·실제 링크 및 접근성 검사.'])
     return '\n'.join(lines) + '\n'
 

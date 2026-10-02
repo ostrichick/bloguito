@@ -2,11 +2,10 @@ import sys
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agents.temporal_validation import KST, extract_evidence, validate_availability
-from agents.copywriter import CopywriterAgent
 from agents.publisher import PublisherAgent
 
 NOW = datetime(2026, 9, 13, 12, tzinfo=KST)
@@ -64,14 +63,6 @@ class TemporalTests(unittest.TestCase):
 
     def test_utc_uses_korean_day(self):
         self.assertEqual(self.check("신청마감: 2026.09.13", now=(NOW.replace(hour=23)).astimezone(__import__('datetime').timezone.utc))["status"], "active")
-
-    def test_writer_cannot_trust_gemini_active(self):
-        writer = object.__new__(CopywriterAgent)
-        writer.client = True
-        writer._generate_with_gemini = Mock(return_value={"is_valid_and_active": True})
-        item = {"title": "마감 공고", "temporal_source": {"evidence": extract_evidence("신청마감: 2020.09.12", "https://example.com")}}
-        self.assertIsNone(writer.write_article(item))
-        writer._generate_with_gemini.assert_not_called()
 
     @patch("agents.publisher.subprocess.run")
     def test_publisher_rechecks_before_side_effects(self, run):

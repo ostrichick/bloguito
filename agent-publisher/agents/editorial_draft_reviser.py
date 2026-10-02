@@ -195,8 +195,8 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                            checkpoint_callback=None):
     """Replace one unchanged reviewed draft with another fully reviewed version.
 
-    This is intentionally separate from update_draft(), which only permits
-    renderer/action-link changes while preserving authored prose.
+    This is the Standard reviewed-draft mutation path. Fast wording-only edits
+    use ``fast_revise_reviewed_draft`` through the canonical ``edit-post`` router.
     """
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
         raise ValueError("specific_draft_revision_confirmation_required")

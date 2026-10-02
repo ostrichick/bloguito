@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agents.qa_scope import qa_requirements_for_edit
+from agents.change_classifier import classify_change
 from agents.task_state import mark_browser_qa_complete, start_task_state, update_task_state
 from test_editorial_system import sample
 
@@ -17,8 +17,8 @@ class QaScopeTests(unittest.TestCase):
             'caption': '비교', 'headers': ['항목', '내용'],
             'rows': [{'cells': ['A', 'B'], 'evidence': []}],
         }
-        scopes = qa_requirements_for_edit(
-            old, new, image_changed=True, target_status='publish')
+        scopes = classify_change(
+            old, new, image_changed=True, target_status='publish')['qa_scopes']
         self.assertIn('content-mobile-desktop', scopes)
         self.assertIn('layout-accessibility', scopes)
         self.assertNotIn('featured-image', scopes)
@@ -28,9 +28,9 @@ class QaScopeTests(unittest.TestCase):
         old = sample()
         text = copy.deepcopy(old)
         text['plan']['sections'][0]['heading'] = '더 짧은 안내'
-        self.assertEqual([], qa_requirements_for_edit(old, text, target_status='publish'))
-        self.assertEqual([], qa_requirements_for_edit(
-            None, None, image_changed=True, target_status='publish'))
+        self.assertEqual([], classify_change(old, text, target_status='publish')['qa_scopes'])
+        self.assertEqual([], classify_change(
+            None, None, image_changed=True, target_status='publish')['qa_scopes'])
 
     def test_qa_completion_requires_all_scopes_and_matching_thumbnail(self):
         with tempfile.TemporaryDirectory() as folder:

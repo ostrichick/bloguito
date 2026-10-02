@@ -8,7 +8,7 @@
 | --- | --- |
 | `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher의 자동 **임시글 생성** 진입점 |
 | `agent-publisher/editorial_cli.py` | 근거 수집, 검토, 검사, 임시글 등록/갱신, 사람 확인 후 별도 공개 |
-| `agent-publisher/agents/` | 검색·검토·렌더링·WordPress 연결 로직; `copywriter.py`는 레거시이며 `main.py`는 `editorial_writer.py`를 사용 |
+| `agent-publisher/agents/` | 검색·검토·렌더링·WordPress 연결 로직; 자동 파이프라인과 현행 원고 경로는 `editorial_writer.py`를 사용 |
 | `agent-publisher/data/` | 환경별 런타임 상태. 민감·운영 JSON 및 `.env`를 Git에 추가하지 않음 |
 | `wordpress/docker-compose.yml` | WordPress·MariaDB 선언; 실행 중 서버 설정과 다를 수 있음 |
 | `wordpress/mu-plugins/` | 자체 WP MU 플러그인. 관리자 글 ID 열 구현을 포함하나 운영본 설치 상태는 별도 확인 |
