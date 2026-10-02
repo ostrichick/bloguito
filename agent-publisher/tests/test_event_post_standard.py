@@ -329,7 +329,8 @@ class EventPostStandardTests(unittest.TestCase):
                 'answers': ['q1'],
             }],
         }
-        content = render(self.bundle['plan'], self.bundle['sources'])
+        with patch('agents.editorial.KAKAO_MAP_JAVASCRIPT_KEY', 'public_test_key_1234567890'):
+            content = render(self.bundle['plan'], self.bundle['sources'])
         image_pos = content.index('bloguito-event-image', content.index('도심 문화행사: 전시와 체험 부스'))
         body_pos = content.index('도심 문화행사는 10월 20일', image_pos)
         table_pos = content.index('도심 문화행사 프로그램 일정', body_pos)

@@ -185,6 +185,21 @@ class DesignerRoutingTests(unittest.TestCase):
             )
         self.assertEqual((1200, 675), rendered.size)
 
+    def test_display_font_selects_korean_face_from_cjk_collection(self):
+        korean = MagicMock()
+        korean.getname.return_value = ('Noto Serif CJK KR', 'Black')
+        japanese = MagicMock()
+        japanese.getname.return_value = ('Noto Serif CJK JP', 'Black')
+
+        def collection_font(path, size, index=0):
+            if not path.endswith('.ttc'):
+                raise OSError('variable font absent')
+            return korean if index == 1 else japanese
+
+        with patch('agents.designer.ImageFont.truetype', side_effect=collection_font), \
+             patch('agents.designer._font_has_hangul', return_value=True):
+            self.assertIs(_load_display_font(32), korean)
+
     def test_display_font_fails_closed_instead_of_using_generic_gothic(self):
         with patch("agents.designer.ImageFont.truetype", side_effect=OSError("display font missing")):
             with self.assertRaisesRegex(RuntimeError, "Brand Hangul display font unavailable"):
