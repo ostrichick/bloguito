@@ -27,7 +27,9 @@ desktop.ini
 *.log
 /tmp/
 /scratch/
-/docs/tasks/
+/docs/tasks/**
+!/docs/tasks/**/
+!/docs/tasks/**/*.md
 /scripts/archive/
 backups/
 *.metadata.json
