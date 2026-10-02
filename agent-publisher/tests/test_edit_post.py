@@ -3,7 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +20,8 @@ from test_editorial_system import sample
 def current_bundle():
     bundle = sample()
     now = datetime.now(KST)
+    bundle['brief']['reviewed_at'] = now.date().isoformat()
+    bundle['brief']['review_until'] = (now.date() + timedelta(days=7)).isoformat()
     for source in bundle['sources']:
         source['fetched_at'] = now.isoformat()
     body = {key: bundle[key] for key in ('brief', 'sources', 'plan', 'temporal_source')}

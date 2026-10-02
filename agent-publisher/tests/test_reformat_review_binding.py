@@ -22,8 +22,8 @@ class ReformatReviewBindingTests(unittest.TestCase):
             root.mkdir()
             (root.parent / 'docs').mkdir()
             shutil.copy2(source_root / 'editorial_policy.json', root / 'editorial_policy.json')
-            shutil.copy2(source_root.parent / 'docs' / 'EDITORIAL_SYSTEM.md',
-                         root.parent / 'docs' / 'EDITORIAL_SYSTEM.md')
+            for name in ('EDITORIAL_SYSTEM.md', 'GENERAL_POST_STANDARD.md', 'EVENT_POST_STANDARD.md'):
+                shutil.copy2(source_root.parent / 'docs' / name, root.parent / 'docs' / name)
             index = root / 'drafts.json'
             index.write_text(json.dumps([{'id': 393, 'fact_manifest': {'editorial_bundle': bundle}}]),
                              encoding='utf-8')

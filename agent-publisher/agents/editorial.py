@@ -19,6 +19,7 @@ from agents.temporal_validation import (KST, validate_availability, extract_evid
 from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 from agents.event_post_standard import overview_event_date_labels, validate_event_post_standard
+from agents.policy_exceptions import get_policy_exception
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,9 +32,68 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def policy_fingerprint():
-    instructions = (ROOT.parent / 'docs' / 'EDITORIAL_SYSTEM.md').read_text(encoding='utf-8')
-    return digest({'rules': policy(), 'instructions': instructions, 'contract_version': 1})
+def policy_profile(bundle=None):
+    """Return the reader-content policy profile that applies to one bundle."""
+    bundle = bundle if isinstance(bundle, dict) else {}
+    brief = bundle.get('brief') if isinstance(bundle.get('brief'), dict) else bundle
+    temporal = bundle.get('temporal_source') if isinstance(bundle.get('temporal_source'), dict) else {}
+    if (brief.get('event_post_standard_version') == 1
+            or temporal.get('multi_event_schedule') is True):
+        return 'event'
+    return 'general'
+
+
+def policy_document_names(bundle=None):
+    """Policy documents relevant to semantic writing/review for this bundle."""
+    specific = 'EVENT_POST_STANDARD.md' if policy_profile(bundle) == 'event' else 'GENERAL_POST_STANDARD.md'
+    return ('EDITORIAL_SYSTEM.md', specific)
+
+
+def _policy_document_text(name):
+    return (ROOT.parent / 'docs' / name).read_text(encoding='utf-8')
+
+
+def policy_instructions(bundle=None):
+    """Load only the common policy plus the current post-type policy."""
+    return '\n\n'.join(_policy_document_text(name) for name in policy_document_names(bundle))
+
+
+def applicable_policy_rules(bundle=None):
+    """Select only machine rules that can affect this bundle's semantic approval.
+
+    Image-generation settings, model preferences and exceptions for unrelated
+    posts intentionally do not invalidate an otherwise identical text review.
+    Deterministic freshness gates continue to read the live full policy directly.
+    """
+    rules = policy()
+    selected = {
+        key: rules[key]
+        for key in ('version', 'min_remaining_days', 'review_checks', 'blocked_patterns')
+        if key in rules
+    }
+    bundle = bundle if isinstance(bundle, dict) else {}
+    brief = bundle.get('brief') if isinstance(bundle.get('brief'), dict) else bundle
+    brief_id = brief.get('id') if isinstance(brief, dict) else None
+    dated = get_policy_exception('dated_post', brief_id, on_date=datetime.now(KST).date())
+    if dated is not None:
+        selected['dated_post_exception'] = {brief_id: dated}
+    legacy = get_policy_exception('legacy_procedure', brief_id)
+    if legacy is not None:
+        selected['legacy_welfare_procedural_exception'] = {brief_id: legacy}
+    return selected
+
+
+def policy_fingerprint(bundle=None):
+    documents = {
+        name: _policy_document_text(name)
+        for name in policy_document_names(bundle)
+    }
+    return digest({
+        'profile': policy_profile(bundle),
+        'rules': applicable_policy_rules(bundle),
+        'instructions': documents,
+        'contract_version': 2,
+    })
 
 
 def normalized(text):
@@ -60,7 +120,7 @@ def supported_counts(text, quote_text, candidates):
 
 def dated_post_exception(brief, today):
     """A narrowly scoped, expiring exception for an authorized existing post."""
-    exception = policy().get('dated_post_exceptions', {}).get(brief.get('id'), {})
+    exception = get_policy_exception('dated_post', brief.get('id'), on_date=today) or {}
     try:
         if exception.get('official_urls'):
             required_urls = exception['official_urls']
@@ -86,7 +146,7 @@ def legacy_85_welfare_navigation_exception(brief):
     """
     if not isinstance(brief, dict):
         return False
-    exception = policy().get('legacy_welfare_procedural_exceptions', {}).get(brief.get('id'))
+    exception = get_policy_exception('legacy_procedure', brief.get('id'))
     if not isinstance(exception, dict):
         return False
     return (type(brief.get('existing_post_id')) is int
@@ -106,7 +166,9 @@ def legacy_85_welfare_navigation_reasons(brief, sources, plan):
     """
     if not legacy_85_welfare_navigation_exception(brief):
         return ['legacy_85_welfare_exception_scope_invalid']
-    cfg = policy()['legacy_welfare_procedural_exceptions'][brief['id']]
+    cfg = get_policy_exception('legacy_procedure', brief['id'])
+    if cfg is None:
+        return ['legacy_85_welfare_exception_scope_invalid']
     reasons = []
     if (plan.get('title') != cfg['title']
             or plan.get('official_navigation') != cfg['official_navigation']
@@ -797,7 +859,10 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             available = [field for s in sources for field in extract_evidence(s['text'], s['url'])]
             seasonal_exception = dated_post_exception(brief, now.date())
             if seasonal_exception:
-                exception = rules['dated_post_exceptions'][brief['id']]
+                exception = get_policy_exception('dated_post', brief['id'], on_date=now.date())
+                if exception is None:
+                    reasons.append('specific_holiday_window_official_evidence_missing')
+                    exception = {}
                 if exception.get('official_urls'):
                     required_urls = exception['official_urls']
                 else:
@@ -1031,7 +1096,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
         if 'review' in scopes:
             review = bundle.get('review', {})
             body = {k: bundle[k] for k in ('brief', 'sources', 'plan', 'temporal_source') if k in bundle}
-            if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint():
+            if review.get('digest') != digest(body) or review.get('policy_digest') != policy_fingerprint(bundle):
                 reasons.append('review_not_bound_to_current_content')
             if not fresh(review.get('checked_at'), now, rules['review_max_age_hours']):
                 reasons.append('review_stale')
@@ -1619,8 +1684,9 @@ def render(plan, sources, category_key=None):
                        '<div style="display:flex;align-items:flex-start;padding-left:2px"><span style="background:#059669;color:#ffffff;font-weight:800;font-size:13px;padding:3px 9px;border-radius:4px;margin-right:10px;flex-shrink:0;margin-top:2px">A</span>'
                        f'<div style="flex-grow:1;color:#334155;line-height:1.8">{inline_text(faq["answer"])}</div></div></div>')
 
-    # 5. Explicit, reviewed related-post links take precedence over volatile
-    # local recommendations. Never promote an internal article to an official CTA.
+    # 5. Render only explicitly reviewed related-post links.  A reviewed bundle
+    # must determine its HTML without consulting a mutable local recommendation
+    # index at render time; candidate discovery belongs before semantic review.
     interlink_html = ''
     related = plan.get('related_posts', [])
     if related:
@@ -1634,106 +1700,6 @@ def render(plan, sources, category_key=None):
             'background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:10px">'
             '<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;font-weight:700">관련 글</h3>'
             '<ul style="margin:0;padding-left:22px;line-height:1.8">' + items + '</ul></div>')
-    else:
-      try:
-        posts_file = ROOT / 'data' / 'published_posts.json'
-        if posts_file.exists():
-            posts = json.loads(posts_file.read_text(encoding='utf-8'))
-            today = datetime.now(KST).date()
-
-            # 현재 글의 카테고리 결정. Renderer callers do not always carry the
-            # brief, so retain a narrow title inference for legacy bundles while
-            # matching candidates against the active eight-category taxonomy.
-            cur_cat = category_key or plan.get('category_key')
-            if not cur_cat:
-                t = plan.get('title', '')
-                if any(w in t for w in ['콘서트', '티켓', '앵콜', '뮤지컬', '공연', '페스티벌']):
-                    cur_cat = 'concert'
-                elif any(w in t for w in ['축제', '지역 행사', '나들이']):
-                    cur_cat = 'events'
-                elif any(w in t for w in ['세금', '연말정산', '종합소득세', '자동차세', '취득세']):
-                    cur_cat = 'tax'
-                elif any(w in t for w in ['건강검진', '예방접종', '독감', '병원', '약국', '의료', '임플란트', '본인부담상한제']):
-                    cur_cat = 'health'
-                elif any(w in t for w in ['KTX', '버스', '공항', '하이패스', '자동차검사', '운전면허', '교통', '통행료', '주차장', '전기차 충전']):
-                    cur_cat = 'transport'
-                elif any(w in t for w in ['주민등록', '전입신고', '여권', '우편물', '폐가전', '배출', '수거', '쓰레기', '버리', '안심상속']):
-                    cur_cat = 'life-admin'
-                elif any(w in t for w in ['보험', '계좌', '카드포인트', '은행', '주택연금', '최저시급', '통신 미환급']):
-                    cur_cat = 'finance'
-                elif any(w in t for w in ['지원금', '기초연금', '국민연금', '실업급여', '바우처', '요금 경감']):
-                    cur_cat = 'welfare'
-                else:
-                    cur_cat = 'life-health'
-
-            def active_key(value, category_id=None, category_name=''):
-                for key, meta in CATEGORIES.items():
-                    if (value == key or value == meta['id'] or value == meta['name']
-                            or category_id == meta['id'] or category_name == meta['name']):
-                        return key
-                return None
-
-            current_key = active_key(cur_cat)
-            is_concert = current_key == 'concert'
-
-            candidates = []
-            for p in posts:
-                if not p.get('url') or p.get('title') == plan.get('title'):
-                    continue
-                # The local post index may contain legacy IP/HTTP links. Only link
-                # canonical public HTTPS posts, and never treat category alone as relevance.
-                parsed = urlparse(p['url'])
-                if parsed.scheme != 'https' or parsed.hostname != 'lifeinfo24.org':
-                    continue
-                generic = {'2026', '2027', '안내', '정보', '방법', '총정리', '가이드',
-                           '무료', '신청', '조회', '기간', '혜택', '이용', '확인',
-                           '전국', '서울', '2026년', '2027년', '기준', '절차',
-                           '관련', '대상', '공식', '받는', '찾기', '오늘', '예약'}
-                words = lambda title: {t for t in re.findall(r'[가-힣a-zA-Z]{2,}', title.casefold())
-                                       if t not in generic and not t.endswith('년')}
-                current_terms = words(plan.get('title', ''))
-                candidate_terms = words(p.get('title', ''))
-                if not any(len(a) >= 3 and (a in b or b in a) for a in current_terms for b in candidate_terms):
-                    continue
-                if p.get('status') == 'draft' or p.get('is_closed') is True:
-                    continue
-                exp_str = p.get('expires_at')
-                if exp_str:
-                    try:
-                        exp_date = datetime.strptime(str(exp_str)[:10], '%Y-%m-%d').date()
-                        if exp_date < today:
-                            continue
-                    except Exception:
-                        pass
-
-                p_cat_id = p.get('category_id')
-                p_cat_name = p.get('category_name', '')
-
-                candidate_key = active_key(None, p_cat_id, p_cat_name)
-                # Category is a relevance boundary. If either side cannot be
-                # mapped to the active taxonomy, do not manufacture a cross-topic link.
-                if current_key is None or candidate_key != current_key:
-                    continue
-
-                candidates.append((2, p))
-
-            if candidates:
-                # 점수 높은 순(동일 카테고리 우선) 정렬 후 최대 2개 선택
-                candidates.sort(key=lambda x: x[0], reverse=True)
-                selected = [x[1] for x in candidates[:2]]
-
-                header_title = '함께 보면 좋은 추천 공연·티켓 정보' if is_concert else '함께 보면 유익한 생활 정보 추천'
-                items = ''.join(
-                    f'<li style="margin-bottom:10px"><a href="{html.escape(item["url"], quote=True)}" target="_blank" rel="noopener noreferrer" style="color:#0d7d59;text-decoration:underline;font-weight:600;font-size:15.5px">👉 [{html.escape(item.get("category_name", "생활정보"))}] {html.escape(item["title"])}</a></li>'
-                    for item in selected
-                )
-                interlink_html = (
-                    '<div class="bloguito-interlink" style="padding:20px 24px;margin:40px 0 20px;background:#f8fafc;border:1px solid #e2e8f0;border-left:5px solid #0d7d59;border-radius:10px">'
-                    f'<h3 style="margin:0 0 12px;font-size:18px;color:#1e293b;display:flex;align-items:center"><span style="margin-right:8px">{"🎵" if is_concert else "🔗"}</span>{header_title}</h3>'
-                    f'<ul style="margin:0;padding-left:22px;line-height:1.8">{items}</ul></div>'
-                )
-      except Exception:
-          interlink_html = ''
 
     # 6. 공식 출처 및 사실 검증 자료.
     # Exact action destinations already have a prominent reader-facing CTA, so

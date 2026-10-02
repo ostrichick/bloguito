@@ -17,7 +17,8 @@ from agents.post_manifest_store import (
     replace_record,
 )
 from agents.related_links import missing_internal_post_ids
-from agents.editorial_writer import fetch_sources, load_inventory
+from agents.editorial_writer import load_inventory
+from agents.source_validation_cache import verify_revision_sources
 from config import POSTS_INDEX_FILE
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
@@ -155,10 +156,15 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         with ThreadPoolExecutor(max_workers=3) as pool:
             inventory_future = pool.submit(inventory_context.run, sync_inventory)
             target_future = pool.submit(target_context.run, get_post, base, post_id, fields=fields)
-            source_future = pool.submit(source_context.run, fetch_sources, bundle['brief'])
+            source_future = pool.submit(
+                source_context.run,
+                verify_revision_sources,
+                tracked_baseline_bundle or {},
+                bundle,
+            )
             inventory_future.result()
             current = target_future.result()
-            fresh_sources = source_future.result()
+            source_validation = source_future.result()
         inventory = load_inventory()
         original = next((row for row in inventory['posts'] if int(row['ID']) == post_id), None)
         if (not original or original['post_status'] != 'publish'
@@ -181,14 +187,6 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         report = validate_bundle(bundle, remaining)
         if report['status'] != 'ready':
             raise ValueError(f'editorial_review_not_current: {report["reasons"]}')
-        before = {source['url']: source['sha256'] for source in bundle['sources']}
-        after = {source['url']: source['sha256'] for source in fresh_sources}
-        if before != after:
-            raise ValueError('official_source_changed_since_review')
-        source_validation = {
-            'all_unchanged': True,
-            'refetched_source_ids': [source.get('id') for source in fresh_sources],
-        }
         if checkpoint_callback is not None:
             checkpoint_callback({
                 'inventory_checked_on': inventory.get('checked_on'),

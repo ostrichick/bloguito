@@ -8,8 +8,10 @@
 | --- | --- | --- |
 | 프로젝트 개요와 로컬 환경 | [README](../README.md) | 진입점·구성요소·빠른 시작만 요약 |
 | 코딩·협업·배포 안전 규칙 | [AGENTS](../AGENTS.md) | 공통 작업 지침; 기존 미커밋 파일 보존 |
-| 글 작성·검토·공개 정책 | [EDITORIAL_SYSTEM](EDITORIAL_SYSTEM.md) | 콘텐츠 업무의 유일한 서술형 현행 규약 |
-| 행사 일정형 글 전용 확장 | [EVENT_POST_STANDARD](EVENT_POST_STANDARD.md) | 월간 다중 행사 글의 작성·이미지·CTA·SEO·QA 세부 표준; EDITORIAL_SYSTEM과 함께 적용 |
+| 공통 편집·검토·저장 안전 계약 | [EDITORIAL_SYSTEM](EDITORIAL_SYSTEM.md) | 모든 콘텐츠에 적용되는 공통 규칙과 정책 라우팅 |
+| 일반 정보글 작성·수정 | [GENERAL_POST_STANDARD](GENERAL_POST_STANDARD.md) | 행사 포스트가 아닌 생활정보·정부서비스·복지·세금·건강·비용/조회형 글의 현행 표준 |
+| 행사 일정형 글 전용 확장 | [EVENT_POST_STANDARD](EVENT_POST_STANDARD.md) | 월간 다중 행사 글의 작성·이미지·CTA·SEO·QA 세부 표준 |
+| 대표 이미지 | [FEATURED_IMAGE_STANDARD](FEATURED_IMAGE_STANDARD.md) | 일반·행사 글의 서술형 이미지 품질 규칙; 기계 설정은 editorial_policy.json |
 | 검증 임계값과 모델 설정 | [editorial_policy.json](../agent-publisher/editorial_policy.json) | 코드가 읽는 설정값의 유일한 정본 |
 | 명령어·백업·배포 체크리스트 | [OPERATIONS](OPERATIONS.md) | 현재 저장소의 코드와 확인 날짜를 구분한 운영 가이드 |
 | 콘텐츠 목록과 주제 대시보드 | [POST_CATALOG](POST_CATALOG.md) | 발행·임시글 현황 및 백로그 로컬 단일 정본 |
@@ -17,7 +19,7 @@
 | 다른 AI로 인계 | [PROJECT_HANDOVER](../PROJECT_HANDOVER.md) | 최소 맥락과 정본 링크; 과거 370줄 이력의 재복제 없음 |
 | 콘텐츠 구조·수요 실험 | [CONTENT_STRATEGY](CONTENT_STRATEGY_2026-09-20.md) | **제안**이며 현재 구현이나 배포 규약이 아님 |
 
-**규범은 `AGENTS.md`·`EDITORIAL_SYSTEM.md`, 수치 설정은 코드가 읽는 `editorial_policy.json`이 기준이다.** 현재 기능·배포 여부는 실제 코드와 운영 환경에서 확인한다. 규범과 구현이 충돌하면 어느 쪽이든 안전 기준을 낮추거나 과거 문서를 근거로 우회하지 말고 보고·수정·검증한다. `OPERATIONS.md`는 실행 안내이고 날짜별 기록은 당시 증거일 뿐이다. 과거 기록으로 공개 승인이나 복원 안전성을 추정하지 않는다.
+**공통 규범은 `AGENTS.md`·`EDITORIAL_SYSTEM.md`, 글 유형별 규범은 `GENERAL_POST_STANDARD.md` 또는 `EVENT_POST_STANDARD.md`, 대표 이미지 규범은 `FEATURED_IMAGE_STANDARD.md`, 수치·기계 설정은 코드가 읽는 `editorial_policy.json`이 기준이다.** 현재 기능·배포 여부는 실제 코드와 운영 환경에서 확인한다. 규범과 구현이 충돌하면 어느 쪽이든 안전 기준을 낮추거나 과거 문서를 근거로 우회하지 말고 보고·수정·검증한다. `OPERATIONS.md`는 실행 안내이고 날짜별 기록은 당시 증거일 뿐이다. 과거 기록으로 공개 승인이나 복원 안전성을 추정하지 않는다.
 
 ## 날짜별 작업 증거 (보존; 현재 지침 아님)
 
@@ -47,6 +49,8 @@
 ## 최근 추가 점검
 
 - [2026-10-02 카테고리 8분류 개편](category-reorganization-2026-10-02.md): `생활/건강 정보`의 과밀과 지역 행사 분산을 해소하기 위한 8개 평면 taxonomy, 실서버 61편 전수 재분류표, WordPress term/메뉴 마이그레이션 원칙을 기록.
+- [2026-10-02 일반 정보 포스트 정책 4단계 후속 계획](general-post-stage4-plan-2026-10-02.md): 4.1 General/Event schema 분리와 4.2 post-specific exception registry 분리를 완료하고, 4.3 volatility 기반 freshness와 4.4 critical facts 데이터화의 후속 순서와 종료 조건을 기록.
+- [2026-10-02 volatility 기반 freshness 4.3 영향도 점검](general-post-stage4-3-impact-2026-10-02.md): 8개 카테고리 구조와 기존 reviewed bundle을 기준으로 metadata-only 도입, migration report, live source 재검증, 기존 content_type fallback의 안전한 전환 순서를 정리.
 - [2026-10-01 프로젝트 간소화 P9~P11 및 WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md): validation registry 제거, per-post reviewed manifest 저장 구조, WSL SSH 연결 재사용, section-image 왕복 축소, 운영 WhatsApp service 제거와 전체 회귀 검증 기록.
 
 - [2026-09-29 #598 임플란트 건강보험 대표 이미지 문구 정정](post-598-cover-text-fix-2026-09-29.md): 대표 이미지 좌측 하단 알약 배지의 '팩트' 단어를 제거하고 '안내'로 수정한 WebP를 재생성하여 운영 WordPress의 대표 이미지(_thumbnail_id=679)로 교체 및 실서비스 검증을 완료한 기록.

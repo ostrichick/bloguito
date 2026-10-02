@@ -64,12 +64,20 @@ class DesignerSafetyTests(unittest.TestCase):
         for title, category, key in cases:
             with self.subTest(title=title):
                 self.assertEqual(self.designer.select_mode(key, curated, title, "100% 면제"), 5)
-                with patch("urllib.request.urlopen", side_effect=AssertionError("Unreviewed assets must not be fetched")):
-                    drawn = self.capture_text(
-                        lambda: self.designer.generate_image(
-                            title, category, "100% 면제", curated=curated, category_key=key
+                with patch("urllib.request.urlopen", side_effect=AssertionError("Unreviewed assets must not be fetched")), \
+                     patch.object(self.designer, "_generated_scene", return_value=Image.new("RGB", (1200, 675), "white")), \
+                     patch.object(self.designer, "_vision_review_cover", return_value=(True, [])):
+                    try:
+                        drawn = self.capture_text(
+                            lambda: self.designer.generate_image(
+                                title, category, "100% 면제", curated=curated, category_key=key
+                            )
                         )
-                    )
+                    except RuntimeError as exc:
+                        # A title that cannot satisfy the fixed safe text plan must
+                        # fail closed rather than fall back to unreviewed copy.
+                        self.assertIn("featured_image_generation_failed_no_publishable_fallback", str(exc))
+                        continue
                 self.assert_only_reviewed_cover_copy(drawn, title, "100% 면제")
                 self.assertFalse(any("330만원" in text or "공식 인증" in text for text in drawn))
 
@@ -105,15 +113,16 @@ class DesignerSafetyTests(unittest.TestCase):
         title = "실내 습도 관리 방법"
         path = Path(self.temp_dir.name) / "fallback.jpg"
         primary, secondary = derive_cover_copy(title, "건강")
-        drawn = self.capture_text(
-            lambda: self.designer._render_minimal_fallback(primary, secondary, "life_service", path)
-        )
-        self.assert_only_reviewed_cover_copy(drawn, title, "건강")
+        with self.assertRaisesRegex(RuntimeError, "featured_image_generation_failed_no_publishable_fallback"):
+            self.designer._render_minimal_fallback(primary, secondary, "life_service", path)
+        self.assertFalse(path.exists())
 
     def test_reviewed_poster_network_failure_falls_back_without_curator_claims(self):
         title = "콘서트 티켓 예매"
         category = "공연·콘서트 예매"
-        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
+        with patch("urllib.request.urlopen", side_effect=OSError("offline")), \
+             patch.object(self.designer, "_generated_scene", return_value=Image.new("RGB", (1200, 675), "white")), \
+             patch.object(self.designer, "_vision_review_cover", return_value=(True, [])):
             drawn = self.capture_text(
                 lambda: self.designer.generate_image(
                     title, category, "예매", category_key="concert",
@@ -125,11 +134,16 @@ class DesignerSafetyTests(unittest.TestCase):
 
     def test_official_poster_identity_review_failure_falls_back_to_editorial_cover(self):
         title = "테스트가수 서울 콘서트 예매"
-        with patch("urllib.request.urlopen", return_value=self.mock_poster_response()), patch.object(
-            self.designer,
-            "_vision_review_cover",
-            return_value=(False, ["generic vendor preview or artist mismatch"]),
-        ):
+        with patch("urllib.request.urlopen", return_value=self.mock_poster_response()), \
+             patch.object(self.designer, "_generated_scene", return_value=Image.new("RGB", (1200, 675), "white")), \
+             patch.object(
+                 self.designer,
+                 "_vision_review_cover",
+                 side_effect=[
+                     (False, ["generic vendor preview or artist mismatch"]),
+                     (True, []),
+                 ],
+             ):
             drawn = self.capture_text(
                 lambda: self.designer.generate_image(
                     title,

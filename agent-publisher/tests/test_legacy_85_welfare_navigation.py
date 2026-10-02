@@ -12,16 +12,16 @@ from datetime import datetime, timedelta
 from agents.editorial import (
     legacy_85_welfare_navigation_exception,
     legacy_85_welfare_navigation_reasons,
-    policy,
     topic_reasons,
     validate_bundle,
 )
+from agents.policy_exceptions import get_policy_exception
 from agents.temporal_validation import KST
 
 
 def fixture():
-    cfg = policy()['legacy_welfare_procedural_exceptions'][
-        'legacy-85-timeless-navigation-full-20260923']
+    cfg = get_policy_exception(
+        'legacy_procedure', 'legacy-85-timeless-navigation-full-20260923')
     now = datetime.now(KST)
     body = [
         '나의 혜택 | 혜택알리미 | 정부24\n로그인이 필요한 메뉴입니다.\n로그인 메뉴',

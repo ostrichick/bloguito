@@ -46,11 +46,9 @@ def cleanup_generated_cover(path) -> bool:
         candidate.unlink(missing_ok=True)
     except OSError:
         return False
-    try:
-        root.rmdir()
-        root.parent.rmdir()
-    except OSError:
-        pass
+    # Keep the dedicated temp root in place. Removing it creates a race where a
+    # concurrent _new_generated_cover_path() can observe/create the directory,
+    # then lose it before mkstemp() opens the reserved file.
     return True
 
 
