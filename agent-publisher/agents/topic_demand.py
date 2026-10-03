@@ -25,6 +25,7 @@ NAVER_MAX_GROUPS = 5
 NAVER_MAX_KEYWORDS_PER_GROUP = 20
 NAVER_TIME_UNITS = {"date", "week", "month"}
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+REVIEW_DISPOSITIONS = {"active", "duplicate_existing"}
 
 
 class TopicDemandError(ValueError):
@@ -41,6 +42,17 @@ def _parse_date(value, *, code: str) -> date:
         return date.fromisoformat(str(value))
     except (TypeError, ValueError):
         raise TopicDemandError(code) from None
+
+
+def _review_disposition(candidate: dict) -> str:
+    disposition = candidate.get("review_disposition", "active")
+    if disposition not in REVIEW_DISPOSITIONS:
+        raise TopicDemandError("invalid_topic_candidate_review_disposition")
+    if disposition == "duplicate_existing":
+        if type(candidate.get("duplicate_post_id")) is not int or candidate["duplicate_post_id"] <= 0:
+            raise TopicDemandError("invalid_topic_candidate_duplicate_post_id")
+        _parse_date(candidate.get("reviewed_at"), code="invalid_topic_candidate_reviewed_at")
+    return disposition
 
 
 def measurement_window(as_of: date, *, days: int = 90) -> tuple[date, date]:
@@ -99,6 +111,8 @@ def select_measurement_candidates(candidate_document: dict, growth_report: dict,
     for candidate in candidate_document["candidates"]:
         if not isinstance(candidate, dict):
             raise TopicDemandError("invalid_topic_candidate")
+        if _review_disposition(candidate) != "active":
+            continue
         matches = matching_gsc_queries(candidate, growth_report)
         if require_gsc_seed and not matches:
             continue
