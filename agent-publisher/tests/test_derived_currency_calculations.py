@@ -1,4 +1,4 @@
-"""Derived reference prices may only be exact sums of cited official won amounts."""
+"""Derived currency values require exact, evidence-bound deterministic operations."""
 import unittest
 
 from agents.editorial import supported_currency_sums, validate_bundle
@@ -34,6 +34,45 @@ class DerivedCurrencyCalculationTests(unittest.TestCase):
         self.block['calculations'][0]['result'] = 9000
         self.block['text'] = '공식 기본 담보를 단순 합산한 1일 참고금액은 약 9,000원입니다.'
         self.assertIn('invalid_derived_calculation', self.check()['reasons'])
+
+    def test_exact_thousand_won_to_won_conversion_is_allowed(self):
+        supported, errors = supported_currency_sums(
+            '월 1,404,000원',
+            '55세\n468\n936\n1,404\n일반주택\n(단위 : 천원)',
+            [{
+                'operation': 'thousand_won_to_won',
+                'source_thousand_won': 1404,
+                'result_won': 1_404_000,
+            }],
+        )
+        self.assertEqual({'1404000'}, supported)
+        self.assertEqual([], errors)
+
+    def test_thousand_won_conversion_requires_exact_factor(self):
+        supported, errors = supported_currency_sums(
+            '월 1,405,000원',
+            '55세\n1,404\n공식 월지급금 표\n(단위 : 천원)',
+            [{
+                'operation': 'thousand_won_to_won',
+                'source_thousand_won': 1404,
+                'result_won': 1_405_000,
+            }],
+        )
+        self.assertEqual(set(), supported)
+        self.assertIn('invalid_derived_calculation', errors)
+
+    def test_thousand_won_conversion_requires_unit_evidence(self):
+        supported, errors = supported_currency_sums(
+            '월 1,404,000원',
+            '55세\n1,404\n공식 월지급금 표',
+            [{
+                'operation': 'thousand_won_to_won',
+                'source_thousand_won': 1404,
+                'result_won': 1_404_000,
+            }],
+        )
+        self.assertEqual(set(), supported)
+        self.assertIn('invalid_derived_calculation', errors)
 
     def test_uncited_operand_is_rejected(self):
         self.block['calculations'][0]['operands'][-1] = 1600
