@@ -135,6 +135,24 @@ class TopicScoringTests(unittest.TestCase):
                     growth_report(), self.policy, as_of=self.as_of,
                 )
 
+    def test_source_specific_metric_contract_rejects_wrong_metric(self):
+        for evidence in ([{
+            "source": "google_trends", "metric": "avg_monthly_searches", "value": 50,
+            "collected_at": "2026-10-01", "measured": True,
+        }], [{
+            "source": "naver_datalab", "metric": "avg_monthly_searches", "value": 50,
+            "collected_at": "2026-10-01", "measured": True,
+        }], [{
+            "source": "keyword_planner", "metric": "relative_interest", "value": 50,
+            "collected_at": "2026-10-01", "measured": True,
+        }]):
+            with self.subTest(evidence=evidence), self.assertRaisesRegex(
+                    TopicScoringError, "unsupported_topic_demand_metric"):
+                score_candidates(
+                    {"schema_version": 1, "candidates": [candidate(demand_evidence=evidence)]},
+                    growth_report(), self.policy, as_of=self.as_of,
+                )
+
     def test_scheduler_gate_binds_score_to_brief_keyword_category_and_freshness(self):
         score_report = score_candidates(
             {"schema_version": 1, "candidates": [candidate()]},
