@@ -31,6 +31,29 @@ def current_bundle():
 
 
 class UnifiedEditPostTests(unittest.TestCase):
+    def test_legacy_public_without_manifest_is_full_standard_only_when_id_bound(self):
+        bundle = current_bundle()
+        bundle['brief']['existing_post_id'] = 345
+        with tempfile.TemporaryDirectory() as folder:
+            draft = Path(folder) / 'draft_posts.json'
+            public = Path(folder) / 'published_posts.json'
+            draft.write_text('[]', encoding='utf-8')
+            public.write_text('[]', encoding='utf-8')
+            with patch('agents.edit_post.DRAFTS_INDEX_FILE', draft), \
+                 patch('agents.edit_post.POSTS_INDEX_FILE', public):
+                decision = classify_reviewed_post_route(
+                    345, bundle, expected_content_sha256='a' * 64)
+                with self.assertRaisesRegex(ValueError, 'reviewed_post_manifest_required'):
+                    classify_reviewed_post_route(
+                        346, bundle, expected_content_sha256='a' * 64)
+        self.assertEqual('standard', decision['route'])
+        self.assertEqual('publish', decision['target_status'])
+        self.assertTrue(decision['legacy_public_adoption'])
+        self.assertIn('legacy_public_without_reviewed_manifest', decision['reasons'])
+        self.assertEqual('full', decision['validation_plan']['source_validation'])
+        self.assertEqual('full', decision['validation_plan']['semantic_review'])
+        self.assertIn('public-page', decision['qa_requirements'])
+
     def test_public_wording_edit_routes_fast_only_when_manifest_matches_expected_sha(self):
         old = current_bundle()
         new = copy.deepcopy(old)

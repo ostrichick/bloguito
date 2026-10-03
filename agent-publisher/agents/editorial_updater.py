@@ -16,11 +16,12 @@ from agents.post_manifest_store import (
     load_record,
     release_editorial_lock,
     replace_record,
+    upsert_record,
 )
 from agents.related_links import missing_internal_post_ids
 from agents.editorial_writer import load_inventory
 from agents.source_validation_cache import verify_revision_sources
-from config import POSTS_INDEX_FILE
+from config import POSTS_INDEX_FILE, SITE_URL, resolve_category
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
     backup_json,
@@ -98,13 +99,36 @@ def _set_rank_math_meta(base, post_id, values):
             capture_output=True, text=True, encoding='utf-8', errors='strict', check=True)
 
 
-def _update_reviewed_public_manifest(post_id, bundle):
-    """Advance an existing reviewed public manifest without creating provenance."""
+def _public_manifest_record(post_id, bundle, live_post):
+    """Build reviewed-state metadata only after a live public readback succeeded."""
+    category = resolve_category(bundle.get('brief', {}).get('category_key', ''))
+    slug = (live_post.get('post_name') or '').strip('/')
+    url = f"{SITE_URL.rstrip('/')}/{slug}/" if slug else f"{SITE_URL.rstrip('/')}/?p={post_id}"
+    return {
+        'id': post_id,
+        'title': live_post.get('post_title') or bundle.get('plan', {}).get('title') or '',
+        'url': url,
+        'category_id': category['id'],
+        'category_name': category['name'],
+        'status': 'publish',
+        'expires_at': bundle.get('brief', {}).get('useful_until'),
+        'fact_manifest': {'editorial_bundle': bundle},
+        # This is the reviewed-state adoption timestamp for a legacy public post.
+        # It deliberately does not claim to reconstruct the original WP publish time.
+        'published_at': datetime.now().strftime('%Y-%m-%d %H:%M'),
+    }
+
+
+def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, live_post=None):
+    """Advance a reviewed manifest; optionally adopt a fully reviewed legacy public post."""
     index_file = POSTS_INDEX_FILE
-    if not index_file.is_file():
-        return False
-    snapshot = load_record(index_file, post_id)
+    snapshot = load_record(index_file, post_id) if index_file.is_file() else None
     if snapshot is None or not snapshot.record.get('fact_manifest', {}).get('editorial_bundle'):
+        if allow_create:
+            if not isinstance(live_post, dict) or live_post.get('post_status') != 'publish':
+                raise ValueError('legacy_public_manifest_live_readback_required')
+            upsert_record(index_file, _public_manifest_record(post_id, bundle, live_post))
+            return True
         return False
     updated = dict(snapshot.record)
     updated.setdefault('fact_manifest', dict(snapshot.record.get('fact_manifest', {})))['editorial_bundle'] = bundle
@@ -117,7 +141,7 @@ def _update_reviewed_public_manifest(post_id, bundle):
 
 def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False,
                                 confirm_title_change=False, checkpoint_callback=None,
-                                tracked_baseline_bundle=None):
+                                tracked_baseline_bundle=None, adopt_missing_manifest=False):
     """Change reviewed content after a fresh review and unchanged-content check.
 
     The slug, status, categories, media and publication date are kept. Title
@@ -210,7 +234,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
                               or old_excerpt == _existing_lead_excerpt(current['post_content'])))
         if (current['post_content'] == reviewed_content and not update_excerpt
                 and not title_changed and not update_meta):
-            _update_reviewed_public_manifest(post_id, bundle)
+            _update_reviewed_public_manifest(
+                post_id, bundle, allow_create=adopt_missing_manifest, live_post=current)
             return post_id
         backup_payload = dict(current)
         if current_meta is not None:
@@ -250,7 +275,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
         if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
-        _update_reviewed_public_manifest(post_id, bundle)
+        _update_reviewed_public_manifest(
+            post_id, bundle, allow_create=adopt_missing_manifest, live_post=saved)
         invalidate_inventory()
         return post_id
     finally:

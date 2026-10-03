@@ -9,6 +9,44 @@ from agents import editorial_updater as updater
 
 
 class ExistingPublicPostUpdateTests(unittest.TestCase):
+    def test_legacy_public_full_update_adopts_reviewed_manifest_only_after_readback(self):
+        updated = {**self.post, 'post_content': 'Reviewed HTML'}
+        calls = []
+
+        def execute(args, **kwargs):
+            calls.append(args)
+            if args[5:7] == ['post', 'get']:
+                return Mock(stdout=json.dumps(self.post))
+            if args[5] == 'eval':
+                payload = json.loads(kwargs['input'])
+                return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
+            return Mock(returncode=0, stdout='Success', stderr='', args=args)
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / 'data'
+            data.mkdir()
+            index = data / 'published_posts.json'
+            index.write_text('[]', encoding='utf-8')
+            with patch.object(updater, 'ROOT', root), \
+                 patch.object(updater, 'POSTS_INDEX_FILE', index), \
+                 patch.object(updater, 'sync_inventory'), \
+                 patch.object(updater, 'invalidate_inventory'), \
+                 patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
+                 patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
+                 patch.object(updater, 'verify_revision_sources', return_value={
+                     'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
+                 patch.object(updater, 'render', return_value='Reviewed HTML'), \
+                 patch.object(updater, 'save_report'), \
+                 patch.object(updater, 'resolve_category', return_value={'id': 276, 'name': '교통/자동차'}), \
+                 patch.object(updater.subprocess, 'run', side_effect=execute):
+                self.assertEqual(243, updater.update_existing_public_post(
+                    243, self.bundle, self.sha, confirmed=True, adopt_missing_manifest=True))
+            saved = json.loads(index.read_text(encoding='utf-8'))
+            self.assertEqual(1, len(saved))
+            self.assertEqual(243, saved[0]['id'])
+            self.assertEqual(self.bundle, saved[0]['fact_manifest']['editorial_bundle'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -6,6 +6,13 @@ from test_editorial_system import sample
 
 
 class ValidationReuseTests(unittest.TestCase):
+    def test_missing_legacy_baseline_reuses_nothing(self):
+        result = assess_validation_reuse(None, sample())
+        self.assertFalse(result["reuse_sources"])
+        self.assertFalse(result["reuse_policy"])
+        self.assertFalse(result["reuse_full_semantic_review"])
+        self.assertFalse(result["delta_review_only"])
+
     def test_exact_bundle_reuses_sources_policy_and_full_review(self):
         old = sample()
         result = assess_validation_reuse(old, copy.deepcopy(old))
