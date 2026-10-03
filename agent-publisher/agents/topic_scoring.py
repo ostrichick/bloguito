@@ -30,6 +30,11 @@ BRIEF_INTENT_TYPES = {
     "guide", "lookup", "application", "calculator", "comparison",
     "decision", "troubleshooting",
 }
+DEMAND_METRICS = {
+    "keyword_planner": {"avg_monthly_searches"},
+    "google_trends": {"relative_interest"},
+    "naver_datalab": {"relative_interest"},
+}
 
 
 def _canonical_digest(value) -> str:
@@ -153,8 +158,11 @@ def _validate_candidate(candidate: dict, gate: dict) -> None:
             raise TopicScoringError("unsupported_topic_demand_source")
         if row.get("measured") is not True:
             raise TopicScoringError("topic_demand_evidence_must_be_measured")
-        if not isinstance(row.get("metric"), str) or not row["metric"].strip():
+        metric = row.get("metric")
+        if not isinstance(metric, str) or not metric.strip():
             raise TopicScoringError("invalid_topic_demand_metric")
+        if metric not in DEMAND_METRICS.get(row["source"], set()):
+            raise TopicScoringError("unsupported_topic_demand_metric")
         value = row.get("value")
         if (isinstance(value, bool) or not isinstance(value, (int, float))
                 or not math.isfinite(float(value)) or value < 0):

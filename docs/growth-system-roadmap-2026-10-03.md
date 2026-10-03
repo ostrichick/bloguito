@@ -207,6 +207,21 @@ AI 답변에서 설명만 읽고 끝나는 대신 독자가 자신의 조건을 
 - tool evidence source ID도 기존 공식 출처 footer에 포함한다. 연장/야간/휴일 가산수당과 세금/공제는 범위 밖임을 reader-facing 안내에 명시한다.
 - P8은 기존 공개글을 자동 수정하지 않고 실제 2027 최저임금 글도 만들지 않았다. 외부 수요 측정이 없는 현재 P2 eligible 신규 후보 0건 상태를 우회하지 않는다.
 
+## P9 — Measured Demand Collector
+
+### 목표
+
+P2가 형식만 준비한 외부 demand evidence를 실제 공식 측정 경로와 연결하되, 외부 키워드 도구가 새 주제를 무제한 발명하지 않도록 GSC query seed를 먼저 사용한다. 측정 인프라가 없거나 provider 응답이 비어 있으면 후보 0건/미측정 상태를 정상 결과로 유지한다.
+
+### 2026-10-03 구현
+
+- `agents/topic_demand.py`와 `scripts/collect_topic_demand.py`를 추가해 사람이 검토한 private `topic_candidates.json`만 enrich하도록 했다. collector 자체는 topic/category/click need/AI answerability/added value를 생성하지 않는다.
+- 첫 provider는 공식 Naver DataLab 통합 검색어 트렌드 API다. 최대 5개 keyword group, group당 최대 20개 검색어라는 provider 경계를 지키며 고정 HTTPS endpoint만 호출한다. credential이나 오류 response body는 로그에 남기지 않는다.
+- 기본 수집은 신선한 P1 GSC query와 후보 `gsc_terms`가 문자 정규화 기준으로 실제 매칭된 candidate만 대상으로 한다. stale GSC report나 매칭이 없는 후보는 외부 호출 전에 보류한다. 운영자가 이미 별도로 검토한 후보는 명시적 `--include-unseeded`로만 예외 측정할 수 있다.
+- DataLab의 상대 ratio는 절대 검색량으로 승격하지 않는다. 최근 90일 완료 날짜의 주간 ratio 평균을 `metric=relative_interest`로 기록하고 period/time unit/query group/aggregation을 evidence에 함께 보존한다. provider가 data point를 반환하지 않으면 0을 만들어내지 않는다.
+- P2 validation도 source-specific metric allowlist를 추가해 Keyword Planner의 `avg_monthly_searches`와 Trends/DataLab의 `relative_interest`를 교차 오표기하지 못하게 했다.
+- 현재 local/production 환경에는 Naver DataLab Client ID/Secret, Google Ads developer token/OAuth/customer ID, Google Trends alpha access가 확인되지 않았다. 따라서 이 구현 시점에는 실제 외부 측정값을 소급 생성하지 않고 private candidate 0건 상태를 유지한다.
+
 ## 작업 순서와 경계
 
 1. **P0**: inventory 파일 역할 충돌을 먼저 제거한다.
@@ -218,6 +233,7 @@ AI 답변에서 설명만 읽고 끝나는 대신 독자가 자신의 조건을 
 7. **P6**: curated cluster로 신규 원고의 related-post 후보를 결합하고, explicit-link orphan 후보를 read-only로 찾는다.
 8. **P7**: scheduler brief에 intent/AI-answerability/added-value를 명시하고 AI로 쉽게 대체되는 무가치 설명글을 자동 작성에서 보류한다.
 9. **P8**: allowlisted structured reader tool을 deterministic하게 렌더해 계산/판정형 클릭 가치를 제공한다.
+10. **P9**: reviewed candidate를 GSC-seeded official provider 측정으로 enrich하고 상대값/절대값 경계를 source-specific metric으로 강제한다.
 
 P0~P5는 운영 배포와 #345 실제 completion loop까지 확인했다. P6도 기존 공개글을 자동 수정하지 않으며, writer 경로에 배포할 때는 release revision과 08:00 cron smoke를 별도로 확인한다.
 

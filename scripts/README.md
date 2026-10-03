@@ -13,6 +13,7 @@
 - 로컬 HTML의 한 컴포넌트 삽입·교체·삭제: `patch_post_component.py`
 - workflow 병목 확인: `summarize_workflow_metrics.py`
 - 검색 성장 기회 갱신: `build_growth_queue.py`
+- 검토된 신규 후보 외부 실측 수요 보강: `collect_topic_demand.py`
 - 신규 주제 demand gate 점수화: `score_topic_candidates.py`
 - 일일 성장 작업 결정: `build_daily_growth_plan.py`
 - 기존 글 성장 개선 완료 기록: `record_growth_work.py`
