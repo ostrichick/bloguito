@@ -11,6 +11,27 @@ GROWTH_SCORE_REPORT = BRIEFS.parent / 'growth' / 'topic-candidate-scores.json'
 GROWTH_POLICY = BRIEFS.parents[1] / 'growth_policy.json'
 
 
+class SearchBriefError(ValueError):
+    """Fail-closed reviewed-brief storage or identity error."""
+
+
+def validate_search_brief_rows(rows):
+    """Validate the shared storage boundary before any brief is consumed."""
+    if not isinstance(rows, list):
+        raise SearchBriefError('search_briefs_shape_invalid')
+    ids = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise SearchBriefError('search_brief_row_invalid')
+        brief_id = row.get('id')
+        if not isinstance(brief_id, str) or not brief_id.strip():
+            raise SearchBriefError('search_brief_id_invalid')
+        ids.append(brief_id)
+    if len(ids) != len(set(ids)):
+        raise SearchBriefError('search_brief_duplicate_id')
+    return rows
+
+
 def _url_outside_verified_source_footer(content, url):
     """An evidence citation shared by distinct articles is not a duplicate topic.
 
@@ -105,7 +126,11 @@ def load_briefs(category, today=None, *, require_growth_gate=False):
     from agents.temporal_validation import KST
     from datetime import datetime
     today = today or datetime.now(KST).date()
-    briefs = json.loads(BRIEFS.read_text(encoding='utf-8'))
+    try:
+        briefs = validate_search_brief_rows(
+            json.loads(BRIEFS.read_text(encoding='utf-8')))
+    except (OSError, ValueError, TypeError):
+        return []
     score_report = growth_policy = None
     if require_growth_gate:
         score_report, growth_policy = _load_growth_gate_state()
