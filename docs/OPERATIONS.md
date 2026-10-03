@@ -238,6 +238,18 @@ python scripts/score_topic_candidates.py
 
 결과는 Git 비추적 `agent-publisher/data/growth/topic-candidate-scores.json`이다. 기본 gate는 100점 중 70점 이상, `medium` 이상 confidence, 최근 측정 demand evidence 존재, 최소 30일 useful lifetime, 명시적 added value를 요구한다. 이 값은 `growth_policy.json`의 운영 heuristic이며 검색 순위·유입·수익 예측값이 아니다. `RadarAgent`가 호출하는 scheduled discovery만 이 score report를 필수로 요구한다. 사용자가 직접 지시한 수동 집필과 기존 editorial CLI는 growth score가 없다는 이유만으로 차단하지 않는다. score가 통과해도 기존 duplicate/source/lifecycle/semantic review/draft-only 계약은 모두 별도로 통과해야 한다.
 
+**Reviewed brief narrow merge:** 자동 후보가 실제 duplicate/source/lifecycle 검토까지 통과해 `search_briefs.json` 승격 대상이 된 경우 운영 파일 전체를 release로 교체하지 않는다. `agent-publisher/merge_search_brief.py`는 한 번에 reviewed brief ID 하나만 다루며 기본은 dry-run이다. `--confirm-merge`에서 target의 pre-SHA를 다시 확인하고, 기존 bytes를 `agent-publisher/backups/search-briefs-<UTC>/`에 보존한 뒤 같은 디렉터리 임시 파일을 `os.replace()`로 교체한다. readback에서는 target ID와 비대상 `ID → row` mapping이 그대로인지 확인하고 실패 시 원본 bytes로 rollback한다. 기존 ID를 다른 내용으로 바꾸려면 `--replace-existing`을 별도로 지정해야 하며 동일 row 재적용은 no-op다. loader도 malformed/중복 brief ID storage를 fail-closed한다. 운영 `scripts/install_editorial_release.py`의 기존 `data/search_briefs.json` skip 계약은 그대로 유지한다.
+
+```bash
+# 먼저 dry-run. production target을 수정하지 않는다.
+python /home/ubuntu/agent-publisher/merge_search_brief.py /path/to/reviewed-brief.json \
+  --expected-sha256 <현재-search_briefs-sha256>
+
+# 검토된 동일 payload만 명시적으로 narrow merge
+python /home/ubuntu/agent-publisher/merge_search_brief.py /path/to/reviewed-brief.json \
+  --expected-sha256 <현재-search_briefs-sha256> --confirm-merge
+```
+
 **P3 Daily Growth Planner:** 정규 자동 작성은 P1/P2 결과를 바로 소비하지 않고 하루 작업 1개를 먼저 결정한다. `python scripts/build_daily_growth_plan.py`는 private `latest-opportunities.json`과 `topic-candidate-scores.json`을 읽어 `daily-growth-plan.json`을 만든다. 결정은 `existing_improvement`, `new_draft`, `no_action` 중 하나다. P3의 초기 기본값은 actionable 기존 글 개선 우선이었고, 현재는 아래 P5 work-mix 정책이 existing/new가 동시에 eligible인 경우의 최종 우선순위를 결정한다. existing을 선택한 경우 공개 글은 자동 수정하지 않고 해당 run의 신규 draft를 보류하며 운영 요약에 post ID를 남긴다. `new_draft`를 선택한 경우 P2에서 `eligible_for_automation=true`인 최고점 brief 하나만 Radar에 전달한다. stale/malformed/private state 누락은 `no_action`으로 fail closed하며 WordPress inventory refresh도 실행하지 않는다.
 
 ```powershell

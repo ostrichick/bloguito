@@ -225,6 +225,8 @@ P2가 형식만 준비한 외부 demand evidence를 실제 공식 측정 경로�
 - P3 planner dry run은 이 후보를 `new_draft` 대상으로 선택했지만 tracked `search_briefs.json`에는 같은 `brief_id`의 사람이 검토한 brief가 아직 없다. scheduled Radar probe도 대상 brief 0건으로 fail closed했다. 따라서 측정 통과만으로 WordPress draft가 생성되지는 않으며, 별도 source/duplicate/lifecycle 검토 후 reviewed brief 승격이 다음 단계다.
 - 후속 duplicate review에서 WordPress #345 본문을 직접 확인한 결과, 기존 글이 이미 티머니GO의 고속/시외 선택, 시외버스 통합예매 CTA, 시외버스 잔여좌석 재조회, 취소표 알림 확인, 시간대/터미널 대안을 포함하고 있어 `시외버스 취소표` 후보와 실질 검색 의도가 겹쳤다. 따라서 이 후보는 새 `search_briefs.json` 항목으로 승격하지 않는다.
 - private candidate에는 optional `review_disposition`을 두고 `duplicate_existing`이면 `duplicate_post_id`와 `reviewed_at`을 필수로 기록한다. 이 상태의 후보는 기존 measured evidence를 보존하되 외부 provider 재측정에서 제외되고 P2 score report에도 `duplicate_existing_post` reason으로 남아 `eligible_for_automation=false`가 된다. 이는 수요 신호가 있다는 이유만으로 이미 해결한 검색 의도를 새 글로 중복 생산하지 않기 위한 fail-closed 경계다.
+- 다음 GSC seed 검토에서는 `ktx양도`(GSC 0 click, 1 impression, 평균 position 8)를 별도 행동 의도로 선택했다. 코레일 공식 FAQ의 승차권 전달 기능과 전달 제한을 근거로 evergreen candidate로 측정했고 Naver DataLab 주간 상대관심도 평균은 `28.6858`이었다. 다만 `ai_answerability=high`를 사실대로 유지했기 때문에 P2는 61점/`medium` confidence, `score_below_automation_threshold`로 보류했다. 즉 측정값을 얻었다는 이유로 점수 metadata를 부풀리거나 reviewed brief를 만들지 않았고 P3도 `no_action`을 유지했다.
+- 향후 실제 eligible candidate가 생겼을 때 server `search_briefs.json`을 안전하게 승격할 수 있도록 `merge_search_brief.py` narrow-merge 경로를 추가했다. 한 invocation당 ID 하나, default dry-run, optional expected-SHA CAS, exact-byte backup, same-directory atomic replace, 비대상 row 불변 readback, 실패 rollback을 적용한다. `load_briefs()`도 top-level list/row ID/ID uniqueness를 먼저 검증해 ambiguous reviewed storage를 scheduler가 소비하지 않도록 fail-closed한다. installer의 기존 server brief skip은 유지한다.
 
 ## 작업 순서와 경계
 

@@ -92,6 +92,19 @@ class SearchIntentTests(unittest.TestCase):
             inventory.read_text.return_value = '[]'
             self.assertEqual([], load_briefs('concert', date(2026, 9, 13)))
 
+    def test_duplicate_brief_ids_fail_closed(self):
+        briefs = json.loads(Path(__file__).resolve().parents[1].joinpath(
+            'data', 'search_briefs.json').read_text(encoding='utf-8'))
+        duplicate = [briefs[0], dict(briefs[0])]
+        with patch('agents.search_intent.BRIEFS') as brief_file:
+            brief_file.read_text.return_value = json.dumps(duplicate, ensure_ascii=False)
+            self.assertEqual([], load_briefs('concert', date(2026, 9, 13)))
+
+    def test_malformed_brief_storage_fails_closed(self):
+        with patch('agents.search_intent.BRIEFS') as brief_file:
+            brief_file.read_text.return_value = '{"briefs": []}'
+            self.assertEqual([], load_briefs('concert', date(2026, 9, 13)))
+
     def test_radar_always_requests_growth_gate_for_scheduled_discovery(self):
         with patch('agents.radar.load_briefs', return_value=[]) as load, patch('builtins.print'):
             self.assertEqual([], RadarAgent().search_news('welfare'))
