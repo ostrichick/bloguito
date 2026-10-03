@@ -5,13 +5,18 @@ from __future__ import annotations
 from datetime import date
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from agents.topic_demand import (
+    NAVER_DATALAB_ENDPOINT,
     TopicDemandError,
     collect_naver_datalab,
     measurement_window,
+    naver_datalab_requester,
     save_candidate_document,
     select_measurement_candidates,
 )
@@ -61,6 +66,33 @@ class TopicDemandTests(unittest.TestCase):
             (date(2026, 7, 5), date(2026, 10, 2)),
             measurement_window(self.as_of, days=90),
         )
+
+    def test_requester_uses_current_naver_api_hub_contract(self):
+        calls = []
+
+        class FakeSession:
+            def post(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return SimpleNamespace(status_code=200, json=lambda: {})
+
+        fake_requests = SimpleNamespace(Session=lambda: FakeSession())
+        with patch.dict(sys.modules, {"requests": fake_requests}):
+            requester = naver_datalab_requester("client-id", "client-secret")
+            self.assertEqual({}, requester({"keywordGroups": []}))
+
+        self.assertEqual(1, len(calls))
+        args, kwargs = calls[0]
+        self.assertEqual((NAVER_DATALAB_ENDPOINT,), args)
+        self.assertEqual(
+            "https://naverapihub.apigw.ntruss.com/search-trend/v1/search",
+            NAVER_DATALAB_ENDPOINT,
+        )
+        self.assertEqual("client-id", kwargs["headers"]["X-NCP-APIGW-API-KEY-ID"])
+        self.assertEqual("client-secret", kwargs["headers"]["X-NCP-APIGW-API-KEY"])
+        self.assertNotIn("X-Naver-Client-Id", kwargs["headers"])
+        self.assertNotIn("X-Naver-Client-Secret", kwargs["headers"])
+        self.assertEqual("application/json", kwargs["headers"]["Content-Type"])
+        self.assertFalse(kwargs["allow_redirects"])
 
     def test_selection_requires_fresh_literal_gsc_seed_by_default(self):
         doc = {"schema_version": 1, "candidates": [candidate()]}

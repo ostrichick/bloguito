@@ -216,11 +216,11 @@ P2가 형식만 준비한 외부 demand evidence를 실제 공식 측정 경로�
 ### 2026-10-03 구현
 
 - `agents/topic_demand.py`와 `scripts/collect_topic_demand.py`를 추가해 사람이 검토한 private `topic_candidates.json`만 enrich하도록 했다. collector 자체는 topic/category/click need/AI answerability/added value를 생성하지 않는다.
-- 첫 provider는 공식 Naver DataLab 통합 검색어 트렌드 API다. 최대 5개 keyword group, group당 최대 20개 검색어라는 provider 경계를 지키며 고정 HTTPS endpoint만 호출한다. credential이나 오류 response body는 로그에 남기지 않는다.
+- 첫 provider는 NAVER API HUB의 공식 Naver DataLab 통합 검색어 트렌드 API다. 현재 공식 계약인 `POST https://naverapihub.apigw.ntruss.com/search-trend/v1/search`와 `X-NCP-APIGW-API-KEY-ID`/`X-NCP-APIGW-API-KEY` 헤더를 사용한다. 최대 5개 keyword group, group당 최대 20개 검색어라는 provider 경계를 지키며 고정 HTTPS endpoint만 호출한다. credential이나 오류 response body는 로그에 남기지 않는다.
 - 기본 수집은 신선한 P1 GSC query와 후보 `gsc_terms`가 문자 정규화 기준으로 실제 매칭된 candidate만 대상으로 한다. stale GSC report나 매칭이 없는 후보는 외부 호출 전에 보류한다. 운영자가 이미 별도로 검토한 후보는 명시적 `--include-unseeded`로만 예외 측정할 수 있다.
 - DataLab의 상대 ratio는 절대 검색량으로 승격하지 않는다. 최근 90일 완료 날짜의 주간 ratio 평균을 `metric=relative_interest`로 기록하고 period/time unit/query group/aggregation을 evidence에 함께 보존한다. provider가 data point를 반환하지 않으면 0을 만들어내지 않는다.
 - P2 validation도 source-specific metric allowlist를 추가해 Keyword Planner의 `avg_monthly_searches`와 Trends/DataLab의 `relative_interest`를 교차 오표기하지 못하게 했다.
-- 현재 local/production 환경에는 Naver DataLab Client ID/Secret, Google Ads developer token/OAuth/customer ID, Google Trends alpha access가 확인되지 않았다. 따라서 이 구현 시점에는 실제 외부 측정값을 소급 생성하지 않고 private candidate 0건 상태를 유지한다.
+- 현재 local/production 환경에는 NAVER API HUB Client ID/Secret, Google Ads developer token/OAuth/customer ID, Google Trends alpha access가 확인되지 않았다. 따라서 이 구현 시점에는 실제 외부 측정값을 소급 생성하지 않고 private candidate 0건 상태를 유지한다.
 
 ## 작업 순서와 경계
 
