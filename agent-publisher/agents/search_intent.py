@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 BRIEFS = Path(__file__).resolve().parents[1] / 'data' / 'search_briefs.json'
 INVENTORY = BRIEFS.with_name('wordpress_inventory.json')
+GROWTH_SCORE_REPORT = BRIEFS.parent / 'growth' / 'topic-candidate-scores.json'
+GROWTH_POLICY = BRIEFS.parents[1] / 'growth_policy.json'
 
 
 def _url_outside_verified_source_footer(content, url):
@@ -82,12 +84,29 @@ def duplicate_posts(brief, posts, related_post_ids=None):
                  or any(url_duplicate(p, url) for url in official))]
 
 
-def load_briefs(category, today=None):
+def _load_growth_gate_state():
+    """Read private growth-gate state; callers fail closed when it is unavailable."""
+    from agents.growth_analysis import load_policy
+    try:
+        report = json.loads(GROWTH_SCORE_REPORT.read_text(encoding='utf-8'))
+        policy = load_policy(GROWTH_POLICY)
+        return report, policy
+    except (OSError, ValueError, KeyError):
+        return None, None
+
+
+def load_briefs(category, today=None, *, require_growth_gate=False):
     from agents.editorial import topic_reasons
+    from agents.topic_scoring import TopicScoringError, brief_growth_gate_reasons
     from agents.temporal_validation import KST
     from datetime import datetime
     today = today or datetime.now(KST).date()
     briefs = json.loads(BRIEFS.read_text(encoding='utf-8'))
+    score_report = growth_policy = None
+    if require_growth_gate:
+        score_report, growth_policy = _load_growth_gate_state()
+        if score_report is None or growth_policy is None:
+            return []
     try:
         inventory = json.loads(INVENTORY.read_text(encoding='utf-8'))
         if inventory['checked_on'] != today.isoformat():
@@ -95,12 +114,19 @@ def load_briefs(category, today=None):
         posts = inventory['posts']
         if not isinstance(posts, list):
             return []
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError):
         return []  # An unavailable inventory is not evidence that no duplicate exists.
     result = []
     for brief in briefs:
         if brief.get('category_key') != category or not brief.get('approved'):
             continue
+        if require_growth_gate:
+            try:
+                if brief_growth_gate_reasons(
+                        brief, score_report, growth_policy, today=today):
+                    continue
+            except TopicScoringError:
+                continue
         if topic_reasons(brief, today):
             continue
         if duplicate_posts(brief, posts):

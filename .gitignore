@@ -41,6 +41,8 @@ agent-publisher/data/draft_posts.json
 agent-publisher/data/designer_state.json
 agent-publisher/data/wordpress_inventory.json
 agent-publisher/data/wordpress_inventory.tmp
+agent-publisher/data/catalog_inventory.json
+agent-publisher/data/growth/
 agent-publisher/data/editorial_runs/
 agent-publisher/data/post_manifests/
 agent-publisher/data/analytics/

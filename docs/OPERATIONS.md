@@ -210,6 +210,45 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 
 **로컬 카탈로그와 주제 백로그:** 새 글 주제 탐색은 `docs/POST_CATALOG.md`에서 시작한다. 이 문서는 빠른 1차 중복 확인과 현재 포트폴리오·주제 백로그 파악용이며, 실제 저장 직전 안전 검사를 대체하지 않는다. 신규 draft 생성, 공개 전환, 제목·카테고리·Rank Math 포커스 키워드/점수처럼 카탈로그에 표시되는 정보 변경이 성공적으로 끝난 뒤 `python scripts/sync_post_catalog.py`를 한 번 실행한다. 동기화 스크립트는 기존 `POST_CATALOG.md`의 사람이 검토한 백로그 행을 보존하고, 현재 공개·임시·예약·비공개 글의 제목 또는 포커스 키워드와 겹치는 후보를 제거한 뒤 우선순위를 다시 매긴다. 백로그를 보충할 때에는 주제 탐색 단계에서 공식 출처와 유효기간을 확인한 새 후보만 추가한다.
 
+**검색 성장 Opportunity Queue:** `python scripts/build_growth_queue.py`는 `agent-publisher/data/analytics/`의 최신 GSC/GA4 JSON과 비공개 `catalog_inventory.json`을 읽어 `agent-publisher/data/growth/latest-opportunities.json`을 생성한다. 이 결과는 WordPress를 수정하지 않는 private triage 자료다. GSC page URL은 WordPress가 반환한 실제 permalink와 post ID alias에만 결합하며 매칭되지 않는 legacy/alternate URL은 별도로 남겨 추정 연결하지 않는다. GA4 page 수치는 채널 전체 값이므로 organic traffic으로 취급하지 않는다. 표본이 작은 페이지는 `low` confidence로 남기며 이 분류 자체가 검색 순위 예측이나 자동 수정 승인으로 사용되지는 않는다.
+
+**P2 신규 주제 demand gate:** 자동 스케줄러에 넣을 신규 아이디어는 tracked `search_briefs.json`에 먼저 추가하지 않는다. `agent-publisher/data/topic_candidates.example.json`을 형식 참고용으로만 사용하고 실제 후보와 측정값은 Git 비추적 `agent-publisher/data/growth/topic_candidates.json`에 둔다. `demand_evidence`에는 실제로 조회한 `keyword_planner`, `google_trends`, `naver_datalab` 값만 `measured: true`로 기록한다. Search Console 연관성은 후보가 명시한 `gsc_terms`와 P1의 실제 query 행이 문자 단위로 맞는 경우만 계산하며 의미 유사도를 추정하지 않는다.
+
+```powershell
+# P1 queue를 최신화한 뒤, 최초 private candidate 파일만 빈 문서로 초기화할 때
+python scripts/score_topic_candidates.py --init-empty
+
+# topic_candidates.json에 실제 측정 evidence를 기록한 뒤 재점수화
+python scripts/score_topic_candidates.py
+```
+
+결과는 Git 비추적 `agent-publisher/data/growth/topic-candidate-scores.json`이다. 기본 gate는 100점 중 70점 이상, `medium` 이상 confidence, 최근 측정 demand evidence 존재, 최소 30일 useful lifetime, 명시적 added value를 요구한다. 이 값은 `growth_policy.json`의 운영 heuristic이며 검색 순위·유입·수익 예측값이 아니다. `RadarAgent`가 호출하는 scheduled discovery만 이 score report를 필수로 요구한다. 사용자가 직접 지시한 수동 집필과 기존 editorial CLI는 growth score가 없다는 이유만으로 차단하지 않는다. score가 통과해도 기존 duplicate/source/lifecycle/semantic review/draft-only 계약은 모두 별도로 통과해야 한다.
+
+**P3 Daily Growth Planner:** 정규 자동 작성은 P1/P2 결과를 바로 소비하지 않고 하루 작업 1개를 먼저 결정한다. `python scripts/build_daily_growth_plan.py`는 private `latest-opportunities.json`과 `topic-candidate-scores.json`을 읽어 `daily-growth-plan.json`을 만든다. 결정은 `existing_improvement`, `new_draft`, `no_action` 중 하나다. P3의 초기 기본값은 actionable 기존 글 개선 우선이었고, 현재는 아래 P5 work-mix 정책이 existing/new가 동시에 eligible인 경우의 최종 우선순위를 결정한다. existing을 선택한 경우 공개 글은 자동 수정하지 않고 해당 run의 신규 draft를 보류하며 운영 요약에 post ID를 남긴다. `new_draft`를 선택한 경우 P2에서 `eligible_for_automation=true`인 최고점 brief 하나만 Radar에 전달한다. stale/malformed/private state 누락은 `no_action`으로 fail closed하며 WordPress inventory refresh도 실행하지 않는다.
+
+```powershell
+python scripts/build_daily_growth_plan.py
+```
+
+정규 `main.py`도 같은 planner 계약을 사용한다. `new_draft`일 때만 WordPress inventory를 갱신하고 Curator/Writer/Designer/Publisher를 생성하며, planner가 선택한 `brief_id` 하나만 scheduled Radar가 소비한다. `existing_improvement` 또는 `no_action`은 정상 성공 결과이며 "오늘 글을 쓰지 않음" 자체가 오류로 처리되지 않는다. 수동 ChatGPT/CoS 집필과 `editorial_cli.py`는 이 scheduled planner의 자동 작성 차단 대상이 아니다.
+
+**P4 Growth Work Log:** planner가 기존 글을 추천했다는 사실만으로 완료 처리하지 않는다. 실제 `edit-post` 작업과 CAS/readback 검증이 끝난 뒤에만 `record_growth_work.py complete-existing`으로 private `growth-work-log.json`에 완료 기록을 남긴다. 기록은 **완료 당일** planner의 `post_id`, planner policy digest, 해당 Opportunity report 종료일에 결합되므로 다른 글, 전날 plan, 정책 변경 후의 오래된 plan으로 완료를 기록하지 못한다.
+
+```powershell
+# 예: planner가 Post #345를 기존 글 개선 대상으로 선택했고 실제 edit-post/readback까지 끝난 뒤
+python scripts/record_growth_work.py complete-existing --post-id 345 `
+  --note "edit-post 저장 및 readback 검증 완료"
+
+# 완료 기록을 반영해 다음 일일 결정을 다시 확인
+python scripts/build_daily_growth_plan.py
+```
+
+기본 `existing_recheck_days`는 14일이다. 완료된 post는 **완료일에서 14일 뒤까지의 데이터가 포함된 새 Opportunity report**가 나오기 전에는 같은 과거 GSC 신호로 다시 `existing_improvement`에 올라오지 않는다. `as_of` 날짜만 14일이 지났다고 재활성화하지 않으며, Search Console 관측기간 종료일이 실제 recheck 날짜에 도달해야 한다. 따라서 수정 직후의 옛 28일 표본이 같은 글을 매일 반복 차단하는 일을 피하면서도, 충분한 새 데이터가 쌓였는데 동일 문제가 지속되면 다시 개선 후보가 될 수 있다. work log가 없으면 빈 기록으로 보수적으로 시작하고, 파일이 존재하지만 스키마가 깨졌다면 planner는 `no_action`으로 fail closed한다.
+
+**P5 Work Mix / Rotation:** 같은 private `growth-work-log.json`은 scheduler가 실제 WordPress draft를 생성한 `new_draft` 완료도 기록한다. 신규 draft는 저장 성공 후 `main.py`가 자동으로 `brief_id`, post ID, 완료일을 기록하며, 한 번 성공한 `brief_id`는 같은 P2 score report에 남아 있어도 다시 선택하지 않는다. 기록 실패는 이미 생성된 WordPress draft를 실패로 되돌리거나 재생성하지 않고 `growth_log_errors`로 별도 보고한다.
+
+기존 글 개선과 신규 draft가 **둘 다 eligible**일 때만 최근 `work_mix_lookback_actions`(기본 8개) 완료 이력을 보고 다음 작업을 선택한다. 목표 existing 비율은 `target_existing_ratio=0.5`다. 다음 action 하나를 추가했을 때 50:50에 더 가까워지는 쪽을 고르고, 수학적으로 동률이면 직전 완료 action의 반대쪽으로 회전한다. 이력이 전혀 없을 때만 `prefer_existing_improvement=true`가 tie-breaker다. 이 비율은 quota가 아니므로 P2를 통과한 신규 후보가 없으면 비율을 맞추기 위해 새 글을 만들지 않고, actionable existing 후보가 없으면 불필요한 기존 글 수정도 만들지 않는다.
+
 최종 보고는 대상 글·변경 내용·임시글/공개 상태·source refresh/reuse·semantic review 범위·WP CAS/readback·필요한 browser QA만 짧게 전달한다. 공유 코드를 실제로 바꿔 테스트를 실행한 경우에만 표적/full regression 결과를 추가한다. 콘텐츠 한 건의 결과 보고에 저장소 전체 테스트 수를 붙이지 않는다.
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.

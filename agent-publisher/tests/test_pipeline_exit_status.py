@@ -2,7 +2,7 @@
 import io
 import unittest
 from contextlib import ExitStack, redirect_stdout
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import main as pipeline
 
@@ -12,6 +12,13 @@ class PipelineExitTests(unittest.TestCase):
         with ExitStack() as stack, redirect_stdout(io.StringIO()):
             for name in ('sync_inventory', 'ensure_inventory', 'notify_published', 'notify_error'):
                 stack.enter_context(patch.object(pipeline, name))
+            stack.enter_context(patch.object(pipeline, 'record_scheduled_new_draft_completion'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft',
+                    'reason': 'test',
+                    'target': {'brief_id': 'test-brief', 'category_key': 'health'},
+                }))
             stack.enter_context(patch.object(pipeline.time, 'sleep'))
             radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
             curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
@@ -55,6 +62,14 @@ class PipelineExitTests(unittest.TestCase):
         with ExitStack() as stack, redirect_stdout(io.StringIO()):
             for name in ('sync_inventory', 'ensure_inventory', 'notify_published', 'notify_error', 'notify_pipeline_summary'):
                 stack.enter_context(patch.object(pipeline, name))
+            growth_record = stack.enter_context(
+                patch.object(pipeline, 'record_scheduled_new_draft_completion'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft',
+                    'reason': 'test',
+                    'target': {'brief_id': 'concert-brief', 'category_key': 'concert'},
+                }))
             radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
             curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
             writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
@@ -74,6 +89,69 @@ class PipelineExitTests(unittest.TestCase):
                 designer.generate_image.call_args.kwargs['reviewed_poster_url'],
                 'https://ticket.example/official.jpg',
             )
+            self.assertEqual(
+                radar.search_news.call_args.kwargs['selected_brief_id'], 'concert-brief')
+            growth_record.assert_called_once_with(
+                ANY, post_id=500, title='테스트 콘서트')
+
+    def test_growth_log_failure_after_draft_creation_is_nonfatal(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            for name in ('sync_inventory', 'ensure_inventory', 'notify_published', 'notify_error', 'notify_pipeline_summary'):
+                stack.enter_context(patch.object(pipeline, name))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft', 'reason': 'test',
+                    'target': {'brief_id': 'test-brief', 'category_key': 'health'},
+                }))
+            stack.enter_context(patch.object(
+                pipeline, 'record_scheduled_new_draft_completion',
+                side_effect=OSError('disk full')))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
+            curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
+            stack.enter_context(patch.object(pipeline, 'DesignerAgent'))
+            publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
+            radar.search_news.return_value = [{'keyword': 'test', 'link': 'https://example.org'}]
+            curator.curate.return_value = {'link': 'https://example.org'}
+            writer.write_article.return_value = {'title': '검토된 원고'}
+            publisher.publish.return_value = 393
+            stats = pipeline.run_pipeline(['health'])
+            self.assertEqual(1, stats['published'])
+            self.assertEqual(0, stats['errors'])
+            self.assertEqual(1, stats['growth_log_errors'])
+
+    def test_existing_improvement_plan_skips_wordpress_and_writer(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            sync = stack.enter_context(patch.object(pipeline, 'sync_inventory'))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent'))
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent'))
+            stack.enter_context(patch.object(pipeline, 'notify_pipeline_summary'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'existing_improvement',
+                    'reason': 'actionable_existing_page_before_new_content',
+                    'target': {'post_id': 345, 'title': '고속버스 취소표'},
+                }))
+            stats = pipeline.run_pipeline(['transport'])
+            self.assertEqual('existing_improvement', stats['growth_action'])
+            self.assertEqual(0, stats['published'])
+            sync.assert_not_called()
+            radar.assert_not_called()
+            writer.assert_not_called()
+
+    def test_no_action_plan_is_success_without_wordpress_access(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            sync = stack.enter_context(patch.object(pipeline, 'sync_inventory'))
+            stack.enter_context(patch.object(pipeline, 'notify_pipeline_summary'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'no_action', 'reason': 'no_actionable_existing_or_eligible_new_topic',
+                    'target': None,
+                }))
+            stats = pipeline.run_pipeline(['health'])
+            self.assertEqual('no_action', stats['growth_action'])
+            self.assertEqual(0, stats['errors'])
+            sync.assert_not_called()
 
     def test_cli_returns_failure_after_partial_success(self):
         stats = {'candidates': 2, 'published': 1, 'held': 0, 'errors': 1, 'notification_errors': 0}

@@ -2,7 +2,9 @@
 """Automated Test Harness for docs/POST_CATALOG.md and sync_post_catalog.py."""
 import re
 import hashlib
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -12,6 +14,7 @@ CATALOG_MD = ROOT_DIR / "docs" / "POST_CATALOG.md"
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 
 from sync_post_catalog import catalog_type, extract_backlog_rows, generate_catalog_markdown, run_ssh_inventory
+import sync_post_catalog as catalog_sync
 
 class TestPostCatalog(unittest.TestCase):
     def test_lifecycle_metadata_requires_matching_review_and_live_content(self):
@@ -119,6 +122,43 @@ class TestPostCatalog(unittest.TestCase):
                 returncode=0, stdout=payload, stderr='')):
             rows = run_ssh_inventory()
         self.assertEqual(648, rows[0]['ID'])
+
+    def test_catalog_php_collects_current_permalink_for_growth_mapping(self):
+        self.assertIn("'permalink' => (string)get_permalink($id)", catalog_sync.CATALOG_PHP)
+
+    def test_catalog_sync_keeps_editorial_inventory_separate(self):
+        """Catalog metadata must never overwrite the scheduler/editorial inventory."""
+        posts = [{
+            "ID": 901,
+            "post_title": "테스트 글",
+            "post_status": "publish",
+            "post_name": "test",
+            "post_date": "2026-10-03 08:00:00",
+            "content_sha256": "0" * 64,
+            "category_slugs": ["life-admin"],
+            "categories": ["행정/생활서비스"],
+            "rank_math_focus_keyword": "테스트",
+            "rank_math_seo_score": "75",
+        }]
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            catalog_md = root / "POST_CATALOG.md"
+            catalog_inventory = root / "catalog_inventory.json"
+            canonical_inventory = root / "wordpress_inventory.json"
+            canonical_payload = '{"schema_version":2,"checked_on":"2026-10-03","posts":[]}'
+            canonical_inventory.write_text(canonical_payload, encoding="utf-8")
+
+            with (patch.object(catalog_sync, "CATALOG_MD", catalog_md),
+                  patch.object(catalog_sync, "CATALOG_INVENTORY_JSON", catalog_inventory),
+                  patch.object(catalog_sync, "run_ssh_inventory", return_value=posts),
+                  patch.object(catalog_sync, "load_reviewed_bundles", return_value={})):
+                catalog_sync.sync_catalog()
+
+            self.assertTrue(catalog_md.is_file())
+            self.assertEqual(posts, json.loads(
+                catalog_inventory.read_text(encoding="utf-8")))
+            self.assertEqual(canonical_payload,
+                             canonical_inventory.read_text(encoding="utf-8"))
 
 if __name__ == "__main__":
     unittest.main()

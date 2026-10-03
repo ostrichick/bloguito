@@ -48,6 +48,7 @@
 
 ## 최근 추가 점검
 
+- [2026-10-03 성장 시스템 P0~P5 로드맵](growth-system-roadmap-2026-10-03.md): inventory 경계 정리, GSC/GA4 Opportunity Queue, 신규 주제 demand gate, 일일 planner, completion log, existing/new work-mix rotation의 구현 순서와 완료 조건을 기록.
 - [2026-10-02 카테고리 8분류 개편](category-reorganization-2026-10-02.md): `생활/건강 정보`의 과밀과 지역 행사 분산을 해소하기 위한 8개 평면 taxonomy, 실서버 61편 전수 재분류표, WordPress term/메뉴 마이그레이션 원칙을 기록.
 - [2026-10-02 일반 정보 포스트 정책 4단계 후속 계획](general-post-stage4-plan-2026-10-02.md): 4.1 General/Event schema 분리, 4.2 post-specific exception registry, 4.3A/B volatility freshness를 완료하고, 4.4는 2026 인플루엔자 규칙을 첫 데이터/엔진 분리 파일럿으로 적용한 상태와 후속 종료 조건을 기록.
 - [2026-10-02 volatility 기반 freshness 4.3 영향도 점검](general-post-stage4-3-impact-2026-10-02.md): 8개 카테고리 구조와 기존 reviewed bundle을 기준으로 metadata-only 도입, migration report, live source 재검증, 기존 content_type fallback의 안전한 전환 순서를 정리.

@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "fresh_post_days": 14,
+  "confidence": {
+    "medium_impressions": 20,
+    "high_impressions": 50
+  },
+  "winner": {
+    "click_override": 5,
+    "min_clicks": 3,
+    "min_impressions": 20,
+    "min_ctr": 0.05,
+    "max_position": 12.0
+  },
+  "quick_win": {
+    "min_impressions": 20,
+    "min_position": 4.0,
+    "max_position": 12.0,
+    "max_ctr": 0.04
+  },
+  "growth_candidate": {
+    "min_impressions": 10,
+    "min_position_exclusive": 12.0,
+    "max_position": 30.0
+  },
+  "low_signal": {
+    "min_age_days": 45,
+    "max_impressions": 4
+  },
+  "topic_gate": {
+    "min_score": 70,
+    "min_confidence": "medium",
+    "max_score_age_days": 14,
+    "max_gsc_report_age_days": 14,
+    "max_demand_evidence_age_days": 90,
+    "min_useful_lifetime_days": 30,
+    "require_added_value": true,
+    "weights": {
+      "demand_evidence": 25,
+      "gsc_relevance": 15,
+      "click_need": 15,
+      "ai_resilience": 10,
+      "added_value": 15,
+      "cluster_fit": 10,
+      "useful_lifetime": 5,
+      "competition_differentiation": 5
+    },
+    "allowed_demand_sources": [
+      "keyword_planner",
+      "google_trends",
+      "naver_datalab"
+    ],
+    "recognized_added_value": [
+      "calculator",
+      "decision_support",
+      "comparison",
+      "official_action",
+      "troubleshooting",
+      "multi_source_synthesis",
+      "lookup"
+    ]
+  },
+  "daily_planner": {
+    "max_opportunity_age_days": 14,
+    "max_topic_score_age_days": 14,
+    "existing_recheck_days": 14,
+    "work_mix_lookback_actions": 8,
+    "target_existing_ratio": 0.5,
+    "min_existing_confidence": "medium",
+    "existing_class_priority": [
+      "quick_win",
+      "growth_candidate"
+    ],
+    "prefer_existing_improvement": true
+  },
+  "classification_order": [
+    "seasonal_decay",
+    "winner",
+    "quick_win",
+    "growth_candidate",
+    "low_signal",
+    "too_early",
+    "observed"
+  ]
+}
