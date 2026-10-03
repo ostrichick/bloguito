@@ -2,6 +2,7 @@
 """Synchronize WordPress posts with local docs/POST_CATALOG.md via Direct SSH."""
 import json
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SSH_HOST = "bloguito"
 CATALOG_MD = ROOT / "docs" / "POST_CATALOG.md"
 CATALOG_INVENTORY_JSON = ROOT / "agent-publisher" / "data" / "catalog_inventory.json"
+EDITORIAL_DATA_DIR = ROOT / "agent-publisher" / "data"
 BACKLOG_HEADING = "## 3. 🎯 추진 예정 백로그 (Topic Backlog)"
 
 DEFAULT_BACKLOG_ROWS = [
@@ -141,14 +143,111 @@ def catalog_type(post, reviewed_bundle=None):
     return inferred + ' (추정)'
 
 
-def load_reviewed_bundles():
+def _restore_index_bytes(path: Path, raw: bytes | None) -> None:
+    """Restore one reviewed-state index exactly after a failed local reconciliation."""
+    if raw is None:
+        path.unlink(missing_ok=True)
+    else:
+        temporary = path.with_name(path.name + '.reconcile-restore')
+        temporary.write_bytes(raw)
+        os.replace(temporary, path)
+
+
+def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR) -> dict:
+    """Align reviewed draft/publish indexes with live WordPress without touching WordPress.
+
+    A row moves only when its reviewed renderer output and reviewed title still match
+    the live post exactly.  This repairs status-only changes made by WordPress UI row
+    actions while refusing to adopt reader-visible edits that bypassed editorial review.
+    """
+    agent_root = ROOT / 'agent-publisher'
+    if str(agent_root) not in sys.path:
+        sys.path.insert(0, str(agent_root))
+    from agents.editorial import render
+    from agents.post_manifest_store import load_records, remove_record, upsert_record
+
+    data_dir = Path(data_dir)
+    draft_index = data_dir / 'draft_posts.json'
+    public_index = data_dir / 'published_posts.json'
+    indexes = {'draft': draft_index, 'publish': public_index}
+    live_by_id = {
+        int(row['ID']): row
+        for row in posts
+        if isinstance(row, dict) and str(row.get('ID', '')).isdigit()
+    }
+    tracked = {}
+    duplicate_ids = set()
+    for indexed_status, index in indexes.items():
+        if not index.is_file():
+            continue
+        for record in load_records(index):
+            post_id = int(record['id'])
+            if post_id in tracked:
+                duplicate_ids.add(post_id)
+                continue
+            tracked[post_id] = (indexed_status, record)
+
+    moved = []
+    skipped = []
+    for post_id, (indexed_status, record) in sorted(tracked.items()):
+        if post_id in duplicate_ids:
+            skipped.append({'post_id': post_id, 'reason': 'present_in_both_reviewed_indexes'})
+            continue
+        live = live_by_id.get(post_id)
+        if not live:
+            continue
+        live_status = live.get('post_status')
+        if live_status not in indexes or live_status == indexed_status:
+            continue
+        bundle = (record.get('fact_manifest') or {}).get('editorial_bundle')
+        if not isinstance(bundle, dict):
+            skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_missing'})
+            continue
+        try:
+            reviewed_title = bundle['plan']['title']
+            reviewed_sha = hashlib.sha256(
+                render(bundle['plan'], bundle['sources']).encode('utf-8')
+            ).hexdigest()
+        except (KeyError, TypeError, ValueError):
+            skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_invalid'})
+            continue
+        if (live.get('post_title') != reviewed_title
+                or live.get('content_sha256') != reviewed_sha):
+            skipped.append({'post_id': post_id, 'reason': 'live_content_or_title_changed'})
+            continue
+
+        source_index = indexes[indexed_status]
+        target_index = indexes[live_status]
+        source_raw = source_index.read_bytes() if source_index.exists() else None
+        target_raw = target_index.read_bytes() if target_index.exists() else None
+        updated = dict(record)
+        updated['status'] = live_status
+        if isinstance(live.get('permalink'), str) and live['permalink'].startswith('https://lifeinfo24.org/'):
+            updated['url'] = live['permalink']
+        try:
+            upsert_record(target_index, updated)
+            if not remove_record(source_index, post_id):
+                raise ValueError('reviewed_status_source_record_missing')
+        except Exception:
+            _restore_index_bytes(source_index, source_raw)
+            _restore_index_bytes(target_index, target_raw)
+            raise
+        moved.append({
+            'post_id': post_id,
+            'from_status': indexed_status,
+            'to_status': live_status,
+        })
+    return {'moved': moved, 'skipped': skipped}
+
+
+def load_reviewed_bundles(data_dir: Path = EDITORIAL_DATA_DIR):
     agent_root = ROOT / 'agent-publisher'
     if str(agent_root) not in sys.path:
         sys.path.insert(0, str(agent_root))
     from agents.post_manifest_store import load_records
     bundles = {}
     for name in ('published_posts.json', 'draft_posts.json'):
-        index = agent_root / 'data' / name
+        index = Path(data_dir) / name
         if not index.is_file():
             continue
         try:
@@ -349,6 +448,14 @@ def sync_catalog():
     print("[Sync Catalog] Fetching all posts and metadata via Direct SSH eval-file...")
     posts = run_ssh_inventory()
     print(f"[Sync Catalog] Successfully fetched {len(posts)} posts with full metadata.")
+
+    reconciliation = reconcile_reviewed_statuses(posts)
+    for row in reconciliation['moved']:
+        print('[Sync Catalog] Reviewed state reconciled: '
+              f"#{row['post_id']} {row['from_status']} -> {row['to_status']}")
+    for row in reconciliation['skipped']:
+        print('[Sync Catalog] WARNING: reviewed state not reconciled for '
+              f"#{row['post_id']}: {row['reason']}")
 
     existing_backlog = None
     if CATALOG_MD.exists():

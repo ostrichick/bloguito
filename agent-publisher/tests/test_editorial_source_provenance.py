@@ -366,6 +366,36 @@ class EditorialSourceProvenanceTests(unittest.TestCase):
             result = fetch_sources({'official_urls': ['https://example.org/notice'], 'entity': 'test'})[0]
         self.assertIn('조회수 : 120은 이번 공고의 조건입니다.', result['text'])
 
+    def test_wonju_health_certificate_view_counter_is_stable_but_body_facts_are_hashed(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, views, days):
+                self.content = (
+                    '<html><head><title>원주시 보도자료</title></head><body>'
+                    '<div class="bbs_right bbs_count">'
+                    '<span>작성일 <strong>2026.08.10</strong></span>'
+                    f'<span class="division_line">조회수 <strong>{views}</strong></span>'
+                    '</div><article>'
+                    f'<p>보건소 검사 후 {days}일이 지나면 온라인으로 무료 발급할 수 있습니다.</p>'
+                    '<p>기사 본문의 조회수 30은 실제 설명 문구이므로 보존합니다.</p>'
+                    '</article></body></html>'
+                ).encode('utf-8')
+
+        url = ('https://www.wonju.go.kr/media/selectBbsNttView.do?bbsNo=145&integrDeptCode='
+               '&key=3450&nttNo=489491&pageIndex=7&searchCnd=all&searchCtgry=&searchKrwd=')
+        brief = {'official_urls': [url], 'entity': '건강진단결과서(구 보건증)'}
+        with patch('agents.source_collector.requests.get', side_effect=[
+            Response('421', 7), Response('422', 7), Response('423', 8),
+        ]):
+            first, second, changed = (fetch_sources(brief)[0] for _ in range(3))
+        self.assertEqual(first['sha256'], second['sha256'])
+        self.assertNotEqual(first['sha256'], changed['sha256'])
+        self.assertNotIn('421', first['text'])
+        self.assertIn('2026.08.10', first['text'])
+        self.assertIn('조회수 30은 실제 설명', first['text'])
+        self.assertIn('7일이 지나면', first['text'])
+
 
 class BeartreeVisualOfficialSourceTests(unittest.TestCase):
     URL = ('https://beartreepark.com/events/?q=x&bmode=view&idx=174457209&t=board')
