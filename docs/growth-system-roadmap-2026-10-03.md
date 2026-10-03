@@ -191,6 +191,22 @@ P4로 동일 기존 글의 반복 선택은 막았지만 actionable existing 후
 - 현재 tracked `search_briefs.json` 13개에 metadata를 명시했다. 단순 guide 여부가 아니라 실제 독자 행동에 맞춰 application/lookup/calculator/comparison/decision/troubleshooting을 구분했다.
 - P7에서는 `Review.Checks`나 semantic review response schema를 변경하지 않았다. value 설계는 semantic fact-review와 분리된 brief-selection contract로 유지한다.
 
+## P8 — Interactive Tool Pilot
+
+### 목표
+
+AI 답변에서 설명만 읽고 끝나는 대신 독자가 자신의 조건을 직접 넣어 결과를 얻는 결정론적 도구를 제공한다. 첫 pilot은 정책 자격판정보다 입력과 계산 경계가 단순한 **최저임금 월급 계산**이다. 기능 구현과 실제 신규 글 생성은 분리하며, 실제 글은 여전히 P2의 측정 수요 gate를 통과해야 한다.
+
+### 2026-10-03 구현
+
+- `editorial_schema.GeneralPlan`에 optional `reader_tools`를 추가했다. 현재 허용 type은 `minimum_wage_monthly`, formula는 `moel_weekly_holiday_v1` 하나뿐이다.
+- `agents/reader_tools.py`에 Python reference calculation과 deterministic renderer를 구현했다. 입력은 시급, 주 소정근로시간, 주휴 적용 여부이고 월 환산시간과 세전 예상 월급을 계산한다.
+- 공식 고용노동부 예시의 단시간 주휴 계산 `(주 소정근로시간 / 40) × 8시간`과 주40시간+유급주휴 8시간의 월 환산 209시간 경계를 pilot formula로 고정했다. 주 15시간 미만에서는 주휴 toggle이 켜져도 주휴시간을 0으로 처리한다.
+- `validate_reader_tools()`는 calculator intent/value, 최저임금 topic scope, official-source evidence exact binding, 허용 formula와 숫자 경계를 검증한다. 모델이 임의 `script`나 다른 formula를 plan에 넣으면 거부한다.
+- renderer는 고정 JavaScript만 출력하고 모델 문자열은 title/default numeric/evidence 구조 데이터로만 받는다. native input, `aria-live`, responsive grid, JavaScript-disabled 안내를 포함한다.
+- tool evidence source ID도 기존 공식 출처 footer에 포함한다. 연장/야간/휴일 가산수당과 세금/공제는 범위 밖임을 reader-facing 안내에 명시한다.
+- P8은 기존 공개글을 자동 수정하지 않고 실제 2027 최저임금 글도 만들지 않았다. 외부 수요 측정이 없는 현재 P2 eligible 신규 후보 0건 상태를 우회하지 않는다.
+
 ## 작업 순서와 경계
 
 1. **P0**: inventory 파일 역할 충돌을 먼저 제거한다.
@@ -201,6 +217,7 @@ P4로 동일 기존 글의 반복 선택은 막았지만 actionable existing 후
 6. **P5**: 실제 완료 이력으로 existing/new 작업 mix를 관리하고 성공한 신규 brief의 재선정을 막는다.
 7. **P6**: curated cluster로 신규 원고의 related-post 후보를 결합하고, explicit-link orphan 후보를 read-only로 찾는다.
 8. **P7**: scheduler brief에 intent/AI-answerability/added-value를 명시하고 AI로 쉽게 대체되는 무가치 설명글을 자동 작성에서 보류한다.
+9. **P8**: allowlisted structured reader tool을 deterministic하게 렌더해 계산/판정형 클릭 가치를 제공한다.
 
 P0~P5는 운영 배포와 #345 실제 completion loop까지 확인했다. P6도 기존 공개글을 자동 수정하지 않으며, writer 경로에 배포할 때는 release revision과 08:00 cron smoke를 별도로 확인한다.
 

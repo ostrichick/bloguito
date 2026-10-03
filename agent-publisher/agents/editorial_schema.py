@@ -192,6 +192,16 @@ class LeadImage(BaseModel):
     height: int
 
 
+class ReaderTool(BaseModel):
+    kind: Literal['minimum_wage_monthly']
+    title: str
+    formula_version: Literal['moel_weekly_holiday_v1']
+    hourly_wage_default: int
+    weekly_hours_default: float
+    weekly_holiday_default: bool
+    evidence: list[Evidence]
+
+
 class OfficialNavigation(BaseModel):
     label: str
     url: str
@@ -210,6 +220,9 @@ class GeneralPlan(BaseModel):
     related_posts: list[RelatedPost] = Field(default_factory=list, description=(
         'Optional, at most two already-published articles on the same site, '
         'with verified https://lifeinfo24.org/?p=ID URLs; never official CTA or evidence.'
+    ))
+    reader_tools: list[ReaderTool] = Field(default_factory=list, description=(
+        'Optional reviewed reader utility. Tool type and formula are allowlisted; arbitrary model JS is never rendered.'
     ))
 
 
@@ -256,5 +269,4 @@ class DeltaChecks(BaseModel):
 class DeltaReview(BaseModel):
     checks: DeltaChecks
     issues: list[str]
-
 
