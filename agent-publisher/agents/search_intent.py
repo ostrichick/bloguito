@@ -97,7 +97,11 @@ def _load_growth_gate_state():
 
 def load_briefs(category, today=None, *, require_growth_gate=False):
     from agents.editorial import topic_reasons
-    from agents.topic_scoring import TopicScoringError, brief_growth_gate_reasons
+    from agents.topic_scoring import (
+        TopicScoringError,
+        brief_growth_gate_reasons,
+        brief_value_gate_reasons,
+    )
     from agents.temporal_validation import KST
     from datetime import datetime
     today = today or datetime.now(KST).date()
@@ -124,6 +128,8 @@ def load_briefs(category, today=None, *, require_growth_gate=False):
             try:
                 if brief_growth_gate_reasons(
                         brief, score_report, growth_policy, today=today):
+                    continue
+                if brief_value_gate_reasons(brief, growth_policy):
                     continue
             except TopicScoringError:
                 continue

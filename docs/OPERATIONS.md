@@ -253,6 +253,10 @@ python scripts/build_daily_growth_plan.py
 
 `python scripts/build_content_cluster_report.py`는 canonical `wordpress_inventory.json`의 `content_urls`만 읽는 read-only 점검이다. cluster 구성원이면서 명시적 `?p=ID` incoming link가 0이고 같은 cluster로 나가는 명시적 링크도 0인 공개 글만 `orphan_candidate=true`로 추천한다. inventory에 `content_urls`가 없거나 불완전하면 orphan이라고 추정하지 않고 `link_state_complete=false`로 남긴다. 이 보고서는 기존 공개글을 자동 수정하거나 hub page를 자동 생성하지 않는다.
 
+**P7 Value-first / AI-answerability:** scheduler가 소비할 reviewed brief에는 `intent_type`, `ai_answerability`, `added_value`를 명시한다. `intent_type`은 `guide`, `lookup`, `application`, `calculator`, `comparison`, `decision`, `troubleshooting` 중 하나다. `ai_answerability`는 `low/medium/high`, `added_value`는 P2와 같은 허용값(`calculator`, `decision_support`, `comparison`, `official_action`, `troubleshooting`, `multi_source_synthesis`, `lookup`)만 사용한다.
+
+scheduled `load_briefs(..., require_growth_gate=True)`는 P2 score gate를 통과한 뒤 이 metadata도 검증한다. 특히 `ai_answerability=high`인데 `added_value=[]`이면 `high_ai_answerability_without_added_value`로 자동 작성을 보류한다. metadata 자체가 빠졌거나 허용되지 않은 값이면 scheduler에서 fail closed한다. 반대로 사용자가 ChatGPT/CoS에서 직접 지시한 글과 일반 editorial CLI/manual `load_briefs()`에는 이 value gate를 적용하지 않는다. P7은 기존 semantic-review checks/signature를 늘리지 않고 **brief 선택 단계**에서만 동작한다.
+
 최종 보고는 대상 글·변경 내용·임시글/공개 상태·source refresh/reuse·semantic review 범위·WP CAS/readback·필요한 browser QA만 짧게 전달한다. 공유 코드를 실제로 바꿔 테스트를 실행한 경우에만 표적/full regression 결과를 추가한다. 콘텐츠 한 건의 결과 보고에 저장소 전체 테스트 수를 붙이지 않는다.
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.

@@ -1,6 +1,9 @@
 [
   {
     "id": "mumyeong-suwon-2026",
+    "intent_type": "application",
+    "ai_answerability": "medium",
+    "added_value": ["official_action", "comparison"],
     "content_type": "dated",
     "useful_until": "2026-12-25",
     "reader_questions": [
@@ -42,6 +45,9 @@
   },
   {
     "id": "energy-voucher-deadline-2026",
+    "intent_type": "application",
+    "ai_answerability": "medium",
+    "added_value": ["official_action", "decision_support", "troubleshooting"],
     "content_type": "dated",
     "useful_until": "2026-12-31",
     "reader_questions": [
@@ -83,6 +89,9 @@
   {
     "id": "passport-online-collection-0915",
     "cluster_id": "civil-documents",
+    "intent_type": "troubleshooting",
+    "ai_answerability": "medium",
+    "added_value": ["official_action", "troubleshooting"],
     "category_key": "life-admin",
     "approved": true,
     "entity": "여권",
@@ -131,6 +140,9 @@
   },
   {
     "id": "postal-paid-forwarding-extension-0915",
+    "intent_type": "troubleshooting",
+    "ai_answerability": "medium",
+    "added_value": ["official_action", "troubleshooting"],
     "category_key": "life-admin",
     "approved": true,
     "entity": "우체국",
@@ -175,6 +187,9 @@
   },
   {
     "id": "climate-card-pass-transition-0915",
+    "intent_type": "decision",
+    "ai_answerability": "medium",
+    "added_value": ["comparison", "decision_support", "official_action"],
     "category_key": "transport",
     "approved": true,
     "entity": "기후동행패스",
@@ -224,6 +239,9 @@
   {
     "id": "resident-registration-certificate-gov24-0915",
     "cluster_id": "civil-documents",
+    "intent_type": "application",
+    "ai_answerability": "high",
+    "added_value": ["official_action", "troubleshooting"],
     "category_key": "life-admin",
     "approved": true,
     "entity": "주민등록등본",
@@ -272,6 +290,9 @@
   },
   {
     "id": "tax-points-discount-hometax-0915",
+    "intent_type": "lookup",
+    "ai_answerability": "medium",
+    "added_value": ["lookup", "official_action"],
     "category_key": "tax",
     "approved": true,
     "entity": "세금포인트",
@@ -323,6 +344,9 @@
   },
   {
     "id": "national-tax-refund-inquiry-0915",
+    "intent_type": "lookup",
+    "ai_answerability": "medium",
+    "added_value": ["lookup", "official_action"],
     "category_key": "tax",
     "approved": true,
     "entity": "국세환급금",
@@ -374,6 +398,9 @@
   },
   {
     "id": "earned-income-tax-credit-guide",
+    "intent_type": "calculator",
+    "ai_answerability": "medium",
+    "added_value": ["calculator", "official_action", "decision_support"],
     "content_type": "evergreen",
     "useful_until": null,
     "evergreen_reason": "매년 정기·반기 신청이 반복되는 대표적 복지세제 혜택 절차",
@@ -420,6 +447,9 @@
   },
   {
     "id": "car-tax-annual-payment-discount",
+    "intent_type": "comparison",
+    "ai_answerability": "medium",
+    "added_value": ["comparison", "official_action"],
     "content_type": "evergreen",
     "useful_until": null,
     "evergreen_reason": "매년 1월, 3월, 6월, 9월 반복되는 지방세 연납 절세 제도",
@@ -466,6 +496,9 @@
   },
   {
     "id": "senior-implant-insurance-guide",
+    "intent_type": "decision",
+    "ai_answerability": "medium",
+    "added_value": ["decision_support", "comparison"],
     "category_key": "health",
     "approved": true,
     "entity": "임플란트",
@@ -518,6 +551,9 @@
   },
   {
     "id": "long-term-care-grade-guide",
+    "intent_type": "decision",
+    "ai_answerability": "medium",
+    "added_value": ["decision_support", "official_action"],
     "category_key": "welfare",
     "approved": true,
     "entity": "노인장기요양보험",
@@ -572,6 +608,9 @@
   {
     "id": "national-pension-silver-loan",
     "cluster_id": "pension",
+    "intent_type": "decision",
+    "ai_answerability": "medium",
+    "added_value": ["decision_support", "comparison", "official_action"],
     "category_key": "welfare",
     "approved": true,
     "entity": "국민연금 실버론",
