@@ -10,11 +10,18 @@ import os
 from pathlib import Path
 import sys
 
+from dotenv import load_dotenv
+
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENT_ROOT = ROOT / "agent-publisher"
 if str(AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(AGENT_ROOT))
+
+# Keep operator credentials in the ignored agent-publisher/.env file, matching
+# the rest of the application.  Cron/shell callers should not have to export
+# the NAVER API HUB keys into their process environment manually.
+load_dotenv(AGENT_ROOT / ".env")
 
 from agents.growth_analysis import GrowthAnalysisError, load_policy  # noqa: E402
 from agents.temporal_validation import KST  # noqa: E402

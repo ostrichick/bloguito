@@ -220,7 +220,9 @@ P2가 형식만 준비한 외부 demand evidence를 실제 공식 측정 경로�
 - 기본 수집은 신선한 P1 GSC query와 후보 `gsc_terms`가 문자 정규화 기준으로 실제 매칭된 candidate만 대상으로 한다. stale GSC report나 매칭이 없는 후보는 외부 호출 전에 보류한다. 운영자가 이미 별도로 검토한 후보는 명시적 `--include-unseeded`로만 예외 측정할 수 있다.
 - DataLab의 상대 ratio는 절대 검색량으로 승격하지 않는다. 최근 90일 완료 날짜의 주간 ratio 평균을 `metric=relative_interest`로 기록하고 period/time unit/query group/aggregation을 evidence에 함께 보존한다. provider가 data point를 반환하지 않으면 0을 만들어내지 않는다.
 - P2 validation도 source-specific metric allowlist를 추가해 Keyword Planner의 `avg_monthly_searches`와 Trends/DataLab의 `relative_interest`를 교차 오표기하지 못하게 했다.
-- 현재 local/production 환경에는 NAVER API HUB Client ID/Secret, Google Ads developer token/OAuth/customer ID, Google Trends alpha access가 확인되지 않았다. 따라서 이 구현 시점에는 실제 외부 측정값을 소급 생성하지 않고 private candidate 0건 상태를 유지한다.
+- 2026-10-03 NAVER API HUB 결제수단/서비스/Application 설정과 Client ID/Secret 준비를 완료하고 첫 live measurement를 수행했다. GSC에 실제 노출된 `시외버스 취소표` 계열 reviewed private candidate 1건은 Naver DataLab 주간 상대 관심도 평균 `33.0623`을 반환했고, P2 재점수 결과 74점/`medium` confidence로 `eligible_for_automation=true`가 됐다. 이 값은 절대 검색량이 아니라 해당 조회 묶음/기간 안의 상대값이다.
+- live 호출에서 API HUB가 주간 구간 경계에 맞춰 요청 기간 `2026-07-05~2026-10-02`를 응답 기간 `2026-06-29~2026-10-03`으로 정규화하는 실제 동작을 확인했다. collector는 이제 time unit별 제한된 boundary expansion만 허용하고 요청 기간과 provider 반환 기간을 둘 다 evidence에 기록한다.
+- P3 planner dry run은 이 후보를 `new_draft` 대상으로 선택했지만 tracked `search_briefs.json`에는 같은 `brief_id`의 사람이 검토한 brief가 아직 없다. scheduled Radar probe도 대상 brief 0건으로 fail closed했다. 따라서 측정 통과만으로 WordPress draft가 생성되지는 않으며, 별도 source/duplicate/lifecycle 검토 후 reviewed brief 승격이 다음 단계다.
 
 ## 작업 순서와 경계
 
