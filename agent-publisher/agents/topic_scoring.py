@@ -35,6 +35,7 @@ DEMAND_METRICS = {
     "google_trends": {"relative_interest"},
     "naver_datalab": {"relative_interest"},
 }
+REVIEW_DISPOSITIONS = {"active", "duplicate_existing"}
 
 
 def _canonical_digest(value) -> str:
@@ -126,6 +127,13 @@ def _validate_candidate(candidate: dict, gate: dict) -> None:
     if any(not isinstance(candidate.get(key), str) or not candidate[key].strip()
            for key in required_text):
         raise TopicScoringError("invalid_topic_candidate_identity")
+    disposition = candidate.get("review_disposition", "active")
+    if disposition not in REVIEW_DISPOSITIONS:
+        raise TopicScoringError("invalid_topic_candidate_review_disposition")
+    if disposition == "duplicate_existing":
+        if type(candidate.get("duplicate_post_id")) is not int or candidate["duplicate_post_id"] <= 0:
+            raise TopicScoringError("invalid_topic_candidate_duplicate_post_id")
+        _parse_date(candidate.get("reviewed_at"), code="invalid_topic_candidate_reviewed_at")
     for key in ("click_need", "ai_answerability", "cluster_fit",
                 "competition_differentiation"):
         if candidate.get(key) not in LEVELS:
@@ -334,6 +342,8 @@ def score_candidate(candidate: dict, growth_report: dict, policy: dict,
         reasons.append("stale_external_demand_evidence_ignored")
     if not gsc["fresh"]:
         reasons.append("stale_gsc_report_ignored")
+    if candidate.get("review_disposition", "active") == "duplicate_existing":
+        reasons.append("duplicate_existing_post")
 
     eligible = not any(reason in reasons for reason in (
         "no_fresh_measured_demand_evidence",
@@ -341,6 +351,7 @@ def score_candidate(candidate: dict, growth_report: dict, policy: dict,
         "confidence_below_automation_threshold",
         "useful_lifetime_below_automation_minimum",
         "added_value_required",
+        "duplicate_existing_post",
     ))
     return {
         "id": candidate["id"],
@@ -348,6 +359,8 @@ def score_candidate(candidate: dict, growth_report: dict, policy: dict,
         "category_key": candidate["category_key"],
         "topic": candidate["topic"],
         "primary_keyword": candidate["primary_keyword"],
+        "review_disposition": candidate.get("review_disposition", "active"),
+        "duplicate_post_id": candidate.get("duplicate_post_id"),
         "candidate_digest": _canonical_digest(candidate),
         "score": score,
         "confidence": confidence,

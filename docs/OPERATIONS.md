@@ -218,6 +218,8 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scr
 
 Naver DataLab의 `ratio`는 **절대 검색량이 아니라 조회 묶음/기간 안의 상대 검색 추이**다. collector는 최근 90일의 완료된 날짜(기본 주간)를 조회해 반환된 ratio의 기간 평균을 `source=naver_datalab`, `metric=relative_interest`로만 기록하고, 기간/검색어/aggregation을 함께 보존한다. API HUB가 `week`/`month` 구간 경계에 맞춰 시작·종료일을 넓혀 반환할 수 있으므로 collector는 time unit별 제한된 boundary expansion만 허용하고 `requested_period_*`와 실제 provider `period_*`를 둘 다 기록한다. 응답에 data point가 없으면 `0`으로 추정하지 않고 evidence를 쓰지 않는다. P2도 source별 metric을 고정해 Keyword Planner만 `avg_monthly_searches`, Google Trends와 Naver DataLab은 `relative_interest`만 허용한다. Google Trends API는 alpha 접근, Google Ads Keyword Planner는 별도 Ads developer token/OAuth/customer ID가 필요한 동안 추정치나 비공식 값을 대신 넣지 않는다.
 
+duplicate/source 검토에서 기존 글이 같은 검색 의도를 이미 해결한다고 확인된 private candidate는 삭제해 측정 이력을 잃지 않고 `review_disposition="duplicate_existing"`, `duplicate_post_id`, `reviewed_at`을 기록한다. 이 candidate는 이후 DataLab 재측정에서 제외되며 P2 score에는 기존 measured evidence와 점수를 남기되 `duplicate_existing_post` reason으로 `eligible_for_automation=false`가 된다. 따라서 P3가 같은 후보를 반복해서 `new_draft`로 고르지 않는다. 신규 brief 승격 여부가 아직 검토 전인 candidate는 필드를 생략하거나 `review_disposition="active"`로 둔다.
+
 ```powershell
 # 자격증명이 있고 GSC-seeded reviewed candidate가 있을 때만 실제 측정
 python scripts/collect_topic_demand.py

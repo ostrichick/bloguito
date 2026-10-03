@@ -113,6 +113,17 @@ class TopicDemandTests(unittest.TestCase):
             as_of=self.as_of, max_gsc_age_days=14)
         self.assertEqual([], selected)
 
+    def test_reviewed_duplicate_is_not_measured_again(self):
+        doc = {"schema_version": 1, "candidates": [candidate(
+            review_disposition="duplicate_existing",
+            duplicate_post_id=345,
+            reviewed_at="2026-10-03",
+        )]}
+        selected, reason = select_measurement_candidates(
+            doc, self.report, as_of=self.as_of, max_gsc_age_days=14)
+        self.assertEqual([], selected)
+        self.assertIsNone(reason)
+
     def test_collection_records_relative_interest_not_absolute_volume(self):
         calls = []
 

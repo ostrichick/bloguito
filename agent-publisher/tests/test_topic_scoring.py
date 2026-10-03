@@ -99,6 +99,37 @@ class TopicScoringTests(unittest.TestCase):
         self.assertIn("no_fresh_measured_demand_evidence", scored["reasons"])
         self.assertIn("score_below_automation_threshold", scored["reasons"])
 
+    def test_reviewed_duplicate_keeps_measurement_but_is_not_automation_eligible(self):
+        duplicate = candidate(
+            review_disposition="duplicate_existing",
+            duplicate_post_id=345,
+            reviewed_at="2026-10-03",
+        )
+        row = score_candidates(
+            {"schema_version": 1, "candidates": [duplicate]},
+            growth_report(queries=[{
+                "query": "주민등록등본 발급", "clicks": 1, "impressions": 30,
+                "ctr": 1 / 30, "position": 6,
+            }]),
+            self.policy,
+            as_of=self.as_of,
+        )["candidates"][0]
+        self.assertTrue(row["measured_demand_present"])
+        self.assertFalse(row["eligible_for_automation"])
+        self.assertEqual("duplicate_existing", row["review_disposition"])
+        self.assertEqual(345, row["duplicate_post_id"])
+        self.assertIn("duplicate_existing_post", row["reasons"])
+
+    def test_reviewed_duplicate_requires_review_metadata(self):
+        with self.assertRaisesRegex(TopicScoringError, "duplicate_post_id"):
+            score_candidates(
+                {"schema_version": 1, "candidates": [candidate(
+                    review_disposition="duplicate_existing",
+                    reviewed_at="2026-10-03",
+                )]},
+                growth_report(), self.policy, as_of=self.as_of,
+            )
+
     def test_stale_external_and_stale_gsc_are_ignored(self):
         stale = candidate(demand_evidence=[{
             "source": "google_trends",

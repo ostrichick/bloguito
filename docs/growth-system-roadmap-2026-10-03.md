@@ -223,6 +223,8 @@ P2가 형식만 준비한 외부 demand evidence를 실제 공식 측정 경로�
 - 2026-10-03 NAVER API HUB 결제수단/서비스/Application 설정과 Client ID/Secret 준비를 완료하고 첫 live measurement를 수행했다. GSC에 실제 노출된 `시외버스 취소표` 계열 reviewed private candidate 1건은 Naver DataLab 주간 상대 관심도 평균 `33.0623`을 반환했고, P2 재점수 결과 74점/`medium` confidence로 `eligible_for_automation=true`가 됐다. 이 값은 절대 검색량이 아니라 해당 조회 묶음/기간 안의 상대값이다.
 - live 호출에서 API HUB가 주간 구간 경계에 맞춰 요청 기간 `2026-07-05~2026-10-02`를 응답 기간 `2026-06-29~2026-10-03`으로 정규화하는 실제 동작을 확인했다. collector는 이제 time unit별 제한된 boundary expansion만 허용하고 요청 기간과 provider 반환 기간을 둘 다 evidence에 기록한다.
 - P3 planner dry run은 이 후보를 `new_draft` 대상으로 선택했지만 tracked `search_briefs.json`에는 같은 `brief_id`의 사람이 검토한 brief가 아직 없다. scheduled Radar probe도 대상 brief 0건으로 fail closed했다. 따라서 측정 통과만으로 WordPress draft가 생성되지는 않으며, 별도 source/duplicate/lifecycle 검토 후 reviewed brief 승격이 다음 단계다.
+- 후속 duplicate review에서 WordPress #345 본문을 직접 확인한 결과, 기존 글이 이미 티머니GO의 고속/시외 선택, 시외버스 통합예매 CTA, 시외버스 잔여좌석 재조회, 취소표 알림 확인, 시간대/터미널 대안을 포함하고 있어 `시외버스 취소표` 후보와 실질 검색 의도가 겹쳤다. 따라서 이 후보는 새 `search_briefs.json` 항목으로 승격하지 않는다.
+- private candidate에는 optional `review_disposition`을 두고 `duplicate_existing`이면 `duplicate_post_id`와 `reviewed_at`을 필수로 기록한다. 이 상태의 후보는 기존 measured evidence를 보존하되 외부 provider 재측정에서 제외되고 P2 score report에도 `duplicate_existing_post` reason으로 남아 `eligible_for_automation=false`가 된다. 이는 수요 신호가 있다는 이유만으로 이미 해결한 검색 의도를 새 글로 중복 생산하지 않기 위한 fail-closed 경계다.
 
 ## 작업 순서와 경계
 
