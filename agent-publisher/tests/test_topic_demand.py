@@ -150,6 +150,36 @@ class TopicDemandTests(unittest.TestCase):
         self.assertEqual("mean_period_ratio", measured["aggregation"])
         self.assertEqual(["ktx 예약대기 순번"], measured["gsc_seed_queries"])
 
+    def test_collection_accepts_provider_normalized_week_window(self):
+        def requester(payload):
+            return {
+                "startDate": "2026-06-29",
+                "endDate": "2026-10-03",
+                "timeUnit": payload["timeUnit"],
+                "results": [{
+                    "title": "g0",
+                    "keywords": payload["keywordGroups"][0]["keywords"],
+                    "data": [{"period": "2026-09-28", "ratio": 25.0}],
+                }],
+            }
+
+        updated, summary = collect_naver_datalab(
+            {"schema_version": 1, "candidates": [candidate()]},
+            self.report, requester, collected_on=self.as_of,
+            max_gsc_age_days=14, window_days=90, time_unit="week",
+        )
+        measured = next(
+            row for row in updated["candidates"][0]["demand_evidence"]
+            if row["source"] == "naver_datalab")
+        self.assertEqual("2026-06-29", measured["period_start"])
+        self.assertEqual("2026-10-03", measured["period_end"])
+        self.assertEqual("2026-07-05", measured["requested_period_start"])
+        self.assertEqual("2026-10-02", measured["requested_period_end"])
+        self.assertEqual(
+            {"start": "2026-06-29", "end": "2026-10-03"},
+            summary["provider_period"],
+        )
+
     def test_no_data_does_not_fabricate_zero_evidence(self):
         def requester(payload):
             return {

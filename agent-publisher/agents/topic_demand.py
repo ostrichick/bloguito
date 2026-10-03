@@ -194,6 +194,37 @@ def _relative_interest(result: dict) -> float | None:
     return round(sum(ratios) / len(ratios), 4)
 
 
+def _validated_response_period(response: dict, payload: dict) -> tuple[str, str]:
+    """Validate API HUB's granularity-normalized response window.
+
+    Search Trend can widen weekly/monthly requests to provider period
+    boundaries.  Accept only small boundary expansion that still fully covers
+    the requested window, rather than requiring an exact date echo.
+    """
+    if response.get("timeUnit") != payload.get("timeUnit"):
+        raise TopicDemandError("naver_datalab_invalid_response")
+    if not isinstance(response.get("results"), list):
+        raise TopicDemandError("naver_datalab_invalid_response")
+    request_start = _parse_date(
+        payload.get("startDate"), code="naver_datalab_invalid_request_period")
+    request_end = _parse_date(
+        payload.get("endDate"), code="naver_datalab_invalid_request_period")
+    response_start = _parse_date(
+        response.get("startDate"), code="naver_datalab_invalid_response_period")
+    response_end = _parse_date(
+        response.get("endDate"), code="naver_datalab_invalid_response_period")
+    if response_start > request_start or response_end < request_end:
+        raise TopicDemandError("naver_datalab_invalid_response_period")
+    max_expansion_days = {"date": 0, "week": 6, "month": 31}.get(
+        payload.get("timeUnit"))
+    if max_expansion_days is None:
+        raise TopicDemandError("invalid_naver_datalab_time_unit")
+    if ((request_start - response_start).days > max_expansion_days
+            or (response_end - request_end).days > max_expansion_days):
+        raise TopicDemandError("naver_datalab_invalid_response_period")
+    return response_start.isoformat(), response_end.isoformat()
+
+
 def _replace_provider_evidence(candidate: dict, evidence: dict) -> None:
     existing = candidate.get("demand_evidence")
     if not isinstance(existing, list):
@@ -223,6 +254,7 @@ def collect_naver_datalab(candidate_document: dict, growth_report: dict, request
     measured = 0
     unavailable = []
     requests_made = 0
+    provider_period = None
 
     for batch in _chunks(selected, NAVER_MAX_GROUPS):
         groups = []
@@ -243,11 +275,11 @@ def collect_naver_datalab(candidate_document: dict, growth_report: dict, request
         }
         response = requester(payload)
         requests_made += 1
-        if (response.get("startDate") != payload["startDate"]
-                or response.get("endDate") != payload["endDate"]
-                or response.get("timeUnit") != time_unit
-                or not isinstance(response.get("results"), list)):
-            raise TopicDemandError("naver_datalab_invalid_response")
+        response_period = _validated_response_period(response, payload)
+        if provider_period is None:
+            provider_period = response_period
+        elif provider_period != response_period:
+            raise TopicDemandError("naver_datalab_inconsistent_response_period")
         seen_labels = set()
         for result in response["results"]:
             if not isinstance(result, dict) or result.get("title") not in labels:
@@ -268,8 +300,10 @@ def collect_naver_datalab(candidate_document: dict, growth_report: dict, request
                 "value": value,
                 "collected_at": collected_on.isoformat(),
                 "measured": True,
-                "period_start": start.isoformat(),
-                "period_end": end.isoformat(),
+                "period_start": response_period[0],
+                "period_end": response_period[1],
+                "requested_period_start": start.isoformat(),
+                "requested_period_end": end.isoformat(),
                 "time_unit": time_unit,
                 "aggregation": "mean_period_ratio",
                 "keywords": _candidate_keywords(candidate),
@@ -290,6 +324,8 @@ def collect_naver_datalab(candidate_document: dict, growth_report: dict, request
         "selection_reason": selection_reason,
         "require_gsc_seed": require_gsc_seed,
         "period": {"start": start.isoformat(), "end": end.isoformat(), "time_unit": time_unit},
+        "provider_period": ({"start": provider_period[0], "end": provider_period[1]}
+                            if provider_period is not None else None),
         "metric_note": "relative interest only; not absolute search volume",
     }
 
