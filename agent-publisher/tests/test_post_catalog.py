@@ -13,7 +13,13 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 CATALOG_MD = ROOT_DIR / "docs" / "POST_CATALOG.md"
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 
-from sync_post_catalog import catalog_type, extract_backlog_rows, generate_catalog_markdown, run_ssh_inventory
+from sync_post_catalog import (
+    catalog_type,
+    extract_backlog_rows,
+    generate_catalog_markdown,
+    reconcile_reviewed_statuses,
+    run_ssh_inventory,
+)
 import sync_post_catalog as catalog_sync
 
 class TestPostCatalog(unittest.TestCase):
@@ -151,6 +157,8 @@ class TestPostCatalog(unittest.TestCase):
             with (patch.object(catalog_sync, "CATALOG_MD", catalog_md),
                   patch.object(catalog_sync, "CATALOG_INVENTORY_JSON", catalog_inventory),
                   patch.object(catalog_sync, "run_ssh_inventory", return_value=posts),
+                  patch.object(catalog_sync, "reconcile_reviewed_statuses",
+                               return_value={"moved": [], "skipped": []}),
                   patch.object(catalog_sync, "load_reviewed_bundles", return_value={})):
                 catalog_sync.sync_catalog()
 
@@ -159,6 +167,101 @@ class TestPostCatalog(unittest.TestCase):
                 catalog_inventory.read_text(encoding="utf-8")))
             self.assertEqual(canonical_payload,
                              canonical_inventory.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _reviewed_record(post_id=844, status='draft', title='테스트 글'):
+        from tests.test_editorial_system import sample, sign
+        from agents.editorial import render
+        bundle = sample()
+        bundle['plan']['title'] = title
+        sign(bundle)
+        return ({
+            'id': post_id,
+            'title': title,
+            'url': f'https://lifeinfo24.org/?p={post_id}',
+            'category_id': 275,
+            'category_name': '건강·의료',
+            'status': status,
+            'expires_at': None,
+            'fact_manifest': {'editorial_bundle': bundle},
+            'published_at': '2026-10-03 10:00',
+        }, render(bundle['plan'], bundle['sources']))
+
+    def test_reviewed_status_reconcile_moves_exact_unchanged_draft_to_publish(self):
+        record, content = self._reviewed_record()
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / 'draft_posts.json').write_text(
+                json.dumps([record], ensure_ascii=False), encoding='utf-8')
+            (data / 'published_posts.json').write_text('[]', encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': record['title'],
+                'post_status': 'publish',
+                'permalink': 'https://lifeinfo24.org/test/',
+                'content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
+            }]
+
+            result = reconcile_reviewed_statuses(live, data)
+
+            self.assertEqual([{
+                'post_id': 844, 'from_status': 'draft', 'to_status': 'publish'
+            }], result['moved'])
+            self.assertEqual([], json.loads((data / 'draft_posts.json').read_text(encoding='utf-8')))
+            published = json.loads((data / 'published_posts.json').read_text(encoding='utf-8'))
+            self.assertEqual('publish', published[0]['status'])
+            self.assertEqual('https://lifeinfo24.org/test/', published[0]['url'])
+
+    def test_reviewed_status_reconcile_refuses_live_content_change(self):
+        record, _content = self._reviewed_record()
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            original = json.dumps([record], ensure_ascii=False)
+            (data / 'draft_posts.json').write_text(original, encoding='utf-8')
+            (data / 'published_posts.json').write_text('[]', encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': record['title'],
+                'post_status': 'publish',
+                'permalink': 'https://lifeinfo24.org/test/',
+                'content_sha256': hashlib.sha256(b'user edited content').hexdigest(),
+            }]
+
+            result = reconcile_reviewed_statuses(live, data)
+
+            self.assertEqual([], result['moved'])
+            self.assertEqual(
+                [{'post_id': 844, 'reason': 'live_content_or_title_changed'}],
+                result['skipped'])
+            self.assertEqual(json.loads(original), json.loads(
+                (data / 'draft_posts.json').read_text(encoding='utf-8')))
+            self.assertEqual([], json.loads(
+                (data / 'published_posts.json').read_text(encoding='utf-8')))
+
+    def test_reviewed_status_reconcile_moves_exact_publish_back_to_draft(self):
+        record, content = self._reviewed_record(status='publish')
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / 'draft_posts.json').write_text('[]', encoding='utf-8')
+            (data / 'published_posts.json').write_text(
+                json.dumps([record], ensure_ascii=False), encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': record['title'],
+                'post_status': 'draft',
+                'permalink': 'https://lifeinfo24.org/?p=844',
+                'content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
+            }]
+
+            result = reconcile_reviewed_statuses(live, data)
+
+            self.assertEqual([{
+                'post_id': 844, 'from_status': 'publish', 'to_status': 'draft'
+            }], result['moved'])
+            drafts = json.loads((data / 'draft_posts.json').read_text(encoding='utf-8'))
+            self.assertEqual('draft', drafts[0]['status'])
+            self.assertEqual([], json.loads(
+                (data / 'published_posts.json').read_text(encoding='utf-8')))
 
 if __name__ == "__main__":
     unittest.main()

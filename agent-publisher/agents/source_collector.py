@@ -251,6 +251,25 @@ def _fetch_sources_sequential(brief):
                 if (marker == '조회' and value
                         and re.fullmatch(r'[\d,]+', value.get_text(' ', strip=True))):
                     item.decompose()
+        # The reviewed Wonju health-certificate press release increments a
+        # standalone view counter on every read.  It sits in the article
+        # metadata next to the publication date and is not policy evidence.
+        # Keep this deliberately bound to the exact reviewed article/template;
+        # article-body numbers must continue to affect the source hash.
+        if (parsed.hostname == 'www.wonju.go.kr'
+                and parsed.path == '/media/selectBbsNttView.do'):
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            if query.get('bbsNo') == ['145'] and query.get('nttNo') == ['489491']:
+                counters = soup.select('div.bbs_right.bbs_count > span.division_line')
+                if len(counters) != 1:
+                    raise ValueError('wonju_health_certificate_view_counter_structure_changed')
+                counter = counters[0]
+                marker = ''.join(counter.find_all(string=True, recursive=False)).strip()
+                value = counter.find('strong', recursive=False)
+                if (marker != '조회수' or value is None
+                        or not re.fullmatch(r'[\d,]+', value.get_text(' ', strip=True))):
+                    raise ValueError('wonju_health_certificate_view_counter_structure_changed')
+                counter.decompose()
         for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
         text = _koreakr_article_text(soup, url)
@@ -280,5 +299,4 @@ def _fetch_sources_sequential(brief):
             raise ValueError('official_source_text_missing_or_too_large')
         sources.append({'id': f's{i}', **snapshot(url, title, text, source_type)})
     return sources
-
 
