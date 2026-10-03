@@ -16,6 +16,7 @@
 - 신규 주제 demand gate 점수화: `score_topic_candidates.py`
 - 일일 성장 작업 결정: `build_daily_growth_plan.py`
 - 기존 글 성장 개선 완료 기록: `record_growth_work.py`
+- 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py`
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
 
 직접 WP-CLI나 임시 PHP로 편집 검증을 우회하지 않는다.

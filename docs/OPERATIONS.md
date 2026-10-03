@@ -249,6 +249,10 @@ python scripts/build_daily_growth_plan.py
 
 기존 글 개선과 신규 draft가 **둘 다 eligible**일 때만 최근 `work_mix_lookback_actions`(기본 8개) 완료 이력을 보고 다음 작업을 선택한다. 목표 existing 비율은 `target_existing_ratio=0.5`다. 다음 action 하나를 추가했을 때 50:50에 더 가까워지는 쪽을 고르고, 수학적으로 동률이면 직전 완료 action의 반대쪽으로 회전한다. 이력이 전혀 없을 때만 `prefer_existing_improvement=true`가 tie-breaker다. 이 비율은 quota가 아니므로 P2를 통과한 신규 후보가 없으면 비율을 맞추기 위해 새 글을 만들지 않고, actionable existing 후보가 없으면 불필요한 기존 글 수정도 만들지 않는다.
 
+**P6 Content Cluster / Internal Links:** 추적 파일 `agent-publisher/data/content_clusters.json`은 사람이 검토한 cluster ID와 post ID 목록만 보존한다. 자동 writer brief에 `cluster_id`가 있으면 현재 WordPress inventory에서 **실제로 공개 상태인** 같은 cluster 글을 순서대로 최대 2개 골라 기존 `plan.related_posts` 형식(`https://lifeinfo24.org/?p=ID`)으로 결합한 뒤 semantic review를 수행한다. 모델이 cluster 밖의 내부 링크를 임의로 만든 경우에는 이 deterministic 후보로 대체된다. `cluster_id`가 없는 기존 brief/bundle은 영향을 받지 않는다.
+
+`python scripts/build_content_cluster_report.py`는 canonical `wordpress_inventory.json`의 `content_urls`만 읽는 read-only 점검이다. cluster 구성원이면서 명시적 `?p=ID` incoming link가 0이고 같은 cluster로 나가는 명시적 링크도 0인 공개 글만 `orphan_candidate=true`로 추천한다. inventory에 `content_urls`가 없거나 불완전하면 orphan이라고 추정하지 않고 `link_state_complete=false`로 남긴다. 이 보고서는 기존 공개글을 자동 수정하거나 hub page를 자동 생성하지 않는다.
+
 최종 보고는 대상 글·변경 내용·임시글/공개 상태·source refresh/reuse·semantic review 범위·WP CAS/readback·필요한 browser QA만 짧게 전달한다. 공유 코드를 실제로 바꿔 테스트를 실행한 경우에만 표적/full regression 결과를 추가한다. 콘텐츠 한 건의 결과 보고에 저장소 전체 테스트 수를 붙이지 않는다.
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.

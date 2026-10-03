@@ -12,6 +12,7 @@ from agents.editorial import (policy, policy_fingerprint, policy_instructions, p
 from agents.event_post_standard import event_review_instruction, event_writer_instruction
 from agents.review_cache import load_cached_review, store_cached_review
 from agents.search_intent import INVENTORY
+from agents.content_clusters import apply_cluster_related_posts, load_clusters
 from agents.temporal_validation import KST, extract_evidence, infer_current_value_period
 from agents.workflow_metrics import increment, timed
 
@@ -242,6 +243,7 @@ class EditorialWriterAgent:
                 + event_rules,
                 {**bundle, 'previous_plan': bundle.get('plan'), 'issues': feedback}, plan_schema, 'writer',
                 policy_context=bundle)
+            plan = apply_cluster_related_posts(plan, brief, inventory, load_clusters())
             bundle['plan'] = plan
             report = validate_bundle(bundle, inventory, require_review=False)
             if report['status'] == 'ready':
