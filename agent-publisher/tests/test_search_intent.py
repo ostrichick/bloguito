@@ -47,10 +47,45 @@ class SearchIntentTests(unittest.TestCase):
                 'eligible_for_automation': True,
             }],
         }
+        brief_data = json.loads(Path(__file__).resolve().parents[1].joinpath('data', 'search_briefs.json').read_text(encoding='utf-8'))
+        target = next(row for row in brief_data if row['id'] == 'mumyeong-suwon-2026')
+        self.assertEqual('application', target['intent_type'])
+        self.assertTrue(target['added_value'])
         with patch('agents.search_intent.GROWTH_SCORE_REPORT') as score_file:
             score_file.read_text.return_value = json.dumps(report, ensure_ascii=False)
             briefs = load_briefs('concert', date(2026, 9, 13), require_growth_gate=True)
         self.assertEqual(['mumyeong-suwon-2026'], [brief['id'] for brief in briefs])
+
+    def test_manual_brief_loading_does_not_apply_value_gate(self):
+        self.assertTrue(load_briefs('concert', date(2026, 9, 13), require_growth_gate=False))
+
+    def test_scheduler_blocks_high_ai_answerability_without_added_value(self):
+        policy = load_policy(Path(__file__).resolve().parents[1] / 'growth_policy.json')
+        briefs = json.loads(Path(__file__).resolve().parents[1].joinpath('data', 'search_briefs.json').read_text(encoding='utf-8'))
+        target = next(row for row in briefs if row['id'] == 'mumyeong-suwon-2026')
+        target['ai_answerability'] = 'high'
+        target['added_value'] = []
+        report = {
+            'schema_version': 1,
+            'as_of_date': '2026-09-13',
+            'policy_version': 1,
+            'topic_gate_digest': topic_gate_digest(policy),
+            'candidates': [{
+                'brief_id': target['id'],
+                'category_key': target['category_key'],
+                'primary_keyword': target['primary_keyword'],
+                'score': 90,
+                'confidence': 'high',
+                'measured_demand_present': True,
+                'eligible_for_automation': True,
+            }],
+        }
+        with patch('agents.search_intent.BRIEFS') as brief_file, \
+             patch('agents.search_intent.GROWTH_SCORE_REPORT') as score_file:
+            brief_file.read_text.return_value = json.dumps([target], ensure_ascii=False)
+            score_file.read_text.return_value = json.dumps(report, ensure_ascii=False)
+            self.assertEqual([], load_briefs('concert', date(2026, 9, 13), require_growth_gate=True))
+            self.assertEqual([target], load_briefs('concert', date(2026, 9, 13), require_growth_gate=False))
 
     def test_invalid_inventory_shape_fails_closed_instead_of_crashing(self):
         with patch('agents.search_intent.INVENTORY') as inventory:

@@ -26,6 +26,10 @@ class TopicScoringError(ValueError):
 
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 LEVELS = {"low", "medium", "high"}
+BRIEF_INTENT_TYPES = {
+    "guide", "lookup", "application", "calculator", "comparison",
+    "decision", "troubleshooting",
+}
 
 
 def _canonical_digest(value) -> str:
@@ -80,6 +84,34 @@ def _topic_gate(policy: dict) -> dict:
 def topic_gate_digest(policy: dict) -> str:
     """Bind score reports to the exact current topic-gate policy, not just a version label."""
     return _canonical_digest(_topic_gate(policy))
+
+
+def brief_value_gate_reasons(brief: dict, policy: dict) -> list[str]:
+    """Validate value-first metadata for scheduler automation only.
+
+    The caller decides whether to enforce these reasons. Manual editorial flows
+    intentionally do not call this gate, so a user-requested post is never held
+    merely because growth/value metadata is absent or incomplete.
+    """
+    if not isinstance(brief, dict):
+        return ["invalid_brief_value_metadata"]
+    gate = _topic_gate(policy)
+    intent = brief.get("intent_type")
+    answerability = brief.get("ai_answerability")
+    added = brief.get("added_value")
+    reasons = []
+    if intent not in BRIEF_INTENT_TYPES:
+        reasons.append("brief_intent_type_missing_or_invalid")
+    if answerability not in LEVELS:
+        reasons.append("brief_ai_answerability_missing_or_invalid")
+    recognized = set(gate["recognized_added_value"])
+    if (not isinstance(added, list)
+            or any(value not in recognized for value in added)
+            or len(set(added)) != len(added)):
+        reasons.append("brief_added_value_missing_or_invalid")
+    elif answerability == "high" and not added:
+        reasons.append("high_ai_answerability_without_added_value")
+    return reasons
 
 
 def _validate_candidate(candidate: dict, gate: dict) -> None:

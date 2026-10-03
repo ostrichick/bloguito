@@ -176,6 +176,21 @@ P4로 동일 기존 글의 반복 선택은 막았지만 actionable existing 후
 - `scripts/build_content_cluster_report.py`를 추가했다. canonical WordPress inventory의 `content_urls`에서 명시적 `?p=ID` 링크만 세어 incoming 0 / 같은 cluster outgoing 0인 공개 글을 `orphan_candidate`로 추천한다. `content_urls`가 없는 snapshot에서는 orphan 판정을 하지 않는다.
 - orphan report와 cluster registry는 **추천/검토 계층**이다. 기존 공개글 자동 edit, hub page 자동 생성, permalink 의미 추정은 하지 않는다.
 
+## P7 — Value-first / AI-answerability
+
+### 목표
+
+정답 한두 문장으로 쉽게 대체되는 주제는 단순 설명글 생산으로 자동 승격하지 않고, 독자가 클릭해서 수행할 가치가 있는 계산/판정/비교/공식 행동/문제 해결/조회 등을 brief 단계에서 명시한다. 이 gate는 자동 scheduler에만 적용하며 사용자가 직접 지시한 글을 막지 않는다.
+
+### 2026-10-03 구현
+
+- scheduled brief metadata로 `intent_type`, `ai_answerability`, `added_value`를 추가했다. intent는 `guide`, `lookup`, `application`, `calculator`, `comparison`, `decision`, `troubleshooting`으로 제한하고 AI answerability는 `low/medium/high`만 허용한다.
+- `added_value`는 P2의 기존 recognized value 목록을 그대로 재사용해 서로 다른 두 정책 목록이 drift하지 않도록 했다.
+- `agents.topic_scoring.brief_value_gate_reasons()`가 scheduler용 metadata를 fail-closed로 검증한다. `ai_answerability=high`인데 added value가 하나도 없으면 `high_ai_answerability_without_added_value`로 보류한다.
+- `load_briefs(..., require_growth_gate=True)`만 P2 demand gate 뒤에 P7 value gate를 적용한다. `require_growth_gate=False`인 수동 경로는 이 gate를 적용하지 않는다.
+- 현재 tracked `search_briefs.json` 13개에 metadata를 명시했다. 단순 guide 여부가 아니라 실제 독자 행동에 맞춰 application/lookup/calculator/comparison/decision/troubleshooting을 구분했다.
+- P7에서는 `Review.Checks`나 semantic review response schema를 변경하지 않았다. value 설계는 semantic fact-review와 분리된 brief-selection contract로 유지한다.
+
 ## 작업 순서와 경계
 
 1. **P0**: inventory 파일 역할 충돌을 먼저 제거한다.
@@ -185,6 +200,7 @@ P4로 동일 기존 글의 반복 선택은 막았지만 actionable existing 후
 5. **P4**: 실제 완료된 기존 글 개선을 기록하고 충분한 새 GSC 관측기간 전까지 같은 과거 신호를 재선정하지 않는다.
 6. **P5**: 실제 완료 이력으로 existing/new 작업 mix를 관리하고 성공한 신규 brief의 재선정을 막는다.
 7. **P6**: curated cluster로 신규 원고의 related-post 후보를 결합하고, explicit-link orphan 후보를 read-only로 찾는다.
+8. **P7**: scheduler brief에 intent/AI-answerability/added-value를 명시하고 AI로 쉽게 대체되는 무가치 설명글을 자동 작성에서 보류한다.
 
 P0~P5는 운영 배포와 #345 실제 completion loop까지 확인했다. P6도 기존 공개글을 자동 수정하지 않으며, writer 경로에 배포할 때는 release revision과 08:00 cron smoke를 별도로 확인한다.
 

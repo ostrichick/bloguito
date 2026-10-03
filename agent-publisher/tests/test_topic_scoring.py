@@ -11,6 +11,7 @@ import unittest
 from agents.growth_analysis import load_policy
 from agents.topic_scoring import (
     TopicScoringError,
+    brief_value_gate_reasons,
     brief_growth_gate_reasons,
     save_topic_scores,
     score_candidates,
@@ -160,6 +161,26 @@ class TopicScoringTests(unittest.TestCase):
             changed, score_report, self.policy, today=self.as_of))
         self.assertEqual(["growth_score_report_stale"], brief_growth_gate_reasons(
             brief, score_report, self.policy, today=date(2026, 10, 20)))
+
+    def test_value_gate_requires_explicit_scheduler_metadata(self):
+        base = {
+            "intent_type": "application",
+            "ai_answerability": "high",
+            "added_value": ["official_action"],
+        }
+        self.assertEqual([], brief_value_gate_reasons(base, self.policy))
+        self.assertIn(
+            "high_ai_answerability_without_added_value",
+            brief_value_gate_reasons(dict(base, added_value=[]), self.policy),
+        )
+        self.assertIn(
+            "brief_intent_type_missing_or_invalid",
+            brief_value_gate_reasons({"ai_answerability": "low", "added_value": []}, self.policy),
+        )
+        self.assertIn(
+            "brief_added_value_missing_or_invalid",
+            brief_value_gate_reasons(dict(base, added_value=["generic_summary"]), self.policy),
+        )
 
     def test_private_score_report_round_trip(self):
         report = score_candidates(
