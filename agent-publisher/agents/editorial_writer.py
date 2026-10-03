@@ -20,6 +20,7 @@ from agents.workflow_metrics import increment, timed
 from agents.editorial_schema import (
     Evidence,
     SumCalculation,
+    ThousandWonToWonCalculation,
     IllustrativeInputCalculation,
     DaysToMonthsCalculation,
     PensionProjectionHorizon,

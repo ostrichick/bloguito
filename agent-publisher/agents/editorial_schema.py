@@ -16,6 +16,12 @@ class SumCalculation(BaseModel):
     result: int
 
 
+class ThousandWonToWonCalculation(BaseModel):
+    operation: Literal['thousand_won_to_won']
+    source_thousand_won: int
+    result_won: int
+
+
 class IllustrativeInputCalculation(BaseModel):
     operation: Literal['illustrative_input']
     age: int
@@ -62,6 +68,7 @@ class AddDurationCalculation(BaseModel):
 
 DerivedCalculation = (
     SumCalculation
+    | ThousandWonToWonCalculation
     | IllustrativeInputCalculation
     | DaysToMonthsCalculation
     | PensionProjectionCalculation
@@ -269,4 +276,3 @@ class DeltaChecks(BaseModel):
 class DeltaReview(BaseModel):
     checks: DeltaChecks
     issues: list[str]
-

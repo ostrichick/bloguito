@@ -316,8 +316,9 @@ def all_blocks(plan):
 def supported_currency_sums(text, quote_text, calculations):
     """Allow only narrowly defined derived values whose inputs are in evidence.
 
-    Supported operations are reader-useful KRW sums and a scheduled end time
-    derived from an explicit Korean start time plus an official running time.
+    Supported operations are reader-useful KRW sums, exact thousand-won to won
+    unit conversions, and a scheduled end time derived from an explicit Korean
+    start time plus an official running time.
     A pension projection is also allowed when it is bound to a cited official
     monthly amount and cited official early/delayed percentage, and only shows
     deterministic cumulative totals at explicitly labelled fixed horizons.
@@ -337,6 +338,23 @@ def supported_currency_sums(text, quote_text, calculations):
     for item in calculations:
         if not isinstance(item, dict):
             errors.append('invalid_derived_calculation')
+            continue
+        if item.get('operation') == 'thousand_won_to_won':
+            if (set(item) != {'operation', 'source_thousand_won', 'result_won'}
+                    or type(item.get('source_thousand_won')) is not int
+                    or item['source_thousand_won'] <= 0
+                    or type(item.get('result_won')) is not int
+                    or item['result_won'] != item['source_thousand_won'] * 1000
+                    or str(item['source_thousand_won']) not in quoted_numbers
+                    or not re.search(r'천\s*원', quote_text)
+                    or str(item['result_won']) not in visible_numbers
+                    or not re.search(
+                        r'(?<!\d)' + re.escape(str(item['result_won'])) + r'\s*원(?!\d)',
+                        plain_text,
+                    )):
+                errors.append('invalid_derived_calculation')
+                continue
+            supported.add(str(item['result_won']))
             continue
         if item.get('operation') == 'illustrative_input':
             required_keys = {'operation', 'age', 'monthly_salary', 'employment_months'}
