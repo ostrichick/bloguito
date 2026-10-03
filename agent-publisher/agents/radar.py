@@ -43,7 +43,8 @@ class RadarAgent:
                     indent=2,
                 )
 
-    def search_news(self, category_key: str, max_items_per_keyword: int = 2) -> list:
+    def search_news(self, category_key: str, max_items_per_keyword: int = 2,
+                    selected_brief_id: str | None = None) -> list:
         """키워드별로 최대 N개의 뉴스 후보를 수집하여 Curator/Copywriter의 팩트체크용 버퍼 풀 확보"""
         if category_key not in CATEGORIES:
             raise ValueError(f"Unknown category: {category_key}")
@@ -53,7 +54,11 @@ class RadarAgent:
 
         print(f"[RadarAgent] 🔍 카테고리 '{cat_info['name']}' 탐색 시작 (키워드당 최대 {max_items_per_keyword}건)...")
 
-        briefs = load_briefs(category_key)
+        # Scheduled discovery requires a current P2 demand score. Manual/editorial
+        # brief loading remains available without this gate for user-directed work.
+        briefs = load_briefs(category_key, require_growth_gate=True)
+        if selected_brief_id is not None:
+            briefs = [brief for brief in briefs if brief.get('id') == selected_brief_id]
         if not briefs:
             print("[RadarAgent] 검색 의도 검토가 완료된 유효 주제가 없어 보류합니다.")
         # Evergreen service questions need not have a recent news article.

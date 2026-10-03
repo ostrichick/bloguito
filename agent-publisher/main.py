@@ -1,7 +1,17 @@
 import argparse
+from datetime import datetime
+import json
+from pathlib import Path
 import sys
 import time
 from config import CATEGORIES
+from agents.growth_analysis import load_policy
+from agents.growth_planner import GrowthPlannerError, decide_daily_action, save_daily_plan
+from agents.growth_work_log import (
+    empty_work_log,
+    record_new_draft_completion,
+    save_work_log,
+)
 from agents.radar import RadarAgent
 from agents.curator import CuratorAgent
 from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent
@@ -9,6 +19,68 @@ from agents.designer import DesignerAgent, cleanup_generated_cover
 from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import ensure_inventory, sync_inventory
 from notifier import notify_published, notify_error, notify_pipeline_summary
+from agents.temporal_validation import KST
+
+
+GROWTH_DIR = Path(__file__).resolve().parent / 'data' / 'growth'
+GROWTH_OPPORTUNITIES = GROWTH_DIR / 'latest-opportunities.json'
+TOPIC_SCORES = GROWTH_DIR / 'topic-candidate-scores.json'
+GROWTH_WORK_LOG = GROWTH_DIR / 'growth-work-log.json'
+GROWTH_POLICY = Path(__file__).resolve().parent / 'growth_policy.json'
+
+
+def _load_private_json(path: Path):
+    if path.is_symlink():
+        raise GrowthPlannerError('growth_runtime_symlink_not_allowed')
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def build_scheduled_growth_plan(category_keys: list) -> dict:
+    """Build and persist the read-only decision that gates scheduled writing."""
+    try:
+        opportunities = _load_private_json(GROWTH_OPPORTUNITIES)
+        scores = _load_private_json(TOPIC_SCORES)
+        if GROWTH_WORK_LOG.exists():
+            work_log = _load_private_json(GROWTH_WORK_LOG)
+        else:
+            work_log = {'schema_version': 1, 'entries': []}
+        policy = load_policy(GROWTH_POLICY)
+        slug_map = {key: value['slug'] for key, value in CATEGORIES.items()}
+        plan = decide_daily_action(
+            opportunities, scores, policy,
+            as_of=datetime.now(KST).date(),
+            work_log=work_log,
+            category_keys=category_keys,
+            category_slug_map=slug_map,
+        )
+        save_daily_plan(plan, GROWTH_DIR)
+        return plan
+    except (OSError, ValueError, GrowthPlannerError):
+        # Missing or malformed private growth state is not evidence that a new
+        # article should be written. Scheduled automation fails closed.
+        return {
+            'schema_version': 1,
+            'action': 'no_action',
+            'target': None,
+            'reason': 'growth_planner_runtime_unavailable',
+            'details': [],
+        }
+
+
+def record_scheduled_new_draft_completion(growth_plan: dict, *, post_id: int, title: str) -> None:
+    """Persist a successful scheduled draft without turning log failure into duplicate creation."""
+    policy = load_policy(GROWTH_POLICY)
+    if GROWTH_WORK_LOG.exists():
+        log = _load_private_json(GROWTH_WORK_LOG)
+    else:
+        log = empty_work_log()
+    updated = record_new_draft_completion(
+        log, growth_plan, policy,
+        post_id=post_id,
+        completed_on=datetime.now(KST).date(),
+        title=title,
+    )
+    save_work_log(updated, GROWTH_WORK_LOG)
 
 
 def run_pipeline(category_keys: list, limit_per_cat: int = 1):
@@ -16,6 +88,55 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     print("📢 [생활정보 24] 멀티 에이전트 자율 발행 파이프라인 가동")
     print("=" * 60)
 
+    valid_categories = [key for key in category_keys if key in CATEGORIES]
+    growth_plan = build_scheduled_growth_plan(valid_categories)
+    selected = growth_plan.get('target') or {}
+    selected_brief_id = selected.get('brief_id') if growth_plan.get('action') == 'new_draft' else None
+    selected_category = selected.get('category_key') if growth_plan.get('action') == 'new_draft' else None
+
+    if growth_plan.get('action') == 'new_draft':
+        if selected_category not in valid_categories or not isinstance(selected_brief_id, str):
+            growth_plan = {
+                'action': 'no_action', 'target': None,
+                'reason': 'growth_plan_new_draft_target_invalid', 'details': [],
+            }
+        else:
+            valid_categories = [selected_category]
+
+    stats = {
+        "categories": [CATEGORIES[key]['name'] for key in valid_categories],
+        "candidates": 0,
+        "published": 0,
+        "held": 0,
+        "errors": 0,
+        "notification_errors": 0,
+        "growth_log_errors": 0,
+        "held_reasons": [],
+        "growth_action": growth_plan.get('action', 'no_action'),
+        "growth_reason": growth_plan.get('reason', ''),
+        "growth_target": growth_plan.get('target'),
+    }
+
+    if growth_plan.get('action') != 'new_draft':
+        if growth_plan.get('action') == 'existing_improvement':
+            target = growth_plan.get('target') or {}
+            print("[Growth Planner] 기존 글 개선 우선: Post #"
+                  + str(target.get('post_id')) + " - " + str(target.get('title') or ''))
+            print("[Growth Planner] 공개 글을 자동 수정하지 않고 이번 신규 draft 실행을 보류합니다.")
+            stats['held_reasons'].append(
+                "[Growth Planner] existing improvement: Post #" + str(target.get('post_id')))
+        else:
+            print("[Growth Planner] 오늘 자동 작성할 신규 주제가 없습니다: "
+                  + str(growth_plan.get('reason') or 'no_action'))
+        try:
+            notify_pipeline_summary(stats)
+        except Exception as e:
+            stats['notification_errors'] += 1
+            print(f"⚠️ 요약 리포트 발송 실패: {e}")
+        return stats
+
+    # Only a planner-approved new draft reaches WordPress inventory refresh and
+    # the existing editorial pipeline.
     sync_inventory()
     radar = RadarAgent()
     curator = CuratorAgent()
@@ -26,27 +147,17 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     designer = DesignerAgent()
     publisher = PublisherAgent()
 
-    stats = {
-        "categories": [],
-        "candidates": 0,
-        "published": 0,
-        "held": 0,
-        "errors": 0,
-        "notification_errors": 0,
-        "held_reasons": []
-    }
-
-    for cat_key in category_keys:
+    for cat_key in valid_categories:
         if cat_key not in CATEGORIES:
             print(f"⚠️ 존재하지 않는 카테고리: {cat_key}")
             continue
 
         cat_info = CATEGORIES[cat_key]
-        stats["categories"].append(cat_info["name"])
         print(f"\n📂 [{cat_info['name']}] 카테고리 작업 시작")
 
         # 1. 탐색 (Radar) - 키워드당 2개 후보 수집하여 팩트 검증 탈락 시 예비 버퍼 확보
-        candidates = radar.search_news(cat_key, max_items_per_keyword=2)
+        candidates = radar.search_news(
+            cat_key, max_items_per_keyword=2, selected_brief_id=selected_brief_id)
         if not candidates:
             print(f"ℹ️ 새로운 소식이 없습니다.")
             continue
@@ -93,6 +204,22 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     post_id = publisher.publish(article, image_path=img_path)
                 finally:
                     cleanup_generated_cover(img_path)
+
+                # The WordPress draft already exists at this point. A private
+                # work-log failure must not make the scheduler recreate it.
+                try:
+                    record_scheduled_new_draft_completion(
+                        growth_plan, post_id=post_id, title=article['title'])
+                except Exception as growth_log_error:
+                    stats["growth_log_errors"] += 1
+                    stats["held_reasons"].append(
+                        "[Growth Planner] 신규 draft 완료 기록 실패: "
+                        + type(growth_log_error).__name__)
+                    try:
+                        notify_error("Growth work log", str(growth_log_error))
+                    except Exception as notification_error:
+                        stats['notification_errors'] += 1
+                        print(f"⚠️ Growth work log 오류 알림 발송 실패: {type(notification_error).__name__}")
 
                 # 6. 중복 방지 히스토리 저장 (구글 뉴스 URL + 언론사 원문 URL 모두 기록)
                 radar.save_to_history(raw_item.get("link", ""), curated.get("link", ""))
@@ -152,8 +279,9 @@ def main(argv=None):
     stats = run_pipeline(targets, limit_per_cat=args.limit)
     # Holds and an empty candidate list are valid editorial outcomes. Actual
     # processing errors must propagate to cron/systemd even after partial success.
-    import json
-    result = {key: stats[key] for key in ('candidates', 'published', 'held', 'errors', 'notification_errors')}
+    result = {key: stats.get(key, 0) for key in (
+        'candidates', 'published', 'held', 'errors', 'notification_errors', 'growth_log_errors')}
+    result['growth_action'] = stats.get('growth_action', 'unknown')
     result['status'] = 'failed' if stats['errors'] else 'completed'
     print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False))
     return 1 if stats['errors'] else 0

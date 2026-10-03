@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "candidates": [
+    {
+      "id": "example-topic-candidate",
+      "brief_id": "future-search-brief-id",
+      "category_key": "life-admin",
+      "topic": "예시 생활행정 주제",
+      "primary_keyword": "예시 생활행정 검색어",
+      "gsc_terms": [
+        "예시 생활행정"
+      ],
+      "demand_evidence": [
+        {
+          "source": "keyword_planner",
+          "metric": "avg_monthly_searches",
+          "value": 0,
+          "collected_at": "2026-10-03",
+          "measured": true
+        }
+      ],
+      "click_need": "high",
+      "ai_answerability": "medium",
+      "added_value": [
+        "official_action",
+        "troubleshooting"
+      ],
+      "cluster_fit": "medium",
+      "useful_lifetime_days": 180,
+      "competition_differentiation": "medium"
+    }
+  ]
+}

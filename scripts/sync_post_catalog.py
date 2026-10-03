@@ -19,7 +19,7 @@ for _stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None)):
 ROOT = Path(__file__).resolve().parents[1]
 SSH_HOST = "bloguito"
 CATALOG_MD = ROOT / "docs" / "POST_CATALOG.md"
-INVENTORY_JSON = ROOT / "agent-publisher" / "data" / "wordpress_inventory.json"
+CATALOG_INVENTORY_JSON = ROOT / "agent-publisher" / "data" / "catalog_inventory.json"
 BACKLOG_HEADING = "## 3. 🎯 추진 예정 백로그 (Topic Backlog)"
 
 DEFAULT_BACKLOG_ROWS = [
@@ -47,6 +47,7 @@ foreach ($q->posts as $p) {
         'post_title' => (string)$p->post_title,
         'post_status' => (string)$p->post_status,
         'post_name' => (string)$p->post_name,
+        'permalink' => (string)get_permalink($id),
         'post_date' => (string)$p->post_date,
         'content_sha256' => hash('sha256', (string)$p->post_content),
         'category_slugs' => wp_get_post_terms($id, 'category', array('fields' => 'slugs')),
@@ -358,10 +359,12 @@ def sync_catalog():
     CATALOG_MD.write_text(md, encoding="utf-8")
     print(f"[Sync Catalog] Successfully generated {CATALOG_MD}")
 
-    # Also save json inventory
-    INVENTORY_JSON.parent.mkdir(parents=True, exist_ok=True)
-    INVENTORY_JSON.write_text(json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[Sync Catalog] Successfully saved {INVENTORY_JSON}")
+    # Keep the catalog's richer WordPress snapshot separate from the canonical
+    # lightweight inventory used by search_intent/scheduled editorial validation.
+    CATALOG_INVENTORY_JSON.parent.mkdir(parents=True, exist_ok=True)
+    CATALOG_INVENTORY_JSON.write_text(
+        json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[Sync Catalog] Successfully saved {CATALOG_INVENTORY_JSON}")
 
 if __name__ == "__main__":
     sync_catalog()

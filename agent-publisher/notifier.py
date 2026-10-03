@@ -96,7 +96,9 @@ def notify_pipeline_summary(stats: dict):
     total_published = stats.get("published", 0)
     total_held = stats.get("held", 0)
     total_errors = stats.get("errors", 0)
+    growth_log_errors = stats.get("growth_log_errors", 0)
     categories = ", ".join(stats.get("categories", []))
+    growth_action = stats.get("growth_action")
 
     msg = (
         f"📊 <b>파이프라인 실행 종합 리포트</b>\n"
@@ -104,8 +106,16 @@ def notify_pipeline_summary(stats: dict):
         f"• <b>탐색 소식 후보</b>: {total_candidates}건\n"
         f"• <b>신규 임시글 등록</b>: {total_published}건\n"
         f"• <b>검증 보류/스킵</b>: {total_held}건\n"
-        f"• <b>장애/에러</b>: {total_errors}건"
+        f"• <b>장애/에러</b>: {total_errors}건\n"
+        f"• <b>Growth 기록 오류</b>: {growth_log_errors}건"
     )
+    if growth_action:
+        msg += f"\n• <b>Growth Planner</b>: {growth_action}"
+        target = stats.get("growth_target") or {}
+        if growth_action == "existing_improvement" and target.get("post_id"):
+            msg += f" (Post #{target['post_id']})"
+        elif growth_action == "new_draft" and target.get("brief_id"):
+            msg += f" ({target['brief_id']})"
     if stats.get("held_reasons"):
         reasons_text = "\n".join(f"  - {r}" for r in stats["held_reasons"][:3])
         msg += f"\n• <b>주요 보류 사유</b>:\n{reasons_text}"
