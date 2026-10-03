@@ -7,6 +7,7 @@ import re
 from urllib.parse import quote
 
 from agents.event_post_standard import overview_event_date_labels
+from agents.reader_tools import render_reader_tools
 
 
 def render_article(plan, sources, category_key=None, *, helpers, map_key):
@@ -81,6 +82,7 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
             'style="display:block;width:100%;max-width:100%;height:auto;border-radius:10px" />'
             '</figure>'
         )
+    result += render_reader_tools(plan)
 
     # A source-reviewed overview table belongs immediately after the answer.
     sections = plan['sections']
@@ -452,6 +454,10 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
     ids = []
     for block in all_blocks(plan):
         ids.extend(e['source_id'] for e in block['evidence'])
+    for tool in plan.get('reader_tools', []):
+        if isinstance(tool, dict):
+            ids.extend(e['source_id'] for e in tool.get('evidence', [])
+                       if isinstance(e, dict) and 'source_id' in e)
     ids = list(dict.fromkeys(ids))
     action_urls = {action['url'] for action in actions}
     citation_ids = [i for i in ids if source_map[i]['url'] not in action_urls]
@@ -472,4 +478,3 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
         + links + '</ul></div>'
         if links else '')
     return result + interlink_html + source_footer + '</div>'
-

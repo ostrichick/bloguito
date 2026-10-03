@@ -257,6 +257,10 @@ python scripts/build_daily_growth_plan.py
 
 scheduled `load_briefs(..., require_growth_gate=True)`는 P2 score gate를 통과한 뒤 이 metadata도 검증한다. 특히 `ai_answerability=high`인데 `added_value=[]`이면 `high_ai_answerability_without_added_value`로 자동 작성을 보류한다. metadata 자체가 빠졌거나 허용되지 않은 값이면 scheduler에서 fail closed한다. 반대로 사용자가 ChatGPT/CoS에서 직접 지시한 글과 일반 editorial CLI/manual `load_briefs()`에는 이 value gate를 적용하지 않는다. P7은 기존 semantic-review checks/signature를 늘리지 않고 **brief 선택 단계**에서만 동작한다.
 
+**P8 Interactive Reader Tool Pilot:** `plan.reader_tools`는 모델이 임의 HTML/JavaScript를 넘기는 통로가 아니다. 현재 allowlist는 `kind=minimum_wage_monthly`, `formula_version=moel_weekly_holiday_v1` 한 종류뿐이며 `agents/reader_tools.py`가 고정 HTML/JS 템플릿을 렌더한다. 입력은 시급, 주 소정근로시간(0~40시간), 주휴 적용 여부이고 출력은 세전 단순 월 환산 예상액이다. 주휴를 적용하더라도 주 15시간 미만이면 주휴시간을 0으로 처리하며, 40시간/주휴 8시간은 월 환산 209시간이 되도록 공식 안내와 같은 환산 경계를 사용한다.
+
+Reader tool은 `intent_type=calculator`, `added_value`에 `calculator` 포함, brief entity/primary keyword에 `최저임금`이 있는 경우에만 허용한다. 계산식 evidence는 **official source**의 실제 인용문과 exact binding되어야 한다. tool당 임의 `script`, 다른 formula version, 40시간 초과 기본값, 비공식/불일치 evidence는 `invalid_reader_tools` 또는 `reader_tool_outside_brief_scope`로 보류한다. renderer는 native number/checkbox input, `aria-live`, responsive grid, `<noscript>` 안내를 제공하며 연장/야간/휴일 가산수당·세금/공제는 계산하지 않는다고 명시한다. 실제 최저임금 글을 자동 생성하는 것은 P2 측정 수요 gate를 별도로 통과해야 하며, P8 기능 추가 자체가 신규 글 생성 승인이 아니다.
+
 최종 보고는 대상 글·변경 내용·임시글/공개 상태·source refresh/reuse·semantic review 범위·WP CAS/readback·필요한 browser QA만 짧게 전달한다. 공유 코드를 실제로 바꿔 테스트를 실행한 경우에만 표적/full regression 결과를 추가한다. 콘텐츠 한 건의 결과 보고에 저장소 전체 테스트 수를 붙이지 않는다.
 
 1. 게시물 상태(공개·임시·예약·비공개)와 출처를 조회하고, 중복·검토 만료·정책 적용 연도를 검증한다.

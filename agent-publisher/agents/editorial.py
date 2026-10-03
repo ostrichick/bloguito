@@ -21,6 +21,7 @@ from agents.search_intent import duplicate_posts
 from agents.critical_facts import critical_fact_reasons
 from agents.event_post_standard import overview_event_date_labels, validate_event_post_standard
 from agents.policy_exceptions import get_policy_exception
+from agents.reader_tools import validate_reader_tools
 from agents.volatility import explicit_contract, lifecycle_reasons, temporal_contract_reasons
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -562,6 +563,9 @@ def reader_visible_strings(plan, sources):
         values.append((faq.get('answer') or {}).get('text', ''))
     for item in plan.get('related_posts', []):
         values.append(item.get('label', ''))
+    for item in plan.get('reader_tools', []):
+        if isinstance(item, dict):
+            values.append(item.get('title', ''))
     for item in plan.get('official_navigation', []):
         values.extend((item.get('label', ''), item.get('note', '')))
     for source in sources:
@@ -777,6 +781,7 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             reasons.extend(temporal_contract_reasons(bundle))
             reasons.extend(validate_current_value_period(
                 brief, sources, bundle.get('temporal_source', {}), now))
+            reasons.extend(validate_reader_tools(plan, sources, brief))
             if any('·' in value for value in reader_visible_strings(plan, sources)):
                 reasons.append('reader_middle_dot_disallowed')
                 details.append('독자 문구의 가운데점 문자를 쉼표 또는 자연스러운 연결 표현으로 바꿀 것')
