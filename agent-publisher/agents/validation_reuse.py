@@ -15,7 +15,16 @@ def _review_body(bundle: dict) -> dict:
     }
 
 
-def validation_fingerprint(bundle: dict) -> dict[str, str | None]:
+def validation_fingerprint(bundle: dict | None) -> dict[str, str | None]:
+    if not isinstance(bundle, dict):
+        return {
+            "content_digest": None,
+            "source_digest": None,
+            "policy_digest": None,
+            "review_digest": None,
+            "review_policy_digest": None,
+            "review_checked_at": None,
+        }
     review = bundle.get("review") if isinstance(bundle.get("review"), dict) else {}
     return {
         "content_digest": digest(_review_body(bundle)),
@@ -27,11 +36,12 @@ def validation_fingerprint(bundle: dict) -> dict[str, str | None]:
     }
 
 
-def assess_validation_reuse(old_bundle: dict, new_bundle: dict) -> dict:
+def assess_validation_reuse(old_bundle: dict | None, new_bundle: dict) -> dict:
     old = validation_fingerprint(old_bundle)
     new = validation_fingerprint(new_bundle)
-    same_sources = old["source_digest"] == new["source_digest"]
-    same_policy = old["policy_digest"] == new["policy_digest"]
+    has_baseline = isinstance(old_bundle, dict)
+    same_sources = has_baseline and old["source_digest"] == new["source_digest"]
+    same_policy = has_baseline and old["policy_digest"] == new["policy_digest"]
     old_review_current_for_policy = old["review_policy_digest"] == old["policy_digest"]
     exact_review_body = old["content_digest"] == new["content_digest"]
     return {

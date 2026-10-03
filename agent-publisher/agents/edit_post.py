@@ -66,6 +66,90 @@ def reviewed_target_kind(post_id: int) -> str:
     raise ValueError("reviewed_post_manifest_required")
 
 
+def _legacy_public_bundle_target(post_id: int, bundle: dict | None) -> bool:
+    """Allow only an explicitly ID-bound full bundle to enter legacy public Standard."""
+    return (
+        isinstance(bundle, dict)
+        and isinstance(bundle.get("brief"), dict)
+        and bundle["brief"].get("existing_post_id") == post_id
+    )
+
+
+def _legacy_public_standard_decision(
+    post_id: int,
+    bundle: dict,
+    *,
+    expected_content_sha256: str | None,
+    image_path: Path | str | None,
+    resume: bool,
+) -> dict:
+    """Fail closed to full Standard when a legacy public post has no reviewed manifest.
+
+    The actual mutator still proves that the live target is public, matches the caller's
+    content SHA, passes full current source/site/semantic validation, and survives guarded
+    readback before a reviewed manifest may be created.
+    """
+    if not _legacy_public_bundle_target(post_id, bundle):
+        raise ValueError("reviewed_post_manifest_required")
+    classification = {
+        "route": "standard",
+        "risk_level": "fact",
+        "reasons": ["legacy_public_without_reviewed_manifest", "full_review_required"],
+        "fast_report": None,
+        "content_changed": True,
+        "image_changed": image_path is not None,
+        "title_changed": True,
+        "brief_changed": True,
+        "category_changed": True,
+        "seo_changed": True,
+        "sources_changed": True,
+        "actions_changed": True,
+        "temporal_changed": True,
+        "layout_changed": True,
+        "related_changed": True,
+        "review_metadata_changed": True,
+        "unknown_bundle_change": False,
+        "unknown_bundle_keys": [],
+        "factual_risk": True,
+        "event_domain": bundle.get("brief", {}).get("category_key") == "events",
+        "ticket_domain": bundle.get("brief", {}).get("category_key") == "concert",
+        "target_status": "publish",
+        "resume": bool(resume),
+        "fast_candidate": False,
+        "fast_reasons": ["legacy_public_without_reviewed_manifest"],
+        "qa_scopes": [
+            "content-mobile-desktop",
+            "cta-destination",
+            "layout-accessibility",
+            "public-page",
+        ],
+    }
+    validation_plan = build_validation_plan(
+        None,
+        bundle,
+        image_changed=image_path is not None,
+        target_status="publish",
+        resume=resume,
+        route="standard",
+        post_id=post_id,
+        expected_content_sha256=expected_content_sha256,
+        classification=classification,
+    )
+    return {
+        "candidate": bundle,
+        "tracked_bundle": None,
+        "tracked_content_sha256": None,
+        "fast_report": None,
+        "route": "standard",
+        "reasons": list(classification["reasons"]),
+        "target_status": "publish",
+        "classification": classification,
+        "qa_requirements": list(classification["qa_scopes"]),
+        "validation_plan": validation_plan,
+        "legacy_public_adoption": True,
+    }
+
+
 def classify_reviewed_post_route(
     post_id: int,
     bundle: dict,
@@ -75,7 +159,18 @@ def classify_reviewed_post_route(
     image_path: Path | str | None = None,
     resume: bool = False,
 ) -> dict:
-    kind = reviewed_target_kind(post_id)
+    try:
+        kind = reviewed_target_kind(post_id)
+    except ValueError as exc:
+        if str(exc) != "reviewed_post_manifest_required":
+            raise
+        return _legacy_public_standard_decision(
+            post_id,
+            bundle,
+            expected_content_sha256=expected_content_sha256,
+            image_path=image_path,
+            resume=resume,
+        )
     if kind == "draft":
         from agents.edit_router import classify_edit_route
         result = classify_edit_route(
@@ -356,7 +451,8 @@ def _edit_reviewed_public_post(
             updated = update_existing_public_post(
                 post_id, bundle, expected_content_sha256, confirmed=True,
                 confirm_title_change=confirm_title_change, checkpoint_callback=checkpoint,
-                tracked_baseline_bundle=old_bundle)
+                tracked_baseline_bundle=old_bundle,
+                adopt_missing_manifest=decision.get("legacy_public_adoption") is True)
         update_task_state(post_id, completed=["baseline_read", "content_saved"])
 
         image_result = run_combined_image_phase(
@@ -422,7 +518,12 @@ def edit_reviewed_post(
                 "validation_plan": validation_plan}
     if not edit_intent:
         raise ValueError("edit_intent_required")
-    kind = reviewed_target_kind(post_id)
+    try:
+        kind = reviewed_target_kind(post_id)
+    except ValueError as exc:
+        if str(exc) != "reviewed_post_manifest_required" or not _legacy_public_bundle_target(post_id, bundle):
+            raise
+        kind = "publish"
     if kind == "draft":
         prepared = _validated_prepared_decision(
             prepared_decision,
