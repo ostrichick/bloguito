@@ -82,6 +82,7 @@
   },
   {
     "id": "passport-online-collection-0915",
+    "cluster_id": "civil-documents",
     "category_key": "life-admin",
     "approved": true,
     "entity": "여권",
@@ -222,6 +223,7 @@
   },
   {
     "id": "resident-registration-certificate-gov24-0915",
+    "cluster_id": "civil-documents",
     "category_key": "life-admin",
     "approved": true,
     "entity": "주민등록등본",
@@ -569,6 +571,7 @@
   },
   {
     "id": "national-pension-silver-loan",
+    "cluster_id": "pension",
     "category_key": "welfare",
     "approved": true,
     "entity": "국민연금 실버론",

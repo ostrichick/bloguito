@@ -6,7 +6,7 @@
 
 2026-10-03 08:00 KST 정규 자동 실행은 현행 8개 카테고리를 오류 없이 순회했지만 유효한 reviewed brief가 없어 후보 0건, 신규 draft 0건으로 종료했다. 따라서 우선 병목은 작성기보다 신규 주제 discovery와 우선순위 판단이다.
 
-이 로드맵은 성장 시스템을 P0~P5의 독립 작업 단위로 나눈 현재 구현 기록이다. 각 P 작업은 독립적으로 검증하고 다음 단계의 입력 계약을 제공한다.
+이 로드맵은 성장 시스템을 독립 P 작업 단위로 나눈 현재 구현 기록이다. P0~P5의 수요/작업선정 루프에 이어 P6부터는 사이트 내부 구조와 reader value를 확장한다.
 
 ## P0 — Inventory 경계 정리
 
@@ -104,7 +104,7 @@ P2를 로컬 정본에 구현하고 private runtime gate까지 초기화했다.
 - 수동 `load_briefs()` 기본값과 editorial CLI는 growth gate를 강제하지 않는다. 따라서 사용자가 직접 지시한 글은 검색 성장 점수만으로 차단되지 않는다. 자동화 gate를 통과한 경우에도 기존 `topic_reasons()`, duplicate 검사, source freshness, semantic review, draft-only 저장 계약은 그대로 유지한다.
 - private runtime에 빈 `topic_candidates.json`을 초기화하고 2026-09-29 종료 P1 opportunity report를 기준으로 score report를 실제 생성했다. 아직 새 주제에 대한 별도 수요 측정 작업을 수행하지 않았으므로 후보 0건, eligible 0건이 정확한 초기 상태다. 과거 `search_briefs.json` 항목에 측정값을 소급 추정해 승인하지 않았다.
 - 측정값이 0인 예시 candidate를 별도 scratch dry run한 결과 46점, `low` confidence, `no_fresh_measured_demand_evidence`로 자동화 보류되어 fail-closed 동작을 확인했다.
-- 현재 private candidate state가 빈 상태인 실제 로컬 Radar probe에서도 `복지/지원금` 자동 후보 0건으로 정상 보류됐다. P2 관련 표적 테스트는 통과했고, 공유 agents 코드 변경에 따른 전체 repository regression은 **860 tests OK, failures=0, errors=0, skipped=0**으로 통과했다.
+- 현재 private candidate state가 빈 상태인 실제 로컬 Radar probe에서도 `복지/지원금` 자동 후보 0건으로 정상 보류됐다. 2026-10-03 재점검에서도 Keyword Planner/Google Trends/Naver DataLab의 실제 측정 자료나 collector가 아직 없어 후보 0건을 유지했다. P2 관련 표적 테스트는 통과했고, 공유 agents 코드 변경에 따른 전체 repository regression은 **860 tests OK, failures=0, errors=0, skipped=0**으로 통과했다.
 
 P2 구현 자체는 WordPress 게시물, 공개 상태, 운영 cron, 광고 설정을 변경하지 않는다. 서버의 정규 cron에 이 gate를 실제 적용하려면 배포 시 execution host에도 최신 analytics/P1 queue와 private candidate/score state를 준비해야 한다.
 
@@ -141,7 +141,7 @@ P3가 선택한 기존 글 개선을 실제로 완료한 뒤에도 같은 **수�
 - Daily Growth Planner는 completion log를 읽고 Opportunity report의 **기간 종료일**이 `recheck_after`에 도달하기 전에는 완료된 post를 기존 글 후보에서 제외한다. 단순히 달력상 14일이 지났다는 이유로 옛 GSC 표본을 다시 평가하지 않는다.
 - 재관측 기간이 지난 새 GSC report에서도 해당 글이 `quick_win`/`growth_candidate` 조건을 다시 만족하면 정상적으로 재진입할 수 있다. 완료된 1순위가 억제된 동안 다른 기존 개선 후보나 P2 eligible 신규 주제가 있으면 다음 후보로 진행한다.
 - work log가 아직 없는 환경은 빈 이력으로 취급해 기존 P3 동작을 유지한다. 반대로 파일이 존재하지만 형식이 잘못됐거나 미래 완료 기록 등 무결성 오류가 있으면 신규 작성을 허용하지 않고 `no_action`으로 fail closed한다.
-- 현재 실제 #345는 아직 수정 완료 작업을 수행하지 않았으므로 **실제 work log에는 완료 기록을 쓰지 않았다**. 현재 실데이터 plan은 계속 #345 `existing_improvement`다. 별도 scratch dry run에서 #345 완료를 2026-10-03으로 기록하면 `recheck_after=2026-10-17`이 되고, 동일 2026-09-29 GSC 표본에서는 다음 plan이 `no_action`으로 바뀌는 것을 확인했다.
+- 2026-10-03 후속 운영 적용에서 #345의 실제 `edit-post`/readback 완료를 확인한 뒤 production/local work log에 완료를 기록했다. `recheck_after=2026-10-17`이며 동일 2026-09-29 GSC 표본을 사용하는 다음 plan은 `no_action`으로 바뀌었다. 따라서 selection 자체가 아니라 실제 편집 완료 뒤에만 suppression이 시작되는 P4 계약이 운영에서도 확인됐다.
 - P4/P3 표적 회귀 26개가 통과했고, 저장소 정식 validation runner의 전체 repository regression은 **879 tests OK, failures=0, errors=0, skipped=0**으로 통과했다. UTF-8 검사와 `git diff --check`도 통과했다.
 
 ## P5 — Work Mix / Rotation Policy
@@ -158,8 +158,23 @@ P4로 동일 기존 글의 반복 선택은 막았지만 actionable existing 후
 - `daily_planner`에 `work_mix_lookback_actions=8`, `target_existing_ratio=0.5`를 추가했다. existing/new가 둘 다 eligible이면 최근 완료 작업에 다음 action 하나를 가정했을 때 목표 50:50에 더 가까워지는 쪽을 선택한다. 수학적 동률은 직전 완료 action 반대쪽으로 회전하고, 이력이 전혀 없을 때만 `prefer_existing_improvement=true`가 tie-breaker로 작동한다.
 - 한쪽 작업만 eligible이면 rotation 비율을 맞추기 위해 다른 작업을 합성하지 않는다. 따라서 신규 수요 후보가 없으면 기존 개선만 진행할 수 있고, existing opportunity가 없으면 검증된 신규 draft만 선택할 수 있다.
 - 신규 WordPress draft 저장은 성공했지만 private work log 기록만 실패한 경우 `growth_log_errors`로 별도 보고한다. 이미 만들어진 draft를 실패로 간주해 다시 만드는 동작은 하지 않는다.
-- 표적 테스트에서 `existing → new → existing` 회전, 완료된 new brief 재선정 차단, P4 기존 글 recheck, post-save work-log 실패의 비치명 처리를 검증했다. 현재 실제 private P2 후보는 0건이므로 실데이터 planner 결과는 계속 Post #345 `existing_improvement`다.
-- P5 관련 표적 회귀 32개가 통과했고, 저장소 정식 validation runner의 전체 repository regression은 **885 tests OK, failures=0, errors=0, skipped=0**으로 통과했다. UTF-8 검사와 `git diff --check`도 통과했다. 실제 private `growth-work-log.json`은 아직 생성하지 않아 현재 work mix는 existing 0, new 0으로 시작한다.
+- 표적 테스트에서 `existing → new → existing` 회전, 완료된 new brief 재선정 차단, P4 기존 글 recheck, post-save work-log 실패의 비치명 처리를 검증했다. 이후 #345 실제 개선 완료가 production work log에 기록되어, 신규 eligible 후보가 없는 현재 planner는 `no_action`을 반환한다.
+- P5 관련 표적 회귀 32개가 통과했고, 저장소 정식 validation runner의 전체 repository regression은 **885 tests OK, failures=0, errors=0, skipped=0**으로 통과했다. UTF-8 검사와 `git diff --check`도 통과했다. production work log의 첫 완료 기록은 #345이며 recheck 기준일은 2026-10-17이다.
+
+## P6 — Content Cluster / Internal Links
+
+### 목표
+
+개별 글을 독립 페이지로만 운영하지 않고 사람이 검토한 주제 cluster를 통해 관련 글 후보를 안정적으로 연결한다. 내부 링크를 늘리기 위해 임의 글을 생성하거나 공개글을 자동 수정하지 않으며, hub page도 추천 대상으로만 남긴다.
+
+### 2026-10-03 구현
+
+- `agent-publisher/data/content_clusters.json`에 schema v1 cluster registry를 추가했다. 초기 cluster는 `civil-documents`와 `pension`이며 post ID는 한 cluster에만 속하도록 검증한다.
+- `agents/content_clusters.py`는 `brief.cluster_id`를 현재 WordPress inventory에 결합해 실제 `publish` 상태인 같은 cluster 글을 최대 2개 반환한다. URL은 기존 검증 계약인 `https://lifeinfo24.org/?p=ID`만 사용하고 현재 수정 대상 post는 제외한다.
+- scheduler writer는 모델이 원고 plan을 반환한 뒤, semantic review 전에 cluster 후보를 `plan.related_posts`에 deterministic하게 결합한다. `cluster_id`가 있을 때 모델이 임의로 만든 related link는 cluster 후보로 대체한다. cluster가 없는 기존 brief는 기존 동작을 유지한다.
+- `search_briefs.json`의 서류 발급/연금 관련 일부 brief에 `cluster_id`를 명시했다. 신규 brief는 해당 cluster가 실제로 맞는 경우에만 이 필드를 추가한다.
+- `scripts/build_content_cluster_report.py`를 추가했다. canonical WordPress inventory의 `content_urls`에서 명시적 `?p=ID` 링크만 세어 incoming 0 / 같은 cluster outgoing 0인 공개 글을 `orphan_candidate`로 추천한다. `content_urls`가 없는 snapshot에서는 orphan 판정을 하지 않는다.
+- orphan report와 cluster registry는 **추천/검토 계층**이다. 기존 공개글 자동 edit, hub page 자동 생성, permalink 의미 추정은 하지 않는다.
 
 ## 작업 순서와 경계
 
@@ -169,8 +184,9 @@ P4로 동일 기존 글의 반복 선택은 막았지만 actionable existing 후
 4. **P3**: P1/P2를 합쳐 당일 자동 실행의 작업 유형과 단일 대상을 결정한다.
 5. **P4**: 실제 완료된 기존 글 개선을 기록하고 충분한 새 GSC 관측기간 전까지 같은 과거 신호를 재선정하지 않는다.
 6. **P5**: 실제 완료 이력으로 existing/new 작업 mix를 관리하고 성공한 신규 brief의 재선정을 막는다.
+7. **P6**: curated cluster로 신규 원고의 related-post 후보를 결합하고, explicit-link orphan 후보를 read-only로 찾는다.
 
-P0~P5의 로컬 구현·검증 동안 WordPress 본문 mutation, 공개 전환, 광고 설정 변경은 하지 않았다. 운영 자동화 반영은 이 코드 변경과 분리된 배포 단계에서 실제 서버 상태·백업·cron을 다시 확인한 뒤 수행한다.
+P0~P5는 운영 배포와 #345 실제 completion loop까지 확인했다. P6도 기존 공개글을 자동 수정하지 않으며, writer 경로에 배포할 때는 release revision과 08:00 cron smoke를 별도로 확인한다.
 
 ## 2026-10-03 P0 실행 기록
 

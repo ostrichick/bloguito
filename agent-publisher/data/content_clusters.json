@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "clusters": {
+    "civil-documents": {
+      "name": "정부/생활 서류 발급",
+      "posts": [121, 837, 844, 846, 851]
+    },
+    "pension": {
+      "name": "연금과 노후소득",
+      "posts": [55, 79, 101, 724, 817, 858]
+    }
+  }
+}
