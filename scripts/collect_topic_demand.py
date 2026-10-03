@@ -81,8 +81,10 @@ def main(argv=None) -> int:
             )
             return 0
         requester = naver_datalab_requester(
-            os.environ.get("NAVER_DATALAB_CLIENT_ID", ""),
-            os.environ.get("NAVER_DATALAB_CLIENT_SECRET", ""),
+            os.environ.get("NAVER_API_HUB_CLIENT_ID")
+            or os.environ.get("NAVER_DATALAB_CLIENT_ID", ""),
+            os.environ.get("NAVER_API_HUB_CLIENT_SECRET")
+            or os.environ.get("NAVER_DATALAB_CLIENT_SECRET", ""),
         )
         updated, summary = collect_naver_datalab(
             candidates, opportunities, requester, collected_on=as_of,

@@ -20,7 +20,7 @@ import tempfile
 import unicodedata
 
 
-NAVER_DATALAB_ENDPOINT = "https://openapi.naver.com/v1/datalab/search"
+NAVER_DATALAB_ENDPOINT = "https://naverapihub.apigw.ntruss.com/search-trend/v1/search"
 NAVER_MAX_GROUPS = 5
 NAVER_MAX_KEYWORDS_PER_GROUP = 20
 NAVER_TIME_UNITS = {"date", "week", "month"}
@@ -131,7 +131,7 @@ def _chunks(values: list[dict], size: int):
 
 
 def naver_datalab_requester(client_id: str, client_secret: str):
-    """Return a fixed-endpoint requester without logging credentials or bodies."""
+    """Return a fixed NAVER API HUB requester without logging credentials or bodies."""
     if not isinstance(client_id, str) or not client_id.strip():
         raise TopicDemandError("naver_datalab_credentials_unavailable")
     if not isinstance(client_secret, str) or not client_secret.strip():
@@ -149,8 +149,8 @@ def naver_datalab_requester(client_id: str, client_secret: str):
                 response = session.post(
                     NAVER_DATALAB_ENDPOINT,
                     headers={
-                        "X-Naver-Client-Id": client_id,
-                        "X-Naver-Client-Secret": client_secret,
+                        "X-NCP-APIGW-API-KEY-ID": client_id,
+                        "X-NCP-APIGW-API-KEY": client_secret,
                         "Content-Type": "application/json",
                     },
                     json=payload,
