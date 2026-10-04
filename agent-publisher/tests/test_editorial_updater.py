@@ -34,7 +34,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                 return Mock(returncode=0, stdout='https://lifeinfo24.org/stable-slug/\n', stderr='')
             if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
-                return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
+                return Mock(stdout=json.dumps({
+                    'status': 'ok', 'saved': {**self.post, **payload['updates']},
+                    'category_ids': [276],
+                }))
             return Mock(returncode=0, stdout='Success', stderr='', args=args)
 
         with tempfile.TemporaryDirectory() as folder:
@@ -80,7 +83,9 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({
-                    'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
+                    'status': 'ok', 'saved': {**self.post, **payload['updates']},
+                    'category_ids': [276],
+                }))
             return Mock(returncode=0, stdout='Success', stderr='', args=args)
 
         with tempfile.TemporaryDirectory() as folder:

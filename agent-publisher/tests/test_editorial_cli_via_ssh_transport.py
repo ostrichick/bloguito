@@ -685,6 +685,19 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'post', 'term', 'list', '649', 'category',
                 '--fields=term_id,name,slug', '--format=json', '--allow-root'])
 
+    def test_draft_standard_allows_read_only_category_binding(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout='[{"term_id":274,"name":"지역 축제/행사","slug":"local-events"}]\n', stderr='')
+        transport = module.make_transport('draft-standard', {665}, 'bloguito')
+        transport(module._WP_PREFIX + [
+            'post', 'term', 'list', '665', 'category',
+            '--fields=term_id,name,slug', '--format=json', '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'post', 'term', 'list', '666', 'category',
+                '--fields=term_id,name,slug', '--format=json', '--allow-root'])
+
     def test_prepare_draft_can_create_and_attach_only_its_generated_image(self):
         module = load_module()
         calls = []

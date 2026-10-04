@@ -250,7 +250,7 @@ class EditorialDraftReviserTests(unittest.TestCase):
             }]), encoding="utf-8")
             inventory = {
                 "checked_on": NOW.date().isoformat(),
-                "posts": [{**live, "category_slugs": ["local-events"]}],
+                "posts": [dict(live)],
             }
 
             def run(args, **kwargs):
@@ -260,7 +260,9 @@ class EditorialDraftReviserTests(unittest.TestCase):
                 if wp and wp[0] == "eval":
                     payload = json.loads(kwargs["input"])
                     live.update(payload["updates"])
-                    return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
+                    return Mock(stdout=json.dumps({
+                        "status": "ok", "saved": live, "category_ids": [274],
+                    }))
                 raise AssertionError(args)
 
             with patch("agents.editorial_draft_reviser.ROOT", root), \
@@ -271,6 +273,9 @@ class EditorialDraftReviserTests(unittest.TestCase):
                  patch("agents.editorial_draft_reviser.resolve_category", return_value={
                      "id": 274, "name": "지역 축제/행사", "slug": "local-events",
                  }), \
+                 patch("agents.editorial_draft_reviser._read_category_terms", return_value=[{
+                     "term_id": 274, "name": "지역 축제/행사", "slug": "local-events",
+                 }]), \
                  patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
                  patch("agents.editorial_draft_reviser.verify_revision_sources", return_value={
                      "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
@@ -311,7 +316,7 @@ class EditorialDraftReviserTests(unittest.TestCase):
             }]), encoding="utf-8")
             inventory = {
                 "checked_on": NOW.date().isoformat(),
-                "posts": [{**live, "category_slugs": ["life-admin"]}],
+                "posts": [dict(live)],
             }
             with patch("agents.editorial_draft_reviser.ROOT", root), \
                  patch("agents.editorial_draft_reviser.DRAFTS_INDEX_FILE", index), \
@@ -323,7 +328,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
                  }), \
                  patch("agents.editorial_draft_reviser.resolve_category", return_value={
                      "id": 274, "name": "지역 축제/행사", "slug": "local-events",
-                 }):
+                 }), \
+                 patch("agents.editorial_draft_reviser._read_category_terms", return_value=[{
+                     "term_id": 277, "name": "행정/생활서비스", "slug": "life-admin",
+                 }]):
                 with self.assertRaisesRegex(ValueError, "draft_revision_topic_or_title_mismatch"):
                     revise_reviewed_draft(
                         393, new, hashlib.sha256(old_body.encode()).hexdigest(), confirmed=True)

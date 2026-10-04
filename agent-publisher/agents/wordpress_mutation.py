@@ -85,7 +85,7 @@ GUARDED_POST_MUTATION_SCRIPT = (
     '"post_excerpt"=>(string)($u["post_excerpt"]??($e["post_excerpt"]??$cur["post_excerpt"]))];'
     '$already=true;foreach($desired as $k=>$v){$already=$already&&hash_equals($v,(string)$cur[$k]);}'
     'if($desired_meta!==null){foreach($desired_meta as $k=>$v){$already=$already&&is_string($cur_meta[$k])&&hash_equals($v,$cur_meta[$k]);}}'
-    'if($already){$wpdb->query("ROLLBACK");$emit(["status"=>"already_applied","saved"=>$cur,"saved_meta"=>$cur_meta]);return;}'
+    'if($already){$wpdb->query("ROLLBACK");$emit(["status"=>"already_applied","saved"=>$cur,"saved_meta"=>$cur_meta,"category_ids"=>$cats??null]);return;}'
     '$ok=true;'
     'if(isset($e["post_status"])){$ok=$ok&&hash_equals((string)$e["post_status"],$cur["post_status"]);}'
     'if(isset($e["post_title"])){$ok=$ok&&hash_equals((string)$e["post_title"],$cur["post_title"]);}'
@@ -94,21 +94,22 @@ GUARDED_POST_MUTATION_SCRIPT = (
     'if(isset($e["content_sha256"])){$ok=$ok&&hash_equals((string)$e["content_sha256"],hash("sha256",$cur["post_content"]));}'
     'if($em!==null){foreach($em as $k=>$v){$ok=$ok&&(($v===null&&$cur_meta[$k]===null)'
     '||(is_string($v)&&is_string($cur_meta[$k])&&hash_equals($v,$cur_meta[$k])));}}'
-    'if(!$ok){$wpdb->query("ROLLBACK");$emit(["status"=>"cas_mismatch","current"=>$cur,"current_meta"=>$cur_meta]);return;}'
+    'if(!$ok){$wpdb->query("ROLLBACK");$emit(["status"=>"cas_mismatch","current"=>$cur,"current_meta"=>$cur_meta,"category_ids"=>$cats??null]);return;}'
     '$args=["ID"=>$id];foreach($u as $k=>$v){$args[$k]=$v;}'
     '$r=wp_update_post(wp_slash($args),true);'
     'if(is_wp_error($r)){$wpdb->query("ROLLBACK");$emit(["status"=>"update_failed","code"=>$r->get_error_code()]);return;}'
     'if($um!==null){foreach($um as $k=>$v){update_post_meta($id,$k,$v);}}'
     'clean_post_cache($id);$saved_post=get_post($id);'
     'if(!$saved_post){$wpdb->query("ROLLBACK");$emit(["status"=>"readback_missing"]);return;}'
-    '$saved=$snap($saved_post);$saved_meta=null;$verified=true;'
+    '$saved=$snap($saved_post);$saved_meta=null;$saved_cats=null;$verified=true;'
     'foreach($desired as $k=>$v){$verified=$verified&&hash_equals((string)$v,(string)$saved[$k]);}'
+    'if(array_key_exists("category_ids",$e)){$saved_cats=array_map("intval",wp_get_post_categories($id,["fields"=>"ids"]));sort($saved_cats,SORT_NUMERIC);$verified=$verified&&$saved_cats===$expected_cats;}'
     'if($desired_meta!==null){$saved_meta=[];foreach($desired_meta as $k=>$v){'
     '$saved_meta[$k]=metadata_exists("post",$id,$k)?(string)get_post_meta($id,$k,true):null;'
     '$verified=$verified&&is_string($saved_meta[$k])&&hash_equals($v,$saved_meta[$k]);}}'
-    'if(!$verified){$wpdb->query("ROLLBACK");$emit(["status"=>"verification_failed","saved"=>$saved,"saved_meta"=>$saved_meta]);return;}'
+    'if(!$verified){$wpdb->query("ROLLBACK");$emit(["status"=>"verification_failed","saved"=>$saved,"saved_meta"=>$saved_meta,"category_ids"=>$saved_cats]);return;}'
     'if($wpdb->query("COMMIT")===false){$emit(["status"=>"update_failed","code"=>"commit_failed"]);return;}'
-    'clean_post_cache($id);$emit(["status"=>"ok","saved"=>$saved,"saved_meta"=>$saved_meta]);'
+    'clean_post_cache($id);$emit(["status"=>"ok","saved"=>$saved,"saved_meta"=>$saved_meta,"category_ids"=>$saved_cats]);'
 )
 
 GUARDED_CATEGORY_MUTATION_SCRIPT = (
@@ -358,11 +359,16 @@ def _matches_already_applied(
     *,
     current_meta=None,
     updates_meta=None,
+    current_categories=None,
 ) -> bool:
     if not isinstance(current, dict):
         return False
     if not all(current.get(key) == value for key, value in _desired_state(expected, updates).items()):
         return False
+    if "category_ids" in expected:
+        if (not isinstance(current_categories, list)
+                or sorted(current_categories) != sorted(expected["category_ids"])):
+            return False
     if updates_meta is None:
         return True
     return (isinstance(current_meta, dict)
@@ -413,12 +419,14 @@ def guarded_update_post(
             increment("wp_guarded_recovered_after_retry")
         if not _matches_already_applied(
                 saved, expected, updates,
-                current_meta=observed.get("saved_meta"), updates_meta=updates_meta):
+                current_meta=observed.get("saved_meta"), updates_meta=updates_meta,
+                current_categories=observed.get("category_ids")):
             raise ValueError("wordpress_guarded_readback_failed")
         return saved
     if status == "cas_mismatch" and _matches_already_applied(
             observed.get("current"), expected, updates,
-            current_meta=observed.get("current_meta"), updates_meta=updates_meta):
+            current_meta=observed.get("current_meta"), updates_meta=updates_meta,
+            current_categories=observed.get("category_ids")):
         increment("wp_guarded_recovered_after_retry")
         return observed["current"]
     if status == "cas_mismatch":

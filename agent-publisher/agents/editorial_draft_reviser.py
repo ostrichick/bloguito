@@ -31,6 +31,7 @@ from agents.post_manifest_store import (
 from agents.source_validation_cache import revision_source_recheck_plan, verify_revision_sources
 from agents.temporal_validation import KST
 from agents.editorial_updater import (
+    _read_category_terms,
     _read_post_meta,
     _read_rank_math_meta,
     rank_math_meta_from_brief,
@@ -263,14 +264,20 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         if (not current_row or current_row["post_status"] != "draft"
                 or inventory_content_sha(current_row) != expected_content_sha256):
             raise ValueError("draft_missing_or_modified")
+        expected_category_ids = None
         if old_brief.get("category_key") != new_brief.get("category_key"):
             try:
                 target_category = resolve_category(
                     new_brief.get("category_key", ""), allow_legacy=False)
             except (KeyError, ValueError) as exc:
                 raise ValueError("draft_revision_topic_or_title_mismatch") from exc
-            if current_row.get("category_slugs") != [target_category["slug"]]:
+            terms = _read_category_terms(base, post_id)
+            if (len(terms) != 1
+                    or int(terms[0].get("term_id") or 0) != int(target_category["id"])
+                    or terms[0].get("name") != target_category["name"]
+                    or terms[0].get("slug") != target_category["slug"]):
                 raise ValueError("draft_revision_topic_or_title_mismatch")
+            expected_category_ids = [int(target_category["id"])]
         if (initial_live.get("post_status") != current_row.get("post_status")
                 or initial_live.get("post_title") != current_row.get("post_title")
                 or hashlib.sha256(initial_live.get("post_content", "").encode("utf-8")).hexdigest()
@@ -367,16 +374,19 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         }
         if title_changed:
             update_fields["post_title"] = new_title
+        guarded_expected = {
+            "post_status": "draft",
+            "post_title": current["post_title"],
+            "post_name": live.get("post_name", ""),
+            "post_excerpt": live.get("post_excerpt", ""),
+            "content_sha256": expected_content_sha256,
+        }
+        if expected_category_ids is not None:
+            guarded_expected["category_ids"] = expected_category_ids
         saved = guarded_update_post(
             base,
             post_id,
-            expected={
-                "post_status": "draft",
-                "post_title": current["post_title"],
-                "post_name": live.get("post_name", ""),
-                "post_excerpt": live.get("post_excerpt", ""),
-                "content_sha256": expected_content_sha256,
-            },
+            expected=guarded_expected,
             updates=update_fields,
             expected_meta=current_meta if update_meta else None,
             updates_meta=reviewed_meta if update_meta else None,

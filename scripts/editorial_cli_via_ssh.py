@@ -347,7 +347,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256',
         }
         allowed_expected_sets = {frozenset(required_expected)}
-        if action == 'public-standard':
+        if action in {'public-standard', 'draft-standard'}:
             allowed_expected_sets.add(frozenset(required_expected | {'category_ids'}))
         expected_status = 'publish' if action in {*_PUBLIC_EDIT_ACTIONS, 'fix-excerpt'} else 'draft'
         if (not isinstance(expected, dict) or frozenset(expected) not in allowed_expected_sets
@@ -541,7 +541,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                             ['--fields=ID,guid,post_title,post_mime_type', '--format=json', '--allow-root']):
                 raise ValueError('unexpected_wordpress_get_flags')
             return
-        if (action == 'repair-draft-category'
+        if (action in {'repair-draft-category', 'draft-standard'}
                 and len(wp) == 8
                 and wp[:3] == ['post', 'term', 'list']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids

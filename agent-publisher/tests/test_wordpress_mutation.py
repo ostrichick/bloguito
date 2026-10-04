@@ -185,7 +185,7 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
             'post_content': 'new', 'post_excerpt': 'old excerpt',
         }
         with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
-                stdout=json.dumps({'status': 'ok', 'saved': saved}))) as run:
+                stdout=json.dumps({'status': 'ok', 'saved': saved, 'category_ids': [278]}))) as run:
             guarded_update_post(
                 base, 7,
                 expected={
@@ -197,6 +197,25 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
             )
         payload = json.loads(run.call_args.kwargs['input'])
         self.assertEqual([278], payload['expected']['category_ids'])
+
+    def test_guarded_update_rejects_category_readback_drift(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        saved = {
+            'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+            'post_content': 'new', 'post_excerpt': 'old excerpt',
+        }
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
+                stdout=json.dumps({'status': 'ok', 'saved': saved, 'category_ids': [277]}))):
+            with self.assertRaisesRegex(ValueError, 'wordpress_guarded_readback_failed'):
+                guarded_update_post(
+                    base, 7,
+                    expected={
+                        'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+                        'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                        'category_ids': [278],
+                    },
+                    updates={'post_content': 'new'},
+                )
 
     def test_guarded_update_binds_reviewed_meta_to_same_transaction(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
