@@ -38,6 +38,7 @@ def verify_release_manifest(release):
         'agent-publisher/agents/validation_router.py',
         'agent-publisher/agents/wordpress_mutation.py',
         'agent-publisher/data/renderer_provenance.json',
+        'agent-publisher/data/reviewed_content_provenance.json',
         'agent-publisher/editorial_cli.py',
         'agent-publisher/editorial_policy.json',
     }

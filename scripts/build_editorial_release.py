@@ -28,6 +28,7 @@ RUNTIME_JSON = (
     "agent-publisher/growth_policy.json",
     "agent-publisher/data/content_clusters.json",
     "agent-publisher/data/renderer_provenance.json",
+    "agent-publisher/data/reviewed_content_provenance.json",
     "agent-publisher/data/search_briefs.json",
 )
 

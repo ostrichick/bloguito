@@ -120,7 +120,7 @@ def catalog_type(post, reviewed_bundle=None):
     """Use lifecycle metadata only when its reviewed HTML matches the live post."""
     if isinstance(reviewed_bundle, dict) and isinstance(reviewed_bundle.get('review'), dict):
         try:
-            from agents.editorial import digest, render
+            from agents.editorial import digest, render, recognized_reviewed_content_hashes
             from agents.volatility import lifecycle_reasons
             body = {key: reviewed_bundle[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in reviewed_bundle}
             review = reviewed_bundle['review']
@@ -128,8 +128,16 @@ def catalog_type(post, reviewed_bundle=None):
                     or not review.get('checks') or any(value is not True for value in review['checks'].values())
                     or lifecycle_reasons(reviewed_bundle['brief'])):
                 raise ValueError('catalog_review_not_bound')
-            content = render(reviewed_bundle['plan'], reviewed_bundle['sources'])
-            if hashlib.sha256(content.encode('utf-8')).hexdigest() == post.get('content_sha256'):
+            post_id = post.get('ID')
+            if type(post_id) is int and post_id > 0:
+                content_hashes = recognized_reviewed_content_hashes(
+                    reviewed_bundle, post_id=post_id)
+            else:
+                content = render(reviewed_bundle['plan'], reviewed_bundle['sources'])
+                content_hashes = {
+                    'current': hashlib.sha256(content.encode('utf-8')).hexdigest(),
+                }
+            if post.get('content_sha256') in set(content_hashes.values()):
                 brief = reviewed_bundle['brief']
                 labels = {'timeless-procedure': '상시 절차', 'policy-current': '현행 제도',
                           'annual-policy': '연간 기준', 'seasonal': '시즌형', 'one-off': '단일 행사'}
@@ -163,7 +171,7 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
     agent_root = ROOT / 'agent-publisher'
     if str(agent_root) not in sys.path:
         sys.path.insert(0, str(agent_root))
-    from agents.editorial import recognized_renderer_hashes
+    from agents.editorial import recognized_reviewed_content_hashes
     from agents.post_manifest_store import load_records, remove_record, upsert_record
     from config import CATEGORIES
 
@@ -209,10 +217,7 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             continue
         try:
             reviewed_title = bundle['plan']['title']
-            renderer_hashes = recognized_renderer_hashes(
-                bundle['plan'], bundle['sources'], bundle.get('brief', {}).get('category_key'),
-                post_id=post_id,
-            )
+            reviewed_hashes = recognized_reviewed_content_hashes(bundle, post_id=post_id)
         except (KeyError, TypeError, ValueError):
             skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_invalid'})
             continue
@@ -221,12 +226,12 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
                 continue
             skipped.append({'post_id': post_id, 'reason': 'live_title_changed'})
             continue
-        renderer_variant = next(
-            (name for name, digest in renderer_hashes.items()
+        provenance_variant = next(
+            (name for name, digest in reviewed_hashes.items()
              if live.get('content_sha256') == digest),
             None,
         )
-        if renderer_variant is None:
+        if provenance_variant is None:
             if live_status == indexed_status:
                 continue
             skipped.append({'post_id': post_id, 'reason': 'live_content_changed'})
@@ -279,8 +284,11 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             'from_status': indexed_status,
             'to_status': live_status,
         }
-        if renderer_variant != 'current':
-            moved_row['renderer_variant'] = renderer_variant
+        if provenance_variant != 'current':
+            if provenance_variant.startswith('completed-full-review-'):
+                moved_row['provenance_variant'] = provenance_variant
+            else:
+                moved_row['renderer_variant'] = provenance_variant
         moved.append(moved_row)
     return {'moved': moved, 'metadata_updated': metadata_updated, 'skipped': skipped}
 

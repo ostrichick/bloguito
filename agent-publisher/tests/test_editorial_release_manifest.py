@@ -28,7 +28,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 'agents/editorial_schema.py', 'agents/public_fast_edit.py',
                 'agents/source_collector.py', 'agents/source_extractors.py',
                 'agents/validation_router.py', 'agents/wordpress_mutation.py',
-                'data/renderer_provenance.json'):
+                'data/renderer_provenance.json', 'data/reviewed_content_provenance.json'):
             path = self.root / 'agent-publisher' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'original')
@@ -117,6 +117,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertIn('agent-publisher/agents/validation_router.py', inventory)
         self.assertIn('agent-publisher/data/search_briefs.json', inventory)
         self.assertIn('agent-publisher/data/renderer_provenance.json', inventory)
+        self.assertIn('agent-publisher/data/reviewed_content_provenance.json', inventory)
         self.assertFalse(any('/tests/' in name or name.endswith('.example.json') for name in inventory))
         self.assertFalse(any('.env' in name for name in inventory))
 
