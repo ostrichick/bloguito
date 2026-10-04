@@ -184,8 +184,12 @@ class FeaturedImageReplacementTests(unittest.TestCase):
         }
         with patch("agents.featured_image._read_post_meta", side_effect=meta), \
              patch("agents.featured_image._rank_math_meta", return_value=rank), \
-             patch("agents.featured_image.get_post", side_effect=[live, attachment]):
+             patch("agents.featured_image.get_post", side_effect=[live, attachment]), \
+             patch("agents.featured_image.guarded_set_post_thumbnail", return_value={
+                 "post": live, "thumbnail_id": "777",
+             }) as guarded:
             result = reconcile_featured_image_outcome(641, checkpoint, "대체텍스트")
+        guarded.assert_called_once()
         self.assertTrue(result["reconciled"])
         self.assertEqual(777, result["attachment_id"])
 

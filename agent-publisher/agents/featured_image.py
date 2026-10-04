@@ -129,6 +129,22 @@ def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: s
             or saved.get("post_excerpt", "") != expected_post.get("post_excerpt", "")
             or content_sha256(saved.get("post_content", "")) != checkpoint.get("content_sha256")):
         raise ValueError("featured_image_resume_post_conflict")
+    mutation = guarded_set_post_thumbnail(
+        base,
+        post_id,
+        expected={
+            "post_status": expected_post.get("post_status", ""),
+            "post_title": expected_post.get("post_title", ""),
+            "post_name": expected_post.get("post_name", ""),
+            "post_excerpt": expected_post.get("post_excerpt", ""),
+            "content_sha256": checkpoint.get("content_sha256", ""),
+        },
+        expected_thumbnail_id=expected_thumbnail_id,
+        attachment_id=attachment_id,
+    )
+    saved = mutation["post"]
+    if mutation.get("thumbnail_id") != attachment_thumb_text:
+        raise ValueError("featured_image_resume_thumbnail_conflict")
     attachment = get_post(
         base, attachment_id, fields=["ID", "guid", "post_title", "post_mime_type"])
     observed_alt = _read_post_meta(base, attachment_id, "_wp_attachment_image_alt")
@@ -139,23 +155,6 @@ def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: s
     guid = str(attachment.get("guid", ""))
     if not guid.startswith(("https://", "http://")):
         raise ValueError("featured_image_resume_url_conflict")
-    if observed_thumb != attachment_thumb_text:
-        mutation = guarded_set_post_thumbnail(
-            base,
-            post_id,
-            expected={
-                "post_status": expected_post.get("post_status", ""),
-                "post_title": expected_post.get("post_title", ""),
-                "post_name": expected_post.get("post_name", ""),
-                "post_excerpt": expected_post.get("post_excerpt", ""),
-                "content_sha256": checkpoint.get("content_sha256", ""),
-            },
-            expected_thumbnail_id=expected_thumbnail_id,
-            attachment_id=attachment_id,
-        )
-        saved = mutation["post"]
-        if mutation.get("thumbnail_id") != attachment_thumb_text:
-            raise ValueError("featured_image_resume_thumbnail_conflict")
     return {
         "post_id": post_id,
         "status": saved.get("post_status"),
