@@ -195,6 +195,52 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "featured_image_resume_thumbnail_conflict"):
                 reconcile_featured_image_outcome(641, checkpoint, "대체텍스트")
 
+    def test_resume_applies_checkpointed_attachment_when_original_thumbnail_is_unchanged(self):
+        live = {
+            "post_status": "publish", "post_title": "제목", "post_name": "slug",
+            "post_content": "body", "post_excerpt": "요약",
+        }
+        checkpoint = {
+            "attachment_id": 777,
+            "expected_thumbnail_id": 70,
+            "content_sha256": hashlib.sha256(b"body").hexdigest(),
+            "preserved_post": {
+                "post_status": "publish", "post_title": "제목", "post_name": "slug",
+                "post_excerpt": "요약",
+            },
+            "backup": "backup.json",
+        }
+        attachment = {
+            "ID": 777, "guid": "https://lifeinfo24.org/uploads/cover.jpg",
+            "post_title": "제목", "post_mime_type": "image/jpeg",
+        }
+
+        def meta(base, post_id, key):
+            if post_id == 641 and key == "_thumbnail_id":
+                return "70"
+            if post_id == 777 and key == "_wp_attachment_image_alt":
+                return "대체텍스트"
+            raise AssertionError((post_id, key))
+
+        with patch("agents.featured_image._read_post_meta", side_effect=meta), \
+             patch("agents.featured_image.get_post", side_effect=[live, attachment]), \
+             patch("agents.featured_image.guarded_set_post_thumbnail", return_value={
+                 "post": live, "thumbnail_id": "777",
+             }) as guarded:
+            result = reconcile_featured_image_outcome(641, checkpoint, "대체텍스트")
+        guarded.assert_called_once_with(
+            ["sudo", "docker", "exec", "wordpress_app", "wp"],
+            641,
+            expected={
+                "post_status": "publish", "post_title": "제목", "post_name": "slug",
+                "post_excerpt": "요약", "content_sha256": hashlib.sha256(b"body").hexdigest(),
+            },
+            expected_thumbnail_id=70,
+            attachment_id=777,
+        )
+        self.assertTrue(result["reconciled"])
+        self.assertEqual(777, result["attachment_id"])
+
     def test_quick_replace_reads_its_own_baseline_and_uses_image_only_mutator(self):
         with tempfile.TemporaryDirectory() as folder:
             image_path = self._image(folder)

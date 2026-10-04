@@ -112,7 +112,13 @@ def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: s
     attachment_id = int(checkpoint["attachment_id"])
     base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
     observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
-    if observed_thumb != str(attachment_id):
+    expected_thumbnail_id = checkpoint.get("expected_thumbnail_id")
+    if expected_thumbnail_id is not None and (
+            type(expected_thumbnail_id) is not int or expected_thumbnail_id <= 0):
+        raise ValueError("featured_image_resume_thumbnail_conflict")
+    expected_thumb_text = None if expected_thumbnail_id is None else str(expected_thumbnail_id)
+    attachment_thumb_text = str(attachment_id)
+    if observed_thumb not in {attachment_thumb_text, expected_thumb_text}:
         raise ValueError("featured_image_resume_thumbnail_conflict")
     fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
     saved = get_post(base, post_id, fields=fields)
@@ -133,6 +139,23 @@ def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: s
     guid = str(attachment.get("guid", ""))
     if not guid.startswith(("https://", "http://")):
         raise ValueError("featured_image_resume_url_conflict")
+    if observed_thumb != attachment_thumb_text:
+        mutation = guarded_set_post_thumbnail(
+            base,
+            post_id,
+            expected={
+                "post_status": expected_post.get("post_status", ""),
+                "post_title": expected_post.get("post_title", ""),
+                "post_name": expected_post.get("post_name", ""),
+                "post_excerpt": expected_post.get("post_excerpt", ""),
+                "content_sha256": checkpoint.get("content_sha256", ""),
+            },
+            expected_thumbnail_id=expected_thumbnail_id,
+            attachment_id=attachment_id,
+        )
+        saved = mutation["post"]
+        if mutation.get("thumbnail_id") != attachment_thumb_text:
+            raise ValueError("featured_image_resume_thumbnail_conflict")
     return {
         "post_id": post_id,
         "status": saved.get("post_status"),
