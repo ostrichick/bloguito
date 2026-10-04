@@ -62,3 +62,4 @@ node_modules/
 **/auth_info_baileys/
 **/whatsapp-bridge/*.png
 agent-publisher/data/quota_usage.json
+service_account*.json
