@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agents.editorial_writer import EditorialWriterAgent, Review
-from agents.review_cache import load_cached_review, store_cached_review
+from agents.review_cache import load_cached_review, reviewer_contract_digest, store_cached_review
 from test_editorial_system import NOW, sample
 
 
@@ -27,6 +27,17 @@ class ReviewCacheTests(unittest.TestCase):
             store_cached_review(bundle, bundle['review'], root=root)
             cached = load_cached_review(changed, root=root, now=NOW)
         self.assertIsNone(cached)
+
+    def test_event_review_contract_binds_event_prompt_source_only_for_event_bundle(self):
+        general = sample()
+        event = copy.deepcopy(general)
+        event['brief']['event_post_standard_version'] = 1
+        event['brief']['category_key'] = 'events'
+        event.setdefault('temporal_source', {})['multi_event_schedule'] = True
+        self.assertNotEqual(
+            reviewer_contract_digest(general),
+            reviewer_contract_digest(event),
+        )
 
     def test_malformed_cache_root_is_a_miss_not_an_exception(self):
         bundle = sample()

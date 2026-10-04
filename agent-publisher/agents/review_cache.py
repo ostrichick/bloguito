@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agents.editorial import ROOT, digest, fresh, policy, policy_fingerprint
+from agents.editorial import ROOT, digest, fresh, policy, policy_fingerprint, policy_profile
 from agents.temporal_validation import KST
 from agents.workflow_metrics import increment
 
@@ -33,21 +33,29 @@ def review_body(bundle: dict) -> dict:
     }
 
 
-def reviewer_contract_digest() -> str:
+def reviewer_contract_digest(bundle: dict | None = None) -> str:
     writer = ROOT / "agents" / "editorial_writer.py"
     code_digest = hashlib.sha256(writer.read_bytes()).hexdigest()
-    return digest({
+    contract = {
         "version": REVIEW_CONTRACT_VERSION,
         "editorial_writer_sha256": code_digest,
         "editorial_schema_sha256": hashlib.sha256((ROOT / 'agents' / 'editorial_schema.py').read_bytes()).hexdigest(),
-    })
+    }
+    # Event semantic review adds prompt instructions from event_post_standard.py.
+    # Bind that source only for event bundles so an event-review contract change
+    # cannot reuse a stale event result while unrelated general-review caches stay valid.
+    if policy_profile(bundle) == 'event':
+        contract["event_post_standard_sha256"] = hashlib.sha256(
+            (ROOT / 'agents' / 'event_post_standard.py').read_bytes()
+        ).hexdigest()
+    return digest(contract)
 
 
 def review_cache_key(bundle: dict) -> str:
     return digest({
         "body_digest": digest(review_body(bundle)),
         "policy_digest": policy_fingerprint(bundle),
-        "review_contract_digest": reviewer_contract_digest(),
+        "review_contract_digest": reviewer_contract_digest(bundle),
     })
 
 
@@ -95,7 +103,7 @@ def load_cached_review(
         and payload.get("cache_key") == review_cache_key(bundle)
         and payload.get("body_digest") == digest(body)
         and payload.get("policy_digest") == current_policy
-        and payload.get("review_contract_digest") == reviewer_contract_digest()
+        and payload.get("review_contract_digest") == reviewer_contract_digest(bundle)
         and _review_shape_valid(review)
         and review.get("digest") == digest(body)
         and review.get("policy_digest") == current_policy
@@ -122,7 +130,7 @@ def store_cached_review(bundle: dict, review: dict, *, root: Path | None = None)
         "cache_key": review_cache_key(bundle),
         "body_digest": digest(body),
         "policy_digest": current_policy,
-        "review_contract_digest": reviewer_contract_digest(),
+        "review_contract_digest": reviewer_contract_digest(bundle),
         "review": deepcopy(review),
     }
     temporary = target.with_suffix(".tmp")
