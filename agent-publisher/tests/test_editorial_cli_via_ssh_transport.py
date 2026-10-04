@@ -787,6 +787,26 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 '--featured_image', '--title=검토된 제목', '--alt=검토된 대체텍스트',
                 '--porcelain', '--allow-root'])
 
+    def test_replace_featured_image_accepts_published_target_snapshot(self):
+        module = load_module()
+
+        def fake_run(args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {559}, 'bloguito')
+        expected = {
+            'post_status': 'publish', 'post_title': '모바일 주민등록증 발급',
+            'post_name': 'mobile-id', 'post_excerpt': 'summary',
+            'content_sha256': '0' * 64,
+        }
+        transport(
+            module._WP_PREFIX + ['eval', module.GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1, 'post_id': 559, 'expected': expected,
+                'expected_thumbnail_id': 822, 'attachment_id': 873,
+            }), text=True)
+
     def test_replace_featured_image_media_import_255_is_not_retried(self):
         module = load_module()
         ssh_attempts = 0

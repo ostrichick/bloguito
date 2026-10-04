@@ -468,12 +468,15 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         required_expected = {
             'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256',
         }
-        expected_status = 'publish' if action in _PUBLIC_EDIT_ACTIONS else 'draft'
+        if action == 'replace-featured-image':
+            expected_statuses = {'publish', 'draft', 'pending', 'future', 'private'}
+        else:
+            expected_statuses = {'publish'} if action in _PUBLIC_EDIT_ACTIONS else {'draft'}
         if (type(post_id) is not int or post_id not in allowed_ids
                 or type(attachment_id) is not int or attachment_id <= 0
                 or (expected_thumb is not None and (type(expected_thumb) is not int or expected_thumb <= 0))
                 or not isinstance(expected, dict) or set(expected) != required_expected
-                or expected.get('post_status') != expected_status
+                or expected.get('post_status') not in expected_statuses
                 or not re.fullmatch(r'[0-9a-f]{64}', expected.get('content_sha256', ''))
                 or any(not isinstance(value, str) or '\x00' in value for value in expected.values())):
             raise ValueError('invalid_guarded_thumbnail_expectation')
