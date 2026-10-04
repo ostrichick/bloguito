@@ -156,7 +156,7 @@
       "official_urls": [
         "https://www.accf.or.kr/main/event/musicsociety2026",
         "https://www.recollection.kr/",
-        "https://www.buskingworldcup.com/about/about.php",
+        "https://www.buskingworldcup.com/program/program.php",
         "https://www.seogu.gwangju.kr/menu.es?mid=c30201000000",
         "https://artgwangju.kr/ko/about/",
         "https://kimchi.gwangju.go.kr/index.php?cate=001002",
@@ -164,10 +164,10 @@
       ],
       "source_event_url": "https://www.accf.or.kr/main/event/musicsociety2026",
       "source_event_phrase": "2026. 10. 1.(목) ∼ 10. 4.(일)",
-      "reason": "The user explicitly requested remediation of existing Draft #666 on 2026-10-01. This exception is limited to that exact draft, exact official source set and the final 2026-10-25 event date; it does not weaken the 30-day rule for another dated post.",
+      "reason": "The user explicitly requested remediation of existing Draft #666 on 2026-10-01 and final pre-publication QA on 2026-10-04. The busking source is narrowed to the official 2026 program page so the current 8-final/4-final schedule and section link share one official source; the Seochang directions page remains a reference source and does not widen this exception. This exception is limited to that exact draft, exact official source set and the final 2026-10-25 event date; it does not weaken the 30-day rule for another dated post.",
       "id": "gwangju-october-festivals-2026",
       "status": "active",
-      "approved_on": "2026-10-01",
+      "approved_on": "2026-10-04",
       "expires_on": "2026-10-25"
     }
   }
