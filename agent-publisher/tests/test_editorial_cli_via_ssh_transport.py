@@ -605,6 +605,19 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'])
         self.assertEqual(b'<p>reviewed</p>', calls[0][1]['input'])
 
+    def test_draft_standard_allows_stale_public_recovery_read_shape(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout='{}', stderr='')
+        transport = module.make_transport('draft-standard', {665}, 'bloguito')
+        transport(module._WP_PREFIX + [
+            'post', 'get', '665', '--fields=post_status,post_title,post_content',
+            '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_get_target'):
+            transport(module._WP_PREFIX + [
+                'post', 'get', '666', '--fields=post_status,post_title,post_content',
+                '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+
     def test_publish_allows_only_supported_rank_math_meta(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')

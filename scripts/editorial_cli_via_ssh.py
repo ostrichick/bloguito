@@ -536,6 +536,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             tail = wp[3:]
             if tail not in (["--format=json", "--allow-root"],
                             ['--fields=post_status,post_content', '--format=json', '--allow-root'],
+                            ['--fields=post_status,post_title,post_content', '--format=json', '--allow-root'],
                             ['--fields=post_status,post_title,post_name,post_content,post_excerpt',
                              '--format=json', '--allow-root'],
                             ['--fields=ID,guid,post_title,post_mime_type', '--format=json', '--allow-root']):
