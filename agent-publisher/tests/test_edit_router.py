@@ -182,6 +182,44 @@ class EditRouterTests(unittest.TestCase):
                 )
         fail.assert_called_once()
 
+    def test_resume_blocks_when_live_status_is_publish_even_if_desired_sha_matches(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        new["plan"]["sections"][0]["heading"] = "더 간단한 소제목"
+        old_body = render(old["plan"], old["sources"])
+        new_body = render(new["plan"], new["sources"])
+        old_sha = hashlib.sha256(old_body.encode()).hexdigest()
+        new_sha = hashlib.sha256(new_body.encode()).hexdigest()
+        reuse = assess_validation_reuse(old, new)
+        state = {
+            "action": "edit-draft", "status": "in_progress",
+            "edit_intent_sha256": intent_sha256("표현만 간결하게"), "route": "fast",
+            "route_reasons": [], "reuse": reuse,
+            "baseline": {
+                "expected_content_sha256": old_sha,
+                "desired_content_sha256": new_sha,
+                "candidate_content_digest": reuse["fingerprint_after"]["content_digest"],
+            },
+            "result": {},
+        }
+        live = {
+            "post_status": "publish", "post_title": new["plan"]["title"],
+            "post_name": "stable", "post_content": new_body, "post_excerpt": "x",
+        }
+        with patch("agents.edit_router.classify_edit_route", return_value={
+                 "route": "fast", "reasons": [],
+                 "fast_report": {"status": "candidate", "reasons": [], "changed_blocks": {}},
+                 "reuse": reuse,
+             }), \
+             patch("agents.edit_router.load_task_state", return_value=state), \
+             patch("agents.edit_router.get_post", return_value=live), \
+             patch("agents.edit_router.fail_task_state") as fail:
+            with self.assertRaisesRegex(ValueError, "resume_state_conflict"):
+                edit_reviewed_draft(
+                    393, new, old_sha, confirmed=True, edit_intent="표현만 간결하게", resume=True
+                )
+        fail.assert_called_once_with(393, "resume_state_conflict", blocked=True)
+
     def test_standard_route_records_preflight_checkpoint_from_reviser(self):
         old = sample()
         new = copy.deepcopy(old)

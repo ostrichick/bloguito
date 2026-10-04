@@ -349,7 +349,7 @@ class FastEditTests(unittest.TestCase):
             self.assertEqual(1, len(saved['fast_edit_chain']))
             self.assertEqual(old['review'], saved['review'])
 
-    def test_fast_revision_accepts_renderer_only_location_card_migration(self):
+    def test_fast_revision_accepts_only_registered_renderer_location_card_migration(self):
         old, new = self._pair()
         location = {
             'venue': '서초구 행사장',
@@ -441,6 +441,8 @@ class FastEditTests(unittest.TestCase):
                  patch('agents.fast_edit.DRAFTS_INDEX_FILE', index), \
                  patch('agents.fast_edit.validate_fast_edit', return_value=report), \
                  patch('agents.fast_edit._review_delta', return_value=delta), \
+                 patch('agents.editorial_draft_reviser.recognized_reviewed_content_hashes',
+                       return_value={'registered-renderer': hashlib.sha256(live_body.encode()).hexdigest()}), \
                  patch('agents.fast_edit.subprocess.run', side_effect=run):
                 result = fast_revise_reviewed_draft(
                     393, new, hashlib.sha256(live_body.encode()).hexdigest(), confirmed=True,
@@ -448,6 +450,66 @@ class FastEditTests(unittest.TestCase):
 
             self.assertEqual(393, result)
             self.assertEqual(new_body, live['post_content'])
+
+    def test_fast_revision_rejects_unregistered_renderer_location_card_migration(self):
+        from agents.editorial import excerpt_from_lead
+
+        old, new = self._pair()
+        location = {
+            'venue': '서초구 행사장',
+            'address': '서울 서초구 행사장 1',
+            'query': '서울 서초구 행사장',
+            'evidence': [{'source_id': 's0', 'quote': old['sources'][0]['text']}],
+        }
+        old['plan']['sections'][0]['location'] = copy.deepcopy(location)
+        new['plan']['sections'][0]['location'] = copy.deepcopy(location)
+        old_body = render(old['plan'], old['sources'])
+        compact = (
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:4px">'
+            '📍 행사장 위치: 서초구 행사장</div>'
+            '<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+            '<strong>주소</strong>: 서울 서초구 행사장 1</div>'
+        )
+        legacy = (
+            '<div style="font-weight:700;color:#1e293b;font-size:15px;margin-bottom:8px">'
+            '📍 행사장 위치</div>'
+            '<div style="font-size:14px;color:#475569;margin-bottom:10px;line-height:1.6">'
+            '<strong>장소</strong>: 서초구 행사장<br/>'
+            '<strong>위치</strong>: 서울 서초구 행사장 1</div>'
+        )
+        live_body = old_body.replace(compact, legacy, 1)
+        live = {
+            'post_status': 'draft', 'post_title': old['plan']['title'], 'post_name': 'stable-slug',
+            'post_content': live_body, 'post_excerpt': excerpt_from_lead(old['plan']['lead']),
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / 'data'
+            data.mkdir()
+            index = data / 'draft_posts.json'
+            index.write_text(json.dumps([{
+                'id': 393, 'fact_manifest': {'editorial_bundle': old},
+            }]), encoding='utf-8')
+            report = {
+                'status': 'candidate', 'reasons': [], 'changed_blocks': {},
+                'base_content_digest': digest({
+                    key: old[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in old
+                }),
+                'result_content_digest': digest({
+                    key: new[key] for key in ('brief', 'sources', 'plan', 'temporal_source') if key in new
+                }),
+            }
+            with patch('agents.fast_edit.ROOT', root), \
+                 patch('agents.fast_edit.DRAFTS_INDEX_FILE', index), \
+                 patch('agents.fast_edit.validate_fast_edit', return_value=report), \
+                 patch('agents.fast_edit.prepare_fast_delta_review', return_value={'prepared': True}), \
+                 patch('agents.fast_edit.verify_explicit_live_sources'), \
+                 patch('agents.fast_edit.get_post', return_value=live), \
+                 patch('agents.editorial_draft_reviser.recognized_reviewed_content_hashes', return_value={}):
+                with self.assertRaisesRegex(ValueError, 'draft_changed_before_fast_revision'):
+                    fast_revise_reviewed_draft(
+                        393, new, hashlib.sha256(live_body.encode()).hexdigest(), confirmed=True,
+                        edit_intent='소제목 표현만 간단하게 다듬기')
 
     def test_consecutive_fast_edits_keep_valid_review_lineage(self):
         old = sample()

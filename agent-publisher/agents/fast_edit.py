@@ -27,7 +27,7 @@ from agents.editorial import (
     render,
     validate_bundle,
 )
-from agents.editorial_draft_reviser import _normalize_renderer_migrations
+from agents.editorial_draft_reviser import _matches_reviewed_draft_content
 from agents.editorial_writer import EditorialWriterAgent
 from agents.post_manifest_store import (
     acquire_editorial_lock,
@@ -572,12 +572,10 @@ def fast_revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, conf
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
         live = get_post(base, post_id, fields=post_fields)
-        expected_old = render(old_bundle["plan"], old_bundle["sources"])
-        live_comparable = _normalize_renderer_migrations(live.get("post_content", ""))
-        expected_comparable = _normalize_renderer_migrations(expected_old)
         if (not verify_cas(live, status="draft", title=old_bundle["plan"]["title"],
                            content_sha=expected_content_sha256)
-                or live_comparable != expected_comparable):
+                or not _matches_reviewed_draft_content(
+                    old_bundle, live.get("post_content", ""), post_id=post_id)):
             raise ValueError("draft_changed_before_fast_revision")
         assert_unchanged(state_snapshot)
 

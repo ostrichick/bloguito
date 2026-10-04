@@ -200,6 +200,22 @@ def _normalize_renderer_migrations(content):
     return content
 
 
+def _matches_reviewed_draft_content(old_bundle, current_content, *, post_id):
+    """Accept only the exact reviewed render or a tracked reviewed-content SHA.
+
+    Renderer compatibility helpers above remain useful for diagnostics, but they
+    are deliberately not authorization boundaries: broad normalization of a
+    source footer or map block must never make an unregistered live edit count
+    as reviewed provenance.
+    """
+    old_rendered = render(old_bundle["plan"], old_bundle["sources"])
+    if current_content.replace("\r\n", "\n") == old_rendered.replace("\r\n", "\n"):
+        return True
+    current_sha = hashlib.sha256(current_content.encode("utf-8")).hexdigest()
+    recognized_hashes = recognized_reviewed_content_hashes(old_bundle, post_id=post_id)
+    return current_sha in set(recognized_hashes.values())
+
+
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
                            confirm_title_change=False, image_path=None,
                            checkpoint_callback=None):
@@ -290,22 +306,8 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             raise ValueError("draft_revision_topic_or_title_mismatch")
 
         old_rendered = render(old_bundle["plan"], old_bundle["sources"])
-        current_comparable = _normalize_renderer_migrations(current["post_content"])
-        old_comparable = _normalize_renderer_migrations(old_rendered)
-        same_exact = (
-            current_comparable.replace("\r\n", "\n")
-            == old_comparable.replace("\r\n", "\n")
-        )
-        same_before_source_footer = (
-            _before_generated_source_footer(current_comparable)
-            == _before_generated_source_footer(old_comparable)
-        )
-        same_recognized_variant = False
-        if not (same_exact or same_before_source_footer):
-            current_sha = hashlib.sha256(current.get("post_content", "").encode("utf-8")).hexdigest()
-            recognized_hashes = recognized_reviewed_content_hashes(old_bundle, post_id=post_id)
-            same_recognized_variant = current_sha in set(recognized_hashes.values())
-        if not (same_exact or same_before_source_footer or same_recognized_variant):
+        if not _matches_reviewed_draft_content(
+                old_bundle, current.get("post_content", ""), post_id=post_id):
             raise ValueError("draft_contains_unreviewed_edits")
         if missing_internal_post_ids(old_rendered, render(bundle["plan"], bundle["sources"])):
             raise ValueError("original_internal_post_navigation_missing")

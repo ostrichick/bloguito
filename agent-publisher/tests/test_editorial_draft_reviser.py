@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from agents.editorial import excerpt_from_lead, render
 from agents.editorial_draft_reviser import (
     _before_generated_source_footer,
+    _matches_reviewed_draft_content,
     _normalize_renderer_migrations,
     _revision_source_recheck_plan,
     revise_reviewed_draft,
@@ -392,6 +393,43 @@ class EditorialDraftReviserTests(unittest.TestCase):
                 result = revise_reviewed_draft(
                     393, new, attested_sha, confirmed=True)
             self.assertEqual(393, result)
+
+    def test_reviewed_baseline_rejects_unregistered_source_footer_change(self):
+        old = sample()
+        old_body = render(old["plan"], old["sources"])
+        changed = old_body.replace(old["sources"][0]["url"], "https://evil.example/unreviewed", 1)
+        self.assertNotEqual(old_body, changed)
+        with patch(
+                "agents.editorial_draft_reviser.recognized_reviewed_content_hashes",
+                return_value={}):
+            self.assertFalse(_matches_reviewed_draft_content(old, changed, post_id=393))
+
+    def test_reviewed_baseline_rejects_unregistered_kakao_map_payload_change(self):
+        old = sample()
+        old_body = (
+            '<p>검토된 본문</p>'
+            '<section class="bloguito-kakao-map-container" aria-label="행사장 위치 지도">'
+            '<div id="bloguito-kakao-map"></div>'
+            '<script>var marker={lat:35.1,lng:126.9};</script>'
+            '</section>'
+            '<p>다음 본문</p>'
+        )
+        changed = old_body.replace("lat:35.1", "lat:99.9", 1)
+        with patch("agents.editorial_draft_reviser.render", return_value=old_body), \
+             patch(
+                 "agents.editorial_draft_reviser.recognized_reviewed_content_hashes",
+                 return_value={}):
+            self.assertFalse(_matches_reviewed_draft_content(old, changed, post_id=393))
+
+    def test_reviewed_baseline_accepts_only_registered_variant_sha(self):
+        old = sample()
+        old_body = render(old["plan"], old["sources"])
+        changed = old_body.replace("검토", "검토된", 1)
+        changed_sha = hashlib.sha256(changed.encode()).hexdigest()
+        with patch(
+                "agents.editorial_draft_reviser.recognized_reviewed_content_hashes",
+                return_value={"attested": changed_sha}):
+            self.assertTrue(_matches_reviewed_draft_content(old, changed, post_id=393))
 
     def test_revision_requires_confirmation(self):
         with self.assertRaisesRegex(ValueError, "specific_draft_revision_confirmation_required"):

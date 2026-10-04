@@ -244,6 +244,10 @@ def edit_reviewed_draft(
             post_id,
             fields=["post_status", "post_title", "post_name", "post_content", "post_excerpt"],
         )
+        if live.get("post_status") != "draft":
+            fail_task_state(post_id, "resume_state_conflict", blocked=True)
+            increment("resume_conflict")
+            raise ValueError("resume_state_conflict")
         live_sha = content_sha256(live.get("post_content", ""))
         if live_sha == desired_sha:
             tracked = _load_tracked_bundle(post_id)
