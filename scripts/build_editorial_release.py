@@ -30,7 +30,11 @@ RUNTIME_JSON = (
     "agent-publisher/data/renderer_provenance.json",
     "agent-publisher/data/reviewed_content_provenance.json",
 )
-RETIRED_FILES = ("agents/copywriter.py",)
+RETIRED_FILES = (
+    "agents/copywriter.py",
+    "agents/editorial_draft_updater.py",
+    "agents/editorial_legacy_draft.py",
+)
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()

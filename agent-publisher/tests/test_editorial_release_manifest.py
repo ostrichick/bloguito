@@ -32,7 +32,7 @@ class ReleaseManifestTests(unittest.TestCase):
             'revision': 'a' * 40,
             'inventory_digest': installer.inventory_digest(self.files),
             'files': self.files,
-            'retired_files': ['agents/copywriter.py'],
+            'retired_files': list(builder.RETIRED_FILES),
         }
         self.write_manifest()
 
@@ -81,6 +81,14 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'retirement_scope'):
             installer.verify_release_manifest(self.root)
 
+    def test_retired_agent_modules_must_not_be_referenced_by_release(self):
+        target = self.root / 'agent-publisher' / 'main.py'
+        target.write_text('import agents.editorial_legacy_draft\n', encoding='utf-8')
+        self.files['agent-publisher/main.py'] = hashlib.sha256(target.read_bytes()).hexdigest()
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'retired_module_still_referenced'):
+            installer.verify_release_manifest(self.root)
+
     def entrypoint_release(self):
         app = self.root / 'existing-app'
         app.mkdir()
@@ -125,6 +133,18 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertFalse((app / 'agents/edit_post.py').exists())
         self.assertFalse((app / 'data/editorial-release.json').exists())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
+
+    def test_install_rejects_unknown_agent_module_but_ignores_root_one_off_script(self):
+        app = self.entrypoint_release()
+        (app / 'agents').mkdir(exist_ok=True)
+        (app / 'agents' / 'unknown_runtime.py').write_text('# stale runtime')
+        (app / 'one_off_maintenance.py').write_text('# not an import-package member')
+        with patch.object(installer.subprocess, 'run'):
+            with self.assertRaisesRegex(ValueError, 'unexpected_existing_runtime_module'):
+                installer.install(self.root, app)
+        (app / 'agents' / 'unknown_runtime.py').unlink()
+        with patch.object(installer.subprocess, 'run'):
+            installer.install(self.root, app)
 
     def test_canonical_builder_includes_all_agent_runtime_modules_and_excludes_tests(self):
         inventory = builder.release_inventory(ROOT)

@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CANONICAL_INVENTORY_DIGEST = '21245da38256e7de801b19447dc672146fe6313143ee5a279223b4475337b467'
-ALLOWED_RETIRED_FILES = {'agents/copywriter.py'}
+ALLOWED_RETIRED_FILES = {
+    'agents/copywriter.py',
+    'agents/editorial_draft_updater.py',
+    'agents/editorial_legacy_draft.py',
+}
 
 
 def inventory_digest(names):
@@ -65,8 +69,15 @@ def verify_release_manifest(release):
     retired = manifest['retired_files']
     if set(retired) != ALLOWED_RETIRED_FILES or len(retired) != len(ALLOWED_RETIRED_FILES):
         raise ValueError('invalid_release_retirement_scope')
-    if retired and any('agents.copywriter' in (release / name).read_text(encoding='utf-8')
-                       for name in expected if name.endswith('.py')):
+    retired_modules = {
+        relative[:-3].replace('/', '.')
+        for relative in retired
+        if relative.endswith('.py')
+    }
+    if retired_modules and any(
+            module in (release / name).read_text(encoding='utf-8')
+            for name in expected if name.endswith('.py')
+            for module in retired_modules):
         raise ValueError('retired_module_still_referenced')
     return manifest
 
@@ -97,13 +108,17 @@ def install(release, app):
         for name in release_manifest['files']
         if name.startswith('agent-publisher/') and name.endswith('.py')
     }
-    existing_runtime = {
+    existing_agent_runtime = {
         path.relative_to(app).as_posix()
-        for pattern in ('*.py', 'agents/*.py')
-        for path in app.glob(pattern)
+        for path in (app / 'agents').glob('*.py')
         if path.is_file()
     }
-    unexpected_existing = existing_runtime - release_runtime - ALLOWED_RETIRED_FILES
+    expected_agent_runtime = {
+        name for name in release_runtime if name.startswith('agents/')
+    }
+    unexpected_existing = (
+        existing_agent_runtime - expected_agent_runtime - ALLOWED_RETIRED_FILES
+    )
     if unexpected_existing:
         raise ValueError('unexpected_existing_runtime_module:' + sorted(unexpected_existing)[0])
     files = [p for p in (release/'agent-publisher').rglob('*') if p.is_file()]
