@@ -4,6 +4,15 @@ from unittest.mock import patch, Mock
 from agents.publisher import PublisherAgent
 
 class DraftCommandSafetyTests(unittest.TestCase):
+    def test_editorial_publish_requires_reviewed_featured_image_before_wordpress_io(self):
+        article = {'editorial_bundle': {}, 'title': '', 'content': ''}
+        with patch('agents.publisher.acquire_editorial_lock', return_value=Path('lock')), \
+             patch('agents.publisher.release_editorial_lock'), \
+             patch('agents.publisher.run_wordpress') as run:
+            with self.assertRaisesRegex(ValueError, 'reviewed_featured_image_required'):
+                PublisherAgent().publish(article, image_path=None)
+        run.assert_not_called()
+
     def test_live_drafts_list_read_only_without_index(self):
         payload=[{'ID':243,'post_title':'검토 대기','post_date':'2026-09-18 12:00:00','post_status':'draft'}]
         with patch('agents.publisher.DRAFTS_INDEX_FILE',Path('/nonexistent-draft-posts-index.json')), patch('agents.publisher.subprocess.run',return_value=Mock(stdout=json.dumps(payload))) as run:

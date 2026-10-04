@@ -130,10 +130,29 @@ class PublicFastEditTests(unittest.TestCase):
             hashlib.sha256(render(old['plan'], old['sources']).encode()).hexdigest(),
             decision['tracked_content_sha256'])
 
+    def test_renderer_classification_refuses_unbound_semantic_review(self):
+        old = current_bundle()
+        old['review']['digest'] = '0' * 64
+        expected = hashlib.sha256(render(old['plan'], old['sources']).encode()).hexdigest()
+        with tempfile.TemporaryDirectory() as folder:
+            index = Path(folder) / 'published_posts.json'
+            index.write_text(json.dumps([{
+                'id': 243, 'fact_manifest': {'editorial_bundle': old},
+            }], ensure_ascii=False), encoding='utf-8')
+            with patch('agents.public_fast_edit.POSTS_INDEX_FILE', index):
+                with self.assertRaisesRegex(ValueError, 'review_not_bound'):
+                    classify_public_fast_edit(
+                        243, old, expected_content_sha256=expected)
+
     def test_classifier_routes_exact_previous_renderer_as_migration_without_freshness_review(self):
         old = current_bundle()
         stale = copy.deepcopy(old)
         stale['brief']['review_until'] = '2020-01-01'
+        stale['review']['digest'] = digest({
+            key: stale[key]
+            for key in ('brief', 'sources', 'plan', 'temporal_source')
+            if key in stale
+        })
         previous = _previous_responsive_layout_variant(render(stale['plan'], stale['sources']))
         expected = hashlib.sha256(previous.encode()).hexdigest()
         with tempfile.TemporaryDirectory() as folder:

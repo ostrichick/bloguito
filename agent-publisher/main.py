@@ -144,7 +144,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
     # configured Gemini adapter to write a new plan. Interactive ChatGPT work
     # supplies an already-written plan through editorial_cli.py manual-review.
     copywriter = CopywriterAgent(writing_enabled=True)
-    designer = DesignerAgent()
+    designer = DesignerAgent(scheduler_context=True)
     publisher = PublisherAgent()
 
     for cat_key in valid_categories:

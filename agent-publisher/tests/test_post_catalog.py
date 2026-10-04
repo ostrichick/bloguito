@@ -242,6 +242,61 @@ class TestPostCatalog(unittest.TestCase):
             self.assertEqual([], json.loads(
                 (data / 'published_posts.json').read_text(encoding='utf-8')))
 
+    def test_reviewed_status_reconcile_reports_same_status_live_content_change(self):
+        record, _content = self._reviewed_record(status='publish')
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / 'draft_posts.json').write_text('[]', encoding='utf-8')
+            original = json.dumps([record], ensure_ascii=False)
+            (data / 'published_posts.json').write_text(original, encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': record['title'],
+                'post_status': 'publish',
+                'permalink': 'https://lifeinfo24.org/test/',
+                'content_sha256': hashlib.sha256(b'user edited content').hexdigest(),
+            }]
+
+            result = reconcile_reviewed_statuses(live, data)
+
+            self.assertEqual([], result['moved'])
+            self.assertEqual(
+                [{'post_id': 844, 'reason': 'live_content_changed'}],
+                result['skipped'])
+            self.assertEqual(json.loads(original), json.loads(
+                (data / 'published_posts.json').read_text(encoding='utf-8')))
+
+    def test_reviewed_status_reconcile_labels_transaction_binding_as_provenance(self):
+        record, _content = self._reviewed_record()
+        transaction_sha = 'd' * 64
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / 'draft_posts.json').write_text(
+                json.dumps([record], ensure_ascii=False), encoding='utf-8')
+            (data / 'published_posts.json').write_text('[]', encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': record['title'],
+                'post_status': 'publish',
+                'permalink': 'https://lifeinfo24.org/test/',
+                'content_sha256': transaction_sha,
+            }]
+            with patch('agents.editorial.recognized_reviewed_content_hashes',
+                       return_value={
+                           'current': 'a' * 64,
+                           'post-review-images-test': transaction_sha,
+                       }), \
+                 patch('agents.editorial.recognized_renderer_hashes',
+                       return_value={'current': 'a' * 64}):
+                result = reconcile_reviewed_statuses(live, data)
+
+        self.assertEqual([{
+            'post_id': 844,
+            'from_status': 'draft',
+            'to_status': 'publish',
+            'provenance_variant': 'post-review-images-test',
+        }], result['moved'])
+
     def test_reviewed_status_reconcile_reports_unbound_review_precisely(self):
         record, content = self._reviewed_record()
         record['fact_manifest']['editorial_bundle']['review']['digest'] = '0' * 64

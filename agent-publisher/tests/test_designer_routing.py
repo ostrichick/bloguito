@@ -20,7 +20,7 @@ from agents.designer import (
 
 class DesignerRoutingTests(unittest.TestCase):
     def setUp(self):
-        self.designer = DesignerAgent()
+        self.designer = DesignerAgent(scheduler_context=True)
         self.designer.client = None
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)

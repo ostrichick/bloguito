@@ -29,11 +29,15 @@ RUNTIME_JSON = (
     "agent-publisher/data/content_clusters.json",
     "agent-publisher/data/renderer_provenance.json",
     "agent-publisher/data/reviewed_content_provenance.json",
-    "agent-publisher/data/search_briefs.json",
 )
+RETIRED_FILES = ("agents/copywriter.py",)
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def inventory_digest(names) -> str:
+    encoded = json.dumps(sorted(names), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 def release_inventory(root: Path = ROOT) -> list[str]:
     root = Path(root)
@@ -85,6 +89,14 @@ def build_release(output_dir: Path, *, root: Path = ROOT, revision: str | None =
     if len(revision) != 40 or any(ch not in "0123456789abcdef" for ch in revision):
         raise ValueError("invalid_release_revision")
     inventory = release_inventory(root)
+    tracked = set(_git(root, "ls-files").splitlines())
+    untracked = sorted(set(inventory) - tracked)
+    if untracked:
+        raise ValueError("release_inventory_contains_untracked_file:" + untracked[0])
+    changed = set(_git(root, "diff", "HEAD", "--name-only").splitlines())
+    changed_inventory = sorted(set(inventory) & changed)
+    if changed_inventory:
+        raise ValueError("release_inventory_not_at_head:" + changed_inventory[0])
     output_dir.mkdir(parents=True)
     hashes = {}
     for relative in inventory:
@@ -93,7 +105,13 @@ def build_release(output_dir: Path, *, root: Path = ROOT, revision: str | None =
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         hashes[relative] = _sha(target)
-    manifest = {"schema_version": 1, "revision": revision, "files": hashes, "retired_files": []}
+    manifest = {
+        "schema_version": 2,
+        "revision": revision,
+        "inventory_digest": inventory_digest(hashes),
+        "files": hashes,
+        "retired_files": list(RETIRED_FILES),
+    }
     manifest_path = output_dir / "release-manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     archive_path = None

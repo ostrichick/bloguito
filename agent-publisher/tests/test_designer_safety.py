@@ -13,13 +13,18 @@ from agents.designer import DesignerAgent, derive_cover_copy, split_title
 
 class DesignerSafetyTests(unittest.TestCase):
     def setUp(self):
-        self.designer = DesignerAgent()
+        self.designer = DesignerAgent(scheduler_context=True)
         self.designer.client = None
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.cover_root = self.enterContext(
             patch("agents.designer.generated_cover_root", return_value=Path(self.temp_dir.name))
         )
+
+    def test_generate_image_requires_scheduler_context(self):
+        manual = DesignerAgent()
+        with self.assertRaisesRegex(ValueError, "scheduler_only"):
+            manual.generate_image("수동 글", "행정/생활서비스", "수동")
 
     def capture_text(self, render):
         drawn = []

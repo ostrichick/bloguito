@@ -10,6 +10,7 @@ import re
 
 from agents.editorial import (
     ROOT, excerpt_from_lead, recognized_renderer_hashes, recognized_renderer_outputs, render,
+    assert_review_digest_bound,
 )
 from agents.editorial_updater import _existing_lead_excerpt
 from agents.fast_edit import (
@@ -64,6 +65,7 @@ def normalize_public_fast_candidate(old_bundle: dict, new_bundle: dict, post_id:
 
 
 def _recognized_content_hashes(bundle: dict, post_id: int) -> dict[str, str]:
+    assert_review_digest_bound(bundle)
     return recognized_renderer_hashes(
         bundle["plan"],
         bundle["sources"],
@@ -139,6 +141,7 @@ def migrate_public_renderer(
         if candidate != old_bundle:
             raise ValueError("renderer_migration_bundle_must_be_unchanged")
 
+        assert_review_digest_bound(old_bundle)
         outputs = recognized_renderer_outputs(
             old_bundle["plan"],
             old_bundle["sources"],
@@ -245,6 +248,7 @@ def fast_update_public_post(
         if not isinstance(old_bundle, dict):
             raise ValueError("reviewed_public_manifest_required")
         candidate = normalize_public_fast_candidate(old_bundle, bundle, post_id)
+        assert_review_digest_bound(old_bundle)
         old_rendered = render(old_bundle["plan"], old_bundle["sources"])
         recognized = recognized_renderer_outputs(
             old_bundle["plan"],

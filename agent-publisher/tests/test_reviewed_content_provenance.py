@@ -11,6 +11,7 @@ from agents import editorial
 from agents.editorial import (
     digest,
     recognized_reviewed_content_hashes,
+    validate_renderer_provenance_registry,
     validate_reviewed_content_provenance_registry,
 )
 from tests.test_editorial_system import sample, sign
@@ -24,6 +25,29 @@ def content_sha(text: str) -> str:
 
 
 class ReviewedContentProvenanceTests(unittest.TestCase):
+    def test_renderer_registry_validator_accepts_tracked_registry(self):
+        entries = validate_renderer_provenance_registry()
+        self.assertIsInstance(entries, list)
+
+    def test_renderer_registry_validator_rejects_invalid_or_duplicate_entries(self):
+        valid = {
+            "post_id": 844,
+            "current_sha256": "a" * 64,
+            "historical_sha256": "b" * 64,
+            "renderer_revision": "1234567",
+            "variant": "historical-test",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "renderer.json"
+            path.write_text(json.dumps({"schema_version": 1, "entries": [valid, valid]}),
+                            encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate_renderer"):
+                validate_renderer_provenance_registry(path)
+            path.write_text(json.dumps({"schema_version": 1, "entries": [{
+                **valid, "renderer_revision": "not-a-revision",
+            }]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid_renderer"):
+                validate_renderer_provenance_registry(path)
     def registry(self, bundle: dict, live_sha: str) -> dict:
         return {
             "schema_version": 1,

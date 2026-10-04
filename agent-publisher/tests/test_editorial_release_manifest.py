@@ -22,18 +22,18 @@ class ReleaseManifestTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.files = {}
-        for name in (
-                'agents/edit_post.py', 'editorial_cli.py', 'agents/edit_orchestration.py',
-                'editorial_policy.json', 'agents/article_renderer.py', 'agents/editorial.py',
-                'agents/editorial_schema.py', 'agents/public_fast_edit.py',
-                'agents/source_collector.py', 'agents/source_extractors.py',
-                'agents/validation_router.py', 'agents/wordpress_mutation.py',
-                'data/renderer_provenance.json', 'data/reviewed_content_provenance.json'):
-            path = self.root / 'agent-publisher' / name
+        for relative in builder.release_inventory(ROOT):
+            path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'original')
-            self.files['agent-publisher/' + name] = hashlib.sha256(b'original').hexdigest()
-        self.manifest = {'schema_version': 1, 'revision': 'a' * 40, 'files': self.files}
+            self.files[relative] = hashlib.sha256(b'original').hexdigest()
+        self.manifest = {
+            'schema_version': 2,
+            'revision': 'a' * 40,
+            'inventory_digest': installer.inventory_digest(self.files),
+            'files': self.files,
+            'retired_files': ['agents/copywriter.py'],
+        }
         self.write_manifest()
 
     def write_manifest(self):
@@ -54,8 +54,20 @@ class ReleaseManifestTests(unittest.TestCase):
         name = 'agent-publisher/agents/edit_orchestration.py'
         (self.root / name).unlink()
         del self.files[name]
+        self.manifest['inventory_digest'] = installer.inventory_digest(self.files)
         self.write_manifest()
-        with self.assertRaisesRegex(ValueError, 'module_missing'):
+        with self.assertRaisesRegex(ValueError, 'contract_mismatch'):
+            installer.verify_release_manifest(self.root)
+
+    def test_manifest_schema_rejects_unknown_or_missing_keys(self):
+        self.manifest['unexpected'] = True
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'invalid_release_manifest'):
+            installer.verify_release_manifest(self.root)
+        self.manifest.pop('unexpected')
+        self.manifest.pop('retired_files')
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, 'invalid_release_manifest'):
             installer.verify_release_manifest(self.root)
 
     def test_entrypoint_replacement_requires_environment_credentials(self):
@@ -79,7 +91,7 @@ class ReleaseManifestTests(unittest.TestCase):
         for name, text in {'agent-publisher/config.py': config, 'agent-publisher/main.py': '# exact new entrypoint\n'}.items():
             (self.root / name).write_text(text)
             self.files[name] = hashlib.sha256((self.root / name).read_bytes()).hexdigest()
-        (self.root / 'docs').mkdir()
+        (self.root / 'docs').mkdir(exist_ok=True)
         for name in ('EDITORIAL_SYSTEM.md', 'GENERAL_POST_STANDARD.md', 'EVENT_POST_STANDARD.md', 'FEATURED_IMAGE_STANDARD.md'):
             path = self.root / 'docs' / name
             path.write_text('policy document')
@@ -93,9 +105,16 @@ class ReleaseManifestTests(unittest.TestCase):
             installer.install(self.root, app)
         self.assertEqual((self.root / 'agent-publisher/main.py').read_bytes(), (app / 'main.py').read_bytes())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
-        self.assertEqual('a' * 40, json.loads((app / 'data/editorial-release.json').read_text())['revision'])
+        receipt = json.loads((app / 'data/editorial-release.json').read_text())
+        self.assertEqual('a' * 40, receipt['revision'])
+        self.assertEqual(
+            hashlib.sha256((self.root / 'release-manifest.json').read_bytes()).hexdigest(),
+            receipt['release_manifest_sha256'])
+        self.assertEqual(installer.CANONICAL_INVENTORY_DIGEST, receipt['inventory_digest'])
         smoke = run.call_args.args[0]
         self.assertIn('validate_reviewed_content_provenance_registry', smoke[-1])
+        self.assertIn('validate_renderer_provenance_registry', smoke[-1])
+        self.assertIn('agents.section_image', smoke[-1])
 
     def test_failed_entrypoint_smoke_restores_original_files(self):
         app = self.entrypoint_release()
@@ -117,16 +136,25 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertIn('agent-publisher/agents/editorial.py', inventory)
         self.assertIn('agent-publisher/agents/public_fast_edit.py', inventory)
         self.assertIn('agent-publisher/agents/validation_router.py', inventory)
-        self.assertIn('agent-publisher/data/search_briefs.json', inventory)
+        self.assertNotIn('agent-publisher/data/search_briefs.json', inventory)
         self.assertIn('agent-publisher/data/renderer_provenance.json', inventory)
         self.assertIn('agent-publisher/data/reviewed_content_provenance.json', inventory)
         self.assertFalse(any('/tests/' in name or name.endswith('.example.json') for name in inventory))
         self.assertFalse(any('.env' in name for name in inventory))
+        self.assertEqual(
+            installer.CANONICAL_INVENTORY_DIGEST,
+            builder.inventory_digest(inventory))
 
     def test_canonical_builder_output_passes_installer_manifest_verification(self):
         with tempfile.TemporaryDirectory() as folder:
             release = Path(folder) / 'release'
-            result = builder.build_release(release, root=ROOT, require_clean=False)
+            real_git = builder._git
+            def clean_inventory_git(root, *args):
+                if args == ('diff', 'HEAD', '--name-only'):
+                    return ''
+                return real_git(root, *args)
+            with patch.object(builder, '_git', side_effect=clean_inventory_git):
+                result = builder.build_release(release, root=ROOT, require_clean=False)
             manifest = installer.verify_release_manifest(release)
         self.assertEqual(builder._git(ROOT, 'rev-parse', 'HEAD'), manifest['revision'])
         self.assertEqual(result['files'], len(manifest['files']))
@@ -139,3 +167,30 @@ class ReleaseManifestTests(unittest.TestCase):
                 builder.build_release(
                     release, root=ROOT, revision='b' * 40, require_clean=False)
             self.assertFalse(release.exists())
+
+    def test_builder_rejects_untracked_runtime_inventory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            release = Path(folder) / 'release'
+            with patch.object(builder, 'release_inventory',
+                              return_value=['agent-publisher/agents/untracked.py']), \
+                 patch.object(builder, '_git', side_effect=lambda root, *args: {
+                     ('rev-parse', 'HEAD'): 'a' * 40,
+                     ('ls-files',): '',
+                     ('diff', 'HEAD', '--name-only'): '',
+                 }.get(args, '')):
+                with self.assertRaisesRegex(ValueError, 'untracked_file'):
+                    builder.build_release(release, root=ROOT, require_clean=False)
+
+    def test_builder_rejects_inventory_bytes_not_at_head(self):
+        with tempfile.TemporaryDirectory() as folder:
+            release = Path(folder) / 'release'
+            inventory = builder.release_inventory(ROOT)
+            changed = inventory[0]
+            real_git = builder._git
+            def changed_inventory_git(root, *args):
+                if args == ('diff', 'HEAD', '--name-only'):
+                    return changed
+                return real_git(root, *args)
+            with patch.object(builder, '_git', side_effect=changed_inventory_git):
+                with self.assertRaisesRegex(ValueError, 'not_at_head'):
+                    builder.build_release(release, root=ROOT, require_clean=False)

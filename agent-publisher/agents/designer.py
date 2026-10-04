@@ -521,9 +521,10 @@ class DesignerAgent:
     - 생성 장면 실패: 저품질 도형/클립아트 폴백을 만들지 않고 업로드 가능한 결과 생성을 중단
     """
 
-    def __init__(self):
+    def __init__(self, *, scheduler_context: bool = False):
+        self.scheduler_context = bool(scheduler_context)
         self.client = None
-        if GEMINI_API_KEY:
+        if self.scheduler_context and GEMINI_API_KEY:
             try:
                 from google import genai
                 self.client = genai.Client(api_key=GEMINI_API_KEY)
@@ -907,6 +908,8 @@ class DesignerAgent:
         기본은 현대적 에디토리얼 커버를 만든다. 독립 검토한 공연 공식 이미지 주소를
         별도 인자로 전달한 경우에만 포스터를 사용하며 실패 시 같은 에디토리얼 커버로 폴백한다.
         """
+        if not self.scheduler_context:
+            raise ValueError("gemini_cover_generation_scheduler_only")
         output_path = _new_generated_cover_path(title)
         try:
             mode = self.select_mode(category_key, curated, title, keyword, reviewed_poster_url)

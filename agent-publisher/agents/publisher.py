@@ -70,6 +70,7 @@ class PublisherAgent:
     def _publish_editorial(self, article, image_path=None):
         from agents.editorial import validate_bundle, render, excerpt_from_lead
         from agents.editorial_writer import load_inventory
+        from agents.featured_image import validate_featured_image_file
         from agents.source_validation_cache import verify_explicit_live_sources
         from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
         from config import CATEGORIES, resolve_category
@@ -79,6 +80,10 @@ class PublisherAgent:
         # a future writer or caller tries to reintroduce tags into this path.
         if article.get('tags'):
             raise ValueError('editorial_tags_disabled: preserve legacy tags; do not create new one-off tags')
+        if image_path is None:
+            raise ValueError('reviewed_featured_image_required')
+        image_path = Path(image_path).resolve()
+        validate_featured_image_file(image_path)
         # Never accept a caller-supplied inventory or a cached quality status here.
         sync_inventory()
         bundle = article['editorial_bundle']
@@ -134,14 +139,13 @@ class PublisherAgent:
             # The saved draft was reread above. Mark the full-site snapshot stale
             # instead of downloading every post again at the end of this command.
             invalidate_inventory()
-            if image_path and image_path.exists():
-                remote_image = f'/tmp/editorial_cover_{post_id}{image_path.suffix}'
-                try:
-                    run_wordpress(['sudo', 'docker', 'cp', str(image_path), f'{self.container_name}:{remote_image}'], check=True, capture_output=True)
-                    run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'media', 'import', remote_image,
-                        f'--post_id={post_id}', '--featured_image', '--allow-root'], check=True, capture_output=True)
-                finally:
-                    run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote_image], capture_output=True)
+            remote_image = f'/tmp/editorial_cover_{post_id}{image_path.suffix}'
+            try:
+                run_wordpress(['sudo', 'docker', 'cp', str(image_path), f'{self.container_name}:{remote_image}'], check=True, capture_output=True)
+                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'media', 'import', remote_image,
+                    f'--post_id={post_id}', '--featured_image', '--allow-root'], check=True, capture_output=True)
+            finally:
+                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote_image], capture_output=True)
             return post_id
         finally:
             local.unlink(missing_ok=True)

@@ -8,17 +8,33 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+CANONICAL_INVENTORY_DIGEST = '21245da38256e7de801b19447dc672146fe6313143ee5a279223b4475337b467'
+ALLOWED_RETIRED_FILES = {'agents/copywriter.py'}
+
+
+def inventory_digest(names):
+    encoded = json.dumps(sorted(names), ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
 
 def verify_release_manifest(release):
     """Verify an explicit release inventory before touching operational files."""
-    manifest = json.loads((release / 'release-manifest.json').read_text(encoding='utf-8'))
-    if (manifest.get('schema_version') != 1
+    manifest_path = release / 'release-manifest.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    if (set(manifest) != {'schema_version', 'revision', 'inventory_digest', 'files', 'retired_files'}
+            or manifest.get('schema_version') != 2
             or not isinstance(manifest.get('revision'), str)
             or len(manifest['revision']) != 40
             or any(char not in '0123456789abcdef' for char in manifest['revision'])
-            or not isinstance(manifest.get('files'), dict)):
+            or not isinstance(manifest.get('files'), dict)
+            or not isinstance(manifest.get('inventory_digest'), str)
+            or not isinstance(manifest.get('retired_files'), list)):
         raise ValueError('invalid_release_manifest')
     expected = manifest['files']
+    computed_inventory_digest = inventory_digest(expected)
+    if (manifest['inventory_digest'] != computed_inventory_digest
+            or computed_inventory_digest != CANONICAL_INVENTORY_DIGEST):
+        raise ValueError('release_inventory_contract_mismatch')
     actual = {p.relative_to(release).as_posix() for folder in ('agent-publisher', 'docs')
               for p in (release / folder).rglob('*') if p.is_file()}
     if set(expected) != actual:
@@ -28,6 +44,8 @@ def verify_release_manifest(release):
         if not path.is_relative_to(release.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('release_file_hash_mismatch')
     required = {
+        'agent-publisher/main.py',
+        'agent-publisher/config.py',
         'agent-publisher/agents/edit_post.py',
         'agent-publisher/agents/edit_orchestration.py',
         'agent-publisher/agents/editorial.py',
@@ -44,8 +62,8 @@ def verify_release_manifest(release):
     }
     if not required.issubset(expected):
         raise ValueError('required_release_module_missing')
-    retired = manifest.get('retired_files', [])
-    if not isinstance(retired, list) or set(retired) - {'agents/copywriter.py'}:
+    retired = manifest['retired_files']
+    if set(retired) != ALLOWED_RETIRED_FILES or len(retired) != len(ALLOWED_RETIRED_FILES):
         raise ValueError('invalid_release_retirement_scope')
     if retired and any('agents.copywriter' in (release / name).read_text(encoding='utf-8')
                        for name in expected if name.endswith('.py')):
@@ -71,13 +89,23 @@ def install(release, app):
     if not (app/'main.py').is_file() or not (app/'config.py').is_file():
         raise ValueError('existing_publisher_required')
     release_manifest = verify_release_manifest(release)
-    replace_entrypoints = (release / 'agent-publisher/main.py').is_file() or (release / 'agent-publisher/config.py').is_file()
-    if replace_entrypoints and (
-            not (release / 'agent-publisher/main.py').is_file()
-            or not (release / 'agent-publisher/config.py').is_file()
-            or not environment_config_is_external((app / 'config.py').read_text(encoding='utf-8'))
+    if (not environment_config_is_external((app / 'config.py').read_text(encoding='utf-8'))
             or not environment_config_is_external((release / 'agent-publisher/config.py').read_text(encoding='utf-8'))):
         raise ValueError('entrypoint_release_requires_external_environment_config')
+    release_runtime = {
+        Path(name).relative_to('agent-publisher').as_posix()
+        for name in release_manifest['files']
+        if name.startswith('agent-publisher/') and name.endswith('.py')
+    }
+    existing_runtime = {
+        path.relative_to(app).as_posix()
+        for pattern in ('*.py', 'agents/*.py')
+        for path in app.glob(pattern)
+        if path.is_file()
+    }
+    unexpected_existing = existing_runtime - release_runtime - ALLOWED_RETIRED_FILES
+    if unexpected_existing:
+        raise ValueError('unexpected_existing_runtime_module:' + sorted(unexpected_existing)[0])
     files = [p for p in (release/'agent-publisher').rglob('*') if p.is_file()]
     for p in files:
         if p.suffix not in {'.py', '.json'} or '.env' in p.parts or '__pycache__' in p.parts:
@@ -110,47 +138,28 @@ def install(release, app):
     try:
         for file in files:
             relative=file.relative_to(release/'agent-publisher')
-            # Existing topic research is user data. Do not replace the server's reviewed list.
-            if relative.as_posix()=='data/search_briefs.json' and (app/relative).exists():
-                continue
             put(app/relative,file.read_bytes())
         for name in policy_documents:
             source = release/'docs'/name
             if not source.is_file():
                 raise ValueError('required_policy_document_missing:' + name)
             put(app.parent/'docs'/name, source.read_bytes())
-        if not replace_entrypoints:
-            text=(app/'config.py').read_text(encoding='utf-8')
-            names={node.id for node in ast.walk(ast.parse(text)) if isinstance(node,ast.Name) and isinstance(node.ctx,ast.Store)}
-            if 'DRAFTS_INDEX_FILE' not in names:
-                text+='\nDRAFTS_INDEX_FILE = DATA_DIR / "draft_posts.json"\n'
-            if 'SITE_URL' not in names:
-                text+='\nSITE_URL = "http://localhost"  # Fallback only; actual permalinks are read from WordPress.\n'
-            put(app/'config.py',text.encode('utf-8'))
-            text=(app/'main.py').read_text(encoding='utf-8')
-            old='from agents.copywriter import CopywriterAgent'
-            new='from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent'
-            if old not in text and new not in text:
-                raise ValueError('unknown_main_entry_point')
-            text=text.replace(old,new)
-            if 'from sync_wordpress_inventory import sync_inventory' not in text:
-                text=text.replace(new,new+'\nfrom sync_wordpress_inventory import sync_inventory')
-            if '    sync_inventory()' not in text:
-                text=text.replace('    radar = RadarAgent()', '    sync_inventory()\n    radar = RadarAgent()')
-            put(app/'main.py',text.encode('utf-8'))
         for relative in release_manifest.get('retired_files', []):
             target = app / relative
             if target.exists():
                 put(target, b'')
                 target.unlink()
         python=app/'venv'/'bin'/'python'
-        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; from agents.editorial_writer import Plan; from agents.editorial import policy, validate_reviewed_content_provenance_registry; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); validate_reviewed_content_provenance_registry(); print("Editorial entrypoints and provenance registries ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; import agents.section_image; from agents.editorial_writer import Plan; from agents.editorial import policy, validate_renderer_provenance_registry, validate_reviewed_content_provenance_registry; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); validate_renderer_provenance_registry(); validate_reviewed_content_provenance_registry(); print("Editorial entrypoints and provenance registries ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
         installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes if Path(change['target']).exists()}
+        manifest_sha256 = hashlib.sha256((release/'release-manifest.json').read_bytes()).hexdigest()
         put(app/'data'/'editorial-release.json', json.dumps({
-            'schema_version': 1, 'revision': release_manifest['revision'],
+            'schema_version': 2, 'revision': release_manifest['revision'],
+            'release_manifest_sha256': manifest_sha256,
+            'inventory_digest': release_manifest['inventory_digest'],
             'installed_at_utc': datetime.now(timezone.utc).isoformat(),
             'files': installed_hashes,
-            'retired_files': release_manifest.get('retired_files', []),
+            'retired_files': release_manifest['retired_files'],
         }, indent=2).encode('utf-8'))
         print('Installed. Rollback manifest:',backup/'manifest.json')
     except Exception:

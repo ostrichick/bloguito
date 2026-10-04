@@ -173,7 +173,7 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
     agent_root = ROOT / 'agent-publisher'
     if str(agent_root) not in sys.path:
         sys.path.insert(0, str(agent_root))
-    from agents.editorial import recognized_reviewed_content_hashes
+    from agents.editorial import recognized_renderer_hashes, recognized_reviewed_content_hashes
     from agents.post_manifest_store import load_records, remove_record, upsert_record
     from config import CATEGORIES
 
@@ -232,18 +232,18 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_invalid'})
             continue
         if live.get('post_title') != reviewed_title:
-            if live_status == indexed_status:
-                continue
             skipped.append({'post_id': post_id, 'reason': 'live_title_changed'})
             continue
+        renderer_variants = set(recognized_renderer_hashes(
+            bundle['plan'], bundle['sources'], bundle.get('brief', {}).get('category_key'),
+            post_id=post_id,
+        ))
         provenance_variant = next(
             (name for name, digest in reviewed_hashes.items()
              if live.get('content_sha256') == digest),
             None,
         )
         if provenance_variant is None:
-            if live_status == indexed_status:
-                continue
             skipped.append({'post_id': post_id, 'reason': 'live_content_changed'})
             continue
 
@@ -295,10 +295,10 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             'to_status': live_status,
         }
         if provenance_variant != 'current':
-            if provenance_variant.startswith('completed-full-review-'):
-                moved_row['provenance_variant'] = provenance_variant
-            else:
+            if provenance_variant in renderer_variants:
                 moved_row['renderer_variant'] = provenance_variant
+            else:
+                moved_row['provenance_variant'] = provenance_variant
         moved.append(moved_row)
     return {'moved': moved, 'metadata_updated': metadata_updated, 'skipped': skipped}
 

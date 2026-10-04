@@ -3,6 +3,7 @@ import hashlib
 import json
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch, Mock
 
 from agents.editorial import validate_bundle, topic_reasons, digest, policy, policy_fingerprint, render, supported_counts
@@ -293,6 +294,7 @@ class EditorialTests(unittest.TestCase):
         article = article_from_bundle(self.b)
         with patch('sync_wordpress_inventory.sync_inventory'), \
              patch('agents.editorial_writer.load_inventory', return_value=self.inventory), \
+             patch('agents.featured_image.validate_featured_image_file', return_value={'width': 1200, 'height': 675}), \
              patch('agents.source_validation_cache.verify_explicit_live_sources',
                    side_effect=ValueError('official_sources_changed_since_review')), \
              patch('agents.editorial.datetime') as clock, \
@@ -300,7 +302,7 @@ class EditorialTests(unittest.TestCase):
             clock.now.return_value = NOW
             clock.fromisoformat = datetime.fromisoformat
             with self.assertRaisesRegex(ValueError, 'official_sources_changed_since_review'):
-                PublisherAgent().publish(article)
+                PublisherAgent().publish(article, image_path=Path('reviewed-cover.jpg'))
             run.assert_not_called()
 
     def test_writer_revises_within_budget_and_holds(self):
@@ -346,10 +348,10 @@ class EditorialTests(unittest.TestCase):
             if '--fields=post_status,post_content' in cmd:
                 return Mock(stdout=json.dumps({'post_status':'draft','post_content':article['content']}))
             return Mock(stdout='')
-        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record:
+        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.featured_image.validate_featured_image_file', return_value={'width': 1200, 'height': 675}), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record:
             clock.now.return_value=NOW
             clock.fromisoformat=datetime.fromisoformat
-            self.assertEqual(PublisherAgent().publish(article),999)
+            self.assertEqual(PublisherAgent().publish(article, image_path=Path('reviewed-cover.jpg')),999)
             self.assertEqual(sync.call_count,1)
             invalidate.assert_called_once_with()
             self.assertTrue(any('--post_status=draft' in c for c in commands))
