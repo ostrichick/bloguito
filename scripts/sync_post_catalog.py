@@ -163,8 +163,9 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
     agent_root = ROOT / 'agent-publisher'
     if str(agent_root) not in sys.path:
         sys.path.insert(0, str(agent_root))
-    from agents.editorial import render
+    from agents.editorial import recognized_renderer_hashes
     from agents.post_manifest_store import load_records, remove_record, upsert_record
+    from config import CATEGORIES
 
     data_dir = Path(data_dir)
     draft_index = data_dir / 'draft_posts.json'
@@ -188,6 +189,7 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             tracked[post_id] = (indexed_status, record)
 
     moved = []
+    metadata_updated = []
     skipped = []
     for post_id, (indexed_status, record) in sorted(tracked.items()):
         if post_id in duplicate_ids:
@@ -197,33 +199,73 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
         if not live:
             continue
         live_status = live.get('post_status')
-        if live_status not in indexes or live_status == indexed_status:
+        if live_status not in indexes:
             continue
         bundle = (record.get('fact_manifest') or {}).get('editorial_bundle')
         if not isinstance(bundle, dict):
+            if live_status == indexed_status:
+                continue
             skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_missing'})
             continue
         try:
             reviewed_title = bundle['plan']['title']
-            reviewed_sha = hashlib.sha256(
-                render(bundle['plan'], bundle['sources']).encode('utf-8')
-            ).hexdigest()
+            renderer_hashes = recognized_renderer_hashes(
+                bundle['plan'], bundle['sources'], bundle.get('brief', {}).get('category_key'),
+                post_id=post_id,
+            )
         except (KeyError, TypeError, ValueError):
             skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_invalid'})
             continue
-        if (live.get('post_title') != reviewed_title
-                or live.get('content_sha256') != reviewed_sha):
-            skipped.append({'post_id': post_id, 'reason': 'live_content_or_title_changed'})
+        if live.get('post_title') != reviewed_title:
+            if live_status == indexed_status:
+                continue
+            skipped.append({'post_id': post_id, 'reason': 'live_title_changed'})
+            continue
+        renderer_variant = next(
+            (name for name, digest in renderer_hashes.items()
+             if live.get('content_sha256') == digest),
+            None,
+        )
+        if renderer_variant is None:
+            if live_status == indexed_status:
+                continue
+            skipped.append({'post_id': post_id, 'reason': 'live_content_changed'})
             continue
 
         source_index = indexes[indexed_status]
         target_index = indexes[live_status]
-        source_raw = source_index.read_bytes() if source_index.exists() else None
-        target_raw = target_index.read_bytes() if target_index.exists() else None
         updated = dict(record)
         updated['status'] = live_status
+        updated['title'] = reviewed_title
         if isinstance(live.get('permalink'), str) and live['permalink'].startswith('https://lifeinfo24.org/'):
             updated['url'] = live['permalink']
+        slugs = live.get('category_slugs')
+        names = live.get('categories')
+        if isinstance(slugs, list) and len(slugs) == 1 and isinstance(names, list) and len(names) == 1:
+            category = next(
+                (value for value in CATEGORIES.values()
+                 if value.get('slug') == slugs[0] and value.get('name') == names[0]),
+                None,
+            )
+            if category is not None:
+                updated['category_id'] = category['id']
+                updated['category_name'] = category['name']
+
+        if live_status == indexed_status:
+            if updated != record:
+                upsert_record(source_index, updated)
+                metadata_updated.append({
+                    'post_id': post_id,
+                    'status': live_status,
+                    'fields': sorted(
+                        key for key in updated
+                        if updated.get(key) != record.get(key)
+                    ),
+                })
+            continue
+
+        source_raw = source_index.read_bytes() if source_index.exists() else None
+        target_raw = target_index.read_bytes() if target_index.exists() else None
         try:
             upsert_record(target_index, updated)
             if not remove_record(source_index, post_id):
@@ -232,12 +274,15 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             _restore_index_bytes(source_index, source_raw)
             _restore_index_bytes(target_index, target_raw)
             raise
-        moved.append({
+        moved_row = {
             'post_id': post_id,
             'from_status': indexed_status,
             'to_status': live_status,
-        })
-    return {'moved': moved, 'skipped': skipped}
+        }
+        if renderer_variant != 'current':
+            moved_row['renderer_variant'] = renderer_variant
+        moved.append(moved_row)
+    return {'moved': moved, 'metadata_updated': metadata_updated, 'skipped': skipped}
 
 
 def load_reviewed_bundles(data_dir: Path = EDITORIAL_DATA_DIR):
@@ -453,6 +498,9 @@ def sync_catalog():
     for row in reconciliation['moved']:
         print('[Sync Catalog] Reviewed state reconciled: '
               f"#{row['post_id']} {row['from_status']} -> {row['to_status']}")
+    for row in reconciliation.get('metadata_updated', []):
+        print('[Sync Catalog] Reviewed metadata reconciled: '
+              f"#{row['post_id']} fields={','.join(row['fields'])}")
     for row in reconciliation['skipped']:
         print('[Sync Catalog] WARNING: reviewed state not reconciled for '
               f"#{row['post_id']}: {row['reason']}")

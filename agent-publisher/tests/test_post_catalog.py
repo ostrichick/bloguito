@@ -211,6 +211,7 @@ class TestPostCatalog(unittest.TestCase):
             published = json.loads((data / 'published_posts.json').read_text(encoding='utf-8'))
             self.assertEqual('publish', published[0]['status'])
             self.assertEqual('https://lifeinfo24.org/test/', published[0]['url'])
+            self.assertEqual([], result['metadata_updated'])
 
     def test_reviewed_status_reconcile_refuses_live_content_change(self):
         record, _content = self._reviewed_record()
@@ -231,12 +232,41 @@ class TestPostCatalog(unittest.TestCase):
 
             self.assertEqual([], result['moved'])
             self.assertEqual(
-                [{'post_id': 844, 'reason': 'live_content_or_title_changed'}],
+                [{'post_id': 844, 'reason': 'live_content_changed'}],
                 result['skipped'])
             self.assertEqual(json.loads(original), json.loads(
                 (data / 'draft_posts.json').read_text(encoding='utf-8')))
             self.assertEqual([], json.loads(
                 (data / 'published_posts.json').read_text(encoding='utf-8')))
+
+    def test_reviewed_status_reconcile_accepts_exact_known_previous_renderer(self):
+        from agents.editorial import _previous_responsive_layout_variant
+        record, content = self._reviewed_record()
+        previous = _previous_responsive_layout_variant(content)
+        self.assertNotEqual(content, previous)
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / 'draft_posts.json').write_text(
+                json.dumps([record], ensure_ascii=False), encoding='utf-8')
+            (data / 'published_posts.json').write_text('[]', encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': record['title'],
+                'post_status': 'publish',
+                'permalink': 'https://lifeinfo24.org/test/',
+                'content_sha256': hashlib.sha256(previous.encode('utf-8')).hexdigest(),
+            }]
+
+            result = reconcile_reviewed_statuses(live, data)
+
+            self.assertEqual([{
+                'post_id': 844,
+                'from_status': 'draft',
+                'to_status': 'publish',
+                'renderer_variant': 'pre-responsive-layout-v1',
+            }], result['moved'])
+            self.assertEqual([], json.loads(
+                (data / 'draft_posts.json').read_text(encoding='utf-8')))
 
     def test_reviewed_status_reconcile_moves_exact_publish_back_to_draft(self):
         record, content = self._reviewed_record(status='publish')
@@ -262,6 +292,41 @@ class TestPostCatalog(unittest.TestCase):
             self.assertEqual('draft', drafts[0]['status'])
             self.assertEqual([], json.loads(
                 (data / 'published_posts.json').read_text(encoding='utf-8')))
+
+    def test_reviewed_metadata_reconcile_updates_safe_outer_fields_only(self):
+        record, content = self._reviewed_record(status='publish', title='현재 제목')
+        record['title'] = '예전 제목'
+        record['category_id'] = 2
+        record['category_name'] = '공연/콘서트 예매'
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / 'draft_posts.json').write_text('[]', encoding='utf-8')
+            (data / 'published_posts.json').write_text(
+                json.dumps([record], ensure_ascii=False), encoding='utf-8')
+            live = [{
+                'ID': 844,
+                'post_title': '현재 제목',
+                'post_status': 'publish',
+                'permalink': 'https://lifeinfo24.org/current/',
+                'content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
+                'category_slugs': ['concert'],
+                'categories': ['공연/콘서트'],
+            }]
+
+            result = reconcile_reviewed_statuses(live, data)
+
+            self.assertEqual([], result['moved'])
+            self.assertEqual([{
+                'post_id': 844,
+                'status': 'publish',
+                'fields': ['category_name', 'title', 'url'],
+            }], result['metadata_updated'])
+            saved = json.loads(
+                (data / 'published_posts.json').read_text(encoding='utf-8'))[0]
+            self.assertEqual('현재 제목', saved['title'])
+            self.assertEqual('https://lifeinfo24.org/current/', saved['url'])
+            self.assertEqual('공연/콘서트', saved['category_name'])
+            self.assertEqual(2, saved['category_id'])
 
 if __name__ == "__main__":
     unittest.main()

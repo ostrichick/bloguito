@@ -8,11 +8,14 @@ import json
 import os
 import re
 
-from agents.editorial import ROOT, excerpt_from_lead, render
+from agents.editorial import (
+    ROOT, excerpt_from_lead, recognized_renderer_hashes, recognized_renderer_outputs, render,
+)
 from agents.editorial_updater import _existing_lead_excerpt
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
     build_fast_stored_bundle,
+    classify_fast_edit,
     prepare_fast_delta_review,
     validate_fast_edit,
     validate_prepared_delta_review,
@@ -60,11 +63,38 @@ def normalize_public_fast_candidate(old_bundle: dict, new_bundle: dict, post_id:
     return candidate
 
 
-def classify_public_fast_edit(post_id: int, bundle: dict) -> dict:
+def _recognized_content_hashes(bundle: dict, post_id: int) -> dict[str, str]:
+    return recognized_renderer_hashes(
+        bundle["plan"],
+        bundle["sources"],
+        bundle.get("brief", {}).get("category_key"),
+        post_id=post_id,
+    )
+
+
+def classify_public_fast_edit(
+    post_id: int,
+    bundle: dict,
+    *,
+    expected_content_sha256: str | None = None,
+) -> dict:
     old_bundle = load_tracked_public_bundle(post_id)
     candidate = normalize_public_fast_candidate(old_bundle, bundle, post_id)
-    expected_old = render(old_bundle["plan"], old_bundle["sources"])
-    report = validate_fast_edit(old_bundle, candidate)
+    hashes = _recognized_content_hashes(old_bundle, post_id)
+    renderer_variant = next(
+        (name for name, digest in hashes.items() if digest == expected_content_sha256),
+        None,
+    ) if expected_content_sha256 else None
+    renderer_migration = bool(
+        candidate == old_bundle
+        and renderer_variant is not None
+        and renderer_variant != "current"
+    )
+    report = (
+        classify_fast_edit(old_bundle, candidate)
+        if renderer_migration
+        else validate_fast_edit(old_bundle, candidate)
+    )
     reasons = list(report.get("reasons", []))
     return {
         "route": "fast" if report.get("status") == "candidate" and not reasons else "standard",
@@ -72,8 +102,115 @@ def classify_public_fast_edit(post_id: int, bundle: dict) -> dict:
         "fast_report": report,
         "candidate": candidate,
         "tracked_bundle": old_bundle,
-        "tracked_content_sha256": content_sha256(expected_old),
+        "tracked_content_sha256": hashes["current"],
+        "tracked_content_sha256s": sorted(set(hashes.values())),
+        "renderer_migration": renderer_migration,
+        "renderer_variant": renderer_variant,
     }
+
+
+def migrate_public_renderer(
+    post_id: int,
+    bundle: dict,
+    expected_content_sha256: str,
+    *,
+    confirmed: bool = False,
+) -> int:
+    """Migrate one exact recognized prior renderer output to the current renderer.
+
+    No source, fact, wording, CTA, title, SEO or manifest content may change.
+    This path exists only for deterministic renderer-version normalization.
+    """
+    if not confirmed or not isinstance(post_id, int) or post_id <= 0:
+        raise ValueError("specific_public_post_update_confirmation_required")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
+        raise ValueError("original_content_sha256_required")
+
+    lock = acquire_editorial_lock(ROOT)
+    try:
+        state_snapshot = load_record(POSTS_INDEX_FILE, post_id)
+        if state_snapshot is None:
+            raise ValueError("reviewed_public_manifest_required")
+        item = state_snapshot.record
+        old_bundle = item.get("fact_manifest", {}).get("editorial_bundle")
+        if not isinstance(old_bundle, dict):
+            raise ValueError("reviewed_public_manifest_required")
+        candidate = normalize_public_fast_candidate(old_bundle, bundle, post_id)
+        if candidate != old_bundle:
+            raise ValueError("renderer_migration_bundle_must_be_unchanged")
+
+        outputs = recognized_renderer_outputs(
+            old_bundle["plan"],
+            old_bundle["sources"],
+            old_bundle.get("brief", {}).get("category_key"),
+        )
+        hashes = recognized_renderer_hashes(
+            old_bundle["plan"],
+            old_bundle["sources"],
+            old_bundle.get("brief", {}).get("category_key"),
+            post_id=post_id,
+        )
+        baseline_name = next(
+            (name for name, digest in hashes.items()
+             if digest == expected_content_sha256),
+            None,
+        )
+        if baseline_name in {None, "current"}:
+            raise ValueError("renderer_migration_previous_output_required")
+        desired = outputs["current"]
+
+        base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+        fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+        live = get_post(base, post_id, fields=fields)
+        if (not verify_cas(
+                live,
+                status="publish",
+                title=old_bundle["plan"]["title"],
+                content_sha=expected_content_sha256)):
+            raise ValueError("public_post_changed_before_renderer_migration")
+        if baseline_name in outputs and live.get("post_content", "") != outputs[baseline_name]:
+            raise ValueError("public_post_changed_before_renderer_migration")
+        assert_unchanged(state_snapshot)
+
+        post_backup = backup_json(ROOT, "renderer-public-edit", post_id, live)
+        archive = ROOT / "data" / "editorial_runs"
+        stamp = post_backup.stem.rsplit("-", 1)[-1]
+        index_backup = archive / f"renderer-public-edit-index-{post_id}-{stamp}.json"
+        index_backup.write_text(
+            json.dumps(snapshot_backup_payload(state_snapshot), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.chmod(index_backup, 0o600)
+
+        saved = guarded_update_post(
+            base,
+            post_id,
+            expected={
+                "post_status": "publish",
+                "post_title": live.get("post_title", ""),
+                "post_name": live.get("post_name", ""),
+                "post_excerpt": live.get("post_excerpt", ""),
+                "content_sha256": expected_content_sha256,
+            },
+            updates={"post_content": desired},
+        )
+        if not verify_saved_fields(
+                saved,
+                expected={
+                    "post_status": "publish",
+                    "post_title": live.get("post_title", ""),
+                    "post_content": desired,
+                    "post_excerpt": live.get("post_excerpt", ""),
+                },
+                preserved={"post_name": live.get("post_name", "")}):
+            raise ValueError(
+                f"renderer_public_save_verification_failed: recover from {post_backup}"
+            )
+        assert_unchanged(state_snapshot)
+        invalidate_inventory()
+        return post_id
+    finally:
+        release_editorial_lock(lock)
 
 
 def fast_update_public_post(
@@ -109,7 +246,17 @@ def fast_update_public_post(
             raise ValueError("reviewed_public_manifest_required")
         candidate = normalize_public_fast_candidate(old_bundle, bundle, post_id)
         old_rendered = render(old_bundle["plan"], old_bundle["sources"])
-        if content_sha256(old_rendered) != expected_content_sha256:
+        recognized = recognized_renderer_outputs(
+            old_bundle["plan"],
+            old_bundle["sources"],
+            old_bundle.get("brief", {}).get("category_key"),
+        )
+        baseline_rendered = next(
+            (content for content in recognized.values()
+             if content_sha256(content) == expected_content_sha256),
+            None,
+        )
+        if baseline_rendered is None:
             raise ValueError(FULL_REVIEW_REQUIRED + ":public_manifest_not_bound_to_expected_content")
 
         report = validate_fast_edit(old_bundle, candidate)
@@ -133,7 +280,7 @@ def fast_update_public_post(
                 status="publish",
                 title=old_bundle["plan"]["title"],
                 content_sha=expected_content_sha256)
-                or live.get("post_content", "") != old_rendered):
+                or live.get("post_content", "") != baseline_rendered):
             raise ValueError("public_post_changed_before_fast_revision")
         assert_unchanged(state_snapshot)
 

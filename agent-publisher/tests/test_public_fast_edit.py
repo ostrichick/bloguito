@@ -7,11 +7,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agents.editorial import digest, render
+from agents.editorial import (
+    _previous_responsive_layout_variant, digest, recognized_renderer_hashes, render,
+)
 from agents.fast_edit import validate_fast_edit
 from agents.public_fast_edit import (
     classify_public_fast_edit,
     fast_update_public_post,
+    migrate_public_renderer,
 )
 from agents.temporal_validation import KST
 from test_editorial_system import sample
@@ -127,6 +130,55 @@ class PublicFastEditTests(unittest.TestCase):
             hashlib.sha256(render(old['plan'], old['sources']).encode()).hexdigest(),
             decision['tracked_content_sha256'])
 
+    def test_classifier_routes_exact_previous_renderer_as_migration_without_freshness_review(self):
+        old = current_bundle()
+        stale = copy.deepcopy(old)
+        stale['brief']['review_until'] = '2020-01-01'
+        previous = _previous_responsive_layout_variant(render(stale['plan'], stale['sources']))
+        expected = hashlib.sha256(previous.encode()).hexdigest()
+        with tempfile.TemporaryDirectory() as folder:
+            index = Path(folder) / 'published_posts.json'
+            index.write_text(json.dumps([{
+                'id': 243, 'fact_manifest': {'editorial_bundle': stale},
+            }], ensure_ascii=False), encoding='utf-8')
+            with patch('agents.public_fast_edit.POSTS_INDEX_FILE', index):
+                decision = classify_public_fast_edit(
+                    243, stale, expected_content_sha256=expected)
+        self.assertEqual('fast', decision['route'])
+        self.assertTrue(decision['renderer_migration'])
+        self.assertEqual('pre-responsive-layout-v1', decision['renderer_variant'])
+        self.assertIn(expected, decision['tracked_content_sha256s'])
+
+    def test_historical_registry_is_bound_to_post_and_current_bundle_sha(self):
+        old = current_bundle()
+        current = render(old['plan'], old['sources'])
+        current_sha = hashlib.sha256(current.encode()).hexdigest()
+        historical_sha = '1' * 64
+        with tempfile.TemporaryDirectory() as folder:
+            registry = Path(folder) / 'renderer_provenance.json'
+            registry.write_text(json.dumps({
+                'schema_version': 1,
+                'entries': [{
+                    'post_id': 243,
+                    'current_sha256': current_sha,
+                    'historical_sha256': historical_sha,
+                    'renderer_revision': '44af7c6',
+                    'variant': 'historical-test',
+                }],
+            }), encoding='utf-8')
+            with patch('agents.editorial.RENDERER_PROVENANCE_FILE', registry):
+                hashes = recognized_renderer_hashes(
+                    old['plan'], old['sources'], post_id=243)
+                wrong_post = recognized_renderer_hashes(
+                    old['plan'], old['sources'], post_id=244)
+                changed = copy.deepcopy(old)
+                changed['plan']['lead']['text'] += ' 변경'
+                wrong_bundle = recognized_renderer_hashes(
+                    changed['plan'], changed['sources'], post_id=243)
+        self.assertEqual(historical_sha, hashes['historical-test'])
+        self.assertNotIn('historical-test', wrong_post)
+        self.assertNotIn('historical-test', wrong_bundle)
+
     def test_fast_public_refuses_stale_manifest_binding(self):
         old = current_bundle()
         new = copy.deepcopy(old)
@@ -144,6 +196,109 @@ class PublicFastEditTests(unittest.TestCase):
                     fast_update_public_post(
                         243, new, '0' * 64, confirmed=True,
                         edit_intent='표현만 간단히 정리')
+
+    def test_fast_public_accepts_exact_known_previous_renderer_baseline(self):
+        old = current_bundle()
+        new = copy.deepcopy(old)
+        new['plan']['sections'][0]['heading'] = '버리는 순서'
+        current_old = render(old['plan'], old['sources'])
+        previous_old = _previous_responsive_layout_variant(current_old)
+        self.assertNotEqual(current_old, previous_old)
+        new_body = render(new['plan'], new['sources'])
+        report = validate_fast_edit(old, new)
+        intent = '과거 renderer 레이아웃을 현행 반응형 renderer로 정규화'
+        prepared = delta_review(old, new, report, intent)
+        live = {
+            'ID': 243,
+            'post_status': 'publish',
+            'post_title': old['plan']['title'],
+            'post_name': 'stable-slug',
+            'post_content': previous_old,
+            'post_excerpt': '사람이 직접 작성한 요약',
+        }
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / 'data'
+            data.mkdir()
+            index = data / 'published_posts.json'
+            index.write_text(json.dumps([{
+                'id': 243, 'status': 'publish',
+                'fact_manifest': {'editorial_bundle': old},
+            }], ensure_ascii=False), encoding='utf-8')
+
+            def run(args, **kwargs):
+                if args[5:7] == ['post', 'get']:
+                    return Mock(stdout=json.dumps(live, ensure_ascii=False))
+                if args[5] == 'eval':
+                    payload = json.loads(kwargs['input'])
+                    live.update(payload['updates'])
+                    return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}, ensure_ascii=False))
+                raise AssertionError(args)
+
+            with patch('agents.public_fast_edit.ROOT', root), \
+                 patch('agents.public_fast_edit.POSTS_INDEX_FILE', index), \
+                 patch('agents.public_fast_edit.invalidate_inventory'), \
+                 patch('agents.wordpress_mutation.subprocess.run', side_effect=run):
+                result = fast_update_public_post(
+                    243,
+                    new,
+                    hashlib.sha256(previous_old.encode()).hexdigest(),
+                    confirmed=True,
+                    edit_intent=intent,
+                    prepared_delta_review=prepared,
+                )
+
+        self.assertEqual(243, result)
+        self.assertEqual(new_body, live['post_content'])
+
+    def test_renderer_migration_changes_only_exact_known_previous_output(self):
+        old = current_bundle()
+        current = render(old['plan'], old['sources'])
+        previous = _previous_responsive_layout_variant(current)
+        live = {
+            'ID': 243,
+            'post_status': 'publish',
+            'post_title': old['plan']['title'],
+            'post_name': 'stable-slug',
+            'post_content': previous,
+            'post_excerpt': '사람이 직접 작성한 요약',
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / 'data'
+            data.mkdir()
+            index = data / 'published_posts.json'
+            index.write_text(json.dumps([{
+                'id': 243, 'status': 'publish',
+                'fact_manifest': {'editorial_bundle': old},
+            }], ensure_ascii=False), encoding='utf-8')
+
+            def run(args, **kwargs):
+                if args[5:7] == ['post', 'get']:
+                    return Mock(stdout=json.dumps(live, ensure_ascii=False))
+                if args[5] == 'eval':
+                    payload = json.loads(kwargs['input'])
+                    self.assertEqual({'post_content'}, set(payload['updates']))
+                    live.update(payload['updates'])
+                    return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}, ensure_ascii=False))
+                raise AssertionError(args)
+
+            with patch('agents.public_fast_edit.ROOT', root), \
+                 patch('agents.public_fast_edit.POSTS_INDEX_FILE', index), \
+                 patch('agents.public_fast_edit.invalidate_inventory') as invalidate, \
+                 patch('agents.wordpress_mutation.subprocess.run', side_effect=run):
+                result = migrate_public_renderer(
+                    243,
+                    old,
+                    hashlib.sha256(previous.encode()).hexdigest(),
+                    confirmed=True,
+                )
+
+        self.assertEqual(243, result)
+        self.assertEqual(current, live['post_content'])
+        self.assertEqual('사람이 직접 작성한 요약', live['post_excerpt'])
+        invalidate.assert_called_once_with()
 
 
 if __name__ == '__main__':

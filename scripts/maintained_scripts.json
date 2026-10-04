@@ -7,6 +7,7 @@
     "audit_tag_governance.py": "Tag governance audit",
     "build_daily_growth_plan.py": "Private existing-vs-new daily growth decision builder",
     "build_content_cluster_report.py": "Curated content-cluster internal-link and orphan recommendation report",
+    "build_editorial_release.py": "Complete reproducible editorial runtime release builder",
     "build_growth_queue.py": "Private GSC/GA4 growth opportunity queue builder",
     "build_legacy_approval_dashboard.py": "Legacy approval dashboard generator",
     "build_legacy_current_dashboard.py": "Legacy current-state dashboard generator",

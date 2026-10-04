@@ -27,10 +27,20 @@ def verify_release_manifest(release):
         path = (release / name).resolve()
         if not path.is_relative_to(release.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('release_file_hash_mismatch')
-    required = {'agent-publisher/agents/edit_post.py', 'agent-publisher/editorial_cli.py',
-                'agent-publisher/agents/edit_orchestration.py', 'agent-publisher/editorial_policy.json',
-                'agent-publisher/agents/article_renderer.py', 'agent-publisher/agents/editorial_schema.py',
-                'agent-publisher/agents/source_collector.py', 'agent-publisher/agents/source_extractors.py'}
+    required = {
+        'agent-publisher/agents/edit_post.py',
+        'agent-publisher/agents/edit_orchestration.py',
+        'agent-publisher/agents/editorial.py',
+        'agent-publisher/agents/editorial_schema.py',
+        'agent-publisher/agents/public_fast_edit.py',
+        'agent-publisher/agents/source_collector.py',
+        'agent-publisher/agents/source_extractors.py',
+        'agent-publisher/agents/validation_router.py',
+        'agent-publisher/agents/wordpress_mutation.py',
+        'agent-publisher/data/renderer_provenance.json',
+        'agent-publisher/editorial_cli.py',
+        'agent-publisher/editorial_policy.json',
+    }
     if not required.issubset(expected):
         raise ValueError('required_release_module_missing')
     retired = manifest.get('retired_files', [])

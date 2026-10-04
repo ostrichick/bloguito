@@ -216,10 +216,10 @@ def build_validation_plan(
     elif resolved_route == "standard" or profile in {"standard-fact", "standard-cta", "standard-event"}:
         source_mode = "affected-or-live"
 
-    if resolved_route == "fast":
-        semantic_review = "delta"
-    elif profile in {"no-op", "docs-only", "quick-image"}:
+    if profile in {"no-op", "docs-only", "quick-image"}:
         semantic_review = "none"
+    elif resolved_route == "fast":
+        semantic_review = "delta"
     else:
         semantic_review = "full"
 

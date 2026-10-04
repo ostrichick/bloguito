@@ -22,6 +22,13 @@ class ValidationRouterTests(unittest.TestCase):
         self.assertEqual('quick-image', plan['profile'])
         self.assertEqual('none', plan['semantic_review'])
 
+    def test_fast_noop_requires_no_semantic_review(self):
+        old = sample()
+        plan = build_validation_plan(old, copy.deepcopy(old), route='fast')
+        self.assertEqual('no-op', plan['profile'])
+        self.assertEqual('not-applicable', plan['source_validation'])
+        self.assertEqual('none', plan['semantic_review'])
+
     def test_new_number_escalates_to_fact(self):
         old = sample()
         new = copy.deepcopy(old)

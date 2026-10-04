@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('release_installer', ROOT / 'scripts/install_editorial_release.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+builder_spec = importlib.util.spec_from_file_location(
+    'release_builder', ROOT / 'scripts/build_editorial_release.py')
+builder = importlib.util.module_from_spec(builder_spec)
+builder_spec.loader.exec_module(builder)
 
 
 class ReleaseManifestTests(unittest.TestCase):
@@ -18,8 +22,13 @@ class ReleaseManifestTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.files = {}
-        for name in ('agents/edit_post.py', 'editorial_cli.py', 'agents/edit_orchestration.py', 'editorial_policy.json',
-                     'agents/article_renderer.py', 'agents/editorial_schema.py', 'agents/source_collector.py', 'agents/source_extractors.py'):
+        for name in (
+                'agents/edit_post.py', 'editorial_cli.py', 'agents/edit_orchestration.py',
+                'editorial_policy.json', 'agents/article_renderer.py', 'agents/editorial.py',
+                'agents/editorial_schema.py', 'agents/public_fast_edit.py',
+                'agents/source_collector.py', 'agents/source_extractors.py',
+                'agents/validation_router.py', 'agents/wordpress_mutation.py',
+                'data/renderer_provenance.json'):
             path = self.root / 'agent-publisher' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'original')
@@ -95,3 +104,28 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertFalse((app / 'agents/edit_post.py').exists())
         self.assertFalse((app / 'data/editorial-release.json').exists())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
+
+    def test_canonical_builder_includes_all_agent_runtime_modules_and_excludes_tests(self):
+        inventory = builder.release_inventory(ROOT)
+        runtime_agents = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / 'agent-publisher' / 'agents').glob('*.py')
+        }
+        self.assertTrue(runtime_agents.issubset(set(inventory)))
+        self.assertIn('agent-publisher/agents/editorial.py', inventory)
+        self.assertIn('agent-publisher/agents/public_fast_edit.py', inventory)
+        self.assertIn('agent-publisher/agents/validation_router.py', inventory)
+        self.assertIn('agent-publisher/data/search_briefs.json', inventory)
+        self.assertIn('agent-publisher/data/renderer_provenance.json', inventory)
+        self.assertFalse(any('/tests/' in name or name.endswith('.example.json') for name in inventory))
+        self.assertFalse(any('.env' in name for name in inventory))
+
+    def test_canonical_builder_output_passes_installer_manifest_verification(self):
+        with tempfile.TemporaryDirectory() as folder:
+            release = Path(folder) / 'release'
+            result = builder.build_release(
+                release, root=ROOT, revision='b' * 40, require_clean=False)
+            manifest = installer.verify_release_manifest(release)
+        self.assertEqual('b' * 40, manifest['revision'])
+        self.assertEqual(result['files'], len(manifest['files']))
+        self.assertIn('agent-publisher/agents/editorial.py', manifest['files'])

@@ -25,6 +25,7 @@ from agents.reader_tools import validate_reader_tools
 from agents.volatility import explicit_contract, lifecycle_reasons, temporal_contract_reasons
 
 ROOT = Path(__file__).resolve().parents[1]
+RENDERER_PROVENANCE_FILE = ROOT / 'data' / 'renderer_provenance.json'
 
 
 def policy():
@@ -1328,6 +1329,91 @@ def render(plan, sources, category_key=None):
         'all_blocks': all_blocks,
         'official_navigation_links': official_navigation_links,
     }, map_key=KAKAO_MAP_JAVASCRIPT_KEY)
+
+
+def _previous_responsive_layout_variant(current_html):
+    """Reproduce the immediately prior renderer layout from current HTML.
+
+    This is intentionally presentation-only.  It removes the responsive CSS
+    additions introduced later without changing any reviewed reader text,
+    links, evidence, headings or table cells.
+    """
+    previous = re.sub(
+        r'<style id="bloguito-responsive-layout">.*?</style>',
+        '',
+        current_html,
+        count=1,
+        flags=re.DOTALL,
+    )
+    previous = re.sub(
+        r'<style>@media\(max-width:640px\)\{\.bloguito-cta-grid\{grid-template-columns:1fr!important\}\}</style>',
+        '',
+        previous,
+    )
+    previous = previous.replace(
+        '<div class="bloguito-cta-grid" style=',
+        '<div style=',
+    )
+    return previous
+
+
+def recognized_renderer_outputs(plan, sources, category_key=None):
+    """Return exact deterministic renderer outputs accepted as reviewed provenance.
+
+    Never use fuzzy HTML or text similarity here.  A live post is recognized
+    only when its body is byte-for-byte equal to one output generated from the
+    stored reviewed bundle by a known renderer version.
+    """
+    current = render(plan, sources, category_key)
+    outputs = {
+        'current': current,
+        'legacy': render_legacy(plan, sources),
+    }
+    previous = _previous_responsive_layout_variant(current)
+    if previous != current:
+        outputs['pre-responsive-layout-v1'] = previous
+    return outputs
+
+
+def recognized_renderer_hashes(plan, sources, category_key=None, *, post_id=None):
+    """Return exact renderer SHA bindings, including audited historical outputs.
+
+    Historical compatibility is intentionally post-specific and bound to the
+    current reviewed render SHA.  It cannot authorize a different bundle or a
+    fuzzy-similar live body.
+    """
+    outputs = recognized_renderer_outputs(plan, sources, category_key)
+    hashes = {
+        name: hashlib.sha256(content.encode('utf-8')).hexdigest()
+        for name, content in outputs.items()
+    }
+    if post_id is None or not RENDERER_PROVENANCE_FILE.is_file():
+        return hashes
+    payload = json.loads(RENDERER_PROVENANCE_FILE.read_text(encoding='utf-8'))
+    entries = payload.get('entries') if isinstance(payload, dict) else None
+    if payload.get('schema_version') != 1 or not isinstance(entries, list):
+        raise ValueError('invalid_renderer_provenance_registry')
+    current_sha = hashes['current']
+    seen = set()
+    for entry in entries:
+        if (not isinstance(entry, dict)
+                or set(entry) != {'post_id', 'current_sha256', 'historical_sha256',
+                                  'renderer_revision', 'variant'}
+                or type(entry.get('post_id')) is not int or entry['post_id'] <= 0
+                or not isinstance(entry.get('variant'), str) or not entry['variant']
+                or not isinstance(entry.get('renderer_revision'), str)
+                or not re.fullmatch(r'[0-9a-f]{7,40}', entry['renderer_revision'])
+                or any(not isinstance(entry.get(key), str)
+                       or not re.fullmatch(r'[0-9a-f]{64}', entry[key])
+                       for key in ('current_sha256', 'historical_sha256'))):
+            raise ValueError('invalid_renderer_provenance_registry')
+        token = (entry['post_id'], entry['variant'])
+        if token in seen:
+            raise ValueError('duplicate_renderer_provenance_entry')
+        seen.add(token)
+        if entry['post_id'] == post_id and entry['current_sha256'] == current_sha:
+            hashes[entry['variant']] = entry['historical_sha256']
+    return hashes
 
 
 def save_report(bundle, report):

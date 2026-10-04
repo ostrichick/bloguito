@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "post_id": 641,
+      "current_sha256": "78aa3ebed10a8eac20ae5e927f69e7a5b468b14e20b690a277e138a61aec3c17",
+      "historical_sha256": "047106bfc84e796e521e6943cf9ee4ac9745533504072c614c71fa866b052711",
+      "renderer_revision": "44af7c6",
+      "variant": "event-renderer-44af7c6"
+    },
+    {
+      "post_id": 648,
+      "current_sha256": "7965a53f06987d3b60a63e87f53d863c3793006c4f3884a9452192ea3bb7d99e",
+      "historical_sha256": "fef21692163f8b281723173536eda55e2b4bba1f22ea97bd8b7403d787b5cc8a",
+      "renderer_revision": "91f2da5",
+      "variant": "event-renderer-91f2da5"
+    }
+  ]
+}

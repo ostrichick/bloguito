@@ -27,6 +27,7 @@ from agents.public_fast_edit import (
     classify_public_fast_edit,
     fast_update_public_post,
     load_tracked_public_bundle,
+    migrate_public_renderer,
 )
 from agents.task_state import (
     complete_task_state,
@@ -177,7 +178,11 @@ def classify_reviewed_post_route(
             post_id, bundle, confirm_title_change=confirm_title_change, image_path=image_path,
             resume=resume, expected_content_sha256=expected_content_sha256)
         return {**result, "target_status": "draft"}
-    decision = classify_public_fast_edit(post_id, bundle)
+    decision = classify_public_fast_edit(
+        post_id,
+        bundle,
+        expected_content_sha256=expected_content_sha256,
+    )
     candidate = decision["candidate"] if decision["route"] == "fast" else bundle
     classification = classify_change(
         decision["tracked_bundle"],
@@ -190,7 +195,9 @@ def classify_reviewed_post_route(
     )
     reasons = list(classification["reasons"])
     if (expected_content_sha256 is not None
-            and decision["tracked_content_sha256"] != expected_content_sha256):
+            and expected_content_sha256 not in decision.get(
+                "tracked_content_sha256s", [decision["tracked_content_sha256"]]
+            )):
         reasons.append("public_manifest_not_bound_to_expected_content")
     if confirm_title_change:
         reasons = [reason for reason in reasons if reason != "forced_standard"]
@@ -324,20 +331,28 @@ def _edit_reviewed_public_post(
     )
     if simple_one_shot:
         increment("simple_one_shot")
-        prepared = prepare_fast_delta_review(
-            old_bundle,
-            candidate,
-            decision["fast_report"],
-            edit_intent,
-        )
-        updated = fast_update_public_post(
-            post_id,
-            candidate,
-            expected_content_sha256,
-            confirmed=True,
-            edit_intent=edit_intent,
-            prepared_delta_review=prepared,
-        )
+        if decision.get("renderer_migration"):
+            updated = migrate_public_renderer(
+                post_id,
+                candidate,
+                expected_content_sha256,
+                confirmed=True,
+            )
+        else:
+            prepared = prepare_fast_delta_review(
+                old_bundle,
+                candidate,
+                decision["fast_report"],
+                edit_intent,
+            )
+            updated = fast_update_public_post(
+                post_id,
+                candidate,
+                expected_content_sha256,
+                confirmed=True,
+                edit_intent=edit_intent,
+                prepared_delta_review=prepared,
+            )
         return {
             "post_id": updated,
             "target_status": "publish",
@@ -346,6 +361,8 @@ def _edit_reviewed_public_post(
             "qa_requirements": [],
             "validation_plan": decision.get("validation_plan", {}),
             "simple_one_shot": True,
+            "renderer_migration": bool(decision.get("renderer_migration")),
+            "renderer_variant": decision.get("renderer_variant"),
         }
 
     if resume:
@@ -426,6 +443,21 @@ def _edit_reviewed_public_post(
     try:
         if content_already_saved:
             updated = post_id
+        elif decision.get("renderer_migration"):
+            update_task_state(
+                post_id,
+                completed=["source_validation", "content_review"],
+                result={
+                    "renderer_migration": True,
+                    "renderer_variant": decision.get("renderer_variant"),
+                },
+            )
+            updated = migrate_public_renderer(
+                post_id,
+                candidate,
+                expected_content_sha256,
+                confirmed=True,
+            )
         elif decision["route"] == "fast":
             prepared = None
             if resume:
