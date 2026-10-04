@@ -123,9 +123,16 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_canonical_builder_output_passes_installer_manifest_verification(self):
         with tempfile.TemporaryDirectory() as folder:
             release = Path(folder) / 'release'
-            result = builder.build_release(
-                release, root=ROOT, revision='b' * 40, require_clean=False)
+            result = builder.build_release(release, root=ROOT, require_clean=False)
             manifest = installer.verify_release_manifest(release)
-        self.assertEqual('b' * 40, manifest['revision'])
+        self.assertEqual(builder._git(ROOT, 'rev-parse', 'HEAD'), manifest['revision'])
         self.assertEqual(result['files'], len(manifest['files']))
         self.assertIn('agent-publisher/agents/editorial.py', manifest['files'])
+
+    def test_canonical_builder_rejects_revision_not_matching_checkout_head(self):
+        with tempfile.TemporaryDirectory() as folder:
+            release = Path(folder) / 'release'
+            with self.assertRaisesRegex(ValueError, 'revision_must_match_head'):
+                builder.build_release(
+                    release, root=ROOT, revision='b' * 40, require_clean=False)
+            self.assertFalse(release.exists())

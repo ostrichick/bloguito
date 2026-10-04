@@ -77,7 +77,10 @@ def build_release(output_dir: Path, *, root: Path = ROOT, revision: str | None =
         raise ValueError("release_output_must_not_exist")
     if require_clean and _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("release_requires_clean_tracked_worktree")
-    revision = revision or _git(root, "rev-parse", "HEAD")
+    head_revision = _git(root, "rev-parse", "HEAD")
+    if revision is not None and revision != head_revision:
+        raise ValueError("release_revision_must_match_head")
+    revision = head_revision
     if len(revision) != 40 or any(ch not in "0123456789abcdef" for ch in revision):
         raise ValueError("invalid_release_revision")
     inventory = release_inventory(root)
