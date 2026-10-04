@@ -22,15 +22,38 @@ from agents.content_clusters import (  # noqa: E402
 )
 from agents.search_intent import INVENTORY  # noqa: E402
 
+CATALOG_INVENTORY = AGENT_ROOT / "data" / "catalog_inventory.json"
+
+
+def load_report_inventory(path: Path | None = None,
+                          catalog_fallback: Path = CATALOG_INVENTORY) -> dict:
+    """Load canonical lightweight inventory, or the complete catalog snapshot fallback.
+
+    The fallback is allowed only when the caller did not explicitly select a
+    different inventory and every row contains the URL state required for an
+    exact orphan audit.
+    """
+    if path is not None:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    if INVENTORY.is_file():
+        return json.loads(INVENTORY.read_text(encoding="utf-8"))
+    rows = json.loads(Path(catalog_fallback).read_text(encoding="utf-8"))
+    if (not isinstance(rows, list)
+            or any(not isinstance(row, dict)
+                   or not isinstance(row.get("content_urls"), list)
+                   for row in rows)):
+        raise ContentClusterError("catalog_inventory_missing_content_urls")
+    return {"schema_version": 2, "posts": rows}
+
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--inventory", type=Path, default=INVENTORY)
+    parser.add_argument("--inventory", type=Path)
     parser.add_argument("--clusters", type=Path, default=CLUSTERS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
-        inventory = json.loads(args.inventory.read_text(encoding="utf-8"))
+        inventory = load_report_inventory(args.inventory)
         report = cluster_link_report(inventory, load_clusters(args.clusters))
     except (OSError, ValueError, ContentClusterError) as exc:
         print("content_cluster_report_failed:" + (str(exc) or "invalid_cluster_input"),

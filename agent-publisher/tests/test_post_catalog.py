@@ -132,6 +132,9 @@ class TestPostCatalog(unittest.TestCase):
     def test_catalog_php_collects_current_permalink_for_growth_mapping(self):
         self.assertIn("'permalink' => (string)get_permalink($id)", catalog_sync.CATALOG_PHP)
 
+    def test_catalog_php_collects_content_urls_for_cluster_audit(self):
+        self.assertIn("'content_urls' => array_values(array_unique(wp_extract_urls(", catalog_sync.CATALOG_PHP)
+
     def test_catalog_sync_keeps_editorial_inventory_separate(self):
         """Catalog metadata must never overwrite the scheduler/editorial inventory."""
         posts = [{

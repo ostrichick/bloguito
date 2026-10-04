@@ -43,6 +43,7 @@ $q = new WP_Query(array(
 $o = array();
 foreach ($q->posts as $p) {
     $id = $p->ID;
+    $content = (string)$p->post_content;
     $categories = wp_get_post_categories($id, array('fields' => 'names'));
     $o[] = array(
         'ID' => (int)$id,
@@ -51,7 +52,8 @@ foreach ($q->posts as $p) {
         'post_name' => (string)$p->post_name,
         'permalink' => (string)get_permalink($id),
         'post_date' => (string)$p->post_date,
-        'content_sha256' => hash('sha256', (string)$p->post_content),
+        'content_sha256' => hash('sha256', $content),
+        'content_urls' => array_values(array_unique(wp_extract_urls(html_entity_decode($content, ENT_QUOTES|ENT_HTML5, 'UTF-8')))),
         'category_slugs' => wp_get_post_terms($id, 'category', array('fields' => 'slugs')),
         'categories' => array_values($categories),
         'rank_math_focus_keyword' => (string)get_post_meta($id, 'rank_math_focus_keyword', true),

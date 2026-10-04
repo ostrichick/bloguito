@@ -17,7 +17,7 @@
 - 신규 주제 demand gate 점수화: `score_topic_candidates.py`
 - 일일 성장 작업 결정: `build_daily_growth_plan.py`
 - 기존 글 성장 개선 완료 기록: `record_growth_work.py`
-- 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py`
+- 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py` (canonical `wordpress_inventory.json`이 없으면 최신 catalog sync의 URL-complete `catalog_inventory.json`을 사용하며, URL state가 불완전하면 fail closed)
 - 운영 editorial release 생성: `build_editorial_release.py` (항상 새 출력 폴더에 current HEAD runtime 전체 패키징)
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
 - Git 추적 파일 비밀정보 검사: `check_repo_secrets.py`
