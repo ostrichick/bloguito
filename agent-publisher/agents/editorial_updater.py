@@ -23,7 +23,7 @@ from agents.post_manifest_store import (
 from agents.related_links import missing_internal_post_ids
 from agents.editorial_writer import load_inventory
 from agents.source_validation_cache import verify_revision_sources
-from config import POSTS_INDEX_FILE, SITE_URL, resolve_category
+from config import POSTS_INDEX_FILE, resolve_category
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
     backup_json,
@@ -101,15 +101,26 @@ def _set_rank_math_meta(base, post_id, values):
             capture_output=True, text=True, encoding='utf-8', errors='strict', check=True)
 
 
-def _public_manifest_record(post_id, bundle, live_post):
+def _read_permalink(base, post_id):
+    """Read the canonical WordPress permalink instead of guessing from local config."""
+    result = run_wordpress(
+        list(base) + ['eval', f'echo get_permalink({int(post_id)});', '--allow-root'],
+        capture_output=True, text=True, encoding='utf-8', errors='strict', check=True)
+    permalink = (result.stdout or '').strip()
+    if not permalink.startswith(('https://', 'http://')) or permalink in {'https://', 'http://'}:
+        raise ValueError('wordpress_permalink_invalid')
+    return permalink
+
+
+def _public_manifest_record(post_id, bundle, live_post, permalink):
     """Build reviewed-state metadata only after a live public readback succeeded."""
     category = resolve_category(bundle.get('brief', {}).get('category_key', ''))
-    slug = (live_post.get('post_name') or '').strip('/')
-    url = f"{SITE_URL.rstrip('/')}/{slug}/" if slug else f"{SITE_URL.rstrip('/')}/?p={post_id}"
+    if not isinstance(permalink, str) or not permalink.startswith(('https://', 'http://')):
+        raise ValueError('wordpress_permalink_required')
     return {
         'id': post_id,
         'title': live_post.get('post_title') or bundle.get('plan', {}).get('title') or '',
-        'url': url,
+        'url': permalink,
         'category_id': category['id'],
         'category_name': category['name'],
         'status': 'publish',
@@ -122,7 +133,7 @@ def _public_manifest_record(post_id, bundle, live_post):
 
 
 def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, live_post=None,
-                                     stale_draft_snapshot=None):
+                                     stale_draft_snapshot=None, permalink=None):
     """Advance a reviewed manifest; optionally adopt a fully reviewed legacy public post."""
     index_file = POSTS_INDEX_FILE
     snapshot = load_record(index_file, post_id) if index_file.is_file() else None
@@ -130,7 +141,7 @@ def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, liv
         if allow_create:
             if not isinstance(live_post, dict) or live_post.get('post_status') != 'publish':
                 raise ValueError('legacy_public_manifest_live_readback_required')
-            record = _public_manifest_record(post_id, bundle, live_post)
+            record = _public_manifest_record(post_id, bundle, live_post, permalink)
             if stale_draft_snapshot is not None:
                 if stale_draft_snapshot.post_id != post_id:
                     raise ValueError('stale_draft_snapshot_target_mismatch')
@@ -223,6 +234,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         report = validate_bundle(bundle, remaining)
         if report['status'] != 'ready':
             raise ValueError(f'editorial_review_not_current: {report["reasons"]}')
+        manifest_permalink = _read_permalink(base, post_id) if adopt_missing_manifest else None
         if checkpoint_callback is not None:
             checkpoint_callback({
                 'inventory_checked_on': inventory.get('checked_on'),
@@ -247,7 +259,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
                 and not title_changed and not update_meta):
             _update_reviewed_public_manifest(
                 post_id, bundle, allow_create=adopt_missing_manifest, live_post=current,
-                stale_draft_snapshot=stale_draft_snapshot)
+                stale_draft_snapshot=stale_draft_snapshot, permalink=manifest_permalink)
             return post_id
         backup_payload = dict(current)
         if current_meta is not None:
@@ -289,7 +301,7 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
         _update_reviewed_public_manifest(
             post_id, bundle, allow_create=adopt_missing_manifest, live_post=saved,
-            stale_draft_snapshot=stale_draft_snapshot)
+            stale_draft_snapshot=stale_draft_snapshot, permalink=manifest_permalink)
         invalidate_inventory()
         return post_id
     finally:

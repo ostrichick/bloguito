@@ -26,6 +26,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             wp = _wp_args(args)
             if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
+            if wp and wp[0] == 'eval' and 'get_permalink' in wp[1]:
+                return Mock(returncode=0, stdout='https://lifeinfo24.org/stable-slug/\n', stderr='')
             if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
@@ -54,6 +56,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             saved = json.loads(index.read_text(encoding='utf-8'))
             self.assertEqual(1, len(saved))
             self.assertEqual(243, saved[0]['id'])
+            self.assertEqual('https://lifeinfo24.org/stable-slug/', saved[0]['url'])
             self.assertEqual(self.bundle, saved[0]['fact_manifest']['editorial_bundle'])
 
     def test_public_adoption_moves_unchanged_stale_draft_record_after_readback(self):
@@ -63,6 +66,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             wp = _wp_args(args)
             if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
+            if wp and wp[0] == 'eval' and 'get_permalink' in wp[1]:
+                return Mock(returncode=0, stdout='https://lifeinfo24.org/stable-slug/\n', stderr='')
             if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({
@@ -102,6 +107,44 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             saved = json.loads(public.read_text(encoding='utf-8'))
             self.assertEqual(1, len(saved))
             self.assertEqual('publish', saved[0]['status'])
+            self.assertEqual('https://lifeinfo24.org/stable-slug/', saved[0]['url'])
+
+    def test_legacy_public_adoption_rejects_invalid_wordpress_permalink_before_mutation(self):
+        calls = []
+
+        def execute(args, **kwargs):
+            calls.append(args)
+            wp = _wp_args(args)
+            if wp and wp[:2] == ['post', 'get']:
+                return Mock(stdout=json.dumps(self.post))
+            if wp and wp[0] == 'eval' and 'get_permalink' in wp[1]:
+                return Mock(returncode=0, stdout='\n', stderr='')
+            raise AssertionError(args)
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / 'data'
+            data.mkdir()
+            index = data / 'published_posts.json'
+            index.write_text('[]', encoding='utf-8')
+            with patch.object(updater, 'ROOT', root), \
+                 patch.object(updater, 'POSTS_INDEX_FILE', index), \
+                 patch.object(updater, 'sync_inventory'), \
+                 patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
+                 patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
+                 patch.object(updater, 'verify_revision_sources', return_value={
+                     'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
+                 patch.object(updater, 'render', return_value='Reviewed HTML'), \
+                 patch.object(updater.subprocess, 'run', side_effect=execute):
+                with self.assertRaisesRegex(ValueError, 'wordpress_permalink_invalid'):
+                    updater.update_existing_public_post(
+                        243, self.bundle, self.sha, confirmed=True, adopt_missing_manifest=True)
+            self.assertEqual([], json.loads(index.read_text(encoding='utf-8')))
+            self.assertFalse(any(
+                (_wp_args(args) or [None])[0] == 'eval'
+                and 'get_permalink' not in (_wp_args(args) or ['', ''])[1]
+                for args in calls
+            ))
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
