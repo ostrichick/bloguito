@@ -8,8 +8,13 @@
 *.pem
 *.p12
 *.pfx
+*.p8
+*.jks
+*.keystore
 gha-creds-*.json
 id_rsa
+id_dsa
+id_ecdsa
 id_ed25519
 credentials.json
 credentials.*.json
