@@ -371,6 +371,68 @@ class EditorialTests(unittest.TestCase):
             self.assertTrue(items[0]['editorial_direct'])
             rss.assert_not_called()
 
+    def test_policy_current_lifecycle_uses_direct_official_discovery(self):
+        from agents.radar import RadarAgent
+        brief = dict(self.b['brief'])
+        brief.update(volatility='policy-current', requires_live_state=False)
+        with patch('agents.radar.load_briefs', return_value=[brief]), \
+             patch('agents.radar.feedparser.parse') as rss:
+            radar = object.__new__(RadarAgent); radar.history = set()
+            items = radar.search_news('life-admin')
+            self.assertEqual(1, len(items))
+            self.assertTrue(items[0]['editorial_direct'])
+            rss.assert_not_called()
+
+    def test_seasonal_lifecycle_uses_news_discovery(self):
+        from agents.radar import RadarAgent
+        brief = dict(self.b['brief'])
+        brief.update(
+            content_type='dated', useful_until='2026-12-31', evergreen_reason=None,
+            volatility='seasonal', requires_live_state=False,
+            queries=['서초구 선풍기'],
+        )
+        with patch('agents.radar.load_briefs', return_value=[brief]), \
+             patch('agents.radar.feedparser.parse') as rss:
+            rss.return_value.entries = []
+            radar = object.__new__(RadarAgent); radar.history = set()
+            self.assertEqual([], radar.search_news('life-admin'))
+            rss.assert_called_once()
+
+    def test_invalid_explicit_lifecycle_is_not_discovered(self):
+        from agents.radar import RadarAgent
+        brief = dict(self.b['brief'])
+        brief.update(volatility='sometimes-current')
+        with patch('agents.radar.load_briefs', return_value=[brief]), \
+             patch('agents.radar.feedparser.parse') as rss:
+            radar = object.__new__(RadarAgent); radar.history = set()
+            self.assertEqual([], radar.search_news('life-admin'))
+            rss.assert_not_called()
+
+    def test_curator_direct_path_matches_discovery_contract(self):
+        from agents.curator import CuratorAgent
+        direct = dict(self.b['brief'])
+        direct.update(
+            volatility='policy-current', requires_live_state=False,
+            review_until='2026-10-31',
+        )
+        result = CuratorAgent().curate({
+            'editorial_direct': True,
+            'search_brief': direct,
+            'category_key': 'life-admin',
+        })
+        self.assertIsNotNone(result)
+
+        seasonal = dict(self.b['brief'])
+        seasonal.update(
+            content_type='dated', useful_until='2026-12-31', evergreen_reason=None,
+            volatility='seasonal', requires_live_state=False, review_until='2026-10-31',
+        )
+        self.assertIsNone(CuratorAgent().curate({
+            'editorial_direct': True,
+            'search_brief': seasonal,
+            'category_key': 'life-admin',
+        }))
+
     def test_actual_source_deadline_overrides_optimistic_brief(self):
         self.b['brief'].update(content_type='dated', useful_until='2026-12-31', category_key='welfare')
         text='신청기간: 2026.09.01 ~ 2026.09.15\n'+self.b['sources'][0]['text']

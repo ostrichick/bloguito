@@ -4,6 +4,7 @@ from datetime import datetime
 import feedparser
 from config import HISTORY_FILE, CATEGORIES
 from agents.search_intent import load_briefs, matches_brief
+from agents.volatility import DISCOVERY_DIRECT, DISCOVERY_NEWS, discovery_mode
 
 
 class RadarAgent:
@@ -61,14 +62,15 @@ class RadarAgent:
             briefs = [brief for brief in briefs if brief.get('id') == selected_brief_id]
         if not briefs:
             print("[RadarAgent] 검색 의도 검토가 완료된 유효 주제가 없어 보류합니다.")
-        # Evergreen service questions need not have a recent news article.
+        # Reviewed lifecycle metadata owns discovery once explicitly present.
+        # Unmigrated briefs retain the legacy content_type fallback.
         for brief in briefs:
-            if brief.get('content_type') == 'evergreen':
+            if discovery_mode(brief) == DISCOVERY_DIRECT:
                 collected.append({'category_key': category_key, 'category_id': cat_info['id'],
                     'category_name': cat_info['name'], 'keyword': brief['primary_keyword'],
                     'title': brief['primary_keyword'], 'link': brief['official_urls'][0],
                     'search_brief': brief, 'editorial_direct': True})
-        briefs = [b for b in briefs if b.get('content_type') != 'evergreen']
+        briefs = [b for b in briefs if discovery_mode(b) == DISCOVERY_NEWS]
         seen = set()
         for brief, keyword in [(b, q) for b in briefs for q in b['queries']]:
             encoded_query = urllib.parse.quote(keyword)

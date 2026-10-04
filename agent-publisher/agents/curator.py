@@ -6,6 +6,7 @@ from googlenewsdecoder import new_decoderv1
 from agents.ticket_validation import extract_expectation, parse_product, select_product
 from agents.temporal_validation import extract_evidence, validate_availability
 from agents.fact_validation import snapshot, build_manifest
+from agents.volatility import DISCOVERY_DIRECT, discovery_mode
 from config import KNOWN_ENTITIES, NOL_ACTIVE_SALE_FILTER_TOKEN
 
 
@@ -124,7 +125,7 @@ class CuratorAgent:
         if raw_item.get('editorial_direct'):
             from agents.editorial import topic_reasons
             brief = raw_item.get('search_brief', {})
-            if topic_reasons(brief) or brief.get('content_type') != 'evergreen':
+            if topic_reasons(brief) or discovery_mode(brief) != DISCOVERY_DIRECT:
                 return None
             # The shared writer fetches each reviewed official URL itself.
             return {**raw_item, 'ticket_verification': {'status': 'not_applicable'}}

@@ -5,11 +5,46 @@ from datetime import date
 from pathlib import Path
 
 from agents.editorial import policy_fingerprint, topic_reasons, validate_bundle
-from agents.volatility import migration_candidate, migration_report, temporal_contract_reasons
+from agents.volatility import (
+    DISCOVERY_DIRECT,
+    DISCOVERY_NEWS,
+    discovery_mode,
+    migration_candidate,
+    migration_report,
+    temporal_contract_reasons,
+)
 from tests.test_editorial_system import NOW, sample
 
 
 class VolatilityTests(unittest.TestCase):
+    def test_explicit_lifecycle_owns_discovery_mode(self):
+        for volatility in ('timeless-procedure', 'policy-current'):
+            with self.subTest(volatility=volatility):
+                self.assertEqual(
+                    DISCOVERY_DIRECT,
+                    discovery_mode({'volatility': volatility, 'content_type': 'dated'}),
+                )
+        for volatility in ('annual-policy', 'seasonal', 'one-off'):
+            with self.subTest(volatility=volatility):
+                self.assertEqual(
+                    DISCOVERY_NEWS,
+                    discovery_mode({'volatility': volatility, 'content_type': 'evergreen'}),
+                )
+
+    def test_unmigrated_discovery_keeps_legacy_content_type_fallback(self):
+        self.assertEqual(DISCOVERY_DIRECT, discovery_mode({'content_type': 'evergreen'}))
+        self.assertEqual(DISCOVERY_NEWS, discovery_mode({'content_type': 'dated'}))
+        self.assertEqual(
+            DISCOVERY_DIRECT,
+            discovery_mode({'content_type': 'evergreen', 'requires_live_state': True}),
+        )
+
+    def test_invalid_explicit_volatility_discovery_fails_closed(self):
+        self.assertIsNone(discovery_mode({
+            'volatility': 'sometimes-current',
+            'content_type': 'evergreen',
+        }))
+
     def test_missing_metadata_preserves_legacy_topic_result(self):
         brief = sample()['brief']
         before = topic_reasons(copy.deepcopy(brief), NOW.date())

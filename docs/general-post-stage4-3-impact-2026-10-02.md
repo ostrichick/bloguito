@@ -341,3 +341,13 @@ migration report의 최소 출력은 `{id, existing_content_type, suggested_vola
 - 운영 readback에서 두 brief 모두 `topic_reasons()==[]`, migration conflict `[]`이며, `main.py --help`의 현행 8개 category도 그대로 유지됐다.
 
 이 시점에서 지금 즉시 수행 가능한 4.3C 작업은 모두 끝냈다. category false HOLD, live-state save-time refetch, current-value claim의 bounded 기간, 자동 writer의 exact-period 주입까지 운영 경로에서 확인했다. **전체 legacy fallback을 지금 제거하지 않는 이유는 남은 기술 결함이 아니라, review window가 만료된 기존 brief들을 자동 재승인하지 않는 정책과 다음 정규 scheduler 표본이 아직 미래라는 점**이다. 따라서 4.3C의 전면 fallback 제거와 4.3D discovery 전환은 2026-10-03 08:00 KST 정규 실행 결과를 확인한 뒤 별도 변경으로 진행한다.
+
+### 2026-10-04 정규 scheduler 재감사와 제한적 4.3D 전환
+
+10월 3일·4일 운영 cron과 당시 배포 revision을 실제 로그·release backup으로 다시 대조했다. 운영 cron은 계속 `0 8 * * * /home/ubuntu/agent-publisher/run_daily.sh`이며, 10월 3일 08:00 실행은 `ea36c6d` revision에서 8개 카테고리를 모두 순회했지만 current brief가 없어 `candidates=0`, `errors=0`으로 끝났다. 10월 4일 08:00 실행은 `3ca7845` revision에서 Growth Planner가 `no_actionable_existing_or_eligible_new_topic`을 반환해 Radar 이전에 정상 종료됐다. 두 정규 실행 모두 파이프라인 안정성은 확인했지만 lifecycle별 discovery 분기를 실제 후보로 통과하지는 않았다.
+
+운영 `search_briefs.json`도 재검사했다. 총 13개 중 review window가 현재 유효하면서 explicit volatility metadata가 있는 row는 3개뿐이며 모두 `policy-current + evergreen`이다. 나머지 10개는 explicit volatility가 없고 review window가 만료됐다. 따라서 이 10개를 migration report 제안값만으로 재승인하거나 legacy `content_type`/category fallback을 제거하는 것은 여전히 금지한다. **4.3C 전면 fallback 제거는 계속 NO-GO**다.
+
+다만 4.3D는 현재 동작을 보존하는 좁은 단계로 진행할 근거가 충분하다. `agents.volatility.discovery_mode()`를 단일 routing 계약으로 추가해, explicit `timeless-procedure`/`policy-current`는 공식 source 직행, explicit `annual-policy`/`seasonal`/`one-off`는 news discovery를 사용한다. `volatility`가 없는 row는 기존 `content_type=evergreen → direct`, `dated → news` fallback을 그대로 유지하고, 잘못된 explicit volatility는 discovery에서 fail-closed한다. Radar와 Curator가 같은 helper를 사용하므로 producer/consumer drift도 막는다.
+
+현재 운영 데이터에서는 이 전환이 동작상 중립이다. 유효한 explicit 3개는 기존에도 `evergreen`이라 direct였고 새 계약에서도 `policy-current`라 direct다. metadata가 없는 10개는 기존 routing을 그대로 사용한다. 따라서 이번 변경은 만료 legacy row의 재채택이나 lifetime/category gate 완화를 포함하지 않는다. 실제 정규 scheduler가 lifecycle 분기를 통과했다는 E2E 증거는 향후 합법적으로 reviewed+growth-eligible candidate가 Radar에 도달할 때 별도로 기록한다.

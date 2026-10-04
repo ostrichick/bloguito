@@ -22,6 +22,8 @@ VOLATILITY_VALUES = frozenset({
     "one-off",
 })
 VOLATILITY_CONTRACT_VERSION = 1
+DISCOVERY_DIRECT = "official-direct"
+DISCOVERY_NEWS = "news-discovery"
 
 _LIVE_TEXT = re.compile(
     r"(?:현재|지금|예매|판매|접수|신청\s*가능|재고|잔여|좌석|금리|운영\s*중|마감\s*임박)"
@@ -139,6 +141,31 @@ def requires_live_refresh(brief: dict | None) -> bool:
     existing text regex remains an independent fallback in source cache code.
     """
     return isinstance(brief, dict) and brief.get("requires_live_state") is True
+
+
+def discovery_mode(brief: dict | None) -> str | None:
+    """Choose discovery from explicit lifecycle metadata when available.
+
+    Reviewed briefs with explicit volatility use the lifecycle contract. Briefs
+    that have not been migrated keep the legacy content_type routing so this
+    rollout cannot silently adopt or reinterpret expired legacy rows. Invalid
+    explicit volatility fails closed; normal brief loading rejects it as well.
+    """
+    if not isinstance(brief, dict):
+        return None
+    if "volatility" in brief:
+        volatility = brief.get("volatility")
+        if volatility in {"timeless-procedure", "policy-current"}:
+            return DISCOVERY_DIRECT
+        if volatility in {"annual-policy", "seasonal", "one-off"}:
+            return DISCOVERY_NEWS
+        return None
+    content_type = brief.get("content_type")
+    if content_type == "evergreen":
+        return DISCOVERY_DIRECT
+    if content_type == "dated":
+        return DISCOVERY_NEWS
+    return None
 
 
 def migration_candidate(brief: dict, *, today: date | None = None) -> dict:
