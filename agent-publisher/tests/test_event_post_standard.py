@@ -583,6 +583,9 @@ class EventPostStandardTests(unittest.TestCase):
         self.assertIn('실제 볼거리·체험', reviewer)
         self.assertIn('중복하지 않는지', reviewer)
         self.assertIn('마무리 section', reviewer)
+        self.assertIn('renderer가 결정론적으로 생성', reviewer)
+        self.assertIn('지도 URL이 section.actions에 없다는 이유로 실패시키지 말고', reviewer)
+        self.assertIn('booking/apply/purchase', reviewer)
 
     def test_event_generation_schema_exposes_event_only_fields(self):
         schema = EventPlan.model_json_schema()
