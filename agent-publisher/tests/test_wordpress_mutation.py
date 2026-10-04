@@ -275,6 +275,11 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
                          run.call_args.args[0][:6])
         self.assertEqual(['eval', GUARDED_CATEGORY_MUTATION_SCRIPT, '--allow-root'],
                          run.call_args.args[0][6:])
+        payload = json.loads(run.call_args.kwargs['input'])
+        self.assertEqual(1, payload['protocol'])
+        self.assertEqual(7, payload['post_id'])
+        self.assertEqual([4], payload['expected']['category_ids'])
+        self.assertEqual(274, payload['target_category_id'])
 
     def test_guarded_thumbnail_mutation_uses_exact_post_and_thumbnail_cas(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']

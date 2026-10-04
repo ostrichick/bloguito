@@ -276,6 +276,24 @@ def _guarded_category_payload(
         "post_status", "post_title", "post_name", "post_excerpt",
         "content_sha256", "category_ids",
     }
+    if (not isinstance(post_id, int) or post_id <= 0
+            or type(target_category_id) is not int or target_category_id <= 0
+            or not isinstance(expected, dict) or set(expected) != required
+            or any(not isinstance(expected[key], str)
+                   for key in required - {"category_ids"})
+            or not isinstance(expected["category_ids"], list)
+            or any(type(value) is not int or value <= 0 for value in expected["category_ids"])
+            or len(expected["category_ids"]) != len(set(expected["category_ids"]))):
+        raise ValueError("invalid_guarded_wordpress_category_expectation")
+    sha = expected["content_sha256"]
+    if len(sha) != 64 or any(ch not in "0123456789abcdef" for ch in sha):
+        raise ValueError("invalid_guarded_wordpress_category_expectation")
+    return {
+        "protocol": GUARDED_CATEGORY_MUTATION_PROTOCOL,
+        "post_id": post_id,
+        "expected": dict(expected),
+        "target_category_id": target_category_id,
+    }
 
 
 def _guarded_thumbnail_payload(
@@ -304,24 +322,6 @@ def _guarded_thumbnail_payload(
         "expected": dict(expected),
         "expected_thumbnail_id": expected_thumbnail_id,
         "attachment_id": attachment_id,
-    }
-    if (not isinstance(post_id, int) or post_id <= 0
-            or type(target_category_id) is not int or target_category_id <= 0
-            or not isinstance(expected, dict) or set(expected) != required
-            or any(not isinstance(expected[key], str)
-                   for key in required - {"category_ids"})
-            or not isinstance(expected["category_ids"], list)
-            or any(type(value) is not int or value <= 0 for value in expected["category_ids"])
-            or len(expected["category_ids"]) != len(set(expected["category_ids"]))):
-        raise ValueError("invalid_guarded_wordpress_category_expectation")
-    sha = expected["content_sha256"]
-    if len(sha) != 64 or any(ch not in "0123456789abcdef" for ch in sha):
-        raise ValueError("invalid_guarded_wordpress_category_expectation")
-    return {
-        "protocol": GUARDED_CATEGORY_MUTATION_PROTOCOL,
-        "post_id": post_id,
-        "expected": dict(expected),
-        "target_category_id": target_category_id,
     }
 
 
