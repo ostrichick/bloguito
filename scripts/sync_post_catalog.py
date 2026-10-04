@@ -220,7 +220,15 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
         try:
             reviewed_title = bundle['plan']['title']
             reviewed_hashes = recognized_reviewed_content_hashes(bundle, post_id=post_id)
-        except (KeyError, TypeError, ValueError):
+        except ValueError as exc:
+            reason = (
+                'reviewed_content_review_not_bound'
+                if str(exc) == 'reviewed_content_review_not_bound'
+                else 'reviewed_bundle_invalid'
+            )
+            skipped.append({'post_id': post_id, 'reason': reason})
+            continue
+        except (KeyError, TypeError):
             skipped.append({'post_id': post_id, 'reason': 'reviewed_bundle_invalid'})
             continue
         if live.get('post_title') != reviewed_title:

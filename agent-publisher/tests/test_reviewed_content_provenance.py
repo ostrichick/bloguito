@@ -275,7 +275,7 @@ class ReviewedContentCatalogReconcileTests(unittest.TestCase):
         self.assertEqual([], result["moved"])
         self.assertEqual([{
             "post_id": 844,
-            "reason": "reviewed_bundle_invalid",
+            "reason": "reviewed_content_review_not_bound",
         }], result["skipped"])
 
 
