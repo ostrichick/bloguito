@@ -13,7 +13,9 @@ from bs4 import BeautifulSoup
 from agents.editorial import ROOT, render, save_report, validate_bundle, excerpt_from_lead
 from agents.post_manifest_store import (
     acquire_editorial_lock,
+    assert_unchanged,
     load_record,
+    move_record,
     release_editorial_lock,
     replace_record,
     upsert_record,
@@ -119,7 +121,8 @@ def _public_manifest_record(post_id, bundle, live_post):
     }
 
 
-def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, live_post=None):
+def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, live_post=None,
+                                     stale_draft_snapshot=None):
     """Advance a reviewed manifest; optionally adopt a fully reviewed legacy public post."""
     index_file = POSTS_INDEX_FILE
     snapshot = load_record(index_file, post_id) if index_file.is_file() else None
@@ -127,7 +130,14 @@ def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, liv
         if allow_create:
             if not isinstance(live_post, dict) or live_post.get('post_status') != 'publish':
                 raise ValueError('legacy_public_manifest_live_readback_required')
-            upsert_record(index_file, _public_manifest_record(post_id, bundle, live_post))
+            record = _public_manifest_record(post_id, bundle, live_post)
+            if stale_draft_snapshot is not None:
+                if stale_draft_snapshot.post_id != post_id:
+                    raise ValueError('stale_draft_snapshot_target_mismatch')
+                assert_unchanged(stale_draft_snapshot)
+                move_record(stale_draft_snapshot, index_file, record)
+            else:
+                upsert_record(index_file, record)
             return True
         return False
     updated = dict(snapshot.record)
@@ -141,7 +151,8 @@ def _update_reviewed_public_manifest(post_id, bundle, *, allow_create=False, liv
 
 def update_existing_public_post(post_id, bundle, expected_content_sha256, *, confirmed=False,
                                 confirm_title_change=False, checkpoint_callback=None,
-                                tracked_baseline_bundle=None, adopt_missing_manifest=False):
+                                tracked_baseline_bundle=None, adopt_missing_manifest=False,
+                                stale_draft_snapshot=None):
     """Change reviewed content after a fresh review and unchanged-content check.
 
     The slug, status, categories, media and publication date are kept. Title
@@ -235,7 +246,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if (current['post_content'] == reviewed_content and not update_excerpt
                 and not title_changed and not update_meta):
             _update_reviewed_public_manifest(
-                post_id, bundle, allow_create=adopt_missing_manifest, live_post=current)
+                post_id, bundle, allow_create=adopt_missing_manifest, live_post=current,
+                stale_draft_snapshot=stale_draft_snapshot)
             return post_id
         backup_payload = dict(current)
         if current_meta is not None:
@@ -276,7 +288,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if reviewed_meta is not None and _read_rank_math_meta(base, post_id) != reviewed_meta:
             raise ValueError('public_edit_verification_failed: inspect WordPress before retrying')
         _update_reviewed_public_manifest(
-            post_id, bundle, allow_create=adopt_missing_manifest, live_post=saved)
+            post_id, bundle, allow_create=adopt_missing_manifest, live_post=saved,
+            stale_draft_snapshot=stale_draft_snapshot)
         invalidate_inventory()
         return post_id
     finally:

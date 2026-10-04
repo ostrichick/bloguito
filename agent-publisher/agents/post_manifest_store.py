@@ -293,6 +293,37 @@ def remove_record(index_path: Path | str, post_id: int) -> bool:
     return True
 
 
+def move_record(snapshot: StateSnapshot, target_index: Path | str, record: dict) -> None:
+    """Move one unchanged reviewed record between indexes with exact-byte rollback.
+
+    The source snapshot is the CAS token.  A crash may leave an unreferenced
+    manifest sidecar, but the two authoritative index files are restored exactly
+    on any failure.
+    """
+    target = Path(target_index)
+    if target.resolve() == snapshot.index_path.resolve():
+        raise ValueError("editorial_index_move_requires_distinct_target")
+    if int(record.get("id", -1)) != snapshot.post_id:
+        raise ValueError("invalid_editorial_record")
+    assert_unchanged(snapshot)
+    source_raw = snapshot.index_path.read_bytes()
+    target_raw = target.read_bytes() if target.exists() else None
+    try:
+        upsert_record(target, record)
+        # Recheck under the caller's editorial lock after the target write.  The
+        # target write must never silently authorize deletion of a changed source.
+        assert_unchanged(snapshot)
+        if not remove_record(snapshot.index_path, snapshot.post_id):
+            raise ValueError("editorial_index_move_source_missing")
+    except Exception:
+        _atomic_write_bytes(snapshot.index_path, source_raw)
+        if target_raw is None:
+            target.unlink(missing_ok=True)
+        else:
+            _atomic_write_bytes(target, target_raw)
+        raise
+
+
 def migrate_index(index_path: Path | str) -> int:
     index = Path(index_path)
     if not storage_enabled(index):

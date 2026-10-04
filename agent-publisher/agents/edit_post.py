@@ -151,6 +151,87 @@ def _legacy_public_standard_decision(
     }
 
 
+def _stale_draft_public_recovery_decision(
+    post_id: int,
+    bundle: dict,
+    expected_content_sha256: str,
+    *,
+    image_path: Path | str | None,
+    resume: bool,
+) -> dict | None:
+    """Recover only a reviewed draft index whose exact live target is now public."""
+    if bundle.get("brief", {}).get("existing_post_id") != post_id:
+        return None
+    if not DRAFTS_INDEX_FILE.is_file():
+        return None
+    snapshot = load_record(DRAFTS_INDEX_FILE, post_id)
+    if snapshot is None:
+        return None
+    tracked = snapshot.record.get("fact_manifest", {}).get("editorial_bundle")
+    if not isinstance(tracked, dict):
+        raise ValueError("reviewed_draft_manifest_required")
+    live = get_post(
+        ["sudo", "docker", "exec", "wordpress_app", "wp"],
+        post_id,
+        fields=["post_status", "post_title", "post_content"],
+    )
+    if live.get("post_status") != "publish":
+        return None
+    live_sha = content_sha256(live.get("post_content", ""))
+    desired_sha = content_sha256(render(bundle["plan"], bundle["sources"]))
+    allowed = {expected_content_sha256}
+    if resume:
+        allowed.add(desired_sha)
+    if live_sha not in allowed:
+        raise ValueError("stale_draft_public_live_sha_mismatch")
+    classification = classify_change(
+        tracked,
+        bundle,
+        image_changed=image_path is not None,
+        target_status="publish",
+        resume=resume,
+        force_standard=True,
+    )
+    reasons = [
+        reason for reason in classification["reasons"]
+        if reason != "forced_standard"
+    ]
+    reasons.extend([
+        "live_publish_with_stale_draft_reviewed_index",
+        "full_review_required",
+    ])
+    classification["route"] = "standard"
+    classification["reasons"] = reasons
+    validation_plan = build_validation_plan(
+        tracked,
+        bundle,
+        image_changed=image_path is not None,
+        target_status="publish",
+        resume=resume,
+        route="standard",
+        post_id=post_id,
+        expected_content_sha256=expected_content_sha256,
+        classification=classification,
+    )
+    return {
+        "candidate": bundle,
+        "tracked_bundle": tracked,
+        "tracked_content_sha256": None,
+        "tracked_content_sha256s": [],
+        "fast_report": classification.get("fast_report"),
+        "route": "standard",
+        "reasons": reasons,
+        "target_status": "publish",
+        "classification": classification,
+        "qa_requirements": list(classification["qa_scopes"]),
+        "validation_plan": validation_plan,
+        "legacy_public_adoption": True,
+        "stale_draft_public_recovery": True,
+        "stale_draft_snapshot": snapshot,
+        "live_content_already_desired": live_sha == desired_sha,
+    }
+
+
 def classify_reviewed_post_route(
     post_id: int,
     bundle: dict,
@@ -484,7 +565,8 @@ def _edit_reviewed_public_post(
                 post_id, bundle, expected_content_sha256, confirmed=True,
                 confirm_title_change=confirm_title_change, checkpoint_callback=checkpoint,
                 tracked_baseline_bundle=old_bundle,
-                adopt_missing_manifest=decision.get("legacy_public_adoption") is True)
+                adopt_missing_manifest=decision.get("legacy_public_adoption") is True,
+                stale_draft_snapshot=decision.get("stale_draft_snapshot"))
         update_task_state(post_id, completed=["baseline_read", "content_saved"])
 
         image_result = run_combined_image_phase(
@@ -557,6 +639,19 @@ def edit_reviewed_post(
             raise
         kind = "publish"
     if kind == "draft":
+        recovery = _stale_draft_public_recovery_decision(
+            post_id,
+            bundle,
+            expected_content_sha256,
+            image_path=image_path,
+            resume=resume,
+        )
+        if recovery is not None:
+            return _edit_reviewed_public_post(
+                post_id, bundle, expected_content_sha256, confirmed=confirmed,
+                edit_intent=edit_intent, confirm_title_change=confirm_title_change,
+                image_path=image_path, expected_thumbnail_id=expected_thumbnail_id,
+                alt_text=alt_text, resume=resume, prepared_decision=recovery)
         prepared = _validated_prepared_decision(
             prepared_decision,
             post_id=post_id,
