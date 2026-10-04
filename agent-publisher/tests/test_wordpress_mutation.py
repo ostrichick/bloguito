@@ -83,7 +83,11 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
                 updates={'post_content': 'new', 'post_excerpt': 'new excerpt'},
             )
         self.assertEqual(saved, result)
-        self.assertEqual(['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root'], seen['args'][5:])
+        self.assertEqual(
+            ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp'],
+            seen['args'][:6],
+        )
+        self.assertEqual(['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root'], seen['args'][6:])
         self.assertEqual(7, seen['payload']['post_id'])
 
     def test_guarded_update_recovers_exact_already_applied_state_after_retry(self):
@@ -114,6 +118,21 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
                 stdout=json.dumps({'status': 'cas_mismatch', 'current': current}))):
             with self.assertRaisesRegex(ValueError, 'wordpress_guarded_cas_mismatch'):
+                guarded_update_post(
+                    base,
+                    7,
+                    expected={
+                        'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                        'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                    },
+                    updates={'post_content': 'new', 'post_excerpt': 'new excerpt'},
+                )
+
+    def test_guarded_update_keeps_invalid_payload_fail_closed(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
+                stdout=json.dumps({'status': 'invalid_payload'}))):
+            with self.assertRaisesRegex(ValueError, 'wordpress_guarded_protocol_rejected'):
                 guarded_update_post(
                     base,
                     7,

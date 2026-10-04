@@ -22,6 +22,14 @@ from agents.fast_edit import (
 from test_editorial_system import NOW, sample
 
 
+def _wp_args(args):
+    if args[:6] == ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp']:
+        return args[6:]
+    if args[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']:
+        return args[5:]
+    return None
+
+
 class FastEditTests(unittest.TestCase):
     def _pair(self):
         old = sample()
@@ -280,11 +288,12 @@ class FastEditTests(unittest.TestCase):
 
             def run(args, **kwargs):
                 calls.append(args)
-                if args[5:7] == ['post', 'get']:
+                wp = _wp_args(args) or []
+                if wp[:2] == ['post', 'get']:
                     self.assertIn(
                         '--fields=post_status,post_title,post_name,post_content,post_excerpt', args)
                     return Mock(stdout=json.dumps(live))
-                if args[5] == 'eval':
+                if wp and wp[0] == 'eval':
                     payload = json.loads(kwargs['input'])
                     live.update(payload['updates'])
                     return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}))
@@ -332,9 +341,9 @@ class FastEditTests(unittest.TestCase):
             self.assertEqual(393, result)
             self.assertEqual(new_body, live['post_content'])
             self.assertEqual(2, len(calls))
-            self.assertEqual(1, sum(args[5] == 'eval' for args in calls))
-            self.assertFalse(any(args[5:7] == ['post', 'update'] for args in calls))
-            self.assertFalse(any(args[5:7] == ['post', 'list'] for args in calls))
+            self.assertEqual(1, sum((_wp_args(args) or [None])[0] == 'eval' for args in calls))
+            self.assertFalse(any((_wp_args(args) or [])[:2] == ['post', 'update'] for args in calls))
+            self.assertFalse(any((_wp_args(args) or [])[:2] == ['post', 'list'] for args in calls))
             saved = json.loads(index.read_text(encoding='utf-8'))[0]['fact_manifest']['editorial_bundle']
             self.assertIn('fast_edit_review', saved)
             self.assertEqual(1, len(saved['fast_edit_chain']))
@@ -389,9 +398,10 @@ class FastEditTests(unittest.TestCase):
             }]), encoding='utf-8')
 
             def run(args, **kwargs):
-                if args[5:7] == ['post', 'get']:
+                wp = _wp_args(args) or []
+                if wp[:2] == ['post', 'get']:
                     return Mock(stdout=json.dumps(live))
-                if args[5] == 'eval':
+                if wp and wp[0] == 'eval':
                     payload = json.loads(kwargs['input'])
                     live.update(payload['updates'])
                     return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}))

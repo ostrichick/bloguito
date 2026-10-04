@@ -8,6 +8,14 @@ from unittest.mock import Mock, patch
 from agents import editorial_updater as updater
 
 
+def _wp_args(args):
+    if args[:6] == ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp']:
+        return args[6:]
+    if args[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']:
+        return args[5:]
+    return None
+
+
 class ExistingPublicPostUpdateTests(unittest.TestCase):
     def test_legacy_public_full_update_adopts_reviewed_manifest_only_after_readback(self):
         updated = {**self.post, 'post_content': 'Reviewed HTML'}
@@ -15,9 +23,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         def execute(args, **kwargs):
             calls.append(args)
-            if args[5:7] == ['post', 'get']:
+            wp = _wp_args(args)
+            if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
-            if args[5] == 'eval':
+            if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
             return Mock(returncode=0, stdout='Success', stderr='', args=args)
@@ -51,9 +60,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         updated = {**self.post, 'post_content': 'Reviewed HTML'}
 
         def execute(args, **kwargs):
-            if args[5:7] == ['post', 'get']:
+            wp = _wp_args(args)
+            if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
-            if args[5] == 'eval':
+            if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({
                     'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
@@ -111,9 +121,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         def execute(args, **kwargs):
             calls.append(args)
-            if args[5:7] == ['post', 'get']:
+            wp = _wp_args(args)
+            if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
-            if args[5] == 'eval':
+            if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 saved = {**self.post, **payload['updates']}
                 return Mock(stdout=json.dumps({'status': 'ok', 'saved': saved}))
@@ -131,9 +142,9 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True))
         invalidate.assert_called_once_with()
-        guarded = [c for c in calls if c[5] == 'eval']
+        guarded = [c for c in calls if (_wp_args(c) or [None])[0] == 'eval']
         self.assertEqual(1, len(guarded))
-        self.assertFalse(any(c[5:7] == ['post', 'update'] for c in calls))
+        self.assertFalse(any((_wp_args(c) or [])[:2] == ['post', 'update'] for c in calls))
         self.assertEqual(1, len(list((Path(self.temp.name) / 'data/editorial_runs').glob('public-edit-*.json'))))
 
     def test_rejects_changed_post_before_any_update(self):
@@ -148,7 +159,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                 updater.update_existing_public_post(243, self.bundle, self.sha, confirmed=True)
             self.assertEqual(1, command.call_count)  # parallel target snapshot only
             self.assertFalse(any(
-                call.args[0][5] == 'eval' or call.args[0][5:7] == ['post', 'update']
+                ((_wp_args(call.args[0]) or [None])[0] == 'eval'
+                 or (_wp_args(call.args[0]) or [])[:2] == ['post', 'update'])
                 for call in command.call_args_list
             ))
 
@@ -175,9 +187,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         def execute(args, **kwargs):
             calls.append(args)
-            if args[5:7] == ['post', 'get']:
+            wp = _wp_args(args)
+            if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
-            if args[5] == 'eval':
+            if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
             return Mock(stdout='Success')
@@ -208,7 +221,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(
                 243, bundle, self.sha, confirmed=True, confirm_title_change=True))
-        guarded_call = next(c for c in calls if c[5] == 'eval')
+        guarded_call = next(c for c in calls if (_wp_args(c) or [None])[0] == 'eval')
         self.assertTrue(guarded_call)
         self.assertEqual('stable-slug', updated['post_name'])
 
@@ -219,9 +232,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         def execute(args, **kwargs):
             calls.append(args)
-            if args[5:7] == ['post', 'get']:
+            wp = _wp_args(args)
+            if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
-            if args[5] == 'eval':
+            if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
                 return Mock(stdout=json.dumps({'status': 'ok', 'saved': {**self.post, **payload['updates']}}))
             return Mock(stdout='Success')
@@ -238,7 +252,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(
                 243, bundle, self.sha, confirmed=True, confirm_title_change=True))
-        self.assertTrue(any(c[5] == 'eval' for c in calls))
+        self.assertTrue(any((_wp_args(c) or [None])[0] == 'eval' for c in calls))
 
     def test_updates_and_verifies_reviewed_rank_math_metadata_with_backup(self):
         bundle = {
@@ -261,7 +275,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         calls = []
         def execute(args, **kwargs):
             calls.append(args)
-            wp = args[5:]
+            wp = _wp_args(args) or []
             if wp[:2] == ['post', 'get']:
                 return Mock(returncode=0, stdout=json.dumps(self.post), stderr='', args=args)
             if wp and wp[0] == 'eval':
@@ -297,11 +311,12 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             'rank_math_description': '정부24 전입신고와 세대주 확인이 필요한 경우, 8일 확인 기한과 처리 순서를 정리합니다.',
         }
         self.assertEqual(expected, meta)
-        set_calls = [c for c in calls if c[5:8] == ['post', 'meta', 'set']]
+        set_calls = [c for c in calls if (_wp_args(c) or [])[:3] == ['post', 'meta', 'set']]
         self.assertEqual(3, len(set_calls))
         for command in set_calls:
-            self.assertEqual('243', command[8])
-            self.assertEqual(expected[command[9]], command[10])
+            wp = _wp_args(command)
+            self.assertEqual('243', wp[3])
+            self.assertEqual(expected[wp[4]], wp[5])
         backup = next((Path(self.temp.name) / 'data/editorial_runs').glob('public-edit-*.json'))
         backed_up = json.loads(backup.read_text(encoding='utf-8'))
         self.assertEqual({
@@ -331,7 +346,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         def execute(args, **kwargs):
             calls.append(args)
-            wp = args[5:]
+            wp = _wp_args(args) or []
             if wp[:2] == ['post', 'get']:
                 return Mock(returncode=0, stdout=json.dumps(post), stderr='', args=args)
             if wp[:3] == ['post', 'meta', 'get']:
@@ -349,7 +364,11 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.update_existing_public_post(243, bundle, sha, confirmed=True))
 
-        self.assertFalse(any(c[5:7] == ['post', 'update'] or c[5:8] == ['post', 'meta', 'set'] for c in calls))
+        self.assertFalse(any(
+            (_wp_args(c) or [])[:2] == ['post', 'update']
+            or (_wp_args(c) or [])[:3] == ['post', 'meta', 'set']
+            for c in calls
+        ))
         self.assertFalse(list((Path(self.temp.name) / 'data/editorial_runs').glob('public-edit-*.json')))
         save_report.assert_not_called()
 
@@ -377,7 +396,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.repair_missing_excerpt(243, digest, confirmed=True))
-        update = next(args for args in calls if args[5:7] == ['post', 'update'])
+        update = next(args for args in calls if (_wp_args(args) or [])[:2] == ['post', 'update'])
         self.assertTrue(any(arg.startswith('--post_excerpt=실제 정보') for arg in update))
         self.assertFalse(any(arg.startswith('--post_content=') for arg in update))
         self.assertEqual(1, len(list((Path(self.temp.name) / 'data/editorial_runs').glob('excerpt-edit-*.json'))))

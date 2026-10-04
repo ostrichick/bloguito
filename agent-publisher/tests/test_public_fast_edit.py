@@ -20,6 +20,14 @@ from agents.temporal_validation import KST
 from test_editorial_system import sample
 
 
+def _wp_args(args):
+    if args[:6] == ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp']:
+        return args[6:]
+    if args[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']:
+        return args[5:]
+    return None
+
+
 def current_bundle():
     bundle = sample()
     now = datetime.now(KST)
@@ -87,9 +95,10 @@ class PublicFastEditTests(unittest.TestCase):
 
             def run(args, **kwargs):
                 calls.append(args)
-                if args[5:7] == ['post', 'get']:
+                wp = _wp_args(args) or []
+                if wp[:2] == ['post', 'get']:
                     return Mock(stdout=json.dumps(live, ensure_ascii=False))
-                if args[5] == 'eval':
+                if wp and wp[0] == 'eval':
                     payload = json.loads(kwargs['input'])
                     self.assertNotIn('post_excerpt', payload['updates'])
                     live.update(payload['updates'])
@@ -109,7 +118,7 @@ class PublicFastEditTests(unittest.TestCase):
             self.assertEqual(new_body, live['post_content'])
             self.assertEqual('사람이 직접 작성한 요약', live['post_excerpt'])
             self.assertEqual(2, len(calls))
-            self.assertEqual(1, sum(call[5] == 'eval' for call in calls))
+            self.assertEqual(1, sum((_wp_args(call) or [None])[0] == 'eval' for call in calls))
             saved = json.loads(index.read_text(encoding='utf-8'))[0]['fact_manifest']['editorial_bundle']
             self.assertEqual(1, len(saved['fast_edit_chain']))
             invalidate.assert_called_once_with()
@@ -247,9 +256,10 @@ class PublicFastEditTests(unittest.TestCase):
             }], ensure_ascii=False), encoding='utf-8')
 
             def run(args, **kwargs):
-                if args[5:7] == ['post', 'get']:
+                wp = _wp_args(args) or []
+                if wp[:2] == ['post', 'get']:
                     return Mock(stdout=json.dumps(live, ensure_ascii=False))
-                if args[5] == 'eval':
+                if wp and wp[0] == 'eval':
                     payload = json.loads(kwargs['input'])
                     live.update(payload['updates'])
                     return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}, ensure_ascii=False))
@@ -294,9 +304,10 @@ class PublicFastEditTests(unittest.TestCase):
             }], ensure_ascii=False), encoding='utf-8')
 
             def run(args, **kwargs):
-                if args[5:7] == ['post', 'get']:
+                wp = _wp_args(args) or []
+                if wp[:2] == ['post', 'get']:
                     return Mock(stdout=json.dumps(live, ensure_ascii=False))
-                if args[5] == 'eval':
+                if wp and wp[0] == 'eval':
                     payload = json.loads(kwargs['input'])
                     self.assertEqual({'post_content'}, set(payload['updates']))
                     live.update(payload['updates'])

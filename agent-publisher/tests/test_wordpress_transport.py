@@ -8,6 +8,22 @@ from agents.wordpress_transport import run_wordpress, wordpress_transport
 
 
 class WordPressTransportTests(unittest.TestCase):
+    def test_direct_docker_exec_with_input_keeps_stdin_attached(self):
+        command = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp', 'eval', 'echo 1;']
+        with patch('subprocess.run', return_value='local') as local:
+            self.assertEqual('local', run_wordpress(command, input='payload', text=True))
+        local.assert_called_once_with(
+            ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp', 'eval', 'echo 1;'],
+            input='payload', text=True,
+        )
+
+    def test_explicit_transport_owns_its_stdin_forwarding(self):
+        remote = Mock(return_value='remote')
+        command = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp', 'eval', 'echo 1;']
+        with wordpress_transport(remote):
+            self.assertEqual('remote', run_wordpress(command, input='payload', text=True))
+        remote.assert_called_once_with(command, input='payload', text=True)
+
     def test_explicit_transport_does_not_replace_other_subprocess_calls(self):
         remote = Mock(return_value='remote result')
         with patch('subprocess.run', return_value='local result') as local:

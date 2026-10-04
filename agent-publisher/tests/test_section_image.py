@@ -14,6 +14,14 @@ from agents.section_image import (
 )
 
 
+def _wp_args(args):
+    if args[:6] == ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp']:
+        return args[6:]
+    if args[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']:
+        return args[5:]
+    return None
+
+
 class SectionImageImportTests(unittest.TestCase):
     def _image(self, folder, size=(1200, 675)):
         path = Path(folder) / 'event.webp'
@@ -52,7 +60,7 @@ class SectionImageImportTests(unittest.TestCase):
             wp_calls = []
 
             def run(args, **kwargs):
-                wp = args[5:] if args[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'wp'] else None
+                wp = _wp_args(args)
                 if wp:
                     wp_calls.append(wp)
                 if wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']:

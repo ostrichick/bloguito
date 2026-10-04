@@ -16,6 +16,14 @@ from agents.editorial_draft_reviser import (
 from test_editorial_system import NOW, sample, sign
 
 
+def _wp_args(args):
+    if args[:6] == ["sudo", "docker", "exec", "-i", "wordpress_app", "wp"]:
+        return args[6:]
+    if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "wp"]:
+        return args[5:]
+    return None
+
+
 class EditorialDraftReviserTests(unittest.TestCase):
     def test_revision_source_plan_rechecks_only_new_source_when_existing_sources_are_fresh(self):
         old = sample()
@@ -85,9 +93,10 @@ class EditorialDraftReviserTests(unittest.TestCase):
 
             def run(args, **kwargs):
                 calls.append(args)
-                if args[5:7] == ["post", "get"]:
+                wp = _wp_args(args)
+                if wp and wp[:2] == ["post", "get"]:
                     return Mock(stdout=json.dumps(live))
-                if args[5] == "eval":
+                if wp and wp[0] == "eval":
                     payload = json.loads(kwargs["input"])
                     live.update(payload["updates"])
                     return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
@@ -126,8 +135,8 @@ class EditorialDraftReviserTests(unittest.TestCase):
             self.assertEqual(len(list((data / "editorial_runs").glob("draft-revision-index-393-*.json"))), 1)
             # P2 keeps the initial backup snapshot, then performs final CAS,
             # mutation and readback inside one guarded WP process.
-            self.assertEqual(1, sum(args[5:7] == ["post", "get"] for args in calls))
-            self.assertEqual(1, sum(args[5] == "eval" for args in calls))
+            self.assertEqual(1, sum((_wp_args(args) or [])[:2] == ["post", "get"] for args in calls))
+            self.assertEqual(1, sum((_wp_args(args) or [None])[0] == "eval" for args in calls))
             source_recheck.assert_called_once()
 
     def test_full_reviewed_draft_revision_updates_reviewed_rank_math_metadata(self):
@@ -165,14 +174,15 @@ class EditorialDraftReviserTests(unittest.TestCase):
             }]), encoding="utf-8")
 
             def run(args, **kwargs):
-                if args[5:7] == ["post", "get"]:
+                wp = _wp_args(args) or []
+                if wp[:2] == ["post", "get"]:
                     return Mock(stdout=json.dumps(live))
-                if args[5:8] == ["post", "meta", "get"]:
-                    return Mock(returncode=0, stdout=meta[args[9]] + "\n", stderr="")
-                if args[5:8] == ["post", "meta", "set"]:
-                    meta[args[9]] = args[10]
+                if wp[:3] == ["post", "meta", "get"]:
+                    return Mock(returncode=0, stdout=meta[wp[4]] + "\n", stderr="")
+                if wp[:3] == ["post", "meta", "set"]:
+                    meta[wp[4]] = wp[5]
                     return Mock(returncode=0, stdout="Success\n", stderr="")
-                if args[5] == "eval":
+                if wp and wp[0] == "eval":
                     payload = json.loads(kwargs["input"])
                     live.update(payload["updates"])
                     return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
