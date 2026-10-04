@@ -1435,12 +1435,6 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
         review = bundle['review']
     except (KeyError, TypeError):
         raise ValueError('invalid_reviewed_content_bundle') from None
-    hashes = recognized_renderer_hashes(
-        plan, sources, brief.get('category_key'), post_id=post_id,
-    )
-    if post_id is None or not REVIEWED_CONTENT_PROVENANCE_FILE.is_file():
-        return hashes
-
     body = {
         key: bundle[key]
         for key in ('brief', 'sources', 'plan', 'temporal_source')
@@ -1458,6 +1452,12 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
         and all(value is True for value in checks.values())
     )
     if not review_bound:
+        raise ValueError('reviewed_content_review_not_bound')
+
+    hashes = recognized_renderer_hashes(
+        plan, sources, brief.get('category_key'), post_id=post_id,
+    )
+    if post_id is None or not REVIEWED_CONTENT_PROVENANCE_FILE.is_file():
         return hashes
 
     payload = json.loads(REVIEWED_CONTENT_PROVENANCE_FILE.read_text(encoding='utf-8'))
@@ -1469,6 +1469,7 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
         common_keys = {
             'post_id', 'review_digest', 'reviewed_content_sha256',
             'live_content_sha256', 'kind', 'variant', 'evidence_sha256',
+            'bundle_digest',
         }
         if not isinstance(entry, dict):
             raise ValueError('invalid_reviewed_content_provenance_registry')
@@ -1476,8 +1477,9 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
         expected_keys = set(common_keys)
         if kind == 'post-review-image-url-substitution':
             expected_keys.update({
-                'replacements', 'mutation_payload_sha256',
-                'mutation_script_sha256', 'receipt_sha256s',
+                'replacements', 'before_snapshot_sha256',
+                'mutation_payload_sha256', 'mutation_script_sha256',
+                'transformation_digest',
             })
         if (set(entry) != expected_keys
                 or type(entry.get('post_id')) is not int or entry['post_id'] <= 0
@@ -1491,6 +1493,7 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
                        for key in (
                            'review_digest', 'reviewed_content_sha256',
                            'live_content_sha256', 'evidence_sha256',
+                           'bundle_digest',
                        ))):
             raise ValueError('invalid_reviewed_content_provenance_registry')
         if (kind == 'completed-full-review'
@@ -1498,27 +1501,29 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
             raise ValueError('invalid_reviewed_content_provenance_registry')
         if kind == 'post-review-image-url-substitution':
             replacements = entry.get('replacements')
-            receipts = entry.get('receipt_sha256s')
             if (not isinstance(replacements, list) or not replacements
                     or len(replacements) > 20
-                    or not isinstance(receipts, list)
-                    or len(receipts) != len(replacements)
-                    or any(not isinstance(value, str)
-                           or re.fullmatch(r'[0-9a-f]{64}', value) is None
-                           for value in receipts)
                     or any(not isinstance(entry.get(key), str)
                            or re.fullmatch(r'[0-9a-f]{64}', entry[key]) is None
-                           for key in ('mutation_payload_sha256', 'mutation_script_sha256'))):
+                           for key in (
+                               'before_snapshot_sha256', 'mutation_payload_sha256',
+                               'mutation_script_sha256', 'transformation_digest',
+                           ))):
                 raise ValueError('invalid_reviewed_content_provenance_registry')
             old_urls = []
             new_urls = []
             for replacement in replacements:
                 if (not isinstance(replacement, dict)
-                        or set(replacement) != {'old_url', 'new_url'}
+                        or set(replacement) != {
+                            'old_url', 'new_url', 'asset_sha256', 'receipt_sha256',
+                        }
                         or any(not isinstance(replacement.get(key), str)
                                or not replacement[key].startswith(
                                    'https://lifeinfo24.org/wp-content/uploads/')
                                for key in ('old_url', 'new_url'))
+                        or any(not isinstance(replacement.get(key), str)
+                               or re.fullmatch(r'[0-9a-f]{64}', replacement[key]) is None
+                               for key in ('asset_sha256', 'receipt_sha256'))
                         or replacement['old_url'] == replacement['new_url']):
                     raise ValueError('invalid_reviewed_content_provenance_registry')
                 old_urls.append(replacement['old_url'])
@@ -1527,11 +1532,23 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
                     or len(new_urls) != len(set(new_urls))
                     or entry['reviewed_content_sha256'] == entry['live_content_sha256']):
                 raise ValueError('invalid_reviewed_content_provenance_registry')
+            transformation = {
+                'reviewed_content_sha256': entry['reviewed_content_sha256'],
+                'live_content_sha256': entry['live_content_sha256'],
+                'before_snapshot_sha256': entry['before_snapshot_sha256'],
+                'mutation_payload_sha256': entry['mutation_payload_sha256'],
+                'mutation_script_sha256': entry['mutation_script_sha256'],
+                'replacements': replacements,
+            }
+            if digest(transformation) != entry['transformation_digest']:
+                raise ValueError('invalid_reviewed_content_provenance_registry')
         token = (entry['post_id'], entry['variant'])
         if token in seen:
             raise ValueError('duplicate_reviewed_content_provenance_entry')
         seen.add(token)
-        if entry['post_id'] == post_id and entry['review_digest'] == review_digest:
+        if (entry['post_id'] == post_id
+                and entry['review_digest'] == review_digest
+                and entry['bundle_digest'] == digest(bundle)):
             hashes[entry['variant']] = entry['live_content_sha256']
     return hashes
 

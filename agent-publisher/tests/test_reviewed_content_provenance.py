@@ -22,6 +22,7 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
             "entries": [{
                 "post_id": 844,
                 "review_digest": bundle["review"]["digest"],
+                "bundle_digest": digest(bundle),
                 "reviewed_content_sha256": live_sha,
                 "live_content_sha256": live_sha,
                 "kind": "completed-full-review",
@@ -68,8 +69,9 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
             registry = Path(folder) / "reviewed-content.json"
             registry.write_text(json.dumps(registry_payload), encoding="utf-8")
             with patch.object(editorial, "REVIEWED_CONTENT_PROVENANCE_FILE", registry):
-                hashes = recognized_reviewed_content_hashes(bundle, post_id=844)
-        self.assertNotIn("completed-full-review-test", hashes)
+                with self.assertRaisesRegex(
+                        ValueError, "reviewed_content_review_not_bound"):
+                    recognized_reviewed_content_hashes(bundle, post_id=844)
 
     def test_completed_full_review_entry_requires_same_reviewed_and_live_sha(self):
         bundle = sample()
@@ -92,26 +94,48 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
             "entries": [{
                 "post_id": 844,
                 "review_digest": bundle["review"]["digest"],
+                "bundle_digest": digest(bundle),
                 "reviewed_content_sha256": "a" * 64,
                 "live_content_sha256": "c" * 64,
                 "kind": "post-review-image-url-substitution",
                 "variant": "post-review-images-test",
                 "evidence_sha256": "b" * 64,
+                "before_snapshot_sha256": "1" * 64,
                 "mutation_payload_sha256": "d" * 64,
                 "mutation_script_sha256": "e" * 64,
-                "receipt_sha256s": ["f" * 64],
                 "replacements": [{
                     "old_url": "https://lifeinfo24.org/wp-content/uploads/old.jpg",
                     "new_url": "https://lifeinfo24.org/wp-content/uploads/new.jpg",
+                    "asset_sha256": "2" * 64,
+                    "receipt_sha256": "f" * 64,
                 }],
+                "transformation_digest": "",
             }],
         }
+        transformation = {
+            "reviewed_content_sha256": "a" * 64,
+            "live_content_sha256": "c" * 64,
+            "before_snapshot_sha256": "1" * 64,
+            "mutation_payload_sha256": "d" * 64,
+            "mutation_script_sha256": "e" * 64,
+            "replacements": payload["entries"][0]["replacements"],
+        }
+        payload["entries"][0]["transformation_digest"] = digest(transformation)
         with tempfile.TemporaryDirectory() as folder:
             registry = Path(folder) / "reviewed-content.json"
             registry.write_text(json.dumps(payload), encoding="utf-8")
             with patch.object(editorial, "REVIEWED_CONTENT_PROVENANCE_FILE", registry):
                 hashes = recognized_reviewed_content_hashes(bundle, post_id=844)
         self.assertEqual("c" * 64, hashes["post-review-images-test"])
+
+    def test_transaction_live_sha_never_becomes_a_renderer_hash(self):
+        bundle = sample()
+        sign(bundle)
+        transaction_sha = "c" * 64
+        renderer_hashes = editorial.recognized_renderer_hashes(
+            bundle["plan"], bundle["sources"],
+            bundle.get("brief", {}).get("category_key"), post_id=844)
+        self.assertNotIn(transaction_sha, renderer_hashes.values())
 
 
 class ReviewedContentCatalogReconcileTests(unittest.TestCase):
@@ -138,6 +162,7 @@ class ReviewedContentCatalogReconcileTests(unittest.TestCase):
             "entries": [{
                 "post_id": 844,
                 "review_digest": bundle["review"]["digest"],
+                "bundle_digest": digest(bundle),
                 "reviewed_content_sha256": saved_sha,
                 "live_content_sha256": saved_sha,
                 "kind": "completed-full-review",
@@ -168,6 +193,45 @@ class ReviewedContentCatalogReconcileTests(unittest.TestCase):
             "to_status": "publish",
             "provenance_variant": "completed-full-review-test",
         }], result["moved"])
+
+    def test_invalid_review_refuses_status_reconcile_even_when_renderer_is_exact(self):
+        import sync_post_catalog as catalog
+        from agents.editorial import render
+
+        bundle = sample()
+        bundle["plan"]["title"] = "검토 결합이 깨진 글"
+        sign(bundle)
+        content = render(bundle["plan"], bundle["sources"])
+        bundle["review"]["digest"] = "0" * 64
+        record = {
+            "id": 844,
+            "title": bundle["plan"]["title"],
+            "url": "https://lifeinfo24.org/?p=844",
+            "category_id": 275,
+            "category_name": "건강/의료",
+            "status": "draft",
+            "expires_at": None,
+            "fact_manifest": {"editorial_bundle": bundle},
+            "published_at": "2026-10-03 10:00",
+        }
+        live = [{
+            "ID": 844,
+            "post_title": bundle["plan"]["title"],
+            "post_status": "publish",
+            "permalink": "https://lifeinfo24.org/test/",
+            "content_sha256": content_sha(content),
+        }]
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            (data / "draft_posts.json").write_text(
+                json.dumps([record], ensure_ascii=False), encoding="utf-8")
+            (data / "published_posts.json").write_text("[]", encoding="utf-8")
+            result = catalog.reconcile_reviewed_statuses(live, data)
+        self.assertEqual([], result["moved"])
+        self.assertEqual([{
+            "post_id": 844,
+            "reason": "reviewed_bundle_invalid",
+        }], result["skipped"])
 
 
 if __name__ == "__main__":

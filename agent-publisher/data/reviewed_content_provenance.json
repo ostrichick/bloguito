@@ -4,6 +4,7 @@
     {
       "post_id": 666,
       "review_digest": "e858ef970777b9decd472fde713dfc59fb2a867ecb4585d70168cc299cd4ee5f",
+      "bundle_digest": "adf2b798697074f4061455a7cdfc9c149a1001341a1df3850a2f1e932ab9f609",
       "reviewed_content_sha256": "65f6729041b688c06b198e1733f65823f0d87436d274242eea9b434e0ebf1cc6",
       "live_content_sha256": "65f6729041b688c06b198e1733f65823f0d87436d274242eea9b434e0ebf1cc6",
       "kind": "completed-full-review",
@@ -13,45 +14,52 @@
     {
       "post_id": 665,
       "review_digest": "bd2a576afdca87efb7ac35a7e3cfa45cff4cd65f1ac845cef8660f4f8f0ee1f0",
+      "bundle_digest": "0b3e81fd6a6de46e8d7aa22b265b4f995feddd261a5e37144b855073c25ac91c",
       "reviewed_content_sha256": "83ab8523e70e84c3201e357ecbdca6cc7be55fb71e01801df225eac71e3a1d07",
       "live_content_sha256": "03e2af2684cd3a591e9e84daf134869a637d0edd78f3abc737fba528b57ce850",
       "kind": "post-review-image-url-substitution",
       "variant": "post-review-images-20261002T094635",
       "evidence_sha256": "f6af9a319c564e531ef5b29b8920c0a15be36764e10c59cd04388a70b65ed3f0",
+      "before_snapshot_sha256": "ca6fea5de8e2964571f33f83022c7ac61239024633bf8fb76df3fdeecfcaead0",
       "mutation_payload_sha256": "fe138a6900b3d92002637a6205cbd8f102c08ff051acc2e656b5c3b35f9e3e17",
       "mutation_script_sha256": "b2f9971250df1eb0f038234bb5fd95841736d775efd6a7e4ce0c7bffe5770bea",
-      "receipt_sha256s": [
-        "e1749bb9fea0accad6a116261793bb7a40e8e440736fe96f4ae8a4ab0760ddd4",
-        "389ca7fd5c9400b989f4393ddf4749591a1369c70e06e4614996fd40affc4cf2",
-        "c0191d08bf64a359381029d7e1e9c6749681c5308f774314c82ed2223804871a",
-        "bbbcb4cbdf1ac1a8538b7b6258447b10f697360838bf36df754963691fc220d3",
-        "13342078ff57ccee47793d03c9ac26ca7429bc61016da609b743d59459348cd0",
-        "814632ee5a6355905f16a52d3aad3724194b2c8d0e395681ca35847ed32d7b2c"
-      ],
+      "transformation_digest": "78174e86e479e3a2a27e761501451881f912ce22f73c745917128cce048ce609",
       "replacements": [
         {
           "old_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_4ef29b69cb4e.jpg",
-          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_5cddca31604d.jpg"
+          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_5cddca31604d.jpg",
+          "asset_sha256": "5cddca31604de398f3d7956357bbdc7ec6e6e954be500788cdccb322542e15ed",
+          "receipt_sha256": "e1749bb9fea0accad6a116261793bb7a40e8e440736fe96f4ae8a4ab0760ddd4"
         },
         {
           "old_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_b20d751c69c1.jpg",
-          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_10b7fe08bc9b.jpg"
+          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_10b7fe08bc9b.jpg",
+          "asset_sha256": "10b7fe08bc9ba16fdbef8ca7f3cdac252b9461a4e32feb9bd21bee9e91309cea",
+          "receipt_sha256": "389ca7fd5c9400b989f4393ddf4749591a1369c70e06e4614996fd40affc4cf2"
         },
         {
           "old_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_badf835fda57.jpg",
-          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_e05a424f178d.jpg"
+          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_e05a424f178d.jpg",
+          "asset_sha256": "e05a424f178de621ce298cd451dd7c0051a8981157e65849bad34fce3b76bb29",
+          "receipt_sha256": "c0191d08bf64a359381029d7e1e9c6749681c5308f774314c82ed2223804871a"
         },
         {
           "old_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_ec88174de774.jpg",
-          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_94823855dbde.jpg"
+          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_94823855dbde.jpg",
+          "asset_sha256": "94823855dbde493e80df58785e906e023816e58969d140d54f740028f751dd8e",
+          "receipt_sha256": "bbbcb4cbdf1ac1a8538b7b6258447b10f697360838bf36df754963691fc220d3"
         },
         {
           "old_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_17e57c8a6528.jpg",
-          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_d8259fe5856e.jpg"
+          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_d8259fe5856e.jpg",
+          "asset_sha256": "d8259fe5856e58e4ab65160f463dd1e967c22624d08fcb9e27e61ee7285d254f",
+          "receipt_sha256": "13342078ff57ccee47793d03c9ac26ca7429bc61016da609b743d59459348cd0"
         },
         {
           "old_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_b7102ae58ca4.jpg",
-          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_b190f9de46a5.jpg"
+          "new_url": "https://lifeinfo24.org/wp-content/uploads/2026/10/editorial_section_665_b190f9de46a5.jpg",
+          "asset_sha256": "b190f9de46a526fd7534264232db2111ea5503c4adcd785320f480be9be8a0ad",
+          "receipt_sha256": "814632ee5a6355905f16a52d3aad3724194b2c8d0e395681ca35847ed32d7b2c"
         }
       ]
     }
