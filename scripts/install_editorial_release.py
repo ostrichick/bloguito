@@ -144,7 +144,7 @@ def install(release, app):
                 put(target, b'')
                 target.unlink()
         python=app/'venv'/'bin'/'python'
-        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; from agents.editorial_writer import Plan; from agents.editorial import policy; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); print("Editorial entrypoints and critical-fact registry ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; from agents.editorial_writer import Plan; from agents.editorial import policy, validate_reviewed_content_provenance_registry; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); validate_reviewed_content_provenance_registry(); print("Editorial entrypoints and provenance registries ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
         installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes if Path(change['target']).exists()}
         put(app/'data'/'editorial-release.json', json.dumps({
             'schema_version': 1, 'revision': release_manifest['revision'],

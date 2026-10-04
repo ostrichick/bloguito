@@ -89,11 +89,13 @@ class ReleaseManifestTests(unittest.TestCase):
 
     def test_entrypoint_install_is_exact_and_does_not_replace_environment(self):
         app = self.entrypoint_release()
-        with patch.object(installer.subprocess, 'run'):
+        with patch.object(installer.subprocess, 'run') as run:
             installer.install(self.root, app)
         self.assertEqual((self.root / 'agent-publisher/main.py').read_bytes(), (app / 'main.py').read_bytes())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
         self.assertEqual('a' * 40, json.loads((app / 'data/editorial-release.json').read_text())['revision'])
+        smoke = run.call_args.args[0]
+        self.assertIn('validate_reviewed_content_provenance_registry', smoke[-1])
 
     def test_failed_entrypoint_smoke_restores_original_files(self):
         app = self.entrypoint_release()

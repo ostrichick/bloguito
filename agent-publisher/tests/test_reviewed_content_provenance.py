@@ -2,13 +2,21 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from agents import editorial
-from agents.editorial import digest, recognized_reviewed_content_hashes
+from agents.editorial import (
+    digest,
+    recognized_reviewed_content_hashes,
+    validate_reviewed_content_provenance_registry,
+)
 from tests.test_editorial_system import sample, sign
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR / "scripts"))
 
 
 def content_sha(text: str) -> str:
@@ -136,6 +144,43 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
             bundle["plan"], bundle["sources"],
             bundle.get("brief", {}).get("category_key"), post_id=844)
         self.assertNotIn(transaction_sha, renderer_hashes.values())
+
+    def test_registry_validator_accepts_tracked_registry(self):
+        entries = validate_reviewed_content_provenance_registry()
+        self.assertEqual({665, 666}, {entry["post_id"] for entry in entries})
+
+    def test_registry_validator_rejects_bad_transformation_digest(self):
+        bundle = sample()
+        sign(bundle)
+        payload = {
+            "schema_version": 1,
+            "entries": [{
+                "post_id": 844,
+                "review_digest": bundle["review"]["digest"],
+                "bundle_digest": digest(bundle),
+                "reviewed_content_sha256": "a" * 64,
+                "live_content_sha256": "c" * 64,
+                "kind": "post-review-image-url-substitution",
+                "variant": "post-review-images-test",
+                "evidence_sha256": "b" * 64,
+                "before_snapshot_sha256": "1" * 64,
+                "mutation_payload_sha256": "d" * 64,
+                "mutation_script_sha256": "e" * 64,
+                "transformation_digest": "0" * 64,
+                "replacements": [{
+                    "old_url": "https://lifeinfo24.org/wp-content/uploads/old.jpg",
+                    "new_url": "https://lifeinfo24.org/wp-content/uploads/new.jpg",
+                    "asset_sha256": "2" * 64,
+                    "receipt_sha256": "f" * 64,
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            registry = Path(folder) / "reviewed-content.json"
+            registry.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(
+                    ValueError, "invalid_reviewed_content_provenance_registry"):
+                validate_reviewed_content_provenance_registry(registry)
 
 
 class ReviewedContentCatalogReconcileTests(unittest.TestCase):

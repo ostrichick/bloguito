@@ -1391,7 +1391,9 @@ def recognized_renderer_hashes(plan, sources, category_key=None, *, post_id=None
     if post_id is None or not RENDERER_PROVENANCE_FILE.is_file():
         return hashes
     payload = json.loads(RENDERER_PROVENANCE_FILE.read_text(encoding='utf-8'))
-    entries = payload.get('entries') if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError('invalid_reviewed_content_provenance_registry')
+    entries = payload.get('entries')
     if payload.get('schema_version') != 1 or not isinstance(entries, list):
         raise ValueError('invalid_renderer_provenance_registry')
     current_sha = hashes['current']
@@ -1417,50 +1419,13 @@ def recognized_renderer_hashes(plan, sources, category_key=None, *, post_id=None
     return hashes
 
 
-def recognized_reviewed_content_hashes(bundle, *, post_id=None):
-    """Return exact content SHAs bound to the current reviewed bundle.
-
-    Renderer provenance remains a separate concept: this helper may additionally
-    accept a content SHA that was already saved by a completed full-review
-    transaction, but only when the registry is cryptographically bound to the
-    exact current bundle review digest.  These entries must never be used to
-    authorize renderer migration because they do not reconstruct historical HTML.
-    """
-    if not isinstance(bundle, dict):
-        raise ValueError('invalid_reviewed_content_bundle')
+def validate_reviewed_content_provenance_registry(path=None):
+    """Validate the complete tracked reviewed-content provenance registry."""
+    registry = Path(path) if path is not None else REVIEWED_CONTENT_PROVENANCE_FILE
     try:
-        brief = bundle['brief']
-        sources = bundle['sources']
-        plan = bundle['plan']
-        review = bundle['review']
-    except (KeyError, TypeError):
-        raise ValueError('invalid_reviewed_content_bundle') from None
-    body = {
-        key: bundle[key]
-        for key in ('brief', 'sources', 'plan', 'temporal_source')
-        if key in bundle
-    }
-    review_digest = review.get('digest') if isinstance(review, dict) else None
-    checks = review.get('checks') if isinstance(review, dict) else None
-    review_bound = (
-        isinstance(review_digest, str)
-        and re.fullmatch(r'[0-9a-f]{64}', review_digest) is not None
-        and review_digest == digest(body)
-        and review.get('issues') == []
-        and isinstance(checks, dict)
-        and bool(checks)
-        and all(value is True for value in checks.values())
-    )
-    if not review_bound:
-        raise ValueError('reviewed_content_review_not_bound')
-
-    hashes = recognized_renderer_hashes(
-        plan, sources, brief.get('category_key'), post_id=post_id,
-    )
-    if post_id is None or not REVIEWED_CONTENT_PROVENANCE_FILE.is_file():
-        return hashes
-
-    payload = json.loads(REVIEWED_CONTENT_PROVENANCE_FILE.read_text(encoding='utf-8'))
+        payload = json.loads(registry.read_text(encoding='utf-8'))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError('invalid_reviewed_content_provenance_registry') from exc
     entries = payload.get('entries') if isinstance(payload, dict) else None
     if payload.get('schema_version') != 1 or not isinstance(entries, list):
         raise ValueError('invalid_reviewed_content_provenance_registry')
@@ -1546,6 +1511,54 @@ def recognized_reviewed_content_hashes(bundle, *, post_id=None):
         if token in seen:
             raise ValueError('duplicate_reviewed_content_provenance_entry')
         seen.add(token)
+    return entries
+
+
+def recognized_reviewed_content_hashes(bundle, *, post_id=None):
+    """Return exact content SHAs bound to the current reviewed bundle.
+
+    Renderer provenance remains a separate concept: this helper may additionally
+    accept a content SHA that was already saved by a completed full-review
+    transaction, but only when the registry is cryptographically bound to the
+    exact current bundle review digest.  These entries must never be used to
+    authorize renderer migration because they do not reconstruct historical HTML.
+    """
+    if not isinstance(bundle, dict):
+        raise ValueError('invalid_reviewed_content_bundle')
+    try:
+        brief = bundle['brief']
+        sources = bundle['sources']
+        plan = bundle['plan']
+        review = bundle['review']
+    except (KeyError, TypeError):
+        raise ValueError('invalid_reviewed_content_bundle') from None
+    body = {
+        key: bundle[key]
+        for key in ('brief', 'sources', 'plan', 'temporal_source')
+        if key in bundle
+    }
+    review_digest = review.get('digest') if isinstance(review, dict) else None
+    checks = review.get('checks') if isinstance(review, dict) else None
+    review_bound = (
+        isinstance(review_digest, str)
+        and re.fullmatch(r'[0-9a-f]{64}', review_digest) is not None
+        and review_digest == digest(body)
+        and review.get('issues') == []
+        and isinstance(checks, dict)
+        and bool(checks)
+        and all(value is True for value in checks.values())
+    )
+    if not review_bound:
+        raise ValueError('reviewed_content_review_not_bound')
+
+    hashes = recognized_renderer_hashes(
+        plan, sources, brief.get('category_key'), post_id=post_id,
+    )
+    if post_id is None or not REVIEWED_CONTENT_PROVENANCE_FILE.is_file():
+        return hashes
+
+    entries = validate_reviewed_content_provenance_registry()
+    for entry in entries:
         if (entry['post_id'] == post_id
                 and entry['review_digest'] == review_digest
                 and entry['bundle_digest'] == digest(bundle)):
