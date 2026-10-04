@@ -11,7 +11,14 @@ from contextvars import copy_context
 from datetime import datetime
 from pathlib import Path
 
-from agents.editorial import ROOT, excerpt_from_lead, render, save_report, validate_bundle
+from agents.editorial import (
+    ROOT,
+    excerpt_from_lead,
+    recognized_reviewed_content_hashes,
+    render,
+    save_report,
+    validate_bundle,
+)
 from agents.editorial_writer import load_inventory
 from agents.post_manifest_store import (
     acquire_editorial_lock,
@@ -28,7 +35,7 @@ from agents.editorial_updater import (
     _read_rank_math_meta,
     rank_math_meta_from_brief,
 )
-from config import DRAFTS_INDEX_FILE
+from config import DRAFTS_INDEX_FILE, resolve_category
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, invalidate_inventory, sync_inventory
 from agents.wordpress_mutation import (
     backup_json,
@@ -225,8 +232,8 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         reviewed_meta = rank_math_meta_from_brief(new_brief)
         new_title = bundle.get("plan", {}).get("title")
         if (old_brief.get("id") != new_brief.get("id")
-                or old_brief.get("category_key") != new_brief.get("category_key")
-                or old_brief.get("entity") != new_brief.get("entity")):
+                or old_brief.get("entity") != new_brief.get("entity")
+                or old_brief.get("existing_post_id") != new_brief.get("existing_post_id")):
             raise ValueError("draft_revision_topic_or_title_mismatch")
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
@@ -256,6 +263,14 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         if (not current_row or current_row["post_status"] != "draft"
                 or inventory_content_sha(current_row) != expected_content_sha256):
             raise ValueError("draft_missing_or_modified")
+        if old_brief.get("category_key") != new_brief.get("category_key"):
+            try:
+                target_category = resolve_category(
+                    new_brief.get("category_key", ""), allow_legacy=False)
+            except (KeyError, ValueError) as exc:
+                raise ValueError("draft_revision_topic_or_title_mismatch") from exc
+            if current_row.get("category_slugs") != [target_category["slug"]]:
+                raise ValueError("draft_revision_topic_or_title_mismatch")
         if (initial_live.get("post_status") != current_row.get("post_status")
                 or initial_live.get("post_title") != current_row.get("post_title")
                 or hashlib.sha256(initial_live.get("post_content", "").encode("utf-8")).hexdigest()
@@ -278,7 +293,12 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             _before_generated_source_footer(current_comparable)
             == _before_generated_source_footer(old_comparable)
         )
+        same_recognized_variant = False
         if not (same_exact or same_before_source_footer):
+            current_sha = hashlib.sha256(current.get("post_content", "").encode("utf-8")).hexdigest()
+            recognized_hashes = recognized_reviewed_content_hashes(old_bundle, post_id=post_id)
+            same_recognized_variant = current_sha in set(recognized_hashes.values())
+        if not (same_exact or same_before_source_footer or same_recognized_variant):
             raise ValueError("draft_contains_unreviewed_edits")
         if missing_internal_post_ids(old_rendered, render(bundle["plan"], bundle["sources"])):
             raise ValueError("original_internal_post_navigation_missing")

@@ -223,6 +223,168 @@ class EditorialDraftReviserTests(unittest.TestCase):
                 "rank_math_description": "old description",
             })
 
+    def test_full_revision_allows_category_key_migration_when_live_category_already_matches(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        old["brief"]["category_key"] = "life"
+        new["brief"]["category_key"] = "events"
+        new["plan"]["lead"]["text"] = "현재 행사 기준으로 다시 검토한 원고입니다."
+        old_body = render(old["plan"], old["sources"])
+        live = {
+            "ID": 393,
+            "post_title": old["plan"]["title"],
+            "post_status": "draft",
+            "post_name": "same-slug",
+            "post_content": old_body,
+            "post_excerpt": excerpt_from_lead(old["plan"]["lead"]),
+        }
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / "data"
+            data.mkdir()
+            index = data / "draft_posts.json"
+            index.write_text(json.dumps([{
+                "id": 393,
+                "fact_manifest": {"editorial_bundle": old},
+            }]), encoding="utf-8")
+            inventory = {
+                "checked_on": NOW.date().isoformat(),
+                "posts": [{**live, "category_slugs": ["local-events"]}],
+            }
+
+            def run(args, **kwargs):
+                wp = _wp_args(args) or []
+                if wp[:2] == ["post", "get"]:
+                    return Mock(stdout=json.dumps(live))
+                if wp and wp[0] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    live.update(payload["updates"])
+                    return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
+                raise AssertionError(args)
+
+            with patch("agents.editorial_draft_reviser.ROOT", root), \
+                 patch("agents.editorial_draft_reviser.DRAFTS_INDEX_FILE", index), \
+                 patch("agents.editorial_draft_reviser.sync_inventory"), \
+                 patch("agents.editorial_draft_reviser.invalidate_inventory"), \
+                 patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
+                 patch("agents.editorial_draft_reviser.resolve_category", return_value={
+                     "id": 274, "name": "지역 축제/행사", "slug": "local-events",
+                 }), \
+                 patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
+                 patch("agents.editorial_draft_reviser.verify_revision_sources", return_value={
+                     "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
+                     "all_unchanged": True,
+                 }), \
+                 patch("agents.editorial_draft_reviser.save_report"), \
+                 patch("agents.editorial_draft_reviser.subprocess.run", side_effect=run):
+                result = revise_reviewed_draft(
+                    393, new, hashlib.sha256(old_body.encode()).hexdigest(), confirmed=True)
+
+            self.assertEqual(393, result)
+            saved = json.loads(index.read_text(encoding="utf-8"))[0]
+            self.assertEqual("events", saved["fact_manifest"]["editorial_bundle"]["brief"]["category_key"])
+
+    def test_category_key_migration_rejects_when_live_category_does_not_match_candidate(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        old["brief"]["category_key"] = "life"
+        new["brief"]["category_key"] = "events"
+        old_body = render(old["plan"], old["sources"])
+        live = {
+            "ID": 393,
+            "post_title": old["plan"]["title"],
+            "post_status": "draft",
+            "post_name": "same-slug",
+            "post_content": old_body,
+            "post_excerpt": excerpt_from_lead(old["plan"]["lead"]),
+        }
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / "data"
+            data.mkdir()
+            index = data / "draft_posts.json"
+            index.write_text(json.dumps([{
+                "id": 393,
+                "fact_manifest": {"editorial_bundle": old},
+            }]), encoding="utf-8")
+            inventory = {
+                "checked_on": NOW.date().isoformat(),
+                "posts": [{**live, "category_slugs": ["life-admin"]}],
+            }
+            with patch("agents.editorial_draft_reviser.ROOT", root), \
+                 patch("agents.editorial_draft_reviser.DRAFTS_INDEX_FILE", index), \
+                 patch("agents.editorial_draft_reviser.sync_inventory"), \
+                 patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
+                 patch("agents.editorial_draft_reviser.get_post", return_value=live), \
+                 patch("agents.editorial_draft_reviser.verify_revision_sources", return_value={
+                     "reused_source_ids": [], "refetched_source_ids": [], "all_unchanged": True,
+                 }), \
+                 patch("agents.editorial_draft_reviser.resolve_category", return_value={
+                     "id": 274, "name": "지역 축제/행사", "slug": "local-events",
+                 }):
+                with self.assertRaisesRegex(ValueError, "draft_revision_topic_or_title_mismatch"):
+                    revise_reviewed_draft(
+                        393, new, hashlib.sha256(old_body.encode()).hexdigest(), confirmed=True)
+
+    def test_full_revision_accepts_only_attested_reviewed_content_variant(self):
+        old = sample()
+        new = copy.deepcopy(old)
+        new["plan"]["lead"]["text"] = "새로 검토한 원고입니다."
+        old_body = render(old["plan"], old["sources"])
+        transformed_body = old_body.replace("검토", "검토된", 1)
+        live = {
+            "ID": 393,
+            "post_title": old["plan"]["title"],
+            "post_status": "draft",
+            "post_name": "same-slug",
+            "post_content": transformed_body,
+            "post_excerpt": excerpt_from_lead(old["plan"]["lead"]),
+        }
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / "data"
+            data.mkdir()
+            index = data / "draft_posts.json"
+            index.write_text(json.dumps([{
+                "id": 393,
+                "fact_manifest": {"editorial_bundle": old},
+            }]), encoding="utf-8")
+            inventory = {
+                "checked_on": NOW.date().isoformat(),
+                "posts": [{**live, "category_slugs": ["life-admin"]}],
+            }
+
+            def run(args, **kwargs):
+                wp = _wp_args(args) or []
+                if wp[:2] == ["post", "get"]:
+                    return Mock(stdout=json.dumps(live))
+                if wp and wp[0] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    live.update(payload["updates"])
+                    return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
+                raise AssertionError(args)
+
+            attested_sha = hashlib.sha256(transformed_body.encode()).hexdigest()
+            with patch("agents.editorial_draft_reviser.ROOT", root), \
+                 patch("agents.editorial_draft_reviser.DRAFTS_INDEX_FILE", index), \
+                 patch("agents.editorial_draft_reviser.sync_inventory"), \
+                 patch("agents.editorial_draft_reviser.invalidate_inventory"), \
+                 patch("agents.editorial_draft_reviser.load_inventory", return_value=inventory), \
+                 patch("agents.editorial_draft_reviser.validate_bundle", return_value={"status": "ready", "reasons": []}), \
+                 patch("agents.editorial_draft_reviser.verify_revision_sources", return_value={
+                     "reused_source_ids": [], "refetched_source_ids": [s["id"] for s in new["sources"]],
+                     "all_unchanged": True,
+                 }), \
+                 patch("agents.editorial_draft_reviser.recognized_reviewed_content_hashes", return_value={"attested": attested_sha}), \
+                 patch("agents.editorial_draft_reviser.save_report"), \
+                 patch("agents.editorial_draft_reviser.subprocess.run", side_effect=run):
+                result = revise_reviewed_draft(
+                    393, new, attested_sha, confirmed=True)
+            self.assertEqual(393, result)
+
     def test_revision_requires_confirmation(self):
         with self.assertRaisesRegex(ValueError, "specific_draft_revision_confirmation_required"):
             revise_reviewed_draft(393, {}, "0" * 64, confirmed=False)
