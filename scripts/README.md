@@ -20,6 +20,7 @@
 - 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py`
 - 운영 editorial release 생성: `build_editorial_release.py` (항상 새 출력 폴더에 current HEAD runtime 전체 패키징)
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
+- Git 추적 파일 비밀정보 검사: `check_repo_secrets.py`
 
 직접 WP-CLI나 임시 PHP로 편집 검증을 우회하지 않는다.
 

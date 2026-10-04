@@ -13,6 +13,7 @@
     "build_legacy_current_dashboard.py": "Legacy current-state dashboard generator",
     "build_legacy_full_approval_index.py": "Legacy approval index generator",
     "check_text_encoding.py": "Tracked text UTF-8 and corruption contract check",
+    "check_repo_secrets.py": "Tracked repository high-confidence secret scan",
     "cleanup_workspaces.py": "Conservative cleanup for disposable local workspaces",
     "collect_topic_demand.py": "Official measured-demand enrichment for reviewed private topic candidates",
     "editorial_cli_via_ssh.py": "Restricted remote adapter for the canonical editorial CLI",
