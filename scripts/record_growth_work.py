@@ -48,6 +48,8 @@ def main(argv=None) -> int:
     parser.add_argument("--post-id", type=int, required=True)
     parser.add_argument("--completed-on", help="YYYY-MM-DD; defaults to KST operator date")
     parser.add_argument("--note", default="", help="short operator note; do not put secrets here")
+    parser.add_argument("--edit-receipt", type=Path, required=True,
+                        help="JSON output from the successful canonical edit-post command")
     parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
     parser.add_argument("--work-log", type=Path, default=DEFAULT_LOG)
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
@@ -58,9 +60,11 @@ def main(argv=None) -> int:
         plan = _load(args.plan, "daily_growth_plan_unreadable")
         log = _load(args.work_log, "growth_work_log_unreadable") if args.work_log.exists() else empty_work_log()
         policy = load_policy(args.policy)
+        edit_result = _load(args.edit_receipt, "growth_edit_receipt_unreadable")
+        edit_receipt = edit_result.get("mutation_receipt") if isinstance(edit_result, dict) else None
         updated = record_existing_completion(
             log, plan, policy, post_id=args.post_id,
-            completed_on=completed_on, note=args.note,
+            completed_on=completed_on, edit_receipt=edit_receipt, note=args.note,
         )
         target = save_work_log(updated, args.work_log)
     except (ValueError, GrowthWorkLogError) as exc:

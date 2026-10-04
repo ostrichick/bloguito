@@ -16,6 +16,14 @@ from agents.featured_image import (
 )
 
 
+def _wp_args(args):
+    if args[:6] == ["sudo", "docker", "exec", "-i", "wordpress_app", "wp"]:
+        return args[6:]
+    if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "wp"]:
+        return args[5:]
+    return None
+
+
 class FeaturedImageReplacementTests(unittest.TestCase):
     def _image(self, folder):
         path = Path(folder) / "cover.jpg"
@@ -62,7 +70,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
 
             def run(args, **kwargs):
                 nonlocal thumbnail
-                wp = args[5:] if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "wp"] else None
+                wp = _wp_args(args)
                 if wp and wp[:2] == ["post", "get"]:
                     if wp[2] == "777":
                         return Mock(stdout=json.dumps({
@@ -80,8 +88,13 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                         return Mock(stdout=thumbnail + "\n", stderr="", returncode=0)
                     return Mock(stdout=rank[key] + "\n", stderr="", returncode=0)
                 if wp and wp[:2] == ["media", "import"]:
-                    thumbnail = "777"
                     return Mock(stdout="\ufeff777\n", stderr="", returncode=0)
+                if wp and wp[0] == "eval":
+                    payload = json.loads(kwargs["input"])
+                    thumbnail = str(payload["attachment_id"])
+                    return Mock(stdout=json.dumps({
+                        "status": "ok", "saved": live, "thumbnail_id": thumbnail,
+                    }), stderr="", returncode=0)
                 if args[:3] == ["sudo", "docker", "cp"]:
                     return Mock(stdout=b"", stderr=b"", returncode=0)
                 if args[:5] == ["sudo", "docker", "exec", "wordpress_app", "rm"]:

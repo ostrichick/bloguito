@@ -42,7 +42,12 @@ from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
 from agents.workflow_metrics import annotate, increment, timed, workflow_run  # noqa: E402
-from agents.wordpress_mutation import GUARDED_POST_MUTATION_SCRIPT, POST_THUMBNAIL_SNAPSHOT_SCRIPT  # noqa: E402
+from agents.wordpress_mutation import (  # noqa: E402
+    GUARDED_CATEGORY_MUTATION_SCRIPT,
+    GUARDED_POST_MUTATION_SCRIPT,
+    GUARDED_THUMBNAIL_MUTATION_SCRIPT,
+    POST_THUMBNAIL_SNAPSHOT_SCRIPT,
+)
 from sync_wordpress_inventory import LIGHTWEIGHT_INVENTORY_ARGS  # noqa: E402
 
 configure_utf8_stdio()
@@ -314,34 +319,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 return _RUN(argv, **options)
         return result
 
-    def parse_update(wp):
-        if len(wp) < 5 or wp[:2] != ['post', 'update'] or not wp[2].isdigit():
-            return None
-        post_id = int(wp[2])
-        if post_id not in allowed_ids or wp[-1] != '--allow-root':
-            raise ValueError('unexpected_wordpress_update_target')
-        fields = {}
-        for item in wp[3:-1]:
-            if not item.startswith('--') or '=' not in item:
-                raise ValueError('unexpected_wordpress_update_flags')
-            key, value = item[2:].split('=', 1)
-            if key in fields:
-                raise ValueError('unexpected_wordpress_update_flags')
-            fields[key] = value
-        expected = _UPDATE_FIELDS.get(action, set())
-        allowed_field_sets = {frozenset(expected)}
-        if action == 'draft-standard' and allow_title_change:
-            allowed_field_sets.add(frozenset(expected | {'post_title'}))
-        if frozenset(fields) not in allowed_field_sets:
-            raise ValueError('unexpected_wordpress_update_flags')
-        if action == 'promote-draft' and fields.get('post_status') != 'publish':
-            raise ValueError('unexpected_wordpress_update_flags')
-        if action == 'repair-draft-category' and not fields.get('post_category', '').isdigit():
-            raise ValueError('unexpected_wordpress_update_flags')
-        return post_id
-
     def validate_guarded_payload(raw):
-        if action not in {'draft-standard', 'draft-fast', 'public-fast', 'public-standard'}:
+        guarded_actions = {
+            'draft-standard', 'draft-fast', 'public-fast', 'public-standard',
+            'reformat', 'fix-excerpt', 'promote-draft',
+        }
+        if action not in guarded_actions:
             raise ValueError('guarded_wordpress_mutation_not_allowed')
         if isinstance(raw, bytes):
             raw = raw.decode('utf-8')
@@ -356,21 +339,52 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         post_id = payload.get('post_id')
         expected = payload.get('expected')
         updates = payload.get('updates')
+        expected_meta = payload.get('expected_meta')
+        updates_meta = payload.get('updates_meta')
         if type(post_id) is not int or post_id not in allowed_ids:
             raise ValueError('unexpected_wordpress_update_target')
         required_expected = {
             'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256',
         }
-        expected_status = 'publish' if action in _PUBLIC_EDIT_ACTIONS else 'draft'
-        if (not isinstance(expected, dict) or set(expected) != required_expected
+        allowed_expected_sets = {frozenset(required_expected)}
+        if action == 'public-standard':
+            allowed_expected_sets.add(frozenset(required_expected | {'category_ids'}))
+        expected_status = 'publish' if action in {*_PUBLIC_EDIT_ACTIONS, 'fix-excerpt'} else 'draft'
+        if (not isinstance(expected, dict) or frozenset(expected) not in allowed_expected_sets
                 or expected.get('post_status') != expected_status
                 or not re.fullmatch(r'[0-9a-f]{64}', expected.get('content_sha256', ''))
-                or any(not isinstance(value, str) or '\x00' in value for value in expected.values())):
+                or any(not isinstance(expected[key], str) or '\x00' in expected[key]
+                       for key in required_expected)
+                or ('category_ids' in expected and (
+                    not isinstance(expected['category_ids'], list)
+                    or any(type(value) is not int or value <= 0 for value in expected['category_ids'])
+                    or len(expected['category_ids']) != len(set(expected['category_ids']))))):
             raise ValueError('invalid_guarded_wordpress_expectation')
         if not isinstance(updates, dict) or any(
                 not isinstance(value, str) or '\x00' in value for value in updates.values()):
             raise ValueError('invalid_guarded_wordpress_update')
-        if action == 'draft-fast':
+        if (expected_meta is None) != (updates_meta is None):
+            raise ValueError('invalid_guarded_wordpress_meta_expectation')
+        if expected_meta is not None:
+            if (action not in {'public-standard', 'draft-standard'}
+                    or expected_rank_math_meta is None
+                    or not isinstance(expected_meta, dict) or not isinstance(updates_meta, dict)
+                    or set(expected_meta) != set(expected_rank_math_meta)
+                    or set(updates_meta) != set(expected_rank_math_meta)
+                    or any(value is not None and (
+                        not isinstance(value, str) or '\x00' in value)
+                        for value in expected_meta.values())
+                    or updates_meta != expected_rank_math_meta):
+                raise ValueError('invalid_guarded_wordpress_meta_expectation')
+        if action == 'promote-draft':
+            allowed_field_sets = {frozenset({'post_status'})}
+            if updates.get('post_status') != 'publish':
+                raise ValueError('unexpected_wordpress_update_flags')
+        elif action == 'reformat':
+            allowed_field_sets = {frozenset({'post_content'})}
+        elif action == 'fix-excerpt':
+            allowed_field_sets = {frozenset({'post_excerpt'})}
+        elif action == 'draft-fast':
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
         elif action == 'draft-standard':
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
@@ -393,6 +407,77 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 })
         if frozenset(updates) not in allowed_field_sets:
             raise ValueError('unexpected_wordpress_update_flags')
+        return payload
+
+    def validate_category_payload(raw):
+        if action != 'repair-draft-category':
+            raise ValueError('guarded_category_mutation_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        if not isinstance(raw, str):
+            raise ValueError('guarded_category_payload_required')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_guarded_category_payload') from exc
+        if (not isinstance(payload, dict)
+                or set(payload) != {'protocol', 'post_id', 'expected', 'target_category_id'}
+                or payload.get('protocol') != 1):
+            raise ValueError('invalid_guarded_category_payload')
+        post_id = payload.get('post_id')
+        target = payload.get('target_category_id')
+        expected = payload.get('expected')
+        required_expected = {
+            'post_status', 'post_title', 'post_name', 'post_excerpt',
+            'content_sha256', 'category_ids',
+        }
+        if (type(post_id) is not int or post_id not in allowed_ids
+                or type(target) is not int or target <= 0
+                or not isinstance(expected, dict) or set(expected) != required_expected
+                or expected.get('post_status') != 'draft'
+                or not re.fullmatch(r'[0-9a-f]{64}', expected.get('content_sha256', ''))
+                or any(not isinstance(expected.get(key), str) or '\x00' in expected[key]
+                       for key in required_expected - {'category_ids'})
+                or not isinstance(expected.get('category_ids'), list)
+                or any(type(value) is not int or value <= 0 for value in expected['category_ids'])):
+            raise ValueError('invalid_guarded_category_expectation')
+        return payload
+
+    def validate_thumbnail_payload(raw):
+        if not image_mutation_allowed or action not in _IMAGE_EDIT_ACTIONS:
+            raise ValueError('guarded_thumbnail_mutation_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        if not isinstance(raw, str):
+            raise ValueError('guarded_thumbnail_payload_required')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_guarded_thumbnail_payload') from exc
+        if (not isinstance(payload, dict)
+                or set(payload) != {
+                    'protocol', 'post_id', 'expected',
+                    'expected_thumbnail_id', 'attachment_id',
+                }
+                or payload.get('protocol') != 1):
+            raise ValueError('invalid_guarded_thumbnail_payload')
+        post_id = payload.get('post_id')
+        attachment_id = payload.get('attachment_id')
+        expected_thumb = payload.get('expected_thumbnail_id')
+        expected = payload.get('expected')
+        required_expected = {
+            'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256',
+        }
+        expected_status = 'publish' if action in _PUBLIC_EDIT_ACTIONS else 'draft'
+        if (type(post_id) is not int or post_id not in allowed_ids
+                or type(attachment_id) is not int or attachment_id <= 0
+                or (expected_thumb is not None and (type(expected_thumb) is not int or expected_thumb <= 0))
+                or not isinstance(expected, dict) or set(expected) != required_expected
+                or expected.get('post_status') != expected_status
+                or not re.fullmatch(r'[0-9a-f]{64}', expected.get('content_sha256', ''))
+                or any(not isinstance(value, str) or '\x00' in value for value in expected.values())):
+            raise ValueError('invalid_guarded_thumbnail_expectation')
+        readable_ids.add(attachment_id)
         return payload
 
     def validate_section_snapshot_payload(raw):
@@ -461,11 +546,15 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']:
             return 'guarded_mutation'
+        if (action == 'repair-draft-category'
+                and wp == ['eval', GUARDED_CATEGORY_MUTATION_SCRIPT, '--allow-root']):
+            return 'guarded_category_mutation'
+        if (image_mutation_allowed and action in _IMAGE_EDIT_ACTIONS
+                and wp == ['eval', GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root']):
+            return 'guarded_thumbnail_mutation'
         if (action == 'import-section-image'
                 and wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']):
             return 'section_snapshot'
-        if parse_update(wp) is not None:
-            return
         if (action in _PERMALINK_ACTIONS and len(wp) == 3 and wp[0] == 'eval'
                 and re.fullmatch(r'echo get_permalink\(([1-9][0-9]*)\);', wp[1])
                 and int(re.fullmatch(r'echo get_permalink\(([1-9][0-9]*)\);', wp[1]).group(1)) in allowed_ids
@@ -485,23 +574,22 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
                 and wp[4:] == ['--featured_image', '--allow-root']):
             return
-        if (allow_image and action == 'draft-standard' and len(wp) == 7 and wp[:2] == ['media', 'import']
+        if (allow_image and action == 'draft-standard' and len(wp) == 6 and wp[:2] == ['media', 'import']
                 and _REMOTE_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
                 and int(wp[3].split('=', 1)[1]) in allowed_ids
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
-                and wp[4:] == ['--featured_image', '--porcelain', '--allow-root']):
+                and wp[4:] == ['--porcelain', '--allow-root']):
             return 'media_import'
         if (image_mutation_allowed and action in _IMAGE_EDIT_ACTIONS
-                and len(wp) == 9 and wp[:2] == ['media', 'import']
+                and len(wp) == 8 and wp[:2] == ['media', 'import']
                 and _REMOTE_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
                 and int(wp[3].split('=', 1)[1]) in allowed_ids
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
-                and wp[4] == '--featured_image'
-                and wp[5].startswith('--title=') and '\x00' not in wp[5]
-                and wp[6].startswith('--alt=') and '\x00' not in wp[6]
-                and wp[7:] == ['--porcelain', '--allow-root']):
+                and wp[4].startswith('--title=') and '\x00' not in wp[4]
+                and wp[5].startswith('--alt=') and '\x00' not in wp[5]
+                and wp[6:] == ['--porcelain', '--allow-root']):
             return 'media_import'
         if (action == 'import-section-image' and len(wp) == 8 and wp[:2] == ['media', 'import']
                 and _REMOTE_SECTION_IMAGE.fullmatch(wp[2])
@@ -528,13 +616,6 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4] in expected_rank_math_meta and wp[5] == '--allow-root'):
-            return
-        if (action in {'public-standard', 'draft-standard'}
-                and expected_rank_math_meta is not None
-                and len(wp) == 7 and wp[:3] == ['post', 'meta', 'set']
-                and wp[3].isdigit() and int(wp[3]) in allowed_ids
-                and wp[4] in expected_rank_math_meta
-                and wp[5] == expected_rank_math_meta[wp[4]] and wp[6] == '--allow-root'):
             return
         raise ValueError('unexpected_wordpress_command_during_editorial_ssh')
 
@@ -587,6 +668,28 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 # The server-side CAS makes one replay safe. If the first write
                 # committed but SSH lost its response, the replay sees the exact
                 # desired state and the local guarded helper reconciles it.
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'guarded_category_mutation':
+                validate_category_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(GUARDED_CATEGORY_MUTATION_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'guarded_thumbnail_mutation':
+                validate_thumbnail_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(GUARDED_THUMBNAIL_MUTATION_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
                 return remote_run(remote, retry_255=True, **options)
             if kind == 'section_snapshot':
                 raw_payload = kwargs.get('input')

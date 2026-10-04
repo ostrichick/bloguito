@@ -12,6 +12,7 @@ from agents.editorial import ROOT, save_report, validate_bundle
 from agents.editorial_writer import fetch_sources, load_inventory
 from agents.post_manifest_store import acquire_editorial_lock, assert_unchanged, load_record, release_editorial_lock
 from agents.publisher import PublisherAgent
+from agents.wordpress_mutation import guarded_set_post_category
 from config import DRAFTS_INDEX_FILE, resolve_category
 from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_content_sha, sync_inventory
 
@@ -92,24 +93,26 @@ def repair_reviewed_draft_category(post_id, expected_content_sha256, *, confirme
         os.chmod(backup, 0o600)
         save_report(bundle, report)
 
-        run_wordpress(
-            base + ["post", "update", str(post_id), f"--post_category={target_id}", "--allow-root"],
-            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
+        category_result = guarded_set_post_category(
+            base,
+            post_id,
+            expected={
+                "post_status": "draft",
+                "post_title": live["post_title"],
+                "post_name": live["post_name"],
+                "post_excerpt": live.get("post_excerpt", ""),
+                "content_sha256": expected_content_sha256,
+                "category_ids": sorted(int(term["term_id"]) for term in terms),
+            },
+            target_category_id=target_id,
         )
-        saved = json.loads(run_wordpress(
-            base + ["post", "get", str(post_id), "--format=json", "--allow-root"],
-            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
-        ).stdout)
-        saved_terms = json.loads(run_wordpress(
-            base + ["post", "term", "list", str(post_id), "category",
-                    "--fields=term_id,name,slug", "--format=json", "--allow-root"],
-            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
-        ).stdout)
+        saved = category_result["post"]
+        saved_category_ids = category_result["category_ids"]
         if (saved["post_status"] != "draft"
                 or saved["post_title"] != live["post_title"]
                 or saved["post_name"] != live["post_name"]
                 or _sha(saved["post_content"]) != expected_content_sha256
-                or [int(term["term_id"]) for term in saved_terms] != [target_id]):
+                or saved_category_ids != [target_id]):
             raise ValueError(f"draft_category_repair_verification_failed: recover from {backup}")
 
         PublisherAgent()._record_post(

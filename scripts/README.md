@@ -16,7 +16,7 @@
 - 검토된 신규 후보 외부 실측 수요 보강: `collect_topic_demand.py`
 - 신규 주제 demand gate 점수화: `score_topic_candidates.py`
 - 일일 성장 작업 결정: `build_daily_growth_plan.py`
-- 기존 글 성장 개선 완료 기록: `record_growth_work.py`
+- 기존 글 성장 개선 완료 기록: `record_growth_work.py` (`edit-post --output`의 verified mutation receipt 필수)
 - 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py` (canonical `wordpress_inventory.json`이 없으면 최신 catalog sync의 URL-complete `catalog_inventory.json`을 사용하며, URL state가 불완전하면 fail closed)
 - 운영 editorial release 생성: `build_editorial_release.py` (항상 새 출력 폴더에 current HEAD runtime 전체 패키징)
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
@@ -28,7 +28,7 @@
 
 1. **재사용 가능**: 두 개 이상의 독립 작업에서 쓸 명확한 인터페이스가 있고 테스트를 둘 수 있으면 `scripts/` 루트에 둔다. `maintained_scripts.json`에도 등록한다.
 2. **작업 중 임시**: 한 글, 한 이미지, 한 조사에만 필요한 코드는 `scratch/tasks/<작업명>/` 아래에 둔다. `scratch/`는 Git 비추적 영역이다.
-3. **기록 보존 필요**: 일회성 스크립트를 나중에 참고할 필요가 있으면 `scripts/archive/<날짜 또는 작업명>/`로 옮긴다. 새 archive 파일은 Git에 추가하지 않는다. 이미 과거에 추적된 archive 파일은 역사 기록으로 유지한다.
+3. **기록 보존 필요**: 일반 일회성 스크립트는 `scripts/archive/<날짜 또는 작업명>/`로 옮기고 새 archive 파일은 Git에 추가하지 않는다. 예전에 maintained surface였던 스크립트를 회귀 테스트·감사 문서 때문에 exact source로 계속 추적해야 할 때만 `scripts/history/`에 immutable historical reference로 이동한다. `history/` 파일은 `maintained_scripts.json`에 등록하지 않으며 운영 mutation 진입점으로 재사용하지 않는다.
 4. **게시물 전용 테스트/하네스**: 공통 동작을 검증하는 테스트가 아니면 `agent-publisher/tests/`에 두지 않는다. 작업 중 검증 코드는 `scratch/tasks/`에, 설명 기록은 필요할 때 기존 작업 MD에 남긴다.
 5. **브라우저 QA 프로필**: repo의 `tmp/`/`scratch/`에 Edge/Chrome user-data-dir를 만들지 않는다. 기존 브라우저 세션을 재사용하거나 OS 임시 디렉터리를 사용하고, 성공한 QA 뒤 프로필/cache는 삭제한다. 저장소에는 최종 screenshot/JSON 증거만 남긴다.
 6. **재시도 산출물**: 같은 작업의 retry마다 timestamp 폴더를 추가하지 않고 동일 task workspace의 안정된 파일명(`candidate.json`, `qa.json`, `mobile.png` 등)을 갱신한다. 별도 보존이 필요한 실패본만 명시적으로 `failed/`에 남긴다.

@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = '21245da38256e7de801b19447dc672146fe6313143ee5a279223b4475337b467'
+CANONICAL_INVENTORY_DIGEST = 'b44ce045a958c27e6bcd2e72451570febc1cec64a459228153464cbb62a42995'
 ALLOWED_RETIRED_FILES = {
     'agents/copywriter.py',
     'agents/editorial_draft_updater.py',
@@ -123,7 +123,12 @@ def install(release, app):
         raise ValueError('unexpected_existing_runtime_module:' + sorted(unexpected_existing)[0])
     files = [p for p in (release/'agent-publisher').rglob('*') if p.is_file()]
     for p in files:
-        if p.suffix not in {'.py', '.json'} or '.env' in p.parts or '__pycache__' in p.parts:
+        relative = p.relative_to(release / 'agent-publisher').as_posix()
+        attestation = (
+            relative.startswith('data/provenance_attestations/') and p.suffix == '.html'
+        )
+        if ((p.suffix not in {'.py', '.json'} and not attestation)
+                or '.env' in p.parts or '__pycache__' in p.parts):
             raise ValueError('unexpected_release_file')
     backup = app/'backups'/('editorial-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
     backup.mkdir(parents=True, mode=0o700)

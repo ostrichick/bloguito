@@ -31,14 +31,16 @@ class ReformatReviewBindingTests(unittest.TestCase):
             old = editorial.render_legacy(bundle['plan'], bundle['sources'])
             desired = editorial.render(bundle['plan'], bundle['sources'])
             live = {'ID': 393, 'post_status': 'draft', 'post_title': bundle['plan']['title'],
-                    'post_content': old}
+                    'post_name': 'stable-slug', 'post_content': old, 'post_excerpt': ''}
             inventory = {'checked_on': NOW.date().isoformat(), 'posts': [live]}
             calls = []
 
             def run(args, **kwargs):
                 calls.append(args)
-                if 'update' in args:
-                    live['post_content'] = desired
+                if 'eval' in args:
+                    payload = json.loads(kwargs['input'])
+                    live.update(payload['updates'])
+                    return Mock(stdout=json.dumps({'status': 'ok', 'saved': live}))
                 return Mock(stdout=json.dumps(live))
 
             real_validator = editorial.validate_bundle
@@ -55,14 +57,15 @@ class ReformatReviewBindingTests(unittest.TestCase):
             if rejected:
                 with self.assertRaisesRegex(ValueError, rejected):
                     PublisherAgent().reformat_draft(393)
-                self.assertFalse(any('update' in args for args in calls))
+                self.assertFalse(any('eval' in args for args in calls))
                 record.assert_not_called()
                 self.assertEqual(before, index.read_bytes())
                 self.assertEqual(old, live['post_content'])
             else:
                 self.assertEqual(393, PublisherAgent().reformat_draft(393))
                 self.assertEqual(desired, live['post_content'])
-                self.assertTrue(any('update' in args for args in calls))
+                self.assertTrue(any('eval' in args for args in calls))
+                self.assertFalse(any('post' in args and 'update' in args for args in calls))
                 stored = record.call_args.kwargs['fact_manifest']['editorial_bundle']
                 self.assertEqual(review_before, stored['review'])
 

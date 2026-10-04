@@ -360,7 +360,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
                       input=json.dumps({'protocol': 1, 'post_id': 463, 'expected': expected,
                                         'updates': {'post_content': 'reviewed'}}), text=True)
-        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'update', '463', '--post_content=reviewed', '--post_excerpt=summary', '--allow-root'])
 
@@ -410,6 +410,15 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             module.make_transport('draft-standard', {463}, 'bloguito')(command, input=payload, text=True)
         module.make_transport(
             'draft-standard', {463}, 'bloguito', allow_title_change=True)(command, input=payload, text=True)
+
+    def test_revise_draft_never_allows_plain_title_update_even_when_title_change_confirmed(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+        transport = module.make_transport(
+            'draft-standard', {463}, 'bloguito', allow_title_change=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'post', 'update', '463', '--post_title=reviewed title', '--allow-root'])
 
     def test_edit_post_transport_must_be_preclassified(self):
         module = load_module()
@@ -551,11 +560,20 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout='', stderr='')
         transport = module.make_transport('promote-draft', {463}, 'bloguito')
-        transport(module._WP_PREFIX + [
-            'post', 'update', '463', '--post_status=publish', '--allow-root'])
+        expected = {
+            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+            'post_excerpt': 'old', 'content_sha256': '0' * 64,
+        }
+        transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                  input=json.dumps({'protocol': 1, 'post_id': 463, 'expected': expected,
+                                    'updates': {'post_status': 'publish'}}), text=True)
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            transport(module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                      input=json.dumps({'protocol': 1, 'post_id': 463, 'expected': expected,
+                                        'updates': {'post_status': 'draft'}}), text=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
-                'post', 'update', '463', '--post_status=draft', '--allow-root'])
+                'post', 'update', '463', '--post_status=publish', '--allow-root'])
 
     def test_publish_learns_created_id_and_allows_saved_content_read(self):
         module = load_module()
@@ -616,11 +634,28 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         for key, value in expected.items():
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'get', '641', key, '--allow-root'])
-            transport(module._WP_PREFIX + [
-                'post', 'meta', 'set', '641', key, value, '--allow-root'])
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
-                'post', 'meta', 'set', '641', 'rank_math_title', 'unreviewed title', '--allow-root'])
+                'post', 'meta', 'set', '641', 'rank_math_title', expected['rank_math_title'], '--allow-root'])
+        payload = {
+            'protocol': 1,
+            'post_id': 641,
+            'expected': {
+                'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                'post_excerpt': 'old', 'content_sha256': '0' * 64,
+            },
+            'updates': {'post_content': 'new', 'post_excerpt': 'summary'},
+            'expected_meta': {key: 'old ' + key for key in expected},
+            'updates_meta': expected,
+        }
+        transport(
+            module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+            input=json.dumps(payload), text=True)
+        payload['updates_meta'] = {**expected, 'rank_math_title': 'unreviewed title'}
+        with self.assertRaisesRegex(ValueError, 'invalid_guarded_wordpress_meta_expectation'):
+            transport(
+                module._WP_PREFIX + ['eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root'],
+                input=json.dumps(payload), text=True)
 
     def test_repair_draft_category_allows_only_target_category_update(self):
         module = load_module()
@@ -629,13 +664,22 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport(module._WP_PREFIX + [
             'post', 'term', 'list', '648', 'category',
             '--fields=term_id,name,slug', '--format=json', '--allow-root'])
+        payload = json.dumps({
+            'protocol': 1, 'post_id': 648,
+            'expected': {
+                'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                'post_excerpt': '', 'content_sha256': '0' * 64, 'category_ids': [4],
+            },
+            'target_category_id': 274,
+        })
         transport(module._WP_PREFIX + [
-            'post', 'update', '648', '--post_category=4', '--allow-root'])
+            'eval', module.GUARDED_CATEGORY_MUTATION_SCRIPT, '--allow-root'],
+            input=payload, text=True)
         transport(module._WP_PREFIX + [
             'eval', 'echo get_permalink(648);', '--allow-root'])
-        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
-                'post', 'update', '648', '--post_category=local-events', '--allow-root'])
+                'post', 'update', '648', '--post_category=274', '--allow-root'])
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'term', 'list', '649', 'category',
@@ -716,17 +760,32 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'wordpress_app:/tmp/editorial_cover_463.jpg'], capture_output=True, check=True)
         transport(module._WP_PREFIX + [
             'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
-            '--featured_image', '--title=검토된 제목', '--alt=검토된 대체텍스트',
+            '--title=검토된 제목', '--alt=검토된 대체텍스트',
             '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
+        expected = {
+            'post_status': 'draft', 'post_title': '검토된 제목', 'post_name': 'slug',
+            'post_excerpt': 'summary', 'content_sha256': '0' * 64,
+        }
+        transport(
+            module._WP_PREFIX + ['eval', module.GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1, 'post_id': 463, 'expected': expected,
+                'expected_thumbnail_id': 642, 'attachment_id': 777,
+            }), text=True)
         transport(module._WP_PREFIX + [
             'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
             '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'meta', 'get', '777', '_wp_attachment_image_alt', '--allow-root'],
             capture_output=True, text=True, check=False)
-        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'update', '463', '--post_content=x', '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
+                '--featured_image', '--title=검토된 제목', '--alt=검토된 대체텍스트',
+                '--porcelain', '--allow-root'])
 
     def test_replace_featured_image_media_import_255_is_not_retried(self):
         module = load_module()
@@ -743,7 +802,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
         result = transport(module._WP_PREFIX + [
             'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
-            '--featured_image', '--title=검토된 제목', '--alt=대체텍스트',
+            '--title=검토된 제목', '--alt=대체텍스트',
             '--porcelain', '--allow-root'], capture_output=True, text=True, check=False)
         self.assertEqual(255, result.returncode)
         self.assertEqual(1, ssh_attempts)
@@ -761,7 +820,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport = module.make_transport('replace-featured-image', {648}, 'bloguito')
         result = transport(module._WP_PREFIX + [
             'media', 'import', '/tmp/editorial_cover_648.webp', '--post_id=648',
-            '--featured_image', '--title=검토된 제목', '--alt=대체텍스트',
+            '--title=검토된 제목', '--alt=대체텍스트',
             '--porcelain', '--allow-root'], capture_output=True, text=True, check=True)
         self.assertEqual(0, result.returncode)
 
@@ -878,7 +937,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         transport(module._WP_PREFIX + [
             'post', 'get', '700', '--format=json', '--allow-root'],
             capture_output=True, text=True, check=True)
-        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_target'):
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'post', 'update', '700', '--post_content=x', '--post_excerpt=y', '--allow-root'])
 

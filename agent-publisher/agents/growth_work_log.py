@@ -112,7 +112,8 @@ def recent_work_mix(log: dict, *, as_of: date, limit: int) -> dict:
 
 
 def record_existing_completion(log: dict, daily_plan: dict, policy: dict, *,
-                               post_id: int, completed_on: date, note: str = "") -> dict:
+                               post_id: int, completed_on: date, edit_receipt: dict,
+                               note: str = "") -> dict:
     """Idempotently append a completion bound to the current planner-selected target."""
     from agents.growth_planner import daily_planner_digest
 
@@ -130,6 +131,45 @@ def record_existing_completion(log: dict, daily_plan: dict, policy: dict, *,
     target = daily_plan.get("target")
     if not isinstance(target, dict) or target.get("post_id") != post_id:
         raise GrowthWorkLogError("daily_growth_plan_post_mismatch")
+    provenance = target.get("editorial_provenance")
+    required_provenance = {
+        "classification", "auto_adoptable", "live_status",
+        "live_content_sha256", "review_digest", "bundle_digest",
+        "provenance_variant", "canonical_category_key",
+    }
+    valid_sha = lambda value: (
+        isinstance(value, str) and len(value) == 64
+        and all(ch in "0123456789abcdef" for ch in value)
+    )
+    if (not isinstance(provenance, dict) or set(provenance) != required_provenance
+            or provenance.get("classification") != "reviewed_exact"
+            or provenance.get("auto_adoptable") is not True
+            or provenance.get("live_status") != "publish"
+            or not valid_sha(provenance.get("live_content_sha256"))
+            or not valid_sha(provenance.get("review_digest"))
+            or not valid_sha(provenance.get("bundle_digest"))
+            or not isinstance(provenance.get("provenance_variant"), str)
+            or not provenance["provenance_variant"]
+            or not isinstance(provenance.get("canonical_category_key"), str)
+            or not provenance["canonical_category_key"]):
+        raise GrowthWorkLogError("daily_growth_plan_provenance_unbound")
+    required_receipt = {
+        "action", "post_id", "target_status", "before_content_sha256",
+        "after_content_sha256", "review_digest", "bundle_digest",
+        "provenance_variant", "readback_verified",
+    }
+    if (not isinstance(edit_receipt, dict) or set(edit_receipt) != required_receipt
+            or edit_receipt.get("action") != "edit-post"
+            or edit_receipt.get("post_id") != post_id
+            or edit_receipt.get("target_status") != "publish"
+            or edit_receipt.get("readback_verified") is not True
+            or edit_receipt.get("before_content_sha256") != provenance["live_content_sha256"]
+            or not valid_sha(edit_receipt.get("after_content_sha256"))
+            or not valid_sha(edit_receipt.get("review_digest"))
+            or not valid_sha(edit_receipt.get("bundle_digest"))
+            or not isinstance(edit_receipt.get("provenance_variant"), str)
+            or not edit_receipt["provenance_variant"]):
+        raise GrowthWorkLogError("growth_completion_edit_receipt_unbound")
     inputs = daily_plan.get("inputs") if isinstance(daily_plan.get("inputs"), dict) else {}
     period_end = _parse_date(
         inputs.get("opportunity_period_end"), "invalid_daily_growth_plan_opportunity_period")
@@ -147,6 +187,8 @@ def record_existing_completion(log: dict, daily_plan: dict, policy: dict, *,
         "title": target.get("title"),
         "classification": target.get("classification"),
         "recommended_action": target.get("recommended_action"),
+        "baseline_provenance": dict(provenance),
+        "completion_receipt": dict(edit_receipt),
         "completed_on": completed_on.isoformat(),
         "opportunity_period_end": period_end.isoformat(),
         "recheck_after": recheck_after.isoformat(),

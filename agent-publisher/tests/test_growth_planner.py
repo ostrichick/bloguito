@@ -21,6 +21,7 @@ POLICY = ROOT / "growth_policy.json"
 def opportunities(pages=None, end="2026-09-29"):
     return {
         "schema_version": 1,
+        "provenance_contract_version": 1,
         "period": {"start": "2026-09-02", "end": end,
                    "timezone": "Google-property-specific"},
         "policy_version": 1,
@@ -48,10 +49,34 @@ def existing(post_id=345, classification="quick_win", confidence="high",
         "classification": classification,
         "confidence": confidence,
         "recommended_action": "inspect_title_snippet_and_search_intent",
+        "editorial_provenance": {
+            "classification": "reviewed_exact",
+            "auto_adoptable": True,
+            "live_status": "publish",
+            "live_content_sha256": "a" * 64,
+            "review_digest": "b" * 64,
+            "bundle_digest": "c" * 64,
+            "provenance_variant": "current",
+            "canonical_category_key": slug,
+        },
         "search_console": {
             "clicks": 1, "impressions": impressions, "ctr": 1 / impressions,
             "position": 7.1,
         },
+    }
+
+
+def edit_receipt(post_id=345, before="a" * 64):
+    return {
+        "action": "edit-post",
+        "post_id": post_id,
+        "target_status": "publish",
+        "before_content_sha256": before,
+        "after_content_sha256": "d" * 64,
+        "review_digest": "e" * 64,
+        "bundle_digest": "f" * 64,
+        "provenance_variant": "current",
+        "readback_verified": True,
     }
 
 
@@ -115,11 +140,31 @@ class GrowthPlannerTests(unittest.TestCase):
         plan = self.decide([existing(confidence="low")], [new_topic()], ["transport", "welfare"])
         self.assertEqual("new_draft", plan["action"])
 
+    def test_existing_without_exact_reviewed_provenance_never_blocks_new(self):
+        row = existing()
+        row["editorial_provenance"] = {
+            "classification": "live_content_changed", "auto_adoptable": False,
+        }
+        plan = self.decide([row], [new_topic()], ["transport", "welfare"])
+        self.assertEqual("new_draft", plan["action"])
+
+    def test_missing_provenance_contract_makes_whole_report_fail_closed(self):
+        report = opportunities([existing()])
+        report.pop("provenance_contract_version")
+        plan = decide_daily_action(
+            report, topic_scores(self.policy, [new_topic()], as_of=self.today.isoformat()),
+            self.policy, as_of=self.today, work_log=None,
+            category_keys=["transport", "welfare"], category_slug_map=self.slug_map,
+        )
+        self.assertEqual("no_action", plan["action"])
+        self.assertIn("opportunity_report_invalid", plan["details"])
+
     def test_completed_existing_is_suppressed_until_post_change_observation_window(self):
         first = self.decide([existing()], [new_topic()], ["transport", "welfare"])
         log = record_existing_completion(
             {"schema_version": 1, "entries": []}, first, self.policy,
-            post_id=345, completed_on=self.today, note="verified edit-post readback",
+            post_id=345, completed_on=self.today, edit_receipt=edit_receipt(),
+            note="verified edit-post readback",
         )
         second = self.decide(
             [existing()], [new_topic()], ["transport", "welfare"], work_log=log)
@@ -131,7 +176,7 @@ class GrowthPlannerTests(unittest.TestCase):
         first = self.decide([existing()], [], ["transport"])
         log = record_existing_completion(
             {"schema_version": 1, "entries": []}, first, self.policy,
-            post_id=345, completed_on=self.today)
+            post_id=345, completed_on=self.today, edit_receipt=edit_receipt())
         later = self.decide(
             [existing()], [], ["transport"], end="2026-10-17",
             work_log=log, today=date(2026, 10, 17))
@@ -145,7 +190,7 @@ class GrowthPlannerTests(unittest.TestCase):
             [], ["transport"])
         log = record_existing_completion(
             {"schema_version": 1, "entries": []}, first, self.policy,
-            post_id=345, completed_on=self.today)
+            post_id=345, completed_on=self.today, edit_receipt=edit_receipt())
         next_plan = self.decide(
             [existing(345, impressions=53), existing(400, classification="growth_candidate",
                                                      impressions=30)],
@@ -159,7 +204,7 @@ class GrowthPlannerTests(unittest.TestCase):
             [new_topic()], ["transport", "welfare"])
         log = record_existing_completion(
             {"schema_version": 1, "entries": []}, first, self.policy,
-            post_id=345, completed_on=self.today)
+            post_id=345, completed_on=self.today, edit_receipt=edit_receipt())
         second = self.decide(
             [existing(345), existing(400, classification="growth_candidate", impressions=30)],
             [new_topic()], ["transport", "welfare"], work_log=log)
@@ -172,7 +217,7 @@ class GrowthPlannerTests(unittest.TestCase):
             [new_topic()], ["transport", "welfare"])
         log = record_existing_completion(
             {"schema_version": 1, "entries": []}, first, self.policy,
-            post_id=345, completed_on=self.today)
+            post_id=345, completed_on=self.today, edit_receipt=edit_receipt())
         second = self.decide(
             [existing(345), existing(400, classification="growth_candidate", impressions=30)],
             [new_topic()], ["transport", "welfare"], work_log=log)

@@ -30,7 +30,6 @@ from agents.wordpress_mutation import (
     content_sha256,
     get_post,
     guarded_update_post,
-    update_post,
     verify_cas,
     verify_saved_fields,
 )
@@ -94,13 +93,6 @@ def _read_rank_math_meta(base, post_id):
     return {key: _read_post_meta(base, post_id, key) for key in RANK_MATH_META_KEYS}
 
 
-def _set_rank_math_meta(base, post_id, values):
-    for key in RANK_MATH_META_KEYS:
-        run_wordpress(
-            list(base) + ['post', 'meta', 'set', str(post_id), key, values[key], '--allow-root'],
-            capture_output=True, text=True, encoding='utf-8', errors='strict', check=True)
-
-
 def _read_permalink(base, post_id):
     """Read the canonical WordPress permalink instead of guessing from local config."""
     result = run_wordpress(
@@ -112,9 +104,34 @@ def _read_permalink(base, post_id):
     return permalink
 
 
+def _read_category_terms(base, post_id):
+    result = run_wordpress(
+        list(base) + [
+            'post', 'term', 'list', str(post_id), 'category',
+            '--fields=term_id,name,slug', '--format=json', '--allow-root',
+        ],
+        capture_output=True, text=True, encoding='utf-8', errors='strict', check=True)
+    terms = json.loads((result.stdout or '').lstrip('\ufeff'))
+    if not isinstance(terms, list):
+        raise ValueError('wordpress_category_readback_invalid')
+    return terms
+
+
+def _adoption_category_ids(base, post_id, bundle):
+    """Bind new public provenance only to one active canonical live category."""
+    category = resolve_category(bundle.get('brief', {}).get('category_key', ''), allow_legacy=False)
+    terms = _read_category_terms(base, post_id)
+    if (len(terms) != 1
+            or int(terms[0].get('term_id') or 0) != int(category['id'])
+            or terms[0].get('name') != category['name']
+            or terms[0].get('slug') != category['slug']):
+        raise ValueError('legacy_public_adoption_category_mismatch')
+    return [int(category['id'])]
+
+
 def _public_manifest_record(post_id, bundle, live_post, permalink):
     """Build reviewed-state metadata only after a live public readback succeeded."""
-    category = resolve_category(bundle.get('brief', {}).get('category_key', ''))
+    category = resolve_category(bundle.get('brief', {}).get('category_key', ''), allow_legacy=False)
     if not isinstance(permalink, str) or not permalink.startswith(('https://', 'http://')):
         raise ValueError('wordpress_permalink_required')
     return {
@@ -235,6 +252,8 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
         if report['status'] != 'ready':
             raise ValueError(f'editorial_review_not_current: {report["reasons"]}')
         manifest_permalink = _read_permalink(base, post_id) if adopt_missing_manifest else None
+        adoption_category_ids = (
+            _adoption_category_ids(base, post_id, bundle) if adopt_missing_manifest else None)
         if checkpoint_callback is not None:
             checkpoint_callback({
                 'inventory_checked_on': inventory.get('checked_on'),
@@ -257,6 +276,19 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
                               or old_excerpt == _existing_lead_excerpt(current['post_content'])))
         if (current['post_content'] == reviewed_content and not update_excerpt
                 and not title_changed and not update_meta):
+            if adoption_category_ids is not None:
+                guarded_update_post(
+                    base, post_id,
+                    expected={
+                        'post_status': 'publish',
+                        'post_title': current['post_title'],
+                        'post_name': current['post_name'],
+                        'post_excerpt': current.get('post_excerpt', ''),
+                        'content_sha256': expected_content_sha256,
+                        'category_ids': adoption_category_ids,
+                    },
+                    updates={'post_content': current['post_content']},
+                )
             _update_reviewed_public_manifest(
                 post_id, bundle, allow_create=adopt_missing_manifest, live_post=current,
                 stale_draft_snapshot=stale_draft_snapshot, permalink=manifest_permalink)
@@ -273,20 +305,23 @@ def update_existing_public_post(post_id, bundle, expected_content_sha256, *, con
             fields['post_title'] = reviewed_title
         if update_excerpt:
             fields['post_excerpt'] = new_excerpt
+        guarded_expected = {
+            'post_status': 'publish',
+            'post_title': current['post_title'],
+            'post_name': current['post_name'],
+            'post_excerpt': current.get('post_excerpt', ''),
+            'content_sha256': expected_content_sha256,
+        }
+        if adoption_category_ids is not None:
+            guarded_expected['category_ids'] = adoption_category_ids
         saved = guarded_update_post(
             base,
             post_id,
-            expected={
-                'post_status': 'publish',
-                'post_title': current['post_title'],
-                'post_name': current['post_name'],
-                'post_excerpt': current.get('post_excerpt', ''),
-                'content_sha256': expected_content_sha256,
-            },
+            expected=guarded_expected,
             updates=fields,
+            expected_meta=current_meta if update_meta else None,
+            updates_meta=reviewed_meta if update_meta else None,
         )
-        if update_meta:
-            _set_rank_math_meta(base, post_id, reviewed_meta)
         expected = {
             'post_status': 'publish',
             'post_title': reviewed_title,
@@ -327,8 +362,18 @@ def repair_missing_excerpt(post_id, expected_content_sha256, *, confirmed=False)
             raise ValueError('published_lead_missing_or_invalid')
         backup = backup_json(ROOT, 'excerpt-edit', post_id, current, include_microseconds=False)
         # One metadata field changes; facts, content and URL are untouched.
-        update_post(base, post_id, {'post_excerpt': excerpt})
-        saved = get_post(base, post_id)
+        saved = guarded_update_post(
+            base,
+            post_id,
+            expected={
+                'post_status': 'publish',
+                'post_title': current['post_title'],
+                'post_name': current['post_name'],
+                'post_excerpt': current.get('post_excerpt', ''),
+                'content_sha256': expected_content_sha256,
+            },
+            updates={'post_excerpt': excerpt},
+        )
         if (saved['post_excerpt'] != excerpt or saved['post_content'] != current['post_content']
                 or saved['post_name'] != current['post_name'] or saved['post_status'] != 'publish'
                 or saved['post_title'] != current['post_title']):

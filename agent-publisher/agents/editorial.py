@@ -1455,7 +1455,7 @@ def validate_reviewed_content_provenance_registry(path=None):
             expected_keys.update({
                 'replacements', 'before_snapshot_sha256',
                 'mutation_payload_sha256', 'mutation_script_sha256',
-                'transformation_digest',
+                'transformation_digest', 'reviewed_content_attestation',
             })
         if (set(entry) != expected_keys
                 or type(entry.get('post_id')) is not int or entry['post_id'] <= 0
@@ -1484,7 +1484,12 @@ def validate_reviewed_content_provenance_registry(path=None):
                            for key in (
                                'before_snapshot_sha256', 'mutation_payload_sha256',
                                'mutation_script_sha256', 'transformation_digest',
-                           ))):
+                           ))
+                    or not isinstance(entry.get('reviewed_content_attestation'), str)
+                    or re.fullmatch(
+                        r'provenance_attestations/post-[1-9][0-9]*-reviewed\.html',
+                        entry['reviewed_content_attestation'],
+                    ) is None):
                 raise ValueError('invalid_reviewed_content_provenance_registry')
             old_urls = []
             new_urls = []
@@ -1518,6 +1523,26 @@ def validate_reviewed_content_provenance_registry(path=None):
             }
             if digest(transformation) != entry['transformation_digest']:
                 raise ValueError('invalid_reviewed_content_provenance_registry')
+            attestation = (registry.parent / entry['reviewed_content_attestation']).resolve()
+            if (not attestation.is_relative_to(registry.parent.resolve())
+                    or not attestation.is_file()):
+                raise ValueError('reviewed_content_attestation_missing')
+            try:
+                reviewed_bytes = attestation.read_bytes()
+                reviewed_html = reviewed_bytes.decode('utf-8')
+            except (OSError, UnicodeError) as exc:
+                raise ValueError('reviewed_content_attestation_invalid') from exc
+            if hashlib.sha256(reviewed_bytes).hexdigest() != entry['reviewed_content_sha256']:
+                raise ValueError('reviewed_content_attestation_invalid')
+            transformed = reviewed_html
+            for replacement in replacements:
+                old_url = replacement['old_url']
+                new_url = replacement['new_url']
+                if transformed.count(old_url) != 1 or new_url in transformed:
+                    raise ValueError('reviewed_content_attestation_invalid')
+                transformed = transformed.replace(old_url, new_url, 1)
+            if hashlib.sha256(transformed.encode('utf-8')).hexdigest() != entry['live_content_sha256']:
+                raise ValueError('reviewed_content_attestation_invalid')
         token = (entry['post_id'], entry['variant'])
         if token in seen:
             raise ValueError('duplicate_reviewed_content_provenance_entry')

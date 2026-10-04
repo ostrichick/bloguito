@@ -184,7 +184,8 @@ def _validate_snapshot(snapshot: dict) -> None:
         raise GrowthAnalysisError("invalid_analytics_snapshot")
 
 
-def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict) -> dict:
+def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict, *,
+                   provenance_by_id: dict[int, dict] | None = None) -> dict:
     """Join private performance data to published WordPress posts without mutation."""
     _validate_snapshot(snapshot)
     if not isinstance(catalog_posts, list):
@@ -230,6 +231,7 @@ def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict) -> d
         existing["screenPageViews"] += int(row.get("screenPageViews") or 0)
         existing["activeUsers"] += int(row.get("activeUsers") or 0)
 
+    provenance_by_id = provenance_by_id if isinstance(provenance_by_id, dict) else {}
     pages = []
     for post in published:
         published_on = _parse_date(post.get("post_date"), code="invalid_catalog_post_date")
@@ -250,6 +252,12 @@ def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict) -> d
             policy=policy,
         )
         ga4 = ga4_by_id.get(post["ID"], {"screenPageViews": 0, "activeUsers": 0})
+        provenance = provenance_by_id.get(post["ID"])
+        if not isinstance(provenance, dict):
+            provenance = {
+                "classification": "provenance_unavailable",
+                "auto_adoptable": False,
+            }
         pages.append({
             "post_id": post["ID"],
             "title": post.get("post_title", ""),
@@ -268,6 +276,14 @@ def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict) -> d
             "confidence": confidence,
             "reasons": reasons,
             "recommended_action": RECOMMENDED_ACTIONS[classification],
+            "editorial_provenance": {
+                key: provenance.get(key)
+                for key in (
+                    "classification", "auto_adoptable", "live_status",
+                    "live_content_sha256", "review_digest", "bundle_digest",
+                    "provenance_variant", "canonical_category_key",
+                )
+            },
         })
 
     order = {name: idx for idx, name in enumerate(policy["classification_order"])}
@@ -287,6 +303,7 @@ def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict) -> d
     )[:50]
     return {
         "schema_version": 1,
+        "provenance_contract_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "period": snapshot["period"],
         "policy_version": policy["version"],

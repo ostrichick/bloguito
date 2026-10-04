@@ -163,6 +163,136 @@ def _restore_index_bytes(path: Path, raw: bytes | None) -> None:
         os.replace(temporary, path)
 
 
+def _canonical_live_category(live: dict, categories: dict):
+    """Return one uniquely proven active canonical category, otherwise ``None``."""
+    slugs = live.get('category_slugs')
+    names = live.get('categories')
+    if (not isinstance(slugs, list) or len(slugs) != 1
+            or not isinstance(names, list) or len(names) != 1):
+        return None
+    matches = [
+        (key, value)
+        for key, value in categories.items()
+        if value.get('slug') == slugs[0] and value.get('name') == names[0]
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def audit_reviewed_provenance(posts: list, data_dir: Path = EDITORIAL_DATA_DIR) -> dict:
+    """Classify live/reviewed bindings without mutating WordPress or local indexes.
+
+    ``auto_adoptable`` is deliberately stricter than "has a reviewed record": the
+    exact live title/content must be review-bound and the live WordPress category
+    must resolve to exactly one active canonical taxonomy entry. Missing, legacy,
+    drifted, unbound and orphan records stay visible but fail closed.
+    """
+    agent_root = ROOT / 'agent-publisher'
+    if str(agent_root) not in sys.path:
+        sys.path.insert(0, str(agent_root))
+    from agents.editorial import digest, recognized_reviewed_content_hashes
+    from agents.post_manifest_store import load_records
+    from config import CATEGORIES
+
+    data_dir = Path(data_dir)
+    live_by_id = {
+        int(row['ID']): row
+        for row in posts
+        if isinstance(row, dict) and str(row.get('ID', '')).isdigit()
+    }
+    tracked = {}
+    duplicate_ids = set()
+    for indexed_status, name in (('draft', 'draft_posts.json'), ('publish', 'published_posts.json')):
+        index = data_dir / name
+        if not index.is_file():
+            continue
+        for record in load_records(index):
+            post_id = int(record['id'])
+            if post_id in tracked:
+                duplicate_ids.add(post_id)
+            else:
+                tracked[post_id] = (indexed_status, record)
+
+    rows = []
+    for post_id, live in sorted(live_by_id.items()):
+        tracked_row = tracked.get(post_id)
+        base = {
+            'post_id': post_id,
+            'live_status': live.get('post_status'),
+            'indexed_status': tracked_row[0] if tracked_row else None,
+            'auto_adoptable': False,
+        }
+        if post_id in duplicate_ids:
+            rows.append({**base, 'classification': 'duplicate_reviewed_record'})
+            continue
+        if tracked_row is None:
+            rows.append({**base, 'classification': 'no_reviewed_record'})
+            continue
+        _indexed_status, record = tracked_row
+        bundle = (record.get('fact_manifest') or {}).get('editorial_bundle')
+        if not isinstance(bundle, dict):
+            rows.append({**base, 'classification': 'legacy_inline_no_bundle'})
+            continue
+        try:
+            reviewed_title = bundle['plan']['title']
+            hashes = recognized_reviewed_content_hashes(bundle, post_id=post_id)
+        except ValueError as exc:
+            classification = (
+                'review_unbound' if str(exc) == 'reviewed_content_review_not_bound'
+                else 'reviewed_bundle_invalid')
+            rows.append({**base, 'classification': classification})
+            continue
+        except (KeyError, TypeError):
+            rows.append({**base, 'classification': 'reviewed_bundle_invalid'})
+            continue
+        if live.get('post_title') != reviewed_title:
+            rows.append({**base, 'classification': 'live_title_changed'})
+            continue
+        variant = next(
+            (name for name, digest in hashes.items() if digest == live.get('content_sha256')),
+            None,
+        )
+        if variant is None:
+            rows.append({**base, 'classification': 'live_content_changed'})
+            continue
+        category = _canonical_live_category(live, CATEGORIES)
+        if category is None:
+            rows.append({
+                **base, 'classification': 'reviewed_exact_category_unbound',
+                'provenance_variant': variant,
+            })
+            continue
+        category_key, category_value = category
+        rows.append({
+            **base,
+            'classification': 'reviewed_exact',
+            'provenance_variant': variant,
+            'live_content_sha256': live.get('content_sha256'),
+            'review_digest': bundle.get('review', {}).get('digest'),
+            'bundle_digest': digest(bundle),
+            'canonical_category_key': category_key,
+            'canonical_category_id': category_value['id'],
+            'auto_adoptable': True,
+        })
+
+    for post_id, (indexed_status, _record) in sorted(tracked.items()):
+        if post_id not in live_by_id:
+            rows.append({
+                'post_id': post_id,
+                'live_status': None,
+                'indexed_status': indexed_status,
+                'classification': 'orphan_reviewed_record',
+                'auto_adoptable': False,
+            })
+    counts = {}
+    for row in rows:
+        counts[row['classification']] = counts.get(row['classification'], 0) + 1
+    return {
+        'rows': rows,
+        'counts': counts,
+        'unsafe': [row for row in rows if row['classification'] == 'duplicate_reviewed_record'],
+    }
+
+
 def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR) -> dict:
     """Align reviewed draft/publish indexes with live WordPress without touching WordPress.
 
@@ -247,6 +377,12 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
             skipped.append({'post_id': post_id, 'reason': 'live_content_changed'})
             continue
 
+        category_evidence = _canonical_live_category(live, CATEGORIES)
+        if category_evidence is None:
+            skipped.append({'post_id': post_id, 'reason': 'live_category_not_canonical'})
+            continue
+        _category_key, category = category_evidence
+
         source_index = indexes[indexed_status]
         target_index = indexes[live_status]
         updated = dict(record)
@@ -254,17 +390,8 @@ def reconcile_reviewed_statuses(posts: list, data_dir: Path = EDITORIAL_DATA_DIR
         updated['title'] = reviewed_title
         if isinstance(live.get('permalink'), str) and live['permalink'].startswith('https://lifeinfo24.org/'):
             updated['url'] = live['permalink']
-        slugs = live.get('category_slugs')
-        names = live.get('categories')
-        if isinstance(slugs, list) and len(slugs) == 1 and isinstance(names, list) and len(names) == 1:
-            category = next(
-                (value for value in CATEGORIES.values()
-                 if value.get('slug') == slugs[0] and value.get('name') == names[0]),
-                None,
-            )
-            if category is not None:
-                updated['category_id'] = category['id']
-                updated['category_name'] = category['name']
+        updated['category_id'] = category['id']
+        updated['category_name'] = category['name']
 
         if live_status == indexed_status:
             if updated != record:
@@ -309,6 +436,7 @@ def load_reviewed_bundles(data_dir: Path = EDITORIAL_DATA_DIR):
         sys.path.insert(0, str(agent_root))
     from agents.post_manifest_store import load_records
     bundles = {}
+    duplicates = set()
     for name in ('published_posts.json', 'draft_posts.json'):
         index = Path(data_dir) / name
         if not index.is_file():
@@ -321,7 +449,13 @@ def load_reviewed_bundles(data_dir: Path = EDITORIAL_DATA_DIR):
         for row in rows:
             bundle = (row.get('fact_manifest') or {}).get('editorial_bundle')
             if isinstance(bundle, dict):
-                bundles[int(row['id'])] = bundle
+                post_id = int(row['id'])
+                if post_id in bundles:
+                    duplicates.add(post_id)
+                    bundles.pop(post_id, None)
+                    continue
+                if post_id not in duplicates:
+                    bundles[post_id] = bundle
     return bundles
 
 def _markdown_cells(row: str) -> list[str]:

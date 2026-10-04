@@ -17,6 +17,12 @@ class WordPressTransportTests(unittest.TestCase):
             input='payload', text=True,
         )
 
+    def test_direct_docker_exec_with_bytes_input_keeps_stdin_attached_once(self):
+        command = ['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp', 'eval', 'echo 1;']
+        with patch('subprocess.run', return_value='local') as local:
+            self.assertEqual('local', run_wordpress(command, input=b'payload'))
+        local.assert_called_once_with(command, input=b'payload')
+
     def test_explicit_transport_owns_its_stdin_forwarding(self):
         remote = Mock(return_value='remote')
         command = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp', 'eval', 'echo 1;']

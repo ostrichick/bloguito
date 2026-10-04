@@ -159,6 +159,8 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertNotIn('agent-publisher/data/search_briefs.json', inventory)
         self.assertIn('agent-publisher/data/renderer_provenance.json', inventory)
         self.assertIn('agent-publisher/data/reviewed_content_provenance.json', inventory)
+        self.assertIn(
+            'agent-publisher/data/provenance_attestations/post-665-reviewed.html', inventory)
         self.assertFalse(any('/tests/' in name or name.endswith('.example.json') for name in inventory))
         self.assertFalse(any('.env' in name for name in inventory))
         self.assertEqual(

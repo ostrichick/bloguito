@@ -24,7 +24,13 @@ from agents.task_state import (
     update_after_image_checkpoint,
     update_task_state,
 )
-from agents.wordpress_mutation import backup_json, content_sha256, get_post, verify_cas
+from agents.wordpress_mutation import (
+    backup_json,
+    content_sha256,
+    get_post,
+    guarded_set_post_thumbnail,
+    verify_cas,
+)
 from agents.designer import FEATURED_IMAGE_POLICY
 from agents.workflow_metrics import increment, timed
 
@@ -270,7 +276,6 @@ def replace_featured_image(
                         "import",
                         remote_image,
                         f"--post_id={post_id}",
-                        "--featured_image",
                         f"--title={live['post_title']}",
                         f"--alt={alt_text}",
                         "--porcelain",
@@ -307,8 +312,21 @@ def replace_featured_image(
         }
         record_outcome(outcome)
 
-        saved = get_post(base, post_id, fields=fields)
-        observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
+        thumbnail = guarded_set_post_thumbnail(
+            base,
+            post_id,
+            expected={
+                "post_status": live["post_status"],
+                "post_title": live["post_title"],
+                "post_name": live["post_name"],
+                "post_excerpt": live.get("post_excerpt", ""),
+                "content_sha256": expected_content_sha256,
+            },
+            expected_thumbnail_id=expected_thumbnail_id,
+            attachment_id=int(attachment_id),
+        )
+        saved = thumbnail["post"]
+        observed_thumb = thumbnail["thumbnail_id"]
         attachment = get_post(
             base,
             int(attachment_id),

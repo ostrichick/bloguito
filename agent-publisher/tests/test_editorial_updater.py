@@ -26,6 +26,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             wp = _wp_args(args)
             if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
+            if wp and wp[:3] == ['post', 'term', 'list']:
+                return Mock(stdout=json.dumps([{
+                    'term_id': 276, 'name': '교통/자동차', 'slug': 'transport',
+                }]))
             if wp and wp[0] == 'eval' and 'get_permalink' in wp[1]:
                 return Mock(returncode=0, stdout='https://lifeinfo24.org/stable-slug/\n', stderr='')
             if wp and wp[0] == 'eval':
@@ -49,7 +53,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                      'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
                  patch.object(updater, 'render', return_value='Reviewed HTML'), \
                  patch.object(updater, 'save_report'), \
-                 patch.object(updater, 'resolve_category', return_value={'id': 276, 'name': '교통/자동차'}), \
+                 patch.object(updater, 'resolve_category', return_value={
+                     'id': 276, 'name': '교통/자동차', 'slug': 'transport'}), \
                  patch.object(updater.subprocess, 'run', side_effect=execute):
                 self.assertEqual(243, updater.update_existing_public_post(
                     243, self.bundle, self.sha, confirmed=True, adopt_missing_manifest=True))
@@ -66,6 +71,10 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
             wp = _wp_args(args)
             if wp and wp[:2] == ['post', 'get']:
                 return Mock(stdout=json.dumps(self.post))
+            if wp and wp[:3] == ['post', 'term', 'list']:
+                return Mock(stdout=json.dumps([{
+                    'term_id': 276, 'name': '교통/자동차', 'slug': 'transport',
+                }]))
             if wp and wp[0] == 'eval' and 'get_permalink' in wp[1]:
                 return Mock(returncode=0, stdout='https://lifeinfo24.org/stable-slug/\n', stderr='')
             if wp and wp[0] == 'eval':
@@ -98,7 +107,8 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                      'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
                  patch.object(updater, 'render', return_value='Reviewed HTML'), \
                  patch.object(updater, 'save_report'), \
-                 patch.object(updater, 'resolve_category', return_value={'id': 276, 'name': '교통/자동차'}), \
+                 patch.object(updater, 'resolve_category', return_value={
+                     'id': 276, 'name': '교통/자동차', 'slug': 'transport'}), \
                  patch.object(updater.subprocess, 'run', side_effect=execute):
                 self.assertEqual(243, updater.update_existing_public_post(
                     243, self.bundle, self.sha, confirmed=True,
@@ -137,6 +147,49 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                  patch.object(updater, 'render', return_value='Reviewed HTML'), \
                  patch.object(updater.subprocess, 'run', side_effect=execute):
                 with self.assertRaisesRegex(ValueError, 'wordpress_permalink_invalid'):
+                    updater.update_existing_public_post(
+                        243, self.bundle, self.sha, confirmed=True, adopt_missing_manifest=True)
+            self.assertEqual([], json.loads(index.read_text(encoding='utf-8')))
+            self.assertFalse(any(
+                (_wp_args(args) or [None])[0] == 'eval'
+                and 'get_permalink' not in (_wp_args(args) or ['', ''])[1]
+                for args in calls
+            ))
+
+    def test_legacy_public_adoption_rejects_category_mismatch_before_mutation(self):
+        calls = []
+
+        def execute(args, **kwargs):
+            calls.append(args)
+            wp = _wp_args(args) or []
+            if wp[:2] == ['post', 'get']:
+                return Mock(stdout=json.dumps(self.post))
+            if wp and wp[0] == 'eval' and 'get_permalink' in wp[1]:
+                return Mock(returncode=0, stdout='https://lifeinfo24.org/stable-slug/\n', stderr='')
+            if wp[:3] == ['post', 'term', 'list']:
+                return Mock(stdout=json.dumps([{
+                    'term_id': 275, 'name': '건강/의료', 'slug': 'health',
+                }]))
+            raise AssertionError(args)
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = root / 'data'
+            data.mkdir()
+            index = data / 'published_posts.json'
+            index.write_text('[]', encoding='utf-8')
+            with patch.object(updater, 'ROOT', root), \
+                 patch.object(updater, 'POSTS_INDEX_FILE', index), \
+                 patch.object(updater, 'sync_inventory'), \
+                 patch.object(updater, 'load_inventory', return_value={'posts': [self.post]}), \
+                 patch.object(updater, 'validate_bundle', return_value={'status': 'ready', 'reasons': []}), \
+                 patch.object(updater, 'verify_revision_sources', return_value={
+                     'reused_source_ids': [], 'refetched_source_ids': ['s0'], 'all_unchanged': True}), \
+                 patch.object(updater, 'render', return_value='Reviewed HTML'), \
+                 patch.object(updater, 'resolve_category', return_value={
+                     'id': 276, 'name': '교통/자동차', 'slug': 'transport'}), \
+                 patch.object(updater.subprocess, 'run', side_effect=execute):
+                with self.assertRaisesRegex(ValueError, 'legacy_public_adoption_category_mismatch'):
                     updater.update_existing_public_post(
                         243, self.bundle, self.sha, confirmed=True, adopt_missing_manifest=True)
             self.assertEqual([], json.loads(index.read_text(encoding='utf-8')))
@@ -323,17 +376,17 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
                 return Mock(returncode=0, stdout=json.dumps(self.post), stderr='', args=args)
             if wp and wp[0] == 'eval':
                 payload = json.loads(kwargs['input'])
+                if payload.get('updates_meta'):
+                    meta.update(payload['updates_meta'])
                 return Mock(returncode=0, stdout=json.dumps({
                     'status': 'ok', 'saved': {**self.post, **payload['updates']},
+                    'saved_meta': payload.get('updates_meta'),
                 }), stderr='', args=args)
             if wp[:3] == ['post', 'meta', 'get']:
                 key = wp[4]
                 if meta[key] is None:
                     return Mock(returncode=1, stdout='', stderr='Error: Could not find the specified post meta field.', args=args)
                 return Mock(returncode=0, stdout=meta[key] + '\n', stderr='', args=args)
-            if wp[:3] == ['post', 'meta', 'set']:
-                meta[wp[4]] = wp[5]
-                return Mock(returncode=0, stdout='Success', stderr='', args=args)
             return Mock(returncode=0, stdout='Success', stderr='', args=args)
 
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
@@ -355,11 +408,7 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
         }
         self.assertEqual(expected, meta)
         set_calls = [c for c in calls if (_wp_args(c) or [])[:3] == ['post', 'meta', 'set']]
-        self.assertEqual(3, len(set_calls))
-        for command in set_calls:
-            wp = _wp_args(command)
-            self.assertEqual('243', wp[3])
-            self.assertEqual(expected[wp[4]], wp[5])
+        self.assertEqual([], set_calls)
         backup = next((Path(self.temp.name) / 'data/editorial_runs').glob('public-edit-*.json'))
         backed_up = json.loads(backup.read_text(encoding='utf-8'))
         self.assertEqual({
@@ -434,14 +483,19 @@ class ExistingPublicPostUpdateTests(unittest.TestCase):
 
         def execute(args, **kwargs):
             calls.append(args)
-            return Mock(stdout=json.dumps(original if len(calls) == 1 else updated))
+            wp = _wp_args(args) or []
+            if wp[:2] == ['post', 'get']:
+                return Mock(stdout=json.dumps(original))
+            if wp and wp[0] == 'eval':
+                return Mock(stdout=json.dumps({'status': 'ok', 'saved': updated}))
+            raise AssertionError(args)
 
         with patch.object(updater, 'ROOT', Path(self.temp.name)), \
              patch.object(updater.subprocess, 'run', side_effect=execute):
             self.assertEqual(243, updater.repair_missing_excerpt(243, digest, confirmed=True))
-        update = next(args for args in calls if (_wp_args(args) or [])[:2] == ['post', 'update'])
-        self.assertTrue(any(arg.startswith('--post_excerpt=실제 정보') for arg in update))
-        self.assertFalse(any(arg.startswith('--post_content=') for arg in update))
+        guarded = next(args for args in calls if (_wp_args(args) or [None])[0] == 'eval')
+        self.assertIn('eval', guarded)
+        self.assertFalse(any((_wp_args(args) or [])[:2] == ['post', 'update'] for args in calls))
         self.assertEqual(1, len(list((Path(self.temp.name) / 'data/editorial_runs').glob('excerpt-edit-*.json'))))
 
     def test_does_not_replace_human_excerpt(self):

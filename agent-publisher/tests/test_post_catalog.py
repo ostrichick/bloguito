@@ -14,6 +14,7 @@ CATALOG_MD = ROOT_DIR / "docs" / "POST_CATALOG.md"
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 
 from sync_post_catalog import (
+    audit_reviewed_provenance,
     catalog_type,
     extract_backlog_rows,
     generate_catalog_markdown,
@@ -23,6 +24,76 @@ from sync_post_catalog import (
 import sync_post_catalog as catalog_sync
 
 class TestPostCatalog(unittest.TestCase):
+    def test_load_reviewed_bundles_omits_duplicate_ids_instead_of_last_write_wins(self):
+        record = {
+            'id': 844,
+            'fact_manifest': {'editorial_bundle': {'brief': {}, 'plan': {}, 'sources': []}},
+        }
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / 'draft_posts.json').write_text(json.dumps([record]), encoding='utf-8')
+            (root / 'published_posts.json').write_text(json.dumps([record]), encoding='utf-8')
+            self.assertNotIn(844, catalog_sync.load_reviewed_bundles(root))
+
+    def test_provenance_audit_classifies_exact_drift_legacy_missing_and_orphan_fail_closed(self):
+        from tests.test_editorial_system import sample, sign
+        from agents.editorial import render
+
+        exact = sample()
+        exact['plan']['title'] = '정확 검토 글'
+        sign(exact)
+        exact_html = render(exact['plan'], exact['sources'])
+        drift = json.loads(json.dumps(exact))
+        drift['plan']['title'] = '드리프트 기준 글'
+        sign(drift)
+        drift_html = render(drift['plan'], drift['sources'])
+        unbound = json.loads(json.dumps(exact))
+        unbound['plan']['title'] = '검토 결합 파손 글'
+        sign(unbound)
+        unbound['plan']['lead']['text'] += ' 변경'
+        records = [
+            {'id': 1, 'status': 'publish', 'fact_manifest': {'editorial_bundle': exact}},
+            {'id': 2, 'status': 'publish', 'fact_manifest': {'editorial_bundle': drift}},
+            {'id': 4, 'status': 'publish', 'fact_manifest': {'legacy': True}},
+            {'id': 5, 'status': 'draft', 'fact_manifest': {'editorial_bundle': exact}},
+            {'id': 6, 'status': 'publish', 'fact_manifest': {'editorial_bundle': unbound}},
+        ]
+        posts = [
+            {'ID': 1, 'post_status': 'publish', 'post_title': '정확 검토 글',
+             'content_sha256': hashlib.sha256(exact_html.encode()).hexdigest(),
+             'category_slugs': ['health'], 'categories': ['건강/의료']},
+            {'ID': 2, 'post_status': 'publish', 'post_title': '드리프트 기준 글',
+             'content_sha256': hashlib.sha256((drift_html + ' third party').encode()).hexdigest(),
+             'category_slugs': ['health'], 'categories': ['건강/의료']},
+            {'ID': 3, 'post_status': 'publish', 'post_title': '미검토 글',
+             'content_sha256': 'a' * 64,
+             'category_slugs': ['health'], 'categories': ['건강/의료']},
+            {'ID': 4, 'post_status': 'publish', 'post_title': '레거시 글',
+             'content_sha256': 'b' * 64,
+             'category_slugs': ['health'], 'categories': ['건강/의료']},
+            {'ID': 6, 'post_status': 'publish', 'post_title': '검토 결합 파손 글',
+             'content_sha256': 'c' * 64,
+             'category_slugs': ['health'], 'categories': ['건강/의료']},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / 'published_posts.json').write_text(
+                json.dumps([r for r in records if r['status'] == 'publish'], ensure_ascii=False),
+                encoding='utf-8')
+            (root / 'draft_posts.json').write_text(
+                json.dumps([r for r in records if r['status'] == 'draft'], ensure_ascii=False),
+                encoding='utf-8')
+            audit = audit_reviewed_provenance(posts, root)
+        by_id = {row['post_id']: row for row in audit['rows']}
+        self.assertEqual('reviewed_exact', by_id[1]['classification'])
+        self.assertTrue(by_id[1]['auto_adoptable'])
+        self.assertEqual('live_content_changed', by_id[2]['classification'])
+        self.assertEqual('no_reviewed_record', by_id[3]['classification'])
+        self.assertEqual('legacy_inline_no_bundle', by_id[4]['classification'])
+        self.assertEqual('orphan_reviewed_record', by_id[5]['classification'])
+        self.assertEqual('review_unbound', by_id[6]['classification'])
+        self.assertTrue(all(not by_id[post_id]['auto_adoptable'] for post_id in (2, 3, 4, 5, 6)))
+
     def test_lifecycle_metadata_requires_matching_review_and_live_content(self):
         from tests.test_editorial_system import sample, sign
         bundle = sample()
@@ -202,6 +273,8 @@ class TestPostCatalog(unittest.TestCase):
                 'post_title': record['title'],
                 'post_status': 'publish',
                 'permalink': 'https://lifeinfo24.org/test/',
+                'category_slugs': ['health'],
+                'categories': ['건강/의료'],
                 'content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
             }]
 
@@ -279,6 +352,8 @@ class TestPostCatalog(unittest.TestCase):
                 'post_title': record['title'],
                 'post_status': 'publish',
                 'permalink': 'https://lifeinfo24.org/test/',
+                'category_slugs': ['health'],
+                'categories': ['건강/의료'],
                 'content_sha256': transaction_sha,
             }]
             with patch('agents.editorial.recognized_reviewed_content_hashes',
@@ -336,6 +411,8 @@ class TestPostCatalog(unittest.TestCase):
                 'post_title': record['title'],
                 'post_status': 'publish',
                 'permalink': 'https://lifeinfo24.org/test/',
+                'category_slugs': ['health'],
+                'categories': ['건강/의료'],
                 'content_sha256': hashlib.sha256(previous.encode('utf-8')).hexdigest(),
             }]
 
@@ -362,6 +439,8 @@ class TestPostCatalog(unittest.TestCase):
                 'post_title': record['title'],
                 'post_status': 'draft',
                 'permalink': 'https://lifeinfo24.org/?p=844',
+                'category_slugs': ['health'],
+                'categories': ['건강/의료'],
                 'content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
             }]
 

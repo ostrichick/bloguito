@@ -21,6 +21,7 @@ from agents.growth_analysis import (  # noqa: E402
     load_policy,
     save_opportunities,
 )
+import sync_post_catalog  # noqa: E402
 
 
 DEFAULT_ANALYTICS_DIR = AGENT_ROOT / "data" / "analytics"
@@ -68,7 +69,10 @@ def main(argv=None) -> int:
         snapshot = _load_json(analytics_path, "analytics_snapshot_unreadable")
         catalog = _load_json(args.catalog_inventory, "catalog_inventory_unreadable")
         policy = load_policy(args.policy)
-        report = analyze_growth(snapshot, catalog, policy)
+        provenance = sync_post_catalog.audit_reviewed_provenance(catalog, AGENT_ROOT / "data")
+        provenance_by_id = {row["post_id"]: row for row in provenance["rows"]}
+        report = analyze_growth(
+            snapshot, catalog, policy, provenance_by_id=provenance_by_id)
         target = save_opportunities(report, args.output_dir)
     except GrowthAnalysisError as exc:
         print("growth_queue_failed:" + str(exc), file=sys.stderr)

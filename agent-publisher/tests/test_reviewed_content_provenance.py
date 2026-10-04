@@ -121,23 +121,28 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
     def test_exact_image_substitution_lineage_can_bind_reviewed_bundle_to_live_sha(self):
         bundle = sample()
         sign(bundle)
+        old_url = "https://lifeinfo24.org/wp-content/uploads/old.jpg"
+        new_url = "https://lifeinfo24.org/wp-content/uploads/new.jpg"
+        reviewed_html = f"<p>before</p><img src=\"{old_url}\"><p>after</p>"
+        live_html = reviewed_html.replace(old_url, new_url)
         payload = {
             "schema_version": 1,
             "entries": [{
                 "post_id": 844,
                 "review_digest": bundle["review"]["digest"],
                 "bundle_digest": digest(bundle),
-                "reviewed_content_sha256": "a" * 64,
-                "live_content_sha256": "c" * 64,
+                "reviewed_content_sha256": content_sha(reviewed_html),
+                "live_content_sha256": content_sha(live_html),
                 "kind": "post-review-image-url-substitution",
                 "variant": "post-review-images-test",
                 "evidence_sha256": "b" * 64,
                 "before_snapshot_sha256": "1" * 64,
                 "mutation_payload_sha256": "d" * 64,
                 "mutation_script_sha256": "e" * 64,
+                "reviewed_content_attestation": "provenance_attestations/post-844-reviewed.html",
                 "replacements": [{
-                    "old_url": "https://lifeinfo24.org/wp-content/uploads/old.jpg",
-                    "new_url": "https://lifeinfo24.org/wp-content/uploads/new.jpg",
+                    "old_url": old_url,
+                    "new_url": new_url,
                     "asset_sha256": "2" * 64,
                     "receipt_sha256": "f" * 64,
                 }],
@@ -145,8 +150,8 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
             }],
         }
         transformation = {
-            "reviewed_content_sha256": "a" * 64,
-            "live_content_sha256": "c" * 64,
+            "reviewed_content_sha256": content_sha(reviewed_html),
+            "live_content_sha256": content_sha(live_html),
             "before_snapshot_sha256": "1" * 64,
             "mutation_payload_sha256": "d" * 64,
             "mutation_script_sha256": "e" * 64,
@@ -155,10 +160,19 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
         payload["entries"][0]["transformation_digest"] = digest(transformation)
         with tempfile.TemporaryDirectory() as folder:
             registry = Path(folder) / "reviewed-content.json"
+            attestation = Path(folder) / "provenance_attestations" / "post-844-reviewed.html"
+            attestation.parent.mkdir()
+            attestation.write_text(reviewed_html, encoding="utf-8")
             registry.write_text(json.dumps(payload), encoding="utf-8")
             with patch.object(editorial, "REVIEWED_CONTENT_PROVENANCE_FILE", registry):
                 hashes = recognized_reviewed_content_hashes(bundle, post_id=844)
-        self.assertEqual("c" * 64, hashes["post-review-images-test"])
+            attestation.unlink()
+            with self.assertRaisesRegex(ValueError, "reviewed_content_attestation_missing"):
+                validate_reviewed_content_provenance_registry(registry)
+            attestation.write_text(reviewed_html + "tampered", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "reviewed_content_attestation_invalid"):
+                validate_reviewed_content_provenance_registry(registry)
+        self.assertEqual(content_sha(live_html), hashes["post-review-images-test"])
 
     def test_transaction_live_sha_never_becomes_a_renderer_hash(self):
         bundle = sample()
@@ -190,6 +204,7 @@ class ReviewedContentProvenanceTests(unittest.TestCase):
                 "before_snapshot_sha256": "1" * 64,
                 "mutation_payload_sha256": "d" * 64,
                 "mutation_script_sha256": "e" * 64,
+                "reviewed_content_attestation": "provenance_attestations/post-844-reviewed.html",
                 "transformation_digest": "0" * 64,
                 "replacements": [{
                     "old_url": "https://lifeinfo24.org/wp-content/uploads/old.jpg",
@@ -244,6 +259,8 @@ class ReviewedContentCatalogReconcileTests(unittest.TestCase):
             "post_title": bundle["plan"]["title"],
             "post_status": "publish",
             "permalink": "https://lifeinfo24.org/test/",
+            "category_slugs": ["health"],
+            "categories": ["건강/의료"],
             "content_sha256": saved_sha,
         }]
         with tempfile.TemporaryDirectory() as folder:

@@ -13,7 +13,7 @@ from agents.edit_orchestration import (
     validate_resume_fingerprint,
 )
 from agents.change_classifier import classify_change
-from agents.editorial import policy_fingerprint, render
+from agents.editorial import digest, policy_fingerprint, recognized_reviewed_content_hashes, render
 from agents.editorial_updater import update_existing_public_post
 from agents.fast_edit import (
     build_fast_stored_bundle,
@@ -65,6 +65,46 @@ def reviewed_target_kind(post_id: int) -> str:
     if public:
         return "publish"
     raise ValueError("reviewed_post_manifest_required")
+
+
+def _verified_public_edit_receipt(post_id: int, before_content_sha256: str) -> dict:
+    """Bind a successful public edit result to exact live/readback reviewed provenance."""
+    base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+    live = get_post(
+        base, post_id,
+        fields=["post_status", "post_title", "post_name", "post_content", "post_excerpt"])
+    bundle = load_tracked_public_bundle(post_id)
+    after_sha = content_sha256(live.get("post_content", ""))
+    if (live.get("post_status") != "publish"
+            or live.get("post_title") != bundle.get("plan", {}).get("title")):
+        raise ValueError("public_edit_receipt_identity_mismatch")
+    hashes = recognized_reviewed_content_hashes(bundle, post_id=post_id)
+    variant = next((name for name, value in hashes.items() if value == after_sha), None)
+    if variant is None:
+        raise ValueError("public_edit_receipt_provenance_unbound")
+    review_digest = (bundle.get("review") or {}).get("digest")
+    bundle_digest = digest(bundle)
+    if (not re.fullmatch(r"[0-9a-f]{64}", review_digest or "")
+            or not re.fullmatch(r"[0-9a-f]{64}", bundle_digest or "")):
+        raise ValueError("public_edit_receipt_provenance_invalid")
+    return {
+        "action": "edit-post",
+        "post_id": post_id,
+        "target_status": "publish",
+        "before_content_sha256": before_content_sha256,
+        "after_content_sha256": after_sha,
+        "review_digest": review_digest,
+        "bundle_digest": bundle_digest,
+        "provenance_variant": variant,
+        "readback_verified": True,
+    }
+
+
+def _with_public_edit_receipt(result: dict, post_id: int, before_content_sha256: str) -> dict:
+    return {
+        **result,
+        "mutation_receipt": _verified_public_edit_receipt(post_id, before_content_sha256),
+    }
 
 
 def _legacy_public_bundle_target(post_id: int, bundle: dict | None) -> bool:
@@ -434,7 +474,7 @@ def _edit_reviewed_public_post(
                 edit_intent=edit_intent,
                 prepared_delta_review=prepared,
             )
-        return {
+        return _with_public_edit_receipt({
             "post_id": updated,
             "target_status": "publish",
             "route": "public-fast",
@@ -444,7 +484,7 @@ def _edit_reviewed_public_post(
             "simple_one_shot": True,
             "renderer_migration": bool(decision.get("renderer_migration")),
             "renderer_variant": decision.get("renderer_variant"),
-        }
+        }, post_id, expected_content_sha256)
 
     if resume:
         state = load_task_state(post_id)
@@ -484,14 +524,14 @@ def _edit_reviewed_public_post(
                     post_id, completed=["image_saved", "wordpress_saved"],
                     status="saved_pending_qa",
                     result={"post_id": post_id, "desired_content_sha256": desired_sha})
-                return {
+                return _with_public_edit_receipt({
                     "post_id": post_id,
                     "target_status": "publish",
                     "route": state.get("route") or "public-" + decision["route"],
                     "qa_requirements": state.get("qa_requirements", decision["qa_requirements"]),
                     "validation_plan": state.get("validation_plan", decision.get("validation_plan", {})),
                     "resumed": True,
-                }
+                }, post_id, expected_content_sha256)
         elif live_sha != expected_content_sha256:
             fail_task_state(post_id, "resume_state_conflict", blocked=True)
             raise ValueError("resume_state_conflict")
@@ -587,7 +627,7 @@ def _edit_reviewed_public_post(
         if not decision["qa_requirements"] and load_task_state(post_id) is not None:
             update_task_state(post_id, status="in_progress")
             complete_task_state(post_id)
-        return {
+        return _with_public_edit_receipt({
             "post_id": updated,
             "target_status": "publish",
             "route": "public-" + decision["route"],
@@ -595,7 +635,7 @@ def _edit_reviewed_public_post(
             "qa_requirements": decision["qa_requirements"],
             "validation_plan": decision.get("validation_plan"),
             "image": image_result,
-        }
+        }, post_id, expected_content_sha256)
     except Exception as exc:
         fail_task_state(post_id, exc, blocked=isinstance(exc, ValueError) and "conflict" in str(exc).lower())
         raise
@@ -628,8 +668,11 @@ def edit_reviewed_post(
             post_id, image_path, expected_content_sha256,
             expected_thumbnail_id=expected_thumbnail_id,
             alt_text=alt_text, confirmed=confirmed, validation_plan=validation_plan)
-        return {**result, "route": "image-only", "target_status": kind,
-                "validation_plan": validation_plan}
+        payload = {**result, "route": "image-only", "target_status": kind,
+                   "validation_plan": validation_plan}
+        if kind == "publish":
+            return _with_public_edit_receipt(payload, post_id, expected_content_sha256)
+        return payload
     if not edit_intent:
         raise ValueError("edit_intent_required")
     try:

@@ -63,11 +63,33 @@ class GrowthAnalysisTests(unittest.TestCase):
              "ctr": 0.0, "position": 18.0},
         ]
         report = analyze_growth(snapshot(rows), posts, self.policy)
+        self.assertEqual(1, report["provenance_contract_version"])
         classes = {row["post_id"]: row["classification"] for row in report["pages"]}
         self.assertEqual("winner", classes[217])
         self.assertEqual("quick_win", classes[345])
         self.assertEqual("growth_candidate", classes[400])
         self.assertEqual("too_early", classes[500])
+        self.assertTrue(all(
+            row["editorial_provenance"]["auto_adoptable"] is False
+            for row in report["pages"]
+        ))
+
+    def test_provenance_map_is_bound_into_page_for_planner(self):
+        posts = [post(609, "2026-09-01 09:00:00", "https://lifeinfo24.org/minimum/")]
+        provenance = {
+            609: {
+                "classification": "reviewed_exact",
+                "auto_adoptable": True,
+                "live_status": "publish",
+                "live_content_sha256": "a" * 64,
+                "review_digest": "b" * 64,
+                "bundle_digest": "c" * 64,
+                "provenance_variant": "current",
+                "canonical_category_key": "finance",
+            },
+        }
+        report = analyze_growth(snapshot([]), posts, self.policy, provenance_by_id=provenance)
+        self.assertEqual(provenance[609], report["pages"][0]["editorial_provenance"])
 
     def test_strong_search_signal_overrides_fresh_age_but_future_post_does_not(self):
         posts = [

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from agents.edit_post import (
     _stale_draft_public_recovery_decision,
+    _verified_public_edit_receipt,
     _validated_prepared_decision,
     classify_reviewed_post_route,
     edit_reviewed_post,
@@ -33,6 +34,21 @@ def current_bundle():
 
 
 class UnifiedEditPostTests(unittest.TestCase):
+    def test_public_edit_receipt_is_bound_to_exact_live_reviewed_readback(self):
+        bundle = current_bundle()
+        html = render(bundle['plan'], bundle['sources'])
+        live = {
+            'post_status': 'publish', 'post_title': bundle['plan']['title'],
+            'post_name': 'stable-slug', 'post_content': html, 'post_excerpt': '',
+        }
+        with patch('agents.edit_post.get_post', return_value=live), \
+             patch('agents.edit_post.load_tracked_public_bundle', return_value=bundle):
+            receipt = _verified_public_edit_receipt(243, 'a' * 64)
+        self.assertEqual('a' * 64, receipt['before_content_sha256'])
+        self.assertEqual(hashlib.sha256(html.encode()).hexdigest(), receipt['after_content_sha256'])
+        self.assertEqual(bundle['review']['digest'], receipt['review_digest'])
+        self.assertTrue(receipt['readback_verified'])
+
     def test_legacy_public_without_manifest_is_full_standard_only_when_id_bound(self):
         bundle = current_bundle()
         bundle['brief']['existing_post_id'] = 345

@@ -15,6 +15,7 @@ from agents.post_manifest_store import (
 )
 from agents.temporal_validation import validate_availability
 from agents.fact_validation import verify_article, render_content, verify_temporal_binding
+from agents.wordpress_mutation import content_sha256, guarded_update_post
 
 
 class PublisherAgent:
@@ -198,13 +199,20 @@ class PublisherAgent:
             backup = ROOT / 'data' / 'editorial_runs'
             backup.mkdir(parents=True, exist_ok=True)
             (backup / f'reformat-{post_id}-{datetime.now().strftime("%Y%m%dT%H%M%S")}.json').write_text(json.dumps(current,ensure_ascii=False),encoding='utf-8')
-            # Only the content field changes; ID, title, status, category and media persist.
-            run_wordpress(
-                base + ['post','update',str(post_id),'--post_content='+content,'--allow-root'],
-                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict')
-            saved = json.loads(run_wordpress(
-                base + ['post','get',str(post_id),'--format=json','--allow-root'],
-                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout)
+            # Only the content field changes. CAS, mutation and readback stay in one
+            # WP process so an intervening editor cannot be overwritten.
+            saved = guarded_update_post(
+                base,
+                int(post_id),
+                expected={
+                    'post_status': 'draft',
+                    'post_title': current['post_title'],
+                    'post_name': current['post_name'],
+                    'post_excerpt': current.get('post_excerpt', ''),
+                    'content_sha256': content_sha256(current['post_content']),
+                },
+                updates={'post_content': content},
+            )
             if saved['post_content'] != content or saved['post_status'] != 'draft':
                 raise ValueError('reformat_saved_content_mismatch')
             category = __import__('config', fromlist=['resolve_category']).resolve_category(
@@ -288,12 +296,18 @@ class PublisherAgent:
                                               encoding='utf-8', errors='strict').stdout)
             if final['post_status'] != 'draft' or final['post_title'] != title or not same(final['post_content'],expected):
                 raise ValueError('draft_changed_during_review')
-            run_wordpress(base+['post','update',str(int(post_id)),'--post_status=publish','--allow-root'],
-                           check=True, capture_output=True, text=True,
-                           encoding='utf-8', errors='strict')
-            saved = json.loads(run_wordpress(base+['post','get',str(int(post_id)),'--format=json','--allow-root'],
-                                              check=True, capture_output=True, text=True,
-                                              encoding='utf-8', errors='strict').stdout)
+            saved = guarded_update_post(
+                base,
+                int(post_id),
+                expected={
+                    'post_status': 'draft',
+                    'post_title': final['post_title'],
+                    'post_name': final['post_name'],
+                    'post_excerpt': final.get('post_excerpt', ''),
+                    'content_sha256': content_sha256(final['post_content']),
+                },
+                updates={'post_status': 'publish'},
+            )
             if saved['post_status'] != 'publish' or saved['post_title'] != title or not same(saved['post_content'],expected):
                 raise ValueError('publication_verification_failed: inspect WordPress state before retrying')
             category = resolve_category(bundle['brief']['category_key'])

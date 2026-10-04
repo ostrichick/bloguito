@@ -64,6 +64,11 @@ def release_inventory(root: Path = ROOT) -> list[str]:
             raise ValueError("required_release_directory_missing:" + str(folder))
         for path in folder.glob("*.json"):
             files.add(path.relative_to(root).as_posix())
+    attestation_dir = root / "agent-publisher" / "data" / "provenance_attestations"
+    if not attestation_dir.is_dir():
+        raise ValueError("required_release_directory_missing:" + str(attestation_dir))
+    for path in attestation_dir.glob("*.html"):
+        files.add(path.relative_to(root).as_posix())
     for name in POLICY_DOCS:
         relative = "docs/" + name
         if not (root / relative).is_file():

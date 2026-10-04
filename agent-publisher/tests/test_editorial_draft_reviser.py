@@ -179,13 +179,15 @@ class EditorialDraftReviserTests(unittest.TestCase):
                     return Mock(stdout=json.dumps(live))
                 if wp[:3] == ["post", "meta", "get"]:
                     return Mock(returncode=0, stdout=meta[wp[4]] + "\n", stderr="")
-                if wp[:3] == ["post", "meta", "set"]:
-                    meta[wp[4]] = wp[5]
-                    return Mock(returncode=0, stdout="Success\n", stderr="")
                 if wp and wp[0] == "eval":
                     payload = json.loads(kwargs["input"])
                     live.update(payload["updates"])
-                    return Mock(stdout=json.dumps({"status": "ok", "saved": live}))
+                    if payload.get("updates_meta"):
+                        meta.update(payload["updates_meta"])
+                    return Mock(stdout=json.dumps({
+                        "status": "ok", "saved": live,
+                        "saved_meta": payload.get("updates_meta"),
+                    }))
                 raise AssertionError(args)
 
             inventory = {"checked_on": NOW.date().isoformat(), "posts": [live]}

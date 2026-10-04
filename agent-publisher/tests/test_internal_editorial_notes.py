@@ -7,7 +7,8 @@ from agents.editorial import validate_bundle
 from test_editorial_system import NOW, sample
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'strip_internal_editorial_notes.py'
+SCRIPT = (Path(__file__).resolve().parents[2] / 'scripts' / 'history'
+          / 'strip_internal_editorial_notes_20260921.py')
 SPEC = importlib.util.spec_from_file_location('strip_internal_editorial_notes', SCRIPT)
 NOTES = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(NOTES)

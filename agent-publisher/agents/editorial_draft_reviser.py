@@ -24,8 +24,8 @@ from agents.post_manifest_store import (
 from agents.source_validation_cache import revision_source_recheck_plan, verify_revision_sources
 from agents.temporal_validation import KST
 from agents.editorial_updater import (
+    _read_post_meta,
     _read_rank_math_meta,
-    _set_rank_math_meta,
     rank_math_meta_from_brief,
 )
 from config import DRAFTS_INDEX_FILE
@@ -33,6 +33,7 @@ from sync_wordpress_inventory import hydrate_duplicate_candidates, inventory_con
 from agents.wordpress_mutation import (
     backup_json,
     get_post,
+    guarded_set_post_thumbnail,
     guarded_update_post,
     verify_saved_fields,
 )
@@ -322,9 +323,15 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
         current_meta = _read_rank_math_meta(base, post_id) if reviewed_meta else None
         update_meta = reviewed_meta is not None and current_meta != reviewed_meta
+        current_thumbnail = _read_post_meta(base, post_id, "_thumbnail_id") if image_path is not None else None
+        if current_thumbnail is not None and not current_thumbnail.isdigit():
+            raise ValueError("featured_image_thumbnail_id_invalid")
+        expected_thumbnail_id = int(current_thumbnail) if current_thumbnail is not None else None
         backup_payload = dict(live)
         if current_meta is not None:
             backup_payload["rank_math_meta"] = current_meta
+        if image_path is not None:
+            backup_payload["thumbnail_id"] = current_thumbnail
         post_backup = backup_json(ROOT, "draft-revision", post_id, backup_payload)
         archive = ROOT / "data" / "editorial_runs"
         index_backup = archive / f"draft-revision-index-{post_id}-{stamp}.json"
@@ -351,9 +358,9 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                 "content_sha256": expected_content_sha256,
             },
             updates=update_fields,
+            expected_meta=current_meta if update_meta else None,
+            updates_meta=reviewed_meta if update_meta else None,
         )
-        if update_meta:
-            _set_rank_math_meta(base, post_id, reviewed_meta)
         if not verify_saved_fields(
                 saved,
                 expected={
@@ -375,7 +382,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
             try:
                 imported = run_wordpress(
                     base + ["media", "import", remote_image, f"--post_id={post_id}",
-                            "--featured_image", "--porcelain", "--allow-root"],
+                            "--porcelain", "--allow-root"],
                     capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
                 featured_attachment_id = imported.stdout.strip()
             finally:
@@ -383,10 +390,20 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
                                capture_output=True, check=False)
             if not featured_attachment_id.isdigit():
                 raise ValueError("featured_image_attachment_id_missing")
-            observed_thumb = run_wordpress(
-                base + ["post", "meta", "get", str(post_id), "_thumbnail_id", "--allow-root"],
-                capture_output=True, text=True, encoding="utf-8", errors="strict", check=True).stdout.strip()
-            if observed_thumb != featured_attachment_id:
+            thumbnail = guarded_set_post_thumbnail(
+                base,
+                post_id,
+                expected={
+                    "post_status": "draft",
+                    "post_title": new_title,
+                    "post_name": live["post_name"],
+                    "post_excerpt": new_excerpt,
+                    "content_sha256": hashlib.sha256(desired.encode("utf-8")).hexdigest(),
+                },
+                expected_thumbnail_id=expected_thumbnail_id,
+                attachment_id=int(featured_attachment_id),
+            )
+            if thumbnail["thumbnail_id"] != featured_attachment_id:
                 raise ValueError("featured_image_save_verification_failed")
 
         try:

@@ -84,7 +84,8 @@ def daily_planner_digest(policy: dict) -> str:
 
 
 def _validate_opportunities(report: dict, policy: dict, as_of: date) -> tuple[bool, str]:
-    if not isinstance(report, dict) or report.get("schema_version") != 1:
+    if (not isinstance(report, dict) or report.get("schema_version") != 1
+            or report.get("provenance_contract_version") != 1):
         return False, "opportunity_report_invalid"
     if report.get("policy_version") != policy.get("version"):
         return False, "opportunity_policy_version_mismatch"
@@ -149,6 +150,23 @@ def _existing_candidates(opportunities: dict, policy: dict, *, work_log: dict,
             continue
         if row.get("post_id") in suppressed:
             continue
+        provenance = row.get("editorial_provenance")
+        valid_sha = lambda value: (
+            isinstance(value, str) and len(value) == 64
+            and all(ch in "0123456789abcdef" for ch in value)
+        )
+        if (not isinstance(provenance, dict)
+                or provenance.get("classification") != "reviewed_exact"
+                or provenance.get("auto_adoptable") is not True
+                or provenance.get("live_status") != "publish"
+                or not valid_sha(provenance.get("live_content_sha256"))
+                or not valid_sha(provenance.get("review_digest"))
+                or not valid_sha(provenance.get("bundle_digest"))
+                or not isinstance(provenance.get("provenance_variant"), str)
+                or not provenance["provenance_variant"]
+                or not isinstance(provenance.get("canonical_category_key"), str)
+                or not provenance["canonical_category_key"]):
+            continue
         if allowed_slugs is not None:
             row_slugs = set(row.get("category_slugs") or [])
             if not row_slugs.intersection(allowed_slugs):
@@ -190,6 +208,7 @@ def _new_candidates(topic_scores: dict, *, work_log: dict, as_of: date,
 
 def _existing_target(row: dict) -> dict:
     metrics = row.get("search_console") or {}
+    provenance = row.get("editorial_provenance") or {}
     return {
         "post_id": row.get("post_id"),
         "title": row.get("title"),
@@ -197,6 +216,14 @@ def _existing_target(row: dict) -> dict:
         "classification": row.get("classification"),
         "confidence": row.get("confidence"),
         "recommended_action": row.get("recommended_action"),
+        "editorial_provenance": {
+            key: provenance.get(key)
+            for key in (
+                "classification", "auto_adoptable", "live_status",
+                "live_content_sha256", "review_digest", "bundle_digest",
+                "provenance_variant", "canonical_category_key",
+            )
+        },
         "search_console": {
             "clicks": int(metrics.get("clicks") or 0),
             "impressions": int(metrics.get("impressions") or 0),

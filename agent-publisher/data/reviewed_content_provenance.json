@@ -23,6 +23,7 @@
       "before_snapshot_sha256": "ca6fea5de8e2964571f33f83022c7ac61239024633bf8fb76df3fdeecfcaead0",
       "mutation_payload_sha256": "fe138a6900b3d92002637a6205cbd8f102c08ff051acc2e656b5c3b35f9e3e17",
       "mutation_script_sha256": "b2f9971250df1eb0f038234bb5fd95841736d775efd6a7e4ce0c7bffe5770bea",
+      "reviewed_content_attestation": "provenance_attestations/post-665-reviewed.html",
       "transformation_digest": "78174e86e479e3a2a27e761501451881f912ce22f73c745917128cce048ce609",
       "replacements": [
         {
