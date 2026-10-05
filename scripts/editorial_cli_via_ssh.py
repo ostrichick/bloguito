@@ -43,6 +43,7 @@ from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
 from agents.workflow_metrics import annotate, increment, timed, workflow_run  # noqa: E402
 from agents.wordpress_mutation import (  # noqa: E402
+    GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT,
     GUARDED_CATEGORY_MUTATION_SCRIPT,
     GUARDED_POST_MUTATION_SCRIPT,
     GUARDED_THUMBNAIL_MUTATION_SCRIPT,
@@ -483,6 +484,44 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         readable_ids.add(attachment_id)
         return payload
 
+    def validate_attachment_alt_payload(raw):
+        if action != 'replace-featured-image':
+            raise ValueError('guarded_attachment_alt_mutation_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        if not isinstance(raw, str):
+            raise ValueError('guarded_attachment_alt_payload_required')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_guarded_attachment_alt_payload') from exc
+        if (not isinstance(payload, dict)
+                or set(payload) != {
+                    'protocol', 'post_id', 'expected', 'attachment_id', 'expected_alt', 'alt_text',
+                }
+                or payload.get('protocol') != 1):
+            raise ValueError('invalid_guarded_attachment_alt_payload')
+        post_id = payload.get('post_id')
+        attachment_id = payload.get('attachment_id')
+        expected = payload.get('expected')
+        expected_alt = payload.get('expected_alt')
+        alt_text = payload.get('alt_text')
+        required_expected = {
+            'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256',
+        }
+        if (type(post_id) is not int or post_id not in allowed_ids
+                or type(attachment_id) is not int or attachment_id not in readable_ids
+                or not isinstance(expected, dict) or set(expected) != required_expected
+                or expected.get('post_status') not in {'publish', 'draft', 'pending', 'future', 'private'}
+                or not re.fullmatch(r'[0-9a-f]{64}', expected.get('content_sha256', ''))
+                or any(not isinstance(value, str) or '\x00' in value for value in expected.values())
+                or (expected_alt is not None and (
+                    not isinstance(expected_alt, str) or '\x00' in expected_alt))
+                or not isinstance(alt_text, str) or not alt_text or len(alt_text) > 180
+                or '\x00' in alt_text):
+            raise ValueError('invalid_guarded_attachment_alt_expectation')
+        return payload
+
     def validate_section_snapshot_payload(raw):
         if action != 'import-section-image':
             raise ValueError('section_snapshot_not_allowed')
@@ -556,6 +595,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (image_mutation_allowed and action in _IMAGE_EDIT_ACTIONS
                 and wp == ['eval', GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_thumbnail_mutation'
+        if (action == 'replace-featured-image'
+                and wp == ['eval', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root']):
+            return 'guarded_attachment_alt_mutation'
         if (action == 'import-section-image'
                 and wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']):
             return 'section_snapshot'
@@ -657,6 +699,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                             or payload.get('thumbnail_id') is not None and not isinstance(payload['thumbnail_id'], str)):
                         raise ValueError('invalid_image_baseline_snapshot')
                     pending_thumbnail = (['post', 'meta', 'get', wp[2], '_thumbnail_id', '--allow-root'], payload['thumbnail_id'])
+                    if isinstance(payload.get('thumbnail_id'), str) and payload['thumbnail_id'].isdigit():
+                        readable_ids.add(int(payload['thumbnail_id']))
                     result.stdout = json.dumps(payload['post'], ensure_ascii=False)
                 return result
             if kind == 'guarded_mutation':
@@ -688,6 +732,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 validate_thumbnail_payload(kwargs.get('input'))
                 remote = ('sudo docker exec -i wordpress_app wp eval '
                           + shlex.quote(GUARDED_THUMBNAIL_MUTATION_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'guarded_attachment_alt_mutation':
+                validate_attachment_alt_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT) + ' --allow-root')
                 options = dict(kwargs)
                 raw = options.get('input')
                 if options.get('text') or options.get('universal_newlines'):

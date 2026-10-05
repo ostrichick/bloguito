@@ -16,6 +16,7 @@ from agents.workflow_metrics import increment, timed
 GUARDED_POST_MUTATION_PROTOCOL = 1
 GUARDED_CATEGORY_MUTATION_PROTOCOL = 1
 GUARDED_THUMBNAIL_MUTATION_PROTOCOL = 1
+GUARDED_ATTACHMENT_ALT_MUTATION_PROTOCOL = 1
 GUARDED_POST_META_KEYS = (
     "rank_math_focus_keyword",
     "rank_math_title",
@@ -198,6 +199,55 @@ GUARDED_THUMBNAIL_MUTATION_SCRIPT = (
     'clean_post_cache($id);$emit(["status"=>"ok","saved"=>$saved,"thumbnail_id"=>$saved_thumb]);'
 )
 
+GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT = (
+    '$raw=file_get_contents("php://stdin");$p=json_decode($raw,true);'
+    '$emit=function($v){echo wp_json_encode($v,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);};'
+    'if(!is_array($p)||($p["protocol"]??null)!==1||empty($p["post_id"])'
+    '||!is_array($p["expected"]??null)||empty($p["attachment_id"])'
+    '||!array_key_exists("expected_alt",$p)||!isset($p["alt_text"])||!is_string($p["alt_text"]))'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$id=(int)$p["post_id"];$attachment_id=(int)$p["attachment_id"];$e=$p["expected"];'
+    '$expected_alt=$p["expected_alt"];$target_alt=(string)$p["alt_text"];'
+    'if($expected_alt!==null&&!is_string($expected_alt)){$emit(["status"=>"invalid_payload"]);return;}'
+    'global $wpdb;$wpdb->query("START TRANSACTION");'
+    '$locked=$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",$id));'
+    '$attachment_locked=$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",$attachment_id));'
+    'if(!$locked||!$attachment_locked){$wpdb->query("ROLLBACK");$emit(["status"=>"missing"]);return;}'
+    '$wpdb->get_results($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s FOR UPDATE",$id,"_thumbnail_id"));'
+    '$wpdb->get_results($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s FOR UPDATE",$attachment_id,"_wp_attachment_image_alt"));'
+    'clean_post_cache($id);clean_post_cache($attachment_id);$post=get_post($id);$attachment=get_post($attachment_id);'
+    'if(!$post||!$attachment||$attachment->post_type!=="attachment"||!wp_attachment_is_image($attachment_id))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"invalid_attachment"]);return;}'
+    '$snap=function($x){return ['
+    '"post_status"=>(string)$x->post_status,"post_title"=>(string)$x->post_title,'
+    '"post_name"=>(string)$x->post_name,"post_content"=>(string)$x->post_content,'
+    '"post_excerpt"=>(string)$x->post_excerpt];};$cur=$snap($post);'
+    '$thumb=metadata_exists("post",$id,"_thumbnail_id")?(string)get_post_meta($id,"_thumbnail_id",true):null;'
+    '$alt=metadata_exists("post",$attachment_id,"_wp_attachment_image_alt")?(string)get_post_meta($attachment_id,"_wp_attachment_image_alt",true):null;'
+    '$post_ok=true;foreach(["post_status","post_title","post_name","post_excerpt"] as $k)'
+    '{if(isset($e[$k])){$post_ok=$post_ok&&hash_equals((string)$e[$k],$cur[$k]);}}'
+    'if(isset($e["content_sha256"])){$post_ok=$post_ok&&hash_equals((string)$e["content_sha256"],hash("sha256",$cur["post_content"]));}'
+    '$thumb_ok=is_string($thumb)&&hash_equals((string)$attachment_id,$thumb);'
+    'if($post_ok&&$thumb_ok&&is_string($alt)&&hash_equals($target_alt,$alt))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"already_applied","saved"=>$cur,"thumbnail_id"=>$thumb,"attachment_id"=>$attachment_id,"alt_text"=>$alt]);return;}'
+    '$alt_ok=($expected_alt===null&&$alt===null)'
+    '||(is_string($expected_alt)&&is_string($alt)&&hash_equals($expected_alt,$alt));'
+    'if(!$post_ok||!$thumb_ok||!$alt_ok){$wpdb->query("ROLLBACK");$emit(["status"=>"cas_mismatch","current"=>$cur,"thumbnail_id"=>$thumb,"attachment_id"=>$attachment_id,"alt_text"=>$alt]);return;}'
+    'update_post_meta($attachment_id,"_wp_attachment_image_alt",$target_alt);'
+    'clean_post_cache($id);clean_post_cache($attachment_id);$saved_post=get_post($id);'
+    '$saved_thumb=metadata_exists("post",$id,"_thumbnail_id")?(string)get_post_meta($id,"_thumbnail_id",true):null;'
+    '$saved_alt=metadata_exists("post",$attachment_id,"_wp_attachment_image_alt")?(string)get_post_meta($attachment_id,"_wp_attachment_image_alt",true):null;'
+    'if(!$saved_post){$wpdb->query("ROLLBACK");$emit(["status"=>"readback_missing"]);return;}'
+    '$saved=$snap($saved_post);$verified=is_string($saved_thumb)&&hash_equals((string)$attachment_id,$saved_thumb)'
+    '&&is_string($saved_alt)&&hash_equals($target_alt,$saved_alt);'
+    'foreach(["post_status","post_title","post_name","post_content","post_excerpt"] as $k)'
+    '{$verified=$verified&&hash_equals((string)$cur[$k],(string)$saved[$k]);}'
+    'if(!$verified){$wpdb->query("ROLLBACK");$emit(["status"=>"verification_failed","saved"=>$saved,"thumbnail_id"=>$saved_thumb,"attachment_id"=>$attachment_id,"alt_text"=>$saved_alt]);return;}'
+    'if($wpdb->query("COMMIT")===false){$emit(["status"=>"update_failed","code"=>"commit_failed"]);return;}'
+    'clean_post_cache($id);clean_post_cache($attachment_id);'
+    '$emit(["status"=>"ok","saved"=>$saved,"thumbnail_id"=>$saved_thumb,"attachment_id"=>$attachment_id,"alt_text"=>$saved_alt]);'
+)
+
 
 def content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -322,6 +372,38 @@ def _guarded_thumbnail_payload(
         "expected": dict(expected),
         "expected_thumbnail_id": expected_thumbnail_id,
         "attachment_id": attachment_id,
+    }
+
+
+def _guarded_attachment_alt_payload(
+    post_id: int,
+    *,
+    expected: dict[str, str],
+    attachment_id: int,
+    expected_alt: str | None,
+    alt_text: str,
+) -> dict:
+    required = {
+        "post_status", "post_title", "post_name", "post_excerpt", "content_sha256",
+    }
+    if (not isinstance(post_id, int) or post_id <= 0
+            or type(attachment_id) is not int or attachment_id <= 0
+            or not isinstance(expected, dict) or set(expected) != required
+            or any(not isinstance(value, str) for value in expected.values())
+            or (expected_alt is not None and not isinstance(expected_alt, str))
+            or not isinstance(alt_text, str) or not alt_text or len(alt_text) > 180
+            or "\x00" in alt_text):
+        raise ValueError("invalid_guarded_wordpress_attachment_alt_expectation")
+    sha = expected["content_sha256"]
+    if len(sha) != 64 or any(ch not in "0123456789abcdef" for ch in sha):
+        raise ValueError("invalid_guarded_wordpress_attachment_alt_expectation")
+    return {
+        "protocol": GUARDED_ATTACHMENT_ALT_MUTATION_PROTOCOL,
+        "post_id": post_id,
+        "expected": dict(expected),
+        "attachment_id": attachment_id,
+        "expected_alt": expected_alt,
+        "alt_text": alt_text,
     }
 
 
@@ -525,6 +607,79 @@ def guarded_set_post_thumbnail(
             and _matches_already_applied(observed.get("current"), expected, {})):
         increment("wp_guarded_recovered_after_retry")
         return {"post": observed["current"], "thumbnail_id": expected_thumb}
+    if status == "cas_mismatch":
+        raise ValueError("wordpress_guarded_cas_mismatch")
+    if status == "verification_failed":
+        raise ValueError("wordpress_guarded_readback_failed")
+    if status == "missing":
+        raise ValueError("wordpress_guarded_target_missing")
+    if status in {"invalid_payload", "invalid_attachment"}:
+        raise ValueError("wordpress_guarded_protocol_rejected")
+    if status == "update_failed":
+        raise ValueError("wordpress_guarded_update_failed:" + str(observed.get("code") or "unknown"))
+    raise ValueError("wordpress_guarded_mutation_failed:" + str(status or "unknown"))
+
+
+def guarded_update_featured_image_alt(
+    base,
+    post_id: int,
+    *,
+    expected: dict[str, str],
+    attachment_id: int,
+    expected_alt: str | None,
+    alt_text: str,
+) -> dict:
+    """CAS featured-image ALT while preserving the attachment relation and post snapshot."""
+    payload = _guarded_attachment_alt_payload(
+        post_id,
+        expected=expected,
+        attachment_id=attachment_id,
+        expected_alt=expected_alt,
+        alt_text=alt_text,
+    )
+    command = list(base) + ["eval", GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, "--allow-root"]
+    with timed("wp_guarded_attachment_alt_mutation"):
+        increment("wp_roundtrips")
+        increment("wp_guarded_mutations")
+        result = run_wordpress(
+            command,
+            input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            check=True,
+        )
+    observed = _guarded_result(result.stdout)
+    status = observed.get("status")
+    expected_thumb = str(attachment_id)
+    if status in {"ok", "already_applied"}:
+        saved = observed.get("saved")
+        if (not isinstance(saved, dict)
+                or observed.get("thumbnail_id") != expected_thumb
+                or observed.get("attachment_id") != attachment_id
+                or observed.get("alt_text") != alt_text):
+            raise ValueError("invalid_guarded_wordpress_response")
+        if status == "already_applied":
+            increment("wp_guarded_recovered_after_retry")
+        return {
+            "post": saved,
+            "thumbnail_id": expected_thumb,
+            "attachment_id": attachment_id,
+            "alt_text": alt_text,
+        }
+    if (status == "cas_mismatch"
+            and observed.get("thumbnail_id") == expected_thumb
+            and observed.get("attachment_id") == attachment_id
+            and observed.get("alt_text") == alt_text
+            and _matches_already_applied(observed.get("current"), expected, {})):
+        increment("wp_guarded_recovered_after_retry")
+        return {
+            "post": observed["current"],
+            "thumbnail_id": expected_thumb,
+            "attachment_id": attachment_id,
+            "alt_text": alt_text,
+        }
     if status == "cas_mismatch":
         raise ValueError("wordpress_guarded_cas_mismatch")
     if status == "verification_failed":

@@ -74,6 +74,8 @@ def _main():
     parser.add_argument('--resume', action='store_true',
                         help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
+    parser.add_argument('--alt-only', action='store_true',
+                        help='replace-featured-image: keep current image and update only its reviewed ALT text')
     parser.add_argument('--media-title', help='import-section-image: reviewed WordPress attachment title')
     parser.add_argument('--media-metadata-file', type=Path,
                         help='import-section-image: UTF-8 JSON with media_title and alt_text; avoids non-ASCII command-line transport')
@@ -230,17 +232,29 @@ def _main():
         label = args.action
         if args.inventory or args.file:
             parser.error(f'{label} uses --post-id/--image-path and no bundle file')
-        if not args.post_id or not args.image_path or not args.alt_text or not args.confirm_update:
-            parser.error(f'{label} requires --post-id, --image-path, --alt-text and --confirm-update')
+        if not args.post_id or not args.alt_text or not args.confirm_update:
+            parser.error(f'{label} requires --post-id, --alt-text and --confirm-update')
+        if args.alt_only and args.image_path:
+            parser.error(f'{label} --alt-only cannot be combined with --image-path')
+        if not args.alt_only and not args.image_path:
+            parser.error(f'{label} requires --image-path unless --alt-only is used')
         if args.expected_content_sha256 or args.expected_thumbnail_id:
             parser.error(f'{label} reads its own current content SHA and thumbnail baseline')
-        from agents.featured_image import replace_featured_image_from_live_baseline
-        result = replace_featured_image_from_live_baseline(
-            args.post_id,
-            args.image_path,
-            alt_text=args.alt_text,
-            confirmed=True,
-        )
+        if args.alt_only:
+            from agents.featured_image import update_featured_image_alt_from_live_baseline
+            result = update_featured_image_alt_from_live_baseline(
+                args.post_id,
+                alt_text=args.alt_text,
+                confirmed=True,
+            )
+        else:
+            from agents.featured_image import replace_featured_image_from_live_baseline
+            result = replace_featured_image_from_live_baseline(
+                args.post_id,
+                args.image_path,
+                alt_text=args.alt_text,
+                confirmed=True,
+            )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')

@@ -29,6 +29,7 @@ from agents.wordpress_mutation import (
     content_sha256,
     get_post,
     guarded_set_post_thumbnail,
+    guarded_update_featured_image_alt,
     verify_cas,
 )
 from agents.designer import FEATURED_IMAGE_POLICY
@@ -164,6 +165,140 @@ def reconcile_featured_image_outcome(post_id: int, checkpoint: dict, alt_text: s
         "backup": checkpoint.get("backup"),
         "reconciled": True,
     }
+
+
+def update_featured_image_alt_from_live_baseline(
+    post_id: int,
+    *,
+    alt_text: str,
+    confirmed: bool = False,
+) -> dict:
+    """Update only the current featured attachment ALT with exact live CAS/readback."""
+    if not confirmed or not isinstance(post_id, int) or post_id <= 0:
+        raise ValueError("specific_featured_image_confirmation_required")
+    alt_text = (alt_text or "").strip()
+    if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
+        raise ValueError("featured_image_alt_text_required")
+
+    lock = acquire_editorial_lock(ROOT)
+    base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+    state_started = False
+    try:
+        fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+        live = get_post(base, post_id, fields=fields)
+        if live.get("post_status") not in ALLOWED_POST_STATUSES:
+            raise ValueError("target_missing_or_modified")
+        live_sha = content_sha256(live.get("post_content", ""))
+        before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
+        if before_thumb is None or not before_thumb.isdigit() or int(before_thumb) <= 0:
+            raise ValueError("featured_image_attachment_required")
+        attachment_id = int(before_thumb)
+        attachment = get_post(
+            base, attachment_id, fields=["ID", "guid", "post_title", "post_mime_type"])
+        if not str(attachment.get("post_mime_type", "")).startswith("image/"):
+            raise ValueError("featured_image_attachment_verification_failed")
+        before_alt = _read_post_meta(base, attachment_id, "_wp_attachment_image_alt")
+
+        validation_plan = {
+            "profile": "image-metadata-only",
+            "full_regression_required": False,
+            "selected_files": [],
+        }
+        start_task_state(
+            post_id,
+            action="replace-featured-image",
+            edit_intent="현재 대표이미지는 유지하고 접근성 ALT 텍스트만 보완",
+            baseline={
+                "expected_content_sha256": live_sha,
+                "status": live.get("post_status"),
+                "title": live.get("post_title"),
+                "post_name": live.get("post_name"),
+                "thumbnail_id": attachment_id,
+                "attachment_alt": before_alt,
+            },
+            reuse={
+                "content_unchanged": True,
+                "image_binary_unchanged": True,
+                "source_validation_skipped": True,
+                "semantic_review_skipped": True,
+                "reason": "featured_image_alt_metadata_only",
+            },
+            validation_plan=validation_plan,
+            completion_requirements=completion_requirements_for_task(
+                image_changed=False, qa_requirements=[]),
+        )
+        state_started = True
+        update_task_state(
+            post_id,
+            completed=[
+                "baseline_read", "route_selected", "source_validation", "content_review",
+                "content_saved", "image_saved",
+            ],
+            route="image-metadata-only",
+        )
+
+        backup = backup_json(
+            ROOT,
+            "featured-image-alt-edit",
+            post_id,
+            {
+                "post": live,
+                "thumbnail_id": attachment_id,
+                "attachment": attachment,
+                "attachment_alt": before_alt,
+            },
+        )
+        mutation = guarded_update_featured_image_alt(
+            base,
+            post_id,
+            expected={
+                "post_status": live["post_status"],
+                "post_title": live["post_title"],
+                "post_name": live["post_name"],
+                "post_excerpt": live.get("post_excerpt", ""),
+                "content_sha256": live_sha,
+            },
+            attachment_id=attachment_id,
+            expected_alt=before_alt,
+            alt_text=alt_text,
+        )
+        saved = mutation["post"]
+        preserved = ("post_status", "post_title", "post_name", "post_content", "post_excerpt")
+        if any(saved.get(key) != live.get(key) for key in preserved):
+            raise ValueError(f"featured_image_alt_post_preservation_failed: recover from {backup}")
+        if mutation.get("thumbnail_id") != str(attachment_id):
+            raise ValueError(f"featured_image_alt_thumbnail_changed: recover from {backup}")
+        observed_alt = _read_post_meta(base, attachment_id, "_wp_attachment_image_alt")
+        if observed_alt != alt_text:
+            raise ValueError(f"featured_image_alt_verification_failed: recover from {backup}")
+        observed_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
+        if observed_thumb != str(attachment_id):
+            raise ValueError(f"featured_image_alt_thumbnail_changed: recover from {backup}")
+
+        result = {
+            "post_id": post_id,
+            "status": saved.get("post_status"),
+            "attachment_id": attachment_id,
+            "attachment_url": str(attachment.get("guid", "")),
+            "previous_alt_text": before_alt,
+            "alt_text": alt_text,
+            "content_sha256": live_sha,
+            "backup": str(backup),
+        }
+        update_task_state(
+            post_id,
+            completed=["wordpress_saved"],
+            result=result,
+            status="in_progress",
+        )
+        complete_task_state(post_id)
+        return result
+    except Exception as exc:
+        if state_started:
+            fail_task_state(post_id, exc)
+        raise
+    finally:
+        release_editorial_lock(lock)
 
 
 def replace_featured_image(

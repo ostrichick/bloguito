@@ -12,6 +12,7 @@ from agents.featured_image import (
     quick_replace_featured_image,
     reconcile_featured_image_outcome,
     replace_featured_image,
+    update_featured_image_alt_from_live_baseline,
     validate_featured_image_file,
 )
 
@@ -48,6 +49,40 @@ class FeaturedImageReplacementTests(unittest.TestCase):
         with patch("agents.featured_image.subprocess.run", return_value=Mock(
                 returncode=1, stdout="", stderr="")):
             self.assertIsNone(_read_post_meta(base, 559, "_thumbnail_id"))
+
+    def test_alt_only_preserves_published_post_and_current_thumbnail(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            live = {
+                "post_status": "publish", "post_title": "검토된 제목", "post_name": "slug",
+                "post_content": "body", "post_excerpt": "요약",
+            }
+            attachment = {
+                "ID": 236, "guid": "https://lifeinfo24.org/uploads/cover.jpg",
+                "post_title": "대표 이미지", "post_mime_type": "image/jpeg",
+            }
+            meta_values = ["236", None, "새 ALT", "236"]
+            with patch("agents.featured_image.ROOT", root), \
+                 patch("agents.featured_image.acquire_editorial_lock", return_value=object()), \
+                 patch("agents.featured_image.release_editorial_lock"), \
+                 patch("agents.featured_image.start_task_state") as start_state, \
+                 patch("agents.featured_image.update_task_state"), \
+                 patch("agents.featured_image.complete_task_state"), \
+                 patch("agents.featured_image.fail_task_state"), \
+                 patch("agents.featured_image.get_post", side_effect=[live, attachment]), \
+                 patch("agents.featured_image._read_post_meta", side_effect=meta_values), \
+                 patch("agents.featured_image.guarded_update_featured_image_alt", return_value={
+                     "post": live, "thumbnail_id": "236", "attachment_id": 236,
+                     "alt_text": "새 ALT",
+                 }) as guarded:
+                result = update_featured_image_alt_from_live_baseline(
+                    235, alt_text="새 ALT", confirmed=True)
+            self.assertEqual("publish", result["status"])
+            self.assertEqual(236, result["attachment_id"])
+            guarded.assert_called_once()
+            self.assertIsNone(guarded.call_args.kwargs["expected_alt"])
+            self.assertEqual("새 ALT", guarded.call_args.kwargs["alt_text"])
+            self.assertEqual("image-metadata-only", start_state.call_args.kwargs["validation_plan"]["profile"])
 
     def test_replace_preserves_post_and_rank_math_and_verifies_alt(self):
         with tempfile.TemporaryDirectory() as folder:

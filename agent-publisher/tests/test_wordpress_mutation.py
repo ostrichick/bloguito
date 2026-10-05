@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agents.wordpress_mutation import (
+    GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT,
     GUARDED_CATEGORY_MUTATION_SCRIPT,
     GUARDED_POST_MUTATION_SCRIPT,
     GUARDED_THUMBNAIL_MUTATION_SCRIPT,
@@ -13,6 +14,7 @@ from agents.wordpress_mutation import (
     get_post,
     guarded_set_post_category,
     guarded_set_post_thumbnail,
+    guarded_update_featured_image_alt,
     guarded_update_post,
     verify_cas,
     verify_saved_fields,
@@ -24,7 +26,8 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         for script in (
                 GUARDED_POST_MUTATION_SCRIPT,
                 GUARDED_CATEGORY_MUTATION_SCRIPT,
-                GUARDED_THUMBNAIL_MUTATION_SCRIPT):
+                GUARDED_THUMBNAIL_MUTATION_SCRIPT,
+                GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT):
             self.assertIn('START TRANSACTION', script)
             self.assertIn('FOR UPDATE', script)
             self.assertIn('ROLLBACK', script)
@@ -33,6 +36,8 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertIn('$wpdb->term_relationships', GUARDED_CATEGORY_MUTATION_SCRIPT)
         self.assertIn('wp_attachment_is_image', GUARDED_THUMBNAIL_MUTATION_SCRIPT)
         self.assertIn('$wpdb->postmeta', GUARDED_THUMBNAIL_MUTATION_SCRIPT)
+        self.assertIn('_wp_attachment_image_alt', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT)
+        self.assertIn('wp_attachment_is_image', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT)
 
     def test_get_builds_expected_wp_cli_command(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
@@ -306,6 +311,39 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         payload = json.loads(run.call_args.kwargs['input'])
         self.assertEqual(642, payload['expected_thumbnail_id'])
         self.assertEqual(777, payload['attachment_id'])
+
+    def test_guarded_attachment_alt_mutation_uses_exact_post_thumbnail_and_alt_cas(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        saved = {
+            'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+            'post_content': 'old', 'post_excerpt': 'old excerpt',
+        }
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
+                stdout=json.dumps({
+                    'status': 'ok', 'saved': saved, 'thumbnail_id': '236',
+                    'attachment_id': 236, 'alt_text': '새 대체텍스트',
+                }))) as run:
+            result = guarded_update_featured_image_alt(
+                base, 235,
+                expected={
+                    'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+                    'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                },
+                attachment_id=236,
+                expected_alt=None,
+                alt_text='새 대체텍스트',
+            )
+        self.assertEqual('236', result['thumbnail_id'])
+        self.assertEqual('새 대체텍스트', result['alt_text'])
+        self.assertEqual(['sudo', 'docker', 'exec', '-i', 'wordpress_app', 'wp'],
+                         run.call_args.args[0][:6])
+        self.assertEqual(['eval', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root'],
+                         run.call_args.args[0][6:])
+        payload = json.loads(run.call_args.kwargs['input'])
+        self.assertEqual(235, payload['post_id'])
+        self.assertEqual(236, payload['attachment_id'])
+        self.assertIsNone(payload['expected_alt'])
+        self.assertEqual('새 대체텍스트', payload['alt_text'])
 
 
 if __name__ == '__main__':

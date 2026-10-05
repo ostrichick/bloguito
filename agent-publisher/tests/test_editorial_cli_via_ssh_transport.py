@@ -833,6 +833,45 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'expected_thumbnail_id': 822, 'attachment_id': 873,
             }), text=True)
 
+    def test_replace_featured_image_allows_guarded_alt_only_for_current_thumbnail(self):
+        module = load_module()
+        calls = []
+        post = {
+            'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+            'post_content': 'body', 'post_excerpt': 'summary',
+        }
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            remote = args[-1] if args else ''
+            if module.POST_THUMBNAIL_SNAPSHOT_SCRIPT in remote:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout=json.dumps({'post': post, 'thumbnail_id': '236'}), stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {235}, 'bloguito')
+        get = module._WP_PREFIX + ['post', 'get', '235',
+            '--fields=post_status,post_title,post_name,post_content,post_excerpt', '--format=json', '--allow-root']
+        thumb = module._WP_PREFIX + ['post', 'meta', 'get', '235', '_thumbnail_id', '--allow-root']
+        transport(get, capture_output=True, text=True, check=True)
+        self.assertEqual('236', transport(thumb, capture_output=True, text=True).stdout)
+        expected = {
+            'post_status': 'publish', 'post_title': 'title', 'post_name': 'slug',
+            'post_excerpt': 'summary', 'content_sha256': '0' * 64,
+        }
+        transport(
+            module._WP_PREFIX + ['eval', module.GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1, 'post_id': 235, 'expected': expected,
+                'attachment_id': 236, 'expected_alt': None, 'alt_text': '대표 이미지 ALT',
+            }), capture_output=True, text=True, check=True)
+        self.assertTrue(any(module.GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT in call[-1]
+                            for call, _ in calls if call))
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'post', 'meta', 'update', '236', '_wp_attachment_image_alt', '우회', '--allow-root'])
+
     def test_replace_featured_image_media_import_255_is_not_retried(self):
         module = load_module()
         ssh_attempts = 0
@@ -893,6 +932,25 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         cli_main.assert_called_once()
         self.assertEqual('replace-featured-image', make.call_args.args[0])
         self.assertEqual({724}, make.call_args.args[1])
+
+    def test_primary_replace_featured_image_alt_only_uses_restricted_transport_without_image_upload(self):
+        module = load_module()
+        argv = [
+            'editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--',
+            'replace-featured-image', '--post-id', '235', '--alt-only',
+            '--alt-text', '2026 운전면허 적성검사·갱신·재발급 안내 대표 이미지',
+            '--confirm-update',
+        ]
+        with patch('sys.argv', argv), \
+                patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                    mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None) as make, \
+                patch.object(module.editorial_cli, 'main') as cli_main:
+            module.main()
+        cli_main.assert_called_once()
+        self.assertEqual('replace-featured-image', make.call_args.args[0])
+        self.assertEqual({235}, make.call_args.args[1])
+        self.assertFalse(make.call_args.kwargs['allow_image'])
 
     def test_prepare_draft_wrapper_syncs_catalog_after_successful_editorial_command(self):
         module = load_module()
