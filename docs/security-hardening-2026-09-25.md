@@ -174,7 +174,10 @@
 - 서버 방화벽의 `BLOGUITO_SSH` 체인, SSH key-only 설정, Fail2ban 및 Direct SSH/Tailscale 비상 경로는 유지되고 있다. 다만 현재 서버/Instance Principal 권한으로 OCI Security List/NSG의 TCP/22 source 범위를 읽을 수 없어 OCI 네트워크 계층 제한은 완료로 간주하지 않는다.
 - 암호화 off-host backup은 실제 최신 ciphertext 인증 검증과 복호화→v3 archive 독립 검증까지 통과했다. recovery key ACL은 상속 차단 + 현재 사용자 read-only로 확인했다. 새 VM 전체 DR은 기존 PARTIAL 판정을 유지한다.
 - 현재 Windows에 과거 `Bloguito Daily Backup Sync` task가 없음을 재확인한 뒤, 기존 정책과 같은 매일 04:30 / StartWhenAvailable / interactive user 조건으로 암호화 sync wrapper를 등록했다. 2026-10-06 수동 예약 실행은 최종 `LastTaskResult=0`으로 완료됐고 서버 보존 8개 snapshot 모두 authenticated ciphertext로 검증됐다. 다음 실제 04:30 예약 실행은 시간 의존 후속으로 별도 확인한다.
-- 운영 호스트는 2026-10-06 재확인에서 `reboot-required=yes`, 업그레이드 대기 16개였고 Oracle 7.0.0 계열 kernel meta package와 Docker 29.8.2 등이 포함돼 있었다. Nginx/Docker/SSH/Fail2ban/unattended-upgrades는 모두 active였으며 `systemctl --failed`의 6개는 종료된 `ubuntu` session scope였다. 커널/Docker 업데이트와 재부팅은 별도 유지보수 창에서 사전 백업·롤백 확인 후 수행한다.
+- 운영 호스트는 2026-10-06 사전 확인에서 `reboot-required=yes`, 업그레이드 대기 16개였고 Oracle 7.0.0 계열 kernel meta package와 Docker 29.8.2 등이 포함돼 있었다. 최신 v3 backup `VERIFY_ONLY_OK`, 공개 홈 HTTP 200, 핵심 서비스 active를 확인한 뒤 `apt-get update` + noninteractive `full-upgrade`를 실행했다. 최종 결과는 17개 upgrade, 6개 신규 kernel package, 제거 0개였고 현재 kernel은 `7.0.0-1013-oracle`, `reboot-required=no`, upgradable 0이다.
+- 첫 두 차례 실제 재부팅에서 `ssh.socket`이 `enabled`인데도 `ConditionResult=no` / inactive로 남아 TCP/22 listener가 생성되지 않는 현상을 재현했다. `/etc/ssh/sshd_not_to_be_run`은 실제로 존재하지 않았고 `BLOGUITO_SSH` 체인은 현재 운영자 `/32`와 `tailscale0`을 정상 허용하고 있었다. 따라서 방화벽/OCI가 아니라 OpenSSH socket activation 부팅 경로가 원인이었다.
+- 복구 중 현재 Windows 노트북에 Tailscale 1.102.4를 설치·로그인해 `bloguito-server`의 기존 tailnet node로 `tailscale ssh` 비상 접속을 재확보했다. 이후 서버를 socket activation에서 상시 서비스 모드로 전환했다: `ssh.socket`은 disabled/inactive, `ssh.service`는 enabled/active이며 기존 `ConditionPathExists=!/etc/ssh/sshd_not_to_be_run` 안전조건은 그대로 유지한다. 세 번째 실제 재부팅 후 Windows Direct SSH가 별도 수동 개입 없이 자동 복귀했고 `ssh.service=active/enabled`, kernel `7.0.0-1013-oracle`을 확인했다.
+- 최종 재부팅 후 Nginx/Docker/SSH/Fail2ban/Tailscale/unattended-upgrades/bloguito-analytics/cron은 모두 active, failed unit 0, 공개 홈 HTTP 200, WordPress publish 65 / draft 4, production editorial release `2dd58a3e8bd9851a748506cdac1c95b1afb68945`가 그대로 유지됐다.
 
 ## Direct SSH 제한 허용 전환 — 2026-09-28
 
