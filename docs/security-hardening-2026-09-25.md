@@ -173,6 +173,7 @@
 - 관리자 Two Factor 플러그인은 활성 상태지만 관리자 계정의 TOTP provider·secret·backup codes 등록 증거는 여전히 없다. 실제 QR/TOTP 등록과 복구 코드의 오프라인 보관은 관리자 본인이 수행해야 한다.
 - 서버 방화벽의 `BLOGUITO_SSH` 체인, SSH key-only 설정, Fail2ban 및 Direct SSH/Tailscale 비상 경로는 유지되고 있다. 다만 현재 서버/Instance Principal 권한으로 OCI Security List/NSG의 TCP/22 source 범위를 읽을 수 없어 OCI 네트워크 계층 제한은 완료로 간주하지 않는다.
 - 암호화 off-host backup은 실제 최신 ciphertext 인증 검증과 복호화→v3 archive 독립 검증까지 통과했다. recovery key ACL은 상속 차단 + 현재 사용자 read-only로 확인했다. 새 VM 전체 DR은 기존 PARTIAL 판정을 유지한다.
+- 현재 Windows에 과거 `Bloguito Daily Backup Sync` task가 없음을 재확인한 뒤, 기존 정책과 같은 매일 04:30 / StartWhenAvailable / interactive user 조건으로 암호화 sync wrapper를 등록했다. 2026-10-06 수동 예약 실행은 최종 `LastTaskResult=0`으로 완료됐고 서버 보존 8개 snapshot 모두 authenticated ciphertext로 검증됐다. 다음 실제 04:30 예약 실행은 시간 의존 후속으로 별도 확인한다.
 - 운영 호스트는 2026-10-06 재확인에서 `reboot-required=yes`, 업그레이드 대기 16개였고 Oracle 7.0.0 계열 kernel meta package와 Docker 29.8.2 등이 포함돼 있었다. Nginx/Docker/SSH/Fail2ban/unattended-upgrades는 모두 active였으며 `systemctl --failed`의 6개는 종료된 `ubuntu` session scope였다. 커널/Docker 업데이트와 재부팅은 별도 유지보수 창에서 사전 백업·롤백 확인 후 수행한다.
 
 ## Direct SSH 제한 허용 전환 — 2026-09-28

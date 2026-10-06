@@ -279,6 +279,21 @@ class RemoteSyncTests(unittest.TestCase):
         with self.assertRaises(sync_module.BackupError):
             sync_module.sync("-untrusted", "/home/ubuntu/backups", self.folder)
 
+    def test_successful_direct_command_decodes_stdout_only(self):
+        completed = subprocess.CompletedProcess(
+            ["ssh"], 0, stdout=b"expected stdout\n", stderr=b"\xb8non-utf8 diagnostic")
+        with patch.object(sync_module.subprocess, "run", return_value=completed) as mocked:
+            self.assertEqual(sync_module.run(["ssh", "bloguito"]), "expected stdout\n")
+        self.assertTrue(mocked.call_args.kwargs["capture_output"])
+        self.assertFalse(mocked.call_args.kwargs["check"])
+        self.assertNotIn("text", mocked.call_args.kwargs)
+
+    def test_non_utf8_stdout_is_rejected(self):
+        completed = subprocess.CompletedProcess(["ssh"], 0, stdout=b"\xb8", stderr=b"")
+        with patch.object(sync_module.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(sync_module.BackupError, "non-UTF-8 stdout"):
+                sync_module.run(["ssh", "bloguito"])
+
     def test_tailscale_transport_reuses_common_verification_pipeline(self):
         calls = []
 
@@ -287,11 +302,12 @@ class RemoteSyncTests(unittest.TestCase):
             if args[:4] == ["tailscale", "ssh", "ubuntu@bloguito-server", "find"]:
                 return subprocess.CompletedProcess(
                     args, 0,
-                    stdout="/home/ubuntu/backups/" + self.filename + "\n",
-                    stderr="",
+                    stdout=("/home/ubuntu/backups/" + self.filename + "\n").encode(),
+                    stderr=b"",
                 )
             if args[:4] == ["tailscale", "ssh", "ubuntu@bloguito-server", "sha256sum"]:
-                return subprocess.CompletedProcess(args, 0, stdout=self.digest + "  snapshot\n", stderr="")
+                return subprocess.CompletedProcess(
+                    args, 0, stdout=(self.digest + "  snapshot\n").encode(), stderr=b"")
             if args[:4] == ["tailscale", "ssh", "ubuntu@bloguito-server", "cat"]:
                 kwargs["stdout"].write(self.remote)
                 return subprocess.CompletedProcess(args, 0, stdout=None, stderr=b"")

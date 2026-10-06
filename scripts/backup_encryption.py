@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import locale
 import os
 from pathlib import Path, PurePath
 import secrets
@@ -37,24 +38,22 @@ def _restrict_private_file(path: Path) -> None:
             raise BackupEncryptionError("recovery_key_permission_update_failed") from exc
         return
     try:
-        identity = subprocess.run(
-            ["whoami"], check=True, capture_output=True, text=True,
-            encoding="utf-8", errors="strict",
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
+        identity_result = subprocess.run(
+            ["whoami"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        identity = identity_result.stdout.decode(
+            locale.getpreferredencoding(False), errors="strict").strip()
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
         raise BackupEncryptionError("recovery_key_operator_unknown") from exc
     if not identity:
         raise BackupEncryptionError("recovery_key_operator_unknown")
     try:
         subprocess.run(
             ["icacls", str(path), "/inheritance:r"],
-            check=True, capture_output=True, text=True,
-            encoding="utf-8", errors="strict",
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
         subprocess.run(
             ["icacls", str(path), "/grant:r", identity + ":(R)"],
-            check=True, capture_output=True, text=True,
-            encoding="utf-8", errors="strict",
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise BackupEncryptionError("recovery_key_permission_update_failed") from exc

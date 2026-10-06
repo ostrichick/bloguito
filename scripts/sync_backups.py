@@ -110,10 +110,13 @@ def verify_archive(path: Path) -> str:
 
 def run(command: list[str]) -> str:
     result = subprocess.run(
-        command, capture_output=True, text=True, encoding="utf-8", errors="strict", check=False)
+        command, capture_output=True, check=False)
     if result.returncode:
         raise BackupError("SSH/SCP failed; check trusted host key, alias and network")
-    return result.stdout
+    try:
+        return result.stdout.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise BackupError("SSH/SCP returned non-UTF-8 stdout") from exc
 
 
 def ssh_args(host: str) -> list[str]:
@@ -160,11 +163,13 @@ class TailscaleTransport:
 
     def _run_text(self, args: list[str]) -> str:
         result = subprocess.run(
-            ["tailscale", "ssh", self.host, *args], capture_output=True, text=True,
-            encoding="utf-8", errors="strict", check=False)
+            ["tailscale", "ssh", self.host, *args], capture_output=True, check=False)
         if result.returncode:
             raise BackupError("Tailscale SSH command failed")
-        return result.stdout
+        try:
+            return result.stdout.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise BackupError("Tailscale SSH returned non-UTF-8 stdout") from exc
 
     def list_filenames(self, remote_dir: str) -> list[str]:
         paths = [p for p in self._run_text(["find", remote_dir, "-maxdepth", "1", "-type", "f",

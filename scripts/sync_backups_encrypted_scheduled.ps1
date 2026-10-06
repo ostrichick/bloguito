@@ -23,10 +23,22 @@ try {
     if (-not (Test-Path -LiteralPath $KeyPath -PathType Leaf)) { throw "Recovery key not found" }
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
-    & $Python $SyncScript --key $KeyPath --destination $BackupDir 2>&1 | ForEach-Object {
-        Add-Log ([string]$_)
+    # Windows PowerShell 5.1 can promote a native process' stderr record to a
+    # terminating error when ErrorActionPreference=Stop and stderr is merged
+    # into a pipeline. Task Scheduler exposes that behavior more readily than
+    # an interactive console. Let the native process finish, preserve all
+    # output in the log, and use its real exit code as the success contract.
+    $PriorErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $NativeOutput = @(& $Python $SyncScript --key $KeyPath --destination $BackupDir 2>&1)
+        $NativeExitCode = $LASTEXITCODE
     }
-    if ($LASTEXITCODE -ne 0) { throw "Encrypted backup sync exited with code $LASTEXITCODE" }
+    finally {
+        $ErrorActionPreference = $PriorErrorActionPreference
+    }
+    $NativeOutput | ForEach-Object { Add-Log ([string]$_) }
+    if ($NativeExitCode -ne 0) { throw "Encrypted backup sync exited with code $NativeExitCode" }
     $cutoff = (Get-Date).AddDays(-30)
     Get-ChildItem -LiteralPath $BackupDir -File -Filter "bloguito_backup_*.tar.gz.blgenc" |
         Where-Object { $_.LastWriteTime -lt $cutoff } |
@@ -38,4 +50,3 @@ catch {
     Add-Log ("Encrypted backup sync failed: " + $_.Exception.Message)
     exit 1
 }
-
