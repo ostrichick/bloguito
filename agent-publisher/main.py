@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import time
 from config import CATEGORIES
-from agents.growth_analysis import load_policy
+from agents.growth_analysis import GrowthAnalysisError, load_policy, refresh_growth_inputs
 from agents.growth_planner import GrowthPlannerError, decide_daily_action, save_daily_plan
 from agents.growth_work_log import (
     empty_work_log,
@@ -23,6 +23,8 @@ from agents.temporal_validation import KST
 
 
 GROWTH_DIR = Path(__file__).resolve().parent / 'data' / 'growth'
+DATA_DIR = Path(__file__).resolve().parent / 'data'
+ANALYTICS_DIR = DATA_DIR / 'analytics'
 GROWTH_OPPORTUNITIES = GROWTH_DIR / 'latest-opportunities.json'
 TOPIC_SCORES = GROWTH_DIR / 'topic-candidate-scores.json'
 GROWTH_WORK_LOG = GROWTH_DIR / 'growth-work-log.json'
@@ -38,8 +40,30 @@ def _load_private_json(path: Path):
 def build_scheduled_growth_plan(category_keys: list) -> dict:
     """Build and persist the read-only decision that gates scheduled writing."""
     try:
+        refresh = refresh_growth_inputs(
+            analytics_dir=ANALYTICS_DIR,
+            growth_dir=GROWTH_DIR,
+            data_dir=DATA_DIR,
+            policy_path=GROWTH_POLICY,
+            as_of=datetime.now(KST).date(),
+        )
+        print(
+            "[Growth Inputs] analytics=" + str(refresh.get('analytics_snapshot'))
+            + " opportunities_refreshed=" + str(refresh.get('opportunities_refreshed')).lower()
+            + " topic_scores_refreshed=" + str(refresh.get('topic_scores_refreshed')).lower()
+        )
         opportunities = _load_private_json(GROWTH_OPPORTUNITIES)
         scores = _load_private_json(TOPIC_SCORES)
+        refresh_id = opportunities.get('refresh_id') if isinstance(opportunities, dict) else None
+        opportunity_digest = (
+            opportunities.get('opportunity_payload_sha256')
+            if isinstance(opportunities, dict) else None
+        )
+        if (not isinstance(refresh_id, str) or len(refresh_id) != 64
+                or scores.get('refresh_id') != refresh_id
+                or not isinstance(opportunity_digest, str) or len(opportunity_digest) != 64
+                or scores.get('opportunity_payload_sha256') != opportunity_digest):
+            raise GrowthAnalysisError('growth_input_pair_not_committed')
         if GROWTH_WORK_LOG.exists():
             work_log = _load_private_json(GROWTH_WORK_LOG)
         else:
@@ -55,7 +79,7 @@ def build_scheduled_growth_plan(category_keys: list) -> dict:
         )
         save_daily_plan(plan, GROWTH_DIR)
         return plan
-    except (OSError, ValueError, GrowthPlannerError):
+    except (OSError, ValueError, GrowthPlannerError, GrowthAnalysisError) as exc:
         # Missing or malformed private growth state is not evidence that a new
         # article should be written. Scheduled automation fails closed.
         return {
@@ -63,7 +87,7 @@ def build_scheduled_growth_plan(category_keys: list) -> dict:
             'action': 'no_action',
             'target': None,
             'reason': 'growth_planner_runtime_unavailable',
-            'details': [],
+            'details': [str(exc)] if str(exc) else [],
         }
 
 

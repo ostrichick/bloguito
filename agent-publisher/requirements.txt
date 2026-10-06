@@ -12,6 +12,7 @@ pypdf==6.19.0
 pydantic==2.13.5
 python-dotenv==1.2.3
 requests==2.34.2
+cryptography==50.0.2
 
 # Used by archived maintenance diagnostics under scripts/archive/.
 duckduckgo-search==8.1.1

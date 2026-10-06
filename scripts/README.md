@@ -16,6 +16,7 @@
 - 검토된 신규 후보 외부 실측 수요 보강: `collect_topic_demand.py`
 - 신규 주제 demand gate 점수화: `score_topic_candidates.py`
 - 일일 성장 작업 결정: `build_daily_growth_plan.py`
+- 검증된 서버 backup을 암호화 오프호스트 사본으로 동기화: `sync_backups_encrypted.py`
 - 기존 글 성장 개선 완료 기록: `record_growth_work.py` (`edit-post --output`의 verified mutation receipt 필수)
 - 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py` (canonical `wordpress_inventory.json`이 없으면 최신 catalog sync의 URL-complete `catalog_inventory.json`을 사용하며, URL state가 불완전하면 fail closed)
 - 운영 editorial release 생성: `build_editorial_release.py` (항상 새 출력 폴더에 current HEAD runtime 전체 패키징)

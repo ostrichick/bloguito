@@ -92,6 +92,15 @@ def _validate_opportunities(report: dict, policy: dict, as_of: date) -> tuple[bo
     period = report.get("period")
     if not isinstance(period, dict) or not isinstance(report.get("pages"), list):
         return False, "opportunity_report_invalid"
+    digest = report.get("opportunity_payload_sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        return False, "opportunity_report_digest_missing"
+    payload = {
+        key: value for key, value in report.items()
+        if key not in {"opportunity_payload_sha256", "refresh_id"}
+    }
+    if _canonical_digest(payload) != digest:
+        return False, "opportunity_report_digest_mismatch"
     try:
         end = _parse_date(period.get("end"), "opportunity_report_period_invalid")
     except GrowthPlannerError:
@@ -103,7 +112,9 @@ def _validate_opportunities(report: dict, policy: dict, as_of: date) -> tuple[bo
     return True, ""
 
 
-def _validate_topic_scores(report: dict, policy: dict, as_of: date) -> tuple[bool, str]:
+def _validate_topic_scores(report: dict, policy: dict, as_of: date,
+                           *, opportunity_period_end=None,
+                           opportunity_payload_sha256=None) -> tuple[bool, str]:
     if not isinstance(report, dict) or report.get("schema_version") != 1:
         return False, "topic_score_report_invalid"
     if report.get("policy_version") != policy.get("version"):
@@ -112,6 +123,12 @@ def _validate_topic_scores(report: dict, policy: dict, as_of: date) -> tuple[boo
         return False, "topic_score_policy_digest_mismatch"
     if not isinstance(report.get("candidates"), list):
         return False, "topic_score_report_invalid"
+    if (opportunity_period_end is not None
+            and report.get("growth_period_end") != opportunity_period_end):
+        return False, "topic_score_growth_period_mismatch"
+    if (opportunity_payload_sha256 is not None
+            and report.get("opportunity_payload_sha256") != opportunity_payload_sha256):
+        return False, "topic_score_opportunity_digest_mismatch"
     try:
         scored_on = _parse_date(report.get("as_of_date"), "topic_score_date_invalid")
     except GrowthPlannerError:
@@ -278,7 +295,16 @@ def decide_daily_action(opportunities: dict, topic_scores: dict, policy: dict, *
     """Return one read-only daily action.  Invalid or stale inputs yield no_action."""
     planner = _planner_policy(policy)
     opportunity_ok, opportunity_reason = _validate_opportunities(opportunities, policy, as_of)
-    topic_ok, topic_reason = _validate_topic_scores(topic_scores, policy, as_of)
+    opportunity_period_end = (
+        (opportunities.get("period") or {}).get("end")
+        if isinstance(opportunities, dict) else None
+    )
+    topic_ok, topic_reason = _validate_topic_scores(
+        topic_scores, policy, as_of, opportunity_period_end=opportunity_period_end,
+        opportunity_payload_sha256=(
+            opportunities.get("opportunity_payload_sha256")
+            if isinstance(opportunities, dict) else None
+        ))
     if work_log is None:
         work_log = empty_work_log()
     try:

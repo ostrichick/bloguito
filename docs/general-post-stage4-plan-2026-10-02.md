@@ -1,6 +1,6 @@
 # 일반 정보 포스트 정책 최적화 4단계 후속 계획
 
-**상태 (2026-10-04):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 카테고리 8분류 개편과 병합 및 기존 회귀 문제 정리 후 4.3A/B와 explicit `policy-current`에 대한 제한적 4.3C를 운영 검증했다. 10/3·10/4 정규 scheduler는 정상 종료했지만 lifecycle 분기를 실제 후보로 통과하지 않았고, 현재 13개 brief 중 10개는 volatility metadata 없이 review window가 만료돼 있다. 따라서 전체 legacy fallback 제거는 계속 보류한다. 4.3D는 explicit volatility가 있는 reviewed row만 lifecycle 기준으로 direct/news discovery를 선택하고 metadata가 없는 row는 legacy `content_type` fallback을 유지하는 호환 전환까지 진행한다. 만료 brief를 자동 재활성화하지 않는다. 4.4는 2026 인플루엔자 규칙을 첫 파일럿으로 데이터/엔진 분리하고 연도 registry 확장까지 구현했다.
+**상태 (2026-10-06):** 4.1 일반/행사 writer schema 분리와 4.2 post-specific exception registry 분리를 구현·검증했다. 카테고리 8분류 개편과 병합 및 기존 회귀 문제 정리 후 4.3A/B와 explicit `policy-current`에 대한 제한적 4.3C를 운영 검증했다. 4.3D도 explicit volatility가 있는 reviewed row만 lifecycle 기준으로 direct/news discovery를 선택하고 metadata가 없는 row는 legacy `content_type` fallback을 유지하는 호환 전환까지 구현됐다. 현재 13개 brief 중 10개는 volatility metadata 없이 review window가 만료돼 있어 전체 legacy fallback 제거는 계속 보류한다. 2026-10-06 Growth 입력 복구에서는 reviewed brief가 실제 자동 작성 후보로 재사용되지 않았고 private topic candidate도 0건이었으므로, 만료된 10개 brief를 자동 재활성화하거나 lifecycle metadata를 소급 부여하지 않았다. 이후 실제 재사용되는 brief만 최신 공식 출처로 다시 검토한다. 4.4는 2026 인플루엔자 규칙을 첫 파일럿으로 데이터/엔진 분리하고 연도 registry 확장까지 구현했다.
 
 1~3단계에서 일반 정보글의 writer/validator/renderer 계약을 맞추고, 정책 문서를 글 유형별로 분리했으며, bundle에 실제 적용되는 정책만 semantic review fingerprint와 모델 지침에 포함하도록 변경했다. Standard 수정의 source recheck도 draft/public 공용 planner로 통합했다.
 

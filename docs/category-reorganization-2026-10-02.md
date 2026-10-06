@@ -189,6 +189,14 @@ WordPress taxonomy는 평면으로 유지하고 메인 메뉴에서만 두 그�
 - 운영 venv에서 `life-health`가 active `CATEGORIES`에 없고 legacy로만 남는지, 실서버 term ID와 표시명이 일치하는지 확인했다.
 - 배포 전 세 파일은 `/home/ubuntu/agent-publisher/backups/category-reorg-20261002T040436Z`에 보관했다. 배포 검증 실패 시 세 파일을 자동 복원하도록 적용했고 실제 검증은 통과했다.
 
+### 2026-10-06 legacy `life-health` 재점검
+
+- WordPress term ID 4 (`life-health`)는 현재 count=0이고 primary menu에 없으며, 기본 카테고리도 term 1이다. 즉 active taxonomy에서는 사용되지 않는다.
+- 그러나 `/category/life-health/`는 현재 HTTP 200으로 남아 있어 term을 즉시 삭제하면 기존 archive URL을 처리할 정책 없이 404로 바꿀 수 있다.
+- reviewed state에는 `life-health` category key를 가진 historical manifest가 여전히 복수 존재한다. 2026-10-06 로컬 reviewed index와 운영 감사 모두 legacy reference가 남아 있음을 확인했지만, status reconciliation/compact state 시점에 따라 index별 개수는 달라질 수 있으므로 개수를 운영 계약으로 고정하지 않는다. 이 기록은 현재 live category를 다시 `life-health`로 바꾸는 근거가 아니라 과거 reviewed bundle 재생·검사 호환용이다.
+- `config.py`의 `LEGACY_CATEGORIES`, `critical_facts.py`, `temporal_validation.py`와 회귀 테스트도 이 historical parsing을 의도적으로 유지한다. 따라서 이번 후속에서는 WordPress term과 legacy resolver를 삭제하지 않는다.
+- 향후 제거 순서는 archive URL 처리 정책 결정 → redirect/landing 검증 → historical manifest 호환성 이전 → 백업/readback → term 삭제 → 마지막으로 legacy resolver 제거다.
+
 ### 코드 검증
 
 - 카테고리 관련 표적 회귀 220개 통과.

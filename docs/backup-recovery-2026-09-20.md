@@ -47,3 +47,12 @@
 - `test_backup_recovery_v3.py`: 총 **7개 통과**. v3 검증/설정 추출, 비밀정보 명시 선택, 해시 손상, 경로 이동/링크/잘못된 구성요소 경로 거부, 기존 설정 보호, 원자적 동기화/전송 실패 시 원본 보존, 호스트키 설정 확인. 기존 `test_backup_restore.py`의 **3개 통과**. Bash 구문 및 `git diff --check` 통과.
 - 신뢰된 SSH 호스트 별칭을 통해 운영 서버에 **읽기 전용** 접근하여 2026-09-20의 기존 v2 통합 백업 **3개를 로컬 ignored `backups/`로 다운로드**. 각 원격 SHA256을 다운로드 전후 대조하고 로컬 아카이브/내부 구성요소를 검증하여 세 개 모두 성공. 운영 최신 v2 중 `bloguito_backup_20260920_185439.tar.gz`는 수정된 `restore_backup.sh --verify-only`도 성공. 원격 백업의 실제 DB/사이트 복원은 수행하지 않았다.
 - **미검증:** 새로운 v3 스크립트의 운영 서버 정기 실행, 실제 WordPress 데이터의 격리 호스트 전체 복구, Nginx/인증서의 독립 호스트 재구축, 복구 후 글·미디어·플러그인 기능, 오프사이트 저장소 암호화·키 복구 및 사이트 중단 없는 복구 시간. 운영 서버 코드·서비스·크론 및 원본 백업에는 쓰기 작업 없음.
+
+## 2026-10-06 암호화 오프호스트 후속
+
+- `scripts/backup_encryption.py`와 `scripts/sync_backups_encrypted.py`는 v3 아카이브를 검증한 뒤 임시 평문을 AES-256-GCM으로 암호화하고 원본 파일명·크기·SHA256을 인증 header에 결합한다. 다운로드 전후 원격 SHA가 달라지거나 archive 검증·GCM 인증·평문 SHA 검증 중 하나라도 실패하면 최종 암호화 파일로 확정하지 않는다.
+- 초기 검증에서 임시 다운로드 파일명이 인증 header의 원본 filename으로 들어가 `encrypted_backup_verification_mismatch`가 발생한 원인을 확인했다. 현재 구현은 임시 디렉터리 안에서도 원격 canonical filename을 유지하고, sync-level 회귀 테스트가 원본 filename 결합과 두 번째 실행의 안전한 verified skip을 검사한다.
+- 실제 recovery key `~/Documents/Secure/Bloguito-Backup-Recovery.key`는 내용을 읽어 출력하지 않고 ACL metadata만 확인했다. 상속은 차단돼 있고 현재 Windows 사용자에게 `Read, Synchronize`만 부여돼 있다. key는 Git·서버·암호화 backup directory에 복사하지 않는다.
+- 실제 최신 `bloguito_backup_20261006_040001.tar.gz.blgenc`는 기존 ciphertext를 다시 인증 검증해 `VERIFIED_ENCRYPTED_EXISTING`을 확인했다. 이어 별도 임시 복원 디렉터리에서 복호화한 평문을 기존 `sync_backups.verify_archive()`로 다시 검사해 v3 archive 구조·component checksum·nested path 검증까지 통과했다. 검증용 평문 114,925,411 bytes와 임시 복원 디렉터리는 즉시 삭제했다.
+- 2026-09-25의 격리 WordPress 실제 복원 훈련과 이번 암호화 계층 복원 검증을 합치면 `encrypted off-host copy → authenticated plaintext v3 archive → validated application/data restore path`까지 연결돼 있다. 이것은 새 VM 전체 부팅·실제 ACME 발급·Tailscale 신규 enrollment·실제 SSH 로그인까지 검증한 것은 아니다.
+- 기존 Windows `Bloguito Daily Backup Sync`의 04:30 실행 시각을 변경해 새 시각을 임의로 만들지는 않는다. 암호화 wrapper를 정본 main 경로에 통합한 뒤 기존 04:30 작업의 action만 암호화 sync wrapper로 전환하고 실제 task result를 검증한다.

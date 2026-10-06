@@ -8,6 +8,27 @@ import main as pipeline
 
 
 class PipelineExitTests(unittest.TestCase):
+    def test_growth_refresh_failure_fails_closed_before_planner_reads_private_state(self):
+        with patch.object(
+                pipeline, 'refresh_growth_inputs',
+                side_effect=pipeline.GrowthAnalysisError('growth_wordpress_catalog_unavailable')):
+            plan = pipeline.build_scheduled_growth_plan(['health'])
+        self.assertEqual('no_action', plan['action'])
+        self.assertEqual('growth_planner_runtime_unavailable', plan['reason'])
+        self.assertIn('growth_wordpress_catalog_unavailable', plan['details'])
+
+    def test_mismatched_growth_refresh_pair_fails_closed(self):
+        with patch.object(pipeline, 'refresh_growth_inputs', return_value={
+                'analytics_snapshot': 'google-analytics-2026-10-02.json',
+                'opportunities_refreshed': False,
+                'topic_scores_refreshed': True,
+        }), patch.object(pipeline, '_load_private_json', side_effect=[
+                {'refresh_id': 'a' * 64}, {'refresh_id': 'b' * 64},
+        ]):
+            plan = pipeline.build_scheduled_growth_plan(['health'])
+        self.assertEqual('no_action', plan['action'])
+        self.assertIn('growth_input_pair_not_committed', plan['details'])
+
     def exercise(self, *, candidate=True, held=False, failed=False, notification_failed=False):
         with ExitStack() as stack, redirect_stdout(io.StringIO()):
             for name in ('sync_inventory', 'ensure_inventory', 'notify_published', 'notify_error'):

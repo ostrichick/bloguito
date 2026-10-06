@@ -8,16 +8,35 @@ review state, or treats GA4 all-channel page views as organic traffic.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unicodedata
 from urllib.parse import parse_qs, unquote, urlparse
 
+from agents.wordpress_transport import run_wordpress
+
 
 class GrowthAnalysisError(ValueError):
     """Fail-closed growth analysis input or storage error."""
+
+
+_WP_BASE = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+_CATALOG_PHP = (
+    "$q=new WP_Query(array('post_type'=>'post','post_status'=>array('publish','draft','pending','future','private'),"
+    "'posts_per_page'=>-1,'orderby'=>'ID','order'=>'ASC','fields'=>'ids'));$o=array();"
+    "foreach($q->posts as $id){$p=get_post($id);$c=(string)$p->post_content;"
+    "$o[]=array('ID'=>(int)$id,'post_title'=>(string)$p->post_title,'post_status'=>(string)$p->post_status,"
+    "'post_name'=>(string)$p->post_name,'permalink'=>(string)get_permalink($id),"
+    "'post_date'=>(string)$p->post_date,'content_sha256'=>hash('sha256',$c),"
+    "'category_slugs'=>wp_get_post_terms($id,'category',array('fields'=>'slugs')),'categories'=>"
+    "array_values(wp_get_post_categories($id,array('fields'=>'names'))));}echo wp_json_encode($o);"
+)
+_CATALOG_ARGS = ["eval", _CATALOG_PHP, "--allow-root"]
+_ANALYTICS_RE = re.compile(r"google-analytics-(\d{4}-\d{2}-\d{2})\.json\Z")
 
 
 RECOMMENDED_ACTIONS = {
@@ -42,6 +61,213 @@ def load_policy(path: str | Path) -> dict:
     if not required.issubset(policy):
         raise GrowthAnalysisError("invalid_growth_policy")
     return policy
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_digest(payload) -> str:
+    raw = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    return _sha256_bytes(raw)
+
+
+def _load_private_json(path: Path, code: str):
+    try:
+        if path.is_symlink():
+            raise GrowthAnalysisError(code + "_symlink_not_allowed")
+        return json.loads(path.read_text(encoding="utf-8"))
+    except GrowthAnalysisError:
+        raise
+    except (OSError, ValueError, TypeError):
+        raise GrowthAnalysisError(code) from None
+
+
+def latest_analytics_snapshot(analytics_dir: Path, *, now=None) -> tuple[Path, dict, str]:
+    """Return the newest intended private snapshot, or fail closed.
+
+    The newest matching filename is selected *before* validation.  A malformed
+    newest snapshot must never make scheduled automation silently fall back to
+    an older valid file.
+    """
+    from analytics_collector import CollectionError
+    from analytics_receiver import validate_snapshot
+
+    directory = Path(analytics_dir)
+    if directory.is_symlink() or not directory.is_dir():
+        raise GrowthAnalysisError("growth_analytics_directory_unavailable")
+    candidates = []
+    for path in directory.iterdir():
+        match = _ANALYTICS_RE.fullmatch(path.name)
+        if match is None:
+            continue
+        try:
+            filename_date = date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        candidates.append((filename_date, path.name, path))
+    if not candidates:
+        raise GrowthAnalysisError("growth_analytics_snapshot_unavailable")
+    filename_date, _name, path = max(candidates, key=lambda row: (row[0], row[1]))
+    if path.is_symlink() or not path.is_file():
+        raise GrowthAnalysisError("growth_latest_analytics_snapshot_invalid")
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        if payload.get("schema_version") != 2:
+            raise GrowthAnalysisError("growth_latest_analytics_snapshot_unsupported")
+        validate_snapshot(payload, now=now)
+        period_end = date.fromisoformat(str(payload["period"]["end"]))
+        if period_end != filename_date:
+            raise GrowthAnalysisError("growth_latest_analytics_filename_period_mismatch")
+    except GrowthAnalysisError:
+        raise
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError, CollectionError) as exc:
+        raise GrowthAnalysisError("growth_latest_analytics_snapshot_invalid") from exc
+    checksum = _sha256_bytes(raw)
+    return path, payload, checksum
+
+
+def fetch_current_catalog() -> list[dict]:
+    """Read the current WordPress post catalog without mutating WordPress."""
+    try:
+        result = run_wordpress(
+            _WP_BASE + _CATALOG_ARGS,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=60,
+        )
+        rows = json.loads((result.stdout or "").lstrip("\ufeff"))
+    except Exception as exc:
+        raise GrowthAnalysisError("growth_wordpress_catalog_unavailable") from exc
+    allowed = {"publish", "draft", "pending", "future", "private"}
+    if (not isinstance(rows, list)
+            or any(
+                not isinstance(row, dict)
+                or type(row.get("ID")) is not int
+                or not isinstance(row.get("post_title"), str)
+                or row.get("post_status") not in allowed
+                or not isinstance(row.get("post_name"), str)
+                or not isinstance(row.get("permalink"), str)
+                or not isinstance(row.get("post_date"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", row.get("content_sha256", ""))
+                or not isinstance(row.get("category_slugs"), list)
+                or not isinstance(row.get("categories"), list)
+                for row in rows
+            )):
+        raise GrowthAnalysisError("growth_wordpress_catalog_invalid")
+    ids = [row["ID"] for row in rows]
+    if len(ids) != len(set(ids)):
+        raise GrowthAnalysisError("growth_wordpress_catalog_duplicate_id")
+    return rows
+
+
+def _canonical_live_category(live: dict):
+    from config import CATEGORIES
+    slugs = live.get("category_slugs")
+    names = live.get("categories")
+    if (not isinstance(slugs, list) or len(slugs) != 1
+            or not isinstance(names, list) or len(names) != 1):
+        return None
+    matches = [
+        (key, value)
+        for key, value in CATEGORIES.items()
+        if value.get("slug") == slugs[0] and value.get("name") == names[0]
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def audit_reviewed_provenance(posts: list[dict], data_dir: Path) -> dict[int, dict]:
+    """Return only current exact reviewed bindings; ambiguous state stays non-adoptable."""
+    from agents.editorial import digest, recognized_reviewed_content_hashes
+    from agents.post_manifest_store import load_records
+
+    live_by_id = {int(row["ID"]): row for row in posts}
+    tracked: dict[int, tuple[str, dict]] = {}
+    duplicate_ids: set[int] = set()
+    for indexed_status, name in (("draft", "draft_posts.json"), ("publish", "published_posts.json")):
+        index = Path(data_dir) / name
+        if not index.is_file():
+            continue
+        try:
+            records = load_records(index)
+        except (OSError, ValueError, TypeError) as exc:
+            raise GrowthAnalysisError("growth_reviewed_index_invalid") from exc
+        for record in records:
+            post_id = int(record["id"])
+            if post_id in tracked:
+                duplicate_ids.add(post_id)
+            else:
+                tracked[post_id] = (indexed_status, record)
+
+    output: dict[int, dict] = {}
+    for post_id, live in live_by_id.items():
+        base = {
+            "classification": "provenance_unavailable",
+            "auto_adoptable": False,
+            "live_status": live.get("post_status"),
+        }
+        if post_id in duplicate_ids:
+            output[post_id] = {**base, "classification": "duplicate_reviewed_record"}
+            continue
+        tracked_row = tracked.get(post_id)
+        if tracked_row is None:
+            output[post_id] = {**base, "classification": "no_reviewed_record"}
+            continue
+        indexed_status, record = tracked_row
+        bundle = (record.get("fact_manifest") or {}).get("editorial_bundle")
+        if not isinstance(bundle, dict):
+            output[post_id] = {**base, "classification": "legacy_inline_no_bundle"}
+            continue
+        try:
+            reviewed_title = bundle["plan"]["title"]
+            hashes = recognized_reviewed_content_hashes(bundle, post_id=post_id)
+        except ValueError as exc:
+            classification = (
+                "review_unbound" if str(exc) == "reviewed_content_review_not_bound"
+                else "reviewed_bundle_invalid"
+            )
+            output[post_id] = {**base, "classification": classification}
+            continue
+        except (KeyError, TypeError):
+            output[post_id] = {**base, "classification": "reviewed_bundle_invalid"}
+            continue
+        if live.get("post_title") != reviewed_title:
+            output[post_id] = {**base, "classification": "live_title_changed"}
+            continue
+        variant = next(
+            (name for name, content_hash in hashes.items()
+             if content_hash == live.get("content_sha256")),
+            None,
+        )
+        if variant is None:
+            output[post_id] = {**base, "classification": "live_content_changed"}
+            continue
+        category = _canonical_live_category(live)
+        if category is None:
+            output[post_id] = {
+                **base,
+                "classification": "reviewed_exact_category_unbound",
+                "provenance_variant": variant,
+            }
+            continue
+        category_key, _category_value = category
+        output[post_id] = {
+            "classification": "reviewed_exact",
+            "auto_adoptable": True,
+            "live_status": live.get("post_status"),
+            "live_content_sha256": live.get("content_sha256"),
+            "review_digest": bundle.get("review", {}).get("digest"),
+            "bundle_digest": digest(bundle),
+            "provenance_variant": variant,
+            "canonical_category_key": category_key,
+        }
+    return output
 
 
 def _parse_date(value, *, code: str) -> date:
@@ -105,6 +331,33 @@ def _match_post_id(value: str, alias_index: dict[str, int | None]) -> int | None
     matches = {alias_index.get(alias) for alias in _url_aliases(value)}
     matches.discard(None)
     return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _merge_gsc_rows(left: dict, right: dict) -> dict:
+    """Aggregate distinct Search Console URL variants mapped to one WordPress post."""
+    left_impressions = int(left.get("impressions") or 0)
+    right_impressions = int(right.get("impressions") or 0)
+    impressions = left_impressions + right_impressions
+    clicks = int(left.get("clicks") or 0) + int(right.get("clicks") or 0)
+    weighted_positions = []
+    if left.get("position") is not None and left_impressions > 0:
+        weighted_positions.append((float(left["position"]), left_impressions))
+    if right.get("position") is not None and right_impressions > 0:
+        weighted_positions.append((float(right["position"]), right_impressions))
+    position = (
+        sum(value * weight for value, weight in weighted_positions)
+        / sum(weight for _value, weight in weighted_positions)
+        if weighted_positions else None
+    )
+    return {
+        "page": left.get("page") or right.get("page"),
+        "clicks": clicks,
+        "impressions": impressions,
+        "ctr": (clicks / impressions) if impressions else 0.0,
+        "position": position,
+        "mapped_url_variants": int(left.get("mapped_url_variants") or 1)
+            + int(right.get("mapped_url_variants") or 1),
+    }
 
 
 def _confidence(impressions: int, policy: dict) -> str:
@@ -212,8 +465,9 @@ def analyze_growth(snapshot: dict, catalog_posts: list[dict], policy: dict, *,
             })
             continue
         if post_id in gsc_by_id:
-            raise GrowthAnalysisError("duplicate_gsc_page_mapping")
-        gsc_by_id[post_id] = row
+            gsc_by_id[post_id] = _merge_gsc_rows(gsc_by_id[post_id], row)
+        else:
+            gsc_by_id[post_id] = dict(row, mapped_url_variants=1)
 
     ga4_by_id: dict[int, dict] = {}
     unmatched_ga4_paths = []
@@ -355,3 +609,125 @@ def save_opportunities(report: dict, output_dir: str | Path) -> Path:
         if temp is not None and temp.exists():
             temp.unlink()
     return target
+
+
+def _atomic_json(path: Path, payload: dict) -> None:
+    path = Path(path)
+    if path.is_symlink():
+        raise GrowthAnalysisError("growth_output_symlink_not_allowed")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "posix" and path.parent.stat().st_mode & 0o077:
+        raise GrowthAnalysisError("growth_output_directory_permissions_too_open")
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=path.parent, prefix=".growth-runtime-",
+                suffix=".tmp", delete=False) as handle:
+            temp = Path(handle.name)
+            if os.name == "posix":
+                os.chmod(temp, 0o600)
+            json.dump(payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        if temp is not None and temp.exists():
+            temp.unlink()
+
+
+def opportunity_payload_digest(report: dict) -> str:
+    """Digest the exact Opportunity payload, excluding self-referential binding fields."""
+    if not isinstance(report, dict):
+        raise GrowthAnalysisError("growth_opportunity_digest_invalid")
+    payload = {
+        key: value for key, value in report.items()
+        if key not in {"opportunity_payload_sha256", "refresh_id"}
+    }
+    return _canonical_digest(payload)
+
+
+def refresh_growth_inputs(*, analytics_dir: Path, growth_dir: Path, data_dir: Path,
+                          policy_path: Path, as_of: date, validation_now=None) -> dict:
+    """Refresh scheduled Opportunity/Topic inputs from the newest proven data.
+
+    A changed analytics snapshot triggers one read-only WordPress catalog query.
+    Topic candidates are re-scored every run so evidence aging cannot stay
+    silently eligible. Both live derived files are staged before either is
+    replaced; callers additionally verify their shared ``refresh_id``.
+    """
+    from agents.topic_scoring import TopicScoringError, score_candidates
+
+    analytics_path, snapshot, analytics_sha = latest_analytics_snapshot(
+        analytics_dir, now=validation_now)
+    policy = load_policy(policy_path)
+    opportunities_path = Path(growth_dir) / "latest-opportunities.json"
+    scores_path = Path(growth_dir) / "topic-candidate-scores.json"
+    candidates_path = Path(growth_dir) / "topic_candidates.json"
+
+    # Recompute every scheduled run from the fully validated newest analytics
+    # snapshot plus the current read-only WordPress catalog.  Reusing a previous
+    # Opportunity body based only on metadata would let body corruption or live
+    # catalog drift influence unattended draft selection.
+    catalog = fetch_current_catalog()
+    provenance = audit_reviewed_provenance(catalog, data_dir)
+    try:
+        opportunities = analyze_growth(
+            snapshot, catalog, policy, provenance_by_id=provenance)
+    except (GrowthAnalysisError, ValueError, TypeError) as exc:
+        raise GrowthAnalysisError("growth_opportunity_refresh_failed") from exc
+    opportunities["analytics_snapshot"] = analytics_path.name
+    opportunities["analytics_snapshot_sha256"] = analytics_sha
+    opportunities["wordpress_catalog_checked_at_utc"] = datetime.now(timezone.utc).isoformat(
+        timespec="seconds")
+
+    candidates = _load_private_json(candidates_path, "topic_candidates_unreadable")
+    try:
+        scores = score_candidates(candidates, opportunities, policy, as_of=as_of)
+    except (TopicScoringError, GrowthAnalysisError, ValueError, TypeError) as exc:
+        raise GrowthAnalysisError("topic_score_refresh_failed") from exc
+    candidate_digest = _canonical_digest(candidates)
+    opportunity_digest = opportunity_payload_digest(opportunities)
+    opportunities["opportunity_payload_sha256"] = opportunity_digest
+    refresh_id = _canonical_digest({
+        "analytics_snapshot_sha256": analytics_sha,
+        "opportunity_payload_sha256": opportunity_digest,
+        "topic_candidates_sha256": candidate_digest,
+        "policy_version": policy.get("version"),
+        "as_of_date": as_of.isoformat(),
+    })
+    opportunities = dict(opportunities)
+    opportunities["refresh_id"] = refresh_id
+    scores["analytics_snapshot_sha256"] = analytics_sha
+    scores["opportunity_payload_sha256"] = opportunity_digest
+    scores["topic_candidates_sha256"] = candidate_digest
+    scores["refresh_id"] = refresh_id
+
+    growth_dir = Path(growth_dir).absolute()
+    if growth_dir.is_symlink():
+        raise GrowthAnalysisError("growth_output_directory_symlink_not_allowed")
+    growth_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "posix" and growth_dir.stat().st_mode & 0o077:
+        raise GrowthAnalysisError("growth_output_directory_permissions_too_open")
+    with tempfile.TemporaryDirectory(prefix=".growth-refresh-", dir=growth_dir) as temp_name:
+        temp_dir = Path(temp_name)
+        if os.name == "posix":
+            os.chmod(temp_dir, 0o700)
+        staged_opportunities = temp_dir / opportunities_path.name
+        staged_scores = temp_dir / scores_path.name
+        _atomic_json(staged_opportunities, opportunities)
+        _atomic_json(staged_scores, scores)
+        os.replace(staged_opportunities, opportunities_path)
+        os.replace(staged_scores, scores_path)
+
+    return {
+        "analytics_snapshot": analytics_path.name,
+        "analytics_snapshot_sha256": analytics_sha,
+        "refresh_id": refresh_id,
+        "opportunities_refreshed": True,
+        "topic_scores_refreshed": True,
+        "growth_period_end": (opportunities.get("period") or {}).get("end"),
+        "topic_candidates": len(scores.get("candidates", [])),
+        "eligible_topic_candidates": int((scores.get("summary") or {}).get(
+            "eligible_for_automation", 0)),
+    }

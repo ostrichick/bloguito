@@ -6,8 +6,14 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from agents.growth_analysis import analyze_growth, load_policy, save_opportunities
+from agents.growth_analysis import (
+    analyze_growth,
+    audit_reviewed_provenance,
+    load_policy,
+    save_opportunities,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,12 +154,54 @@ class GrowthAnalysisTests(unittest.TestCase):
         self.assertEqual("winner", page["classification"])
         self.assertEqual("/preview470.html", report["unmatched_ga4_paths"][0]["pagePath"])
 
+    def test_distinct_gsc_url_variants_for_same_post_are_aggregated(self):
+        posts = [post(231, "2026-09-01 09:00:00", "https://lifeinfo24.org/account-info/",
+                      post_name="account-info")]
+        rows = [
+            {"page": "https://lifeinfo24.org/account-info/", "clicks": 0, "impressions": 3,
+             "ctr": 0.0, "position": 6.0},
+            {"page": "https://lifeinfo24.org/?p=231", "clicks": 1, "impressions": 2,
+             "ctr": 0.5, "position": 4.0},
+        ]
+        report = analyze_growth(snapshot(rows), posts, self.policy)
+        page = report["pages"][0]["search_console"]
+        self.assertEqual(5, page["impressions"])
+        self.assertEqual(1, page["clicks"])
+        self.assertAlmostEqual(0.2, page["ctr"])
+        self.assertAlmostEqual(5.2, page["position"])
+        self.assertEqual(1, report["summary"]["mapped_gsc_pages"])
+
     def test_private_report_save_is_round_trippable(self):
         report = analyze_growth(snapshot([]), [], self.policy)
         with tempfile.TemporaryDirectory() as root:
             target = save_opportunities(report, Path(root) / "growth")
             self.assertEqual("latest-opportunities.json", target.name)
             self.assertEqual(report, json.loads(target.read_text(encoding="utf-8")))
+
+    def test_reviewed_status_drift_does_not_break_exact_provenance(self):
+        catalog_post = post(
+            10, "2026-09-01 09:00:00", "https://lifeinfo24.org/p/10/",
+            title="테스트 글", content_sha256="a" * 64,
+        )
+        catalog_post["post_status"] = "publish"
+        bundle = {"plan": {"title": "테스트 글"}, "review": {"digest": "b" * 64}}
+        record = {"id": 10, "fact_manifest": {"editorial_bundle": bundle}}
+        with tempfile.TemporaryDirectory() as root:
+            data_dir = Path(root)
+            (data_dir / "draft_posts.json").write_text("[]", encoding="utf-8")
+            (data_dir / "published_posts.json").write_text("[]", encoding="utf-8")
+
+            def records(path):
+                return [record] if Path(path).name == "draft_posts.json" else []
+
+            with patch("agents.post_manifest_store.load_records", side_effect=records), \
+                    patch("agents.editorial.recognized_reviewed_content_hashes",
+                          return_value={"current": "a" * 64}), \
+                    patch("agents.editorial.digest", return_value="c" * 64):
+                result = audit_reviewed_provenance([catalog_post], data_dir)
+        self.assertEqual("reviewed_exact", result[10]["classification"])
+        self.assertTrue(result[10]["auto_adoptable"])
+        self.assertEqual("publish", result[10]["live_status"])
 
 
 if __name__ == "__main__":

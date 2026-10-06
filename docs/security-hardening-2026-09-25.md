@@ -168,6 +168,13 @@
 3. 필요하면 로컬 백업 자체의 추가 암호화 또는 별도 오프사이트 저장소를 검토한다.
 4. Ubuntu phased update와 새 Oracle 커널은 배포가 안정화된 뒤 별도 유지보수 창에서 적용/검증.
 
+### 2026-10-06 보존 후속 재확인
+
+- 관리자 Two Factor 플러그인은 활성 상태지만 관리자 계정의 TOTP provider·secret·backup codes 등록 증거는 여전히 없다. 실제 QR/TOTP 등록과 복구 코드의 오프라인 보관은 관리자 본인이 수행해야 한다.
+- 서버 방화벽의 `BLOGUITO_SSH` 체인, SSH key-only 설정, Fail2ban 및 Direct SSH/Tailscale 비상 경로는 유지되고 있다. 다만 현재 서버/Instance Principal 권한으로 OCI Security List/NSG의 TCP/22 source 범위를 읽을 수 없어 OCI 네트워크 계층 제한은 완료로 간주하지 않는다.
+- 암호화 off-host backup은 실제 최신 ciphertext 인증 검증과 복호화→v3 archive 독립 검증까지 통과했다. recovery key ACL은 상속 차단 + 현재 사용자 read-only로 확인했다. 새 VM 전체 DR은 기존 PARTIAL 판정을 유지한다.
+- 운영 호스트는 2026-10-06 재확인에서 `reboot-required=yes`, 업그레이드 대기 16개였고 Oracle 7.0.0 계열 kernel meta package와 Docker 29.8.2 등이 포함돼 있었다. Nginx/Docker/SSH/Fail2ban/unattended-upgrades는 모두 active였으며 `systemctl --failed`의 6개는 종료된 `ubuntu` session scope였다. 커널/Docker 업데이트와 재부팅은 별도 유지보수 창에서 사전 백업·롤백 확인 후 수행한다.
+
 ## Direct SSH 제한 허용 전환 — 2026-09-28
 
 사용자 요청에 따라 평상시 Bloguito 운영 작업은 Windows의 `ssh bloguito` Direct SSH를 우선하고, Tailscale은 비상·복구 경로로 유지하는 구조로 변경했다. 변경 전에 기존 Tailscale 경로를 먼저 살려 `wordpress-blog` / `ubuntu` 접속을 확인한 뒤 서버 설정을 읽기 전용으로 재검증했다.

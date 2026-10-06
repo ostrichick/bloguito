@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -18,8 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "growth_policy.json"
 
 
+def _digest(value):
+    raw = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def opportunities(pages=None, end="2026-09-29"):
-    return {
+    report = {
         "schema_version": 1,
         "provenance_contract_version": 1,
         "period": {"start": "2026-09-02", "end": end,
@@ -27,14 +35,19 @@ def opportunities(pages=None, end="2026-09-29"):
         "policy_version": 1,
         "pages": pages or [],
     }
+    report["opportunity_payload_sha256"] = _digest(report)
+    return report
 
 
-def topic_scores(policy, rows=None, as_of="2026-10-03"):
+def topic_scores(policy, rows=None, as_of="2026-10-03", growth_period_end="2026-09-29",
+                 opportunity_sha256=None):
     return {
         "schema_version": 1,
         "as_of_date": as_of,
         "policy_version": 1,
         "topic_gate_digest": topic_gate_digest(policy),
+        "growth_period_end": growth_period_end,
+        "opportunity_payload_sha256": opportunity_sha256,
         "candidates": rows or [],
     }
 
@@ -103,9 +116,12 @@ class GrowthPlannerTests(unittest.TestCase):
     def decide(self, pages=None, topics=None, categories=None, end="2026-09-29",
                work_log=None, today=None):
         today = today or self.today
+        opportunity_report = opportunities(pages, end=end)
         return decide_daily_action(
-            opportunities(pages, end=end),
-            topic_scores(self.policy, topics, as_of=today.isoformat()), self.policy,
+            opportunity_report,
+            topic_scores(
+                self.policy, topics, as_of=today.isoformat(), growth_period_end=end,
+                opportunity_sha256=opportunity_report["opportunity_payload_sha256"]), self.policy,
             as_of=today, work_log=work_log, category_keys=categories,
             category_slug_map=self.slug_map,
         )
@@ -131,6 +147,20 @@ class GrowthPlannerTests(unittest.TestCase):
         self.assertEqual("no_action", plan["action"])
         self.assertIn("opportunity_report_stale", plan["details"])
 
+    def test_topic_scores_from_different_growth_period_fail_closed(self):
+        opportunities_report = opportunities([], end="2026-10-02")
+        scores = topic_scores(
+            self.policy, [new_topic()], as_of="2026-10-06",
+            opportunity_sha256=opportunities_report["opportunity_payload_sha256"])
+        scores["growth_period_end"] = "2026-09-29"
+        plan = decide_daily_action(
+            opportunities_report, scores, self.policy,
+            as_of=date(2026, 10, 6), work_log=None,
+            category_keys=["welfare"], category_slug_map=self.slug_map,
+        )
+        self.assertEqual("no_action", plan["action"])
+        self.assertIn("topic_score_growth_period_mismatch", plan["details"])
+
     def test_category_scope_does_not_let_transport_block_welfare_run(self):
         plan = self.decide([existing(slug="transport")], [new_topic(category="welfare")], ["welfare"])
         self.assertEqual("new_draft", plan["action"])
@@ -152,12 +182,41 @@ class GrowthPlannerTests(unittest.TestCase):
         report = opportunities([existing()])
         report.pop("provenance_contract_version")
         plan = decide_daily_action(
-            report, topic_scores(self.policy, [new_topic()], as_of=self.today.isoformat()),
+            report, topic_scores(
+                self.policy, [new_topic()], as_of=self.today.isoformat(),
+                growth_period_end="2026-09-29",
+                opportunity_sha256=report.get("opportunity_payload_sha256")),
             self.policy, as_of=self.today, work_log=None,
             category_keys=["transport", "welfare"], category_slug_map=self.slug_map,
         )
         self.assertEqual("no_action", plan["action"])
         self.assertIn("opportunity_report_invalid", plan["details"])
+
+    def test_opportunity_body_digest_mismatch_fails_closed(self):
+        report = opportunities([existing()])
+        report["pages"][0]["title"] = "tampered"
+        scores = topic_scores(
+            self.policy, [new_topic()], as_of=self.today.isoformat(),
+            growth_period_end="2026-09-29",
+            opportunity_sha256=report["opportunity_payload_sha256"])
+        plan = decide_daily_action(
+            report, scores, self.policy, as_of=self.today, work_log=None,
+            category_keys=["transport", "welfare"], category_slug_map=self.slug_map,
+        )
+        self.assertEqual("no_action", plan["action"])
+        self.assertIn("opportunity_report_digest_mismatch", plan["details"])
+
+    def test_topic_score_bound_to_different_opportunity_digest_fails_closed(self):
+        report = opportunities([])
+        scores = topic_scores(
+            self.policy, [new_topic()], as_of=self.today.isoformat(),
+            growth_period_end="2026-09-29", opportunity_sha256="f" * 64)
+        plan = decide_daily_action(
+            report, scores, self.policy, as_of=self.today, work_log=None,
+            category_keys=["welfare"], category_slug_map=self.slug_map,
+        )
+        self.assertEqual("no_action", plan["action"])
+        self.assertIn("topic_score_opportunity_digest_mismatch", plan["details"])
 
     def test_completed_existing_is_suppressed_until_post_change_observation_window(self):
         first = self.decide([existing()], [new_topic()], ["transport", "welfare"])

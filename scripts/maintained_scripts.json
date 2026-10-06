@@ -1,6 +1,7 @@
 {
   "version": 1,
   "scripts": {
+    "backup_encryption.py": "Authenticated encryption and restore verification for Bloguito backup archives",
     "audit_legacy_posts.py": "Legacy post audit",
     "audit_published_facts.py": "Published fact audit",
     "audit_rank_math_scores.py": "Rank Math score audit",
@@ -28,6 +29,7 @@
     "summarize_workflow_metrics.py": "Workflow metrics aggregation",
     "task_workspace.py": "Managed scratch task workspace lifecycle",
     "sync_backups.py": "Verified backup synchronization with direct/Tailscale transports",
+    "sync_backups_encrypted.py": "Authenticated encrypted off-host backup synchronization",
     "sync_post_catalog.py": "POST_CATALOG synchronization"
   }
 }

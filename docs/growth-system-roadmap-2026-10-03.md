@@ -241,7 +241,16 @@ P2가 형식만 준비한 외부 demand evidence를 실제 공식 측정 경로�
 9. **P8**: allowlisted structured reader tool을 deterministic하게 렌더해 계산/판정형 클릭 가치를 제공한다.
 10. **P9**: reviewed candidate를 GSC-seeded official provider 측정으로 enrich하고 상대값/절대값 경계를 source-specific metric으로 강제한다.
 
-P0~P5는 운영 배포와 #345 실제 completion loop까지 확인했다. P6도 기존 공개글을 자동 수정하지 않으며, writer 경로에 배포할 때는 release revision과 08:00 cron smoke를 별도로 확인한다.
+P0~P5는 운영 배포와 #345 실제 completion loop까지 확인했다. P6~P9도 2026-10-04 운영 release `d0f0a86`에 포함된 것을 2026-10-06 다시 확인했다. 10/4 정규 scheduler는 정상 `no_action`, 10/5~10/6은 구형 Opportunity input이 최신 provenance 계약을 만족하지 않아 fail-closed `growth_inputs_unavailable_or_stale`로 종료했다. 이 후속에서는 최신 analytics snapshot이 있을 때 scheduled `main.py`가 Opportunity와 Topic score를 JIT로 재검증·갱신하고, 두 파생 파일을 동일 `refresh_id`와 같은 analytics period로 결합하도록 보강한다. 갱신 실패·불일치에서는 예전 score로 되돌아가지 않고 `no_action`을 유지한다.
+
+### 2026-10-06 운영 입력 복구
+
+- 원인: 운영 `latest-opportunities.json`은 period end `2026-09-29`의 구형 파일로 `provenance_contract_version`이 없었고, 최신 analytics는 이미 period end `2026-10-02`까지 도착해 있었다.
+- 최신 실데이터 preflight에서 Post #231의 canonical slug URL과 `?p=231` URL이 Search Console의 별도 행으로 존재하는 것도 확인했다. 둘 다 같은 WordPress post로 정확히 매핑되는 경우에 한해 clicks/impressions를 합산하고 CTR을 재계산하며 position은 impressions 가중 평균으로 합친다. 서로 다른 post로 추정 병합하지 않는다.
+- scheduled refresh는 가장 최신 이름의 analytics JSON 하나를 먼저 선택한 뒤 canonical receiver 계약으로 그 파일 자체를 검증하며, 최신 파일이 malformed/stale이면 이전 파일로 후퇴하지 않는다. 검증된 snapshot을 사용할 때는 매 실행마다 WordPress를 읽기 전용으로 조회해 Opportunity를 현재 catalog에서 재계산한다. reviewed provenance는 저장 bundle과 현재 title/content SHA/category가 exact match일 때 `auto_adoptable=true`이며 draft/publish index status drift는 관측 정보로만 남긴다.
+- private `topic_candidates.json`은 사람이 검토한 후보만 그대로 사용한다. daily scheduler가 Naver DataLab 같은 외부 demand provider를 자동 호출하거나 새 candidate를 발명하지 않는다.
+- Opportunity와 Topic score는 같은 analytics generation이어야 하며 `growth_period_end`와 shared `refresh_id`가 일치하지 않으면 planner가 fail closed한다.
+- 2026-10-06 최신 analytics + 현재 65개 공개글 preflight 결과: Opportunity 생성 성공, mapped GSC pages 35, private topic candidate 0, eligible 0, Daily Planner `no_action`.
 
 ## 2026-10-03 P0 실행 기록
 
