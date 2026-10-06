@@ -85,7 +85,7 @@ agent-publisher/data/policy_exceptions/
 
 ## 4.3 category 중심 freshness를 volatility 중심으로 전환
 
-**진행 상태:** 4.3A/B 완료. 4.3C는 명시적으로 검토된 `welfare + evergreen + policy-current` brief의 legacy category blanket gate를 대체하고, 상시 제도 안의 bounded 현재값은 별도 `current_value_period` claim 계약으로 분리했다. metadata가 없는 welfare와 실제 dated temporal 검증은 계속 fallback으로 유지한다. 4.3D는 아직 시작하지 않는다.
+**진행 상태:** 4.3A/B 완료. 4.3C는 명시적으로 검토된 `welfare + evergreen + policy-current` brief의 legacy category blanket gate를 대체하고, 상시 제도 안의 bounded 현재값은 별도 `current_value_period` claim 계약으로 분리했다. 4.3D의 호환 전환도 구현되어 explicit volatility가 있는 reviewed brief는 lifecycle 기준으로 direct/news discovery를 선택하고, metadata가 없는 기존 brief는 legacy `content_type` fallback을 유지한다. 아직 남은 작업은 이 fallback을 전면 제거하는 것이며, 만료된 기존 brief를 자동 재승인하지 않기 때문에 충분한 재검토가 쌓일 때까지 의도적으로 보류한다.
 
 ### 목표
 
