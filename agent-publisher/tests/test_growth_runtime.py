@@ -54,7 +54,7 @@ class GrowthRuntimeTests(unittest.TestCase):
         self.growth_dir = self.root / "growth"
         self.data_dir = self.root / "data"
         self.analytics_dir.mkdir()
-        self.growth_dir.mkdir()
+        self.growth_dir.mkdir(mode=0o700)
         self.data_dir.mkdir()
         (self.growth_dir / "topic_candidates.json").write_text(
             json.dumps({"schema_version": 1, "candidates": []}), encoding="utf-8")
