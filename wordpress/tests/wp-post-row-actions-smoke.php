@@ -25,6 +25,27 @@ if (!has_action('transition_post_status', 'bloguito_consume_publish_attestation'
     fwrite(STDERR, 'Publish attestation consumption hook is not registered' . PHP_EOL);
     exit(1);
 }
+if (!has_filter('query', 'bloguito_guard_unguarded_publish_sql')) {
+    fwrite(STDERR, 'Direct publish SQL guard is not registered' . PHP_EOL);
+    exit(1);
+}
+
+$new_publish = bloguito_guard_publish_transition([
+    'post_type' => 'post',
+    'post_status' => 'publish',
+], [], [], false);
+if (($new_publish['post_status'] ?? '') !== 'draft') {
+    fwrite(STDERR, 'New direct publish creation is not forced to draft' . PHP_EOL);
+    exit(1);
+}
+$new_future = bloguito_guard_publish_transition([
+    'post_type' => 'post',
+    'post_status' => 'future',
+], [], [], false);
+if (($new_future['post_status'] ?? '') !== 'draft') {
+    fwrite(STDERR, 'New native future scheduling is not forced to draft' . PHP_EOL);
+    exit(1);
+}
 
 $admins = get_users(['role' => 'administrator', 'number' => 1, 'fields' => 'ID']);
 if (!$admins) {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Post Row Actions
  * Description: Add guarded publish/draft status actions to the Posts list and draft preview admin bar.
- * Version: 1.3.0
+ * Version: 1.3.1
  */
 
 if (!defined('ABSPATH')) {
@@ -10,6 +10,42 @@ if (!defined('ABSPATH')) {
 }
 
 const BLOGUITO_PUBLISH_GATE_META_KEY = '_bloguito_publish_gate_v1';
+
+/**
+ * Last-resort database guard for core paths such as wp_publish_post() that
+ * bypass wp_insert_post_data. Abort before a non-publish post can be written
+ * as publish unless the exact post is inside our guarded transaction.
+ */
+add_filter('query', 'bloguito_guard_unguarded_publish_sql', PHP_INT_MIN);
+function bloguito_guard_unguarded_publish_sql($query) {
+    global $wpdb;
+
+    if (!is_string($query) || !isset($wpdb) || !isset($wpdb->posts)) {
+        return $query;
+    }
+    $table = preg_quote((string) $wpdb->posts, '/');
+    if (!preg_match('/^\s*UPDATE\s+`?' . $table . '`?\s+SET\s+(.+?)\s+WHERE\s+(.+)$/is', $query, $parts)) {
+        return $query;
+    }
+    if (!preg_match('/`?post_status`?\s*=\s*[\'\"]publish[\'\"]/i', $parts[1])) {
+        return $query;
+    }
+    if (!preg_match('/`?ID`?\s*=\s*[\'\"]?(\d+)[\'\"]?/i', $parts[2], $id_match)) {
+        wp_die('비가드 공개 상태 변경을 차단했습니다.', '발행 차단', ['response' => 409]);
+    }
+    $post_id = (int) $id_match[1];
+    if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) === $post_id) {
+        return $query;
+    }
+    $current_status = $wpdb->get_var($wpdb->prepare(
+        "SELECT post_status FROM {$wpdb->posts} WHERE ID=%d",
+        $post_id
+    ));
+    if ((string) $current_status !== 'publish') {
+        wp_die('정규 발행 검증을 거치지 않은 공개 상태 변경을 차단했습니다.', '발행 차단', ['response' => 409]);
+    }
+    return $query;
+}
 
 /**
  * Verify the exact reviewed body/title and approved featured image currently
@@ -290,6 +326,7 @@ function bloguito_atomic_publish_post($post_id) {
         '_thumbnail_id',
         BLOGUITO_PUBLISH_GATE_META_KEY
     ));
+    wp_cache_delete($post_id, 'post_meta');
     clean_post_cache($post_id);
     $post = get_post($post_id);
     if (!$post || $post->post_type !== 'post' || $post->post_status !== 'draft') {
@@ -304,10 +341,13 @@ function bloguito_atomic_publish_post($post_id) {
             $thumbnail_id
         ));
         $wpdb->get_results($wpdb->prepare(
-            "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s FOR UPDATE",
+            "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key IN (%s,%s) FOR UPDATE",
             $thumbnail_id,
-            '_wp_attachment_image_alt'
+            '_wp_attachment_image_alt',
+            '_wp_attached_file'
         ));
+        wp_cache_delete($thumbnail_id, 'post_meta');
+        clean_post_cache($thumbnail_id);
     }
 
     $gate = bloguito_validate_publishability($post_id);

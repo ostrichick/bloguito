@@ -150,6 +150,7 @@ def reviewed_binding_for_post(post_id: int, content_sha256: str, title: str) -> 
         validate_sources,
     )
     from agents.post_manifest_store import load_record
+    from agents.source_validation_cache import source_requires_live_refresh
 
     snapshot = load_record(DRAFTS_INDEX_FILE, post_id) if DRAFTS_INDEX_FILE.is_file() else None
     if snapshot is None and POSTS_INDEX_FILE.is_file():
@@ -187,11 +188,16 @@ def reviewed_binding_for_post(post_id: int, content_sha256: str, title: str) -> 
     expiry = min(deadlines)
     if expiry <= datetime.now(timezone.utc):
         raise ValueError("reviewed_publish_binding_expired")
+    brief = bundle.get("brief", {})
+    requires_live_state = bool(brief.get("requires_live_state")) or any(
+        isinstance(source, dict) and source_requires_live_refresh(source, brief)
+        for source in bundle.get("sources", [])
+    )
     return {
         "review_digest": review_digest,
         "title_sha256": hashlib.sha256(title.encode("utf-8")).hexdigest(),
         "expires_at_gmt": expiry.isoformat().replace("+00:00", "Z"),
-        "requires_live_state": bool(bundle.get("brief", {}).get("requires_live_state")),
+        "requires_live_state": requires_live_state,
     }
 
 

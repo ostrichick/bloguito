@@ -40,6 +40,9 @@ class PublishGateTests(unittest.TestCase):
             }], ensure_ascii=False), encoding="utf-8")
             with patch("config.DRAFTS_INDEX_FILE", drafts), patch("config.POSTS_INDEX_FILE", published):
                 binding = reviewed_binding_for_post(901, content_sha, bundle["plan"]["title"])
+                with patch("agents.source_validation_cache.source_requires_live_refresh", return_value=True):
+                    inferred_live_binding = reviewed_binding_for_post(
+                        901, content_sha, bundle["plan"]["title"])
                 with self.assertRaisesRegex(ValueError, "reviewed_publish_title_mismatch"):
                     reviewed_binding_for_post(901, content_sha, "changed title")
                 with self.assertRaisesRegex(ValueError, "reviewed_publish_content_mismatch"):
@@ -60,6 +63,7 @@ class PublishGateTests(unittest.TestCase):
         )
         self.assertTrue(binding["expires_at_gmt"].endswith("Z"))
         self.assertIs(binding["requires_live_state"], False)
+        self.assertIs(inferred_live_binding["requires_live_state"], True)
 
     def test_manual_approval_evidence_is_deterministic_and_kind_bound(self):
         evidence = {"post_id": 901, "image_sha256": "a" * 64, "selection_confirmed": True}

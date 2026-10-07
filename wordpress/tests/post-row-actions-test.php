@@ -27,7 +27,12 @@ class TestWpdb {
     public $queries = [];
     public function prepare($query, ...$args) { return $query; }
     public function query($query) { $this->queries[] = $query; return 1; }
-    public function get_var($query) { $this->queries[] = $query; return 1; }
+    public function get_var($query) {
+        global $test_post;
+        $this->queries[] = $query;
+        if (stripos($query, 'SELECT post_status') !== false) return $test_post->post_status;
+        return 1;
+    }
     public function get_results($query) { $this->queries[] = $query; return []; }
     public function update($table, $data, $where, $formats = null, $where_formats = null) {
         global $test_post;
@@ -113,6 +118,10 @@ function delete_post_meta($post_id, $key) {
 }
 function wp_unslash($value) { return is_string($value) ? stripslashes($value) : $value; }
 function clean_post_cache($post_id) { return true; }
+function wp_cache_delete($key, $group = '') { return true; }
+function wp_die($message = '', $title = '', $args = []) {
+    throw new RuntimeException(strip_tags((string) $message));
+}
 function wp_update_post($data, $wp_error = false) {
     global $test_updated, $test_post;
     $test_updated = $data;
@@ -169,6 +178,19 @@ check($registered_actions['admin_bar_menu'][1] === 82, 'Preview publish button f
 check(isset($registered_filters['wp_insert_post_data']), 'Global publish transition filter registered');
 check($registered_filters['wp_insert_post_data'][2] === 4, 'Global publish transition filter receives full update context');
 check(isset($registered_actions['transition_post_status']), 'Publish attestation consumption hook registered');
+check(isset($registered_filters['query']), 'Direct publish SQL guard registered');
+
+$raw_publish_sql = "UPDATE wp_posts SET post_status = 'publish' WHERE ID = 837";
+$blocked_sql = false;
+try {
+    bloguito_guard_unguarded_publish_sql($raw_publish_sql);
+} catch (RuntimeException $error) {
+    $blocked_sql = strpos($error->getMessage(), '발행') !== false;
+}
+check($blocked_sql, 'Direct wp_publish_post-style SQL is blocked before execution');
+$GLOBALS['bloguito_guarded_publish_post_id'] = 837;
+check(bloguito_guard_unguarded_publish_sql($raw_publish_sql) === $raw_publish_sql, 'Guarded publish transaction may execute publish SQL');
+unset($GLOBALS['bloguito_guarded_publish_post_id']);
 
 $base_actions = [
     'edit' => '<a>Edit</a>',
