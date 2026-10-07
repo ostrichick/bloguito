@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = 'b44ce045a958c27e6bcd2e72451570febc1cec64a459228153464cbb62a42995'
+CANONICAL_INVENTORY_DIGEST = '3104dbc8c9ea1e9c3d3da173826b7e10772b064220a410f491bd489b40ca8cdb'
 ALLOWED_RETIRED_FILES = {
     'agents/copywriter.py',
     'agents/editorial_draft_updater.py',
@@ -55,6 +55,7 @@ def verify_release_manifest(release):
         'agent-publisher/agents/editorial.py',
         'agent-publisher/agents/editorial_schema.py',
         'agent-publisher/agents/public_fast_edit.py',
+        'agent-publisher/agents/publish_gate.py',
         'agent-publisher/agents/source_collector.py',
         'agent-publisher/agents/source_extractors.py',
         'agent-publisher/agents/validation_router.py',
@@ -170,7 +171,7 @@ def install(release, app):
                 put(target, b'')
                 target.unlink()
         python=app/'venv'/'bin'/'python'
-        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; import agents.section_image; from agents.editorial_writer import Plan; from agents.editorial import policy, validate_renderer_provenance_registry, validate_reviewed_content_provenance_registry; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); validate_renderer_provenance_registry(); validate_reviewed_content_provenance_registry(); print("Editorial entrypoints and provenance registries ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; import agents.publish_gate; import agents.section_image; from agents.editorial_writer import Plan; from agents.editorial import policy, validate_renderer_provenance_registry, validate_reviewed_content_provenance_registry; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); validate_renderer_provenance_registry(); validate_reviewed_content_provenance_registry(); print("Editorial entrypoints, publish gate and provenance registries ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
         installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes if Path(change['target']).exists()}
         manifest_sha256 = hashlib.sha256((release/'release-manifest.json').read_bytes()).hexdigest()
         put(app/'data'/'editorial-release.json', json.dumps({

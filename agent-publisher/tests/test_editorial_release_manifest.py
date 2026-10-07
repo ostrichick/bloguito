@@ -122,6 +122,7 @@ class ReleaseManifestTests(unittest.TestCase):
         smoke = run.call_args.args[0]
         self.assertIn('validate_reviewed_content_provenance_registry', smoke[-1])
         self.assertIn('validate_renderer_provenance_registry', smoke[-1])
+        self.assertIn('agents.publish_gate', smoke[-1])
         self.assertIn('agents.section_image', smoke[-1])
 
     def test_failed_entrypoint_smoke_restores_original_files(self):
