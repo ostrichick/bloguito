@@ -529,6 +529,7 @@ def replace_featured_image(
                 approval_kind=approval_kind,
                 approval_evidence_sha256=approval_evidence_sha256,
                 expires_at_gmt=publish_binding["expires_at_gmt"],
+                requires_live_state=publish_binding["requires_live_state"],
             )
 
         if manage_task_state:
@@ -671,6 +672,7 @@ def replace_featured_image_from_live_baseline(
             approval_kind=approval_kind,
             approval_evidence_sha256=approval_evidence_sha256,
             expires_at_gmt=binding["expires_at_gmt"],
+            requires_live_state=binding["requires_live_state"],
         )
         return {**result, "publish_attestation": attestation}
 

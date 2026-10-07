@@ -794,6 +794,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'approval_kind': 'manual_user_selected',
                 'approval_evidence_sha256': '5' * 64,
                 'expires_at_gmt': '2026-10-08T00:00:00Z',
+                'requires_live_state': False,
             }), text=True)
 
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):

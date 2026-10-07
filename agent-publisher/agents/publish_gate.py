@@ -27,7 +27,8 @@ PUBLISH_GATE_RECORD_SCRIPT = (
     '||!is_string($p["content_sha256"]??null)||!is_string($p["review_digest"]??null)'
     '||!is_string($p["title_sha256"]??null)||!is_string($p["image_sha256"]??null)'
     '||!is_string($p["alt_text_sha256"]??null)||!is_string($p["approval_evidence_sha256"]??null)'
-    '||!is_string($p["expires_at_gmt"]??null)||!is_string($p["approval_kind"]??null))'
+    '||!is_string($p["expires_at_gmt"]??null)||!is_string($p["approval_kind"]??null)'
+    '||!is_bool($p["requires_live_state"]??null))'
     '{$emit(["status"=>"invalid_payload"]);return;}'
     '$id=(int)$p["post_id"];$thumb=(int)$p["thumbnail_id"];$post=get_post($id);$att=get_post($thumb);'
     'if(!$post||!$att||$att->post_type!=="attachment"||!wp_attachment_is_image($thumb))'
@@ -51,7 +52,8 @@ PUBLISH_GATE_RECORD_SCRIPT = (
     '"review_digest"=>$p["review_digest"],"title_sha256"=>$p["title_sha256"],'
     '"thumbnail_id"=>$thumb,"image_sha256"=>$p["image_sha256"],'
     '"alt_text_sha256"=>$p["alt_text_sha256"],"approval_kind"=>$p["approval_kind"],'
-    '"approval_evidence_sha256"=>$p["approval_evidence_sha256"],"expires_at_gmt"=>$p["expires_at_gmt"]];'
+    '"approval_evidence_sha256"=>$p["approval_evidence_sha256"],"expires_at_gmt"=>$p["expires_at_gmt"],'
+    '"requires_live_state"=>$p["requires_live_state"]];'
     '$encoded=wp_json_encode($gate,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);'
     'update_post_meta($id,"_bloguito_publish_gate_v1",$encoded);'
     '$saved=(string)get_post_meta($id,"_bloguito_publish_gate_v1",true);'
@@ -69,11 +71,12 @@ PUBLISH_GATE_VALIDATE_SCRIPT = (
     '$raw_gate=(string)get_post_meta($id,"_bloguito_publish_gate_v1",true);'
     '$g=json_decode($raw_gate,true);$required=["version","post_id","content_sha256","review_digest",'
     '"title_sha256","thumbnail_id","image_sha256","alt_text_sha256","approval_kind",'
-    '"approval_evidence_sha256","expires_at_gmt"];'
+    '"approval_evidence_sha256","expires_at_gmt","requires_live_state"];'
     'if(!is_array($g)||array_keys($g)!==$required||($g["version"]??null)!==1||(int)($g["post_id"]??0)!==$id)'
     '{$emit(["status"=>"blocked","reason"=>"publish_attestation_missing_or_invalid"]);return;}'
     '$allowed=["manual_user_selected"=>1,"automated_visual_review"=>1];'
     'if(!isset($allowed[$g["approval_kind"]??""])){$emit(["status"=>"blocked","reason"=>"image_approval_missing"]);return;}'
+    'if(!is_bool($g["requires_live_state"]??null)){$emit(["status"=>"blocked","reason"=>"publish_attestation_invalid"]);return;}'
     '$hex=function($v){return is_string($v)&&preg_match("/^[0-9a-f]{64}$/D",$v)===1;};'
     'foreach(["content_sha256","review_digest","title_sha256","image_sha256","alt_text_sha256","approval_evidence_sha256"] as $k)'
     '{if(!$hex($g[$k]??null)){$emit(["status"=>"blocked","reason"=>"publish_attestation_invalid"]);return;}}'
@@ -143,6 +146,8 @@ def reviewed_binding_for_post(post_id: int, content_sha256: str, title: str) -> 
         assert_review_digest_bound,
         policy,
         recognized_reviewed_content_hashes,
+        validate_review_binding,
+        validate_sources,
     )
     from agents.post_manifest_store import load_record
 
@@ -155,6 +160,12 @@ def reviewed_binding_for_post(post_id: int, content_sha256: str, title: str) -> 
         raise ValueError("reviewed_publish_binding_required")
     if not isinstance(title, str) or bundle.get("plan", {}).get("title") != title:
         raise ValueError("reviewed_publish_title_mismatch")
+    review_report = validate_review_binding(bundle)
+    if review_report.get("status") != "ready":
+        raise ValueError("reviewed_publish_review_not_current:" + str(review_report.get("reasons") or []))
+    source_report = validate_sources(bundle)
+    if source_report.get("status") != "ready":
+        raise ValueError("reviewed_publish_sources_not_current:" + str(source_report.get("reasons") or []))
     review_digest = assert_review_digest_bound(bundle)
     recognized = recognized_reviewed_content_hashes(bundle, post_id=post_id)
     if content_sha256 not in set(recognized.values()):
@@ -180,6 +191,7 @@ def reviewed_binding_for_post(post_id: int, content_sha256: str, title: str) -> 
         "review_digest": review_digest,
         "title_sha256": hashlib.sha256(title.encode("utf-8")).hexdigest(),
         "expires_at_gmt": expiry.isoformat().replace("+00:00", "Z"),
+        "requires_live_state": bool(bundle.get("brief", {}).get("requires_live_state")),
     }
 
 
@@ -196,11 +208,13 @@ def record_publish_attestation(
     approval_kind: str,
     approval_evidence_sha256: str,
     expires_at_gmt: str,
+    requires_live_state: bool,
 ) -> dict:
     if (not isinstance(post_id, int) or post_id <= 0
             or type(thumbnail_id) is not int or thumbnail_id <= 0
             or not _valid_sha(content_sha256) or not _valid_sha(review_digest)
             or not _valid_sha(title_sha256) or not _valid_sha(approval_evidence_sha256)
+            or type(requires_live_state) is not bool
             or approval_kind not in ALLOWED_IMAGE_APPROVAL_KINDS):
         raise ValueError("invalid_publish_attestation")
     try:
@@ -227,6 +241,7 @@ def record_publish_attestation(
         "approval_kind": approval_kind,
         "approval_evidence_sha256": approval_evidence_sha256,
         "expires_at_gmt": expires_at_gmt,
+        "requires_live_state": requires_live_state,
     }
     command = list(base) + ["eval", PUBLISH_GATE_RECORD_SCRIPT, "--allow-root"]
     with timed("wp_publish_attestation_write"):

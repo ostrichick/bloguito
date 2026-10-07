@@ -144,6 +144,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                      "review_digest": "1" * 64,
                      "title_sha256": "2" * 64,
                      "expires_at_gmt": "2026-10-08T00:00:00Z",
+                     "requires_live_state": False,
                  }) as reviewed_binding, \
                  patch("agents.featured_image.record_publish_attestation", return_value={
                      "version": 1, "thumbnail_id": 777,

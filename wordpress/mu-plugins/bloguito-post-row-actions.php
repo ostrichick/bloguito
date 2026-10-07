@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Post Row Actions
  * Description: Add guarded publish/draft status actions to the Posts list and draft preview admin bar.
- * Version: 1.2.0
+ * Version: 1.3.0
  */
 
 if (!defined('ABSPATH')) {
@@ -17,7 +17,12 @@ const BLOGUITO_PUBLISH_GATE_META_KEY = '_bloguito_publish_gate_v1';
  *
  * @return true|WP_Error
  */
-function bloguito_validate_publishability($post_id, $content_override = null, $title_override = null) {
+function bloguito_validate_publishability(
+    $post_id,
+    $content_override = null,
+    $title_override = null,
+    $allow_live_state = false
+) {
     $post_id = (int) $post_id;
     $post = $post_id > 0 ? get_post($post_id) : null;
     if (!$post || $post->post_type !== 'post') {
@@ -29,7 +34,7 @@ function bloguito_validate_publishability($post_id, $content_override = null, $t
     $required = [
         'version', 'post_id', 'content_sha256', 'review_digest', 'title_sha256',
         'thumbnail_id', 'image_sha256', 'alt_text_sha256', 'approval_kind',
-        'approval_evidence_sha256', 'expires_at_gmt',
+        'approval_evidence_sha256', 'expires_at_gmt', 'requires_live_state',
     ];
     if (!is_array($gate)) {
         return new WP_Error('bloguito_publish_gate_missing', '대표이미지와 최종 검토 승인이 완료되지 않았습니다.');
@@ -54,6 +59,15 @@ function bloguito_validate_publishability($post_id, $content_override = null, $t
     }
     if (!in_array($gate['approval_kind'], ['manual_user_selected', 'automated_visual_review'], true)) {
         return new WP_Error('bloguito_publish_gate_image_unapproved', '대표이미지 선택 또는 품질 검수가 완료되지 않았습니다.');
+    }
+    if (!is_bool($gate['requires_live_state'])) {
+        return new WP_Error('bloguito_publish_gate_invalid', '발행 승인 정보가 올바르지 않습니다.');
+    }
+    if ($gate['requires_live_state'] && !$allow_live_state) {
+        return new WP_Error(
+            'bloguito_publish_gate_live_state_requires_canonical_preflight',
+            '현재 상태 재확인이 필요한 글은 정규 promote-draft 검증으로만 발행할 수 있습니다.'
+        );
     }
     $expires = is_string($gate['expires_at_gmt']) ? strtotime($gate['expires_at_gmt']) : false;
     if ($expires === false || $expires <= time()) {
@@ -229,10 +243,7 @@ function bloguito_change_post_status($post_id, $target_status) {
         return new WP_Error('bloguito_status_conflict', '글 상태가 이미 변경되었습니다. 목록을 새로고침한 뒤 다시 시도하세요.');
     }
     if ($target_status === 'publish') {
-        $gate = bloguito_validate_publishability($post_id);
-        if (is_wp_error($gate)) {
-            return $gate;
-        }
+        return bloguito_atomic_publish_post($post_id);
     }
 
     $result = wp_update_post([
@@ -250,28 +261,115 @@ function bloguito_change_post_status($post_id, $target_status) {
 }
 
 /**
+ * Publish one draft under the same row locks used by the canonical Python
+ * mutation. This path is only for non-live-state posts whose attestation is
+ * already current; high-volatility posts must use promote-draft.
+ *
+ * @return int|WP_Error
+ */
+function bloguito_atomic_publish_post($post_id) {
+    global $wpdb;
+
+    $post_id = (int) $post_id;
+    if ($post_id <= 0 || !isset($wpdb)) {
+        return new WP_Error('bloguito_publish_gate_unavailable', '발행 검증기를 사용할 수 없습니다.');
+    }
+
+    $wpdb->query('START TRANSACTION');
+    $locked = $wpdb->get_var($wpdb->prepare(
+        "SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",
+        $post_id
+    ));
+    if (!$locked) {
+        $wpdb->query('ROLLBACK');
+        return new WP_Error('bloguito_invalid_post', '글을 찾을 수 없습니다.');
+    }
+    $wpdb->get_results($wpdb->prepare(
+        "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key IN (%s,%s) FOR UPDATE",
+        $post_id,
+        '_thumbnail_id',
+        BLOGUITO_PUBLISH_GATE_META_KEY
+    ));
+    clean_post_cache($post_id);
+    $post = get_post($post_id);
+    if (!$post || $post->post_type !== 'post' || $post->post_status !== 'draft') {
+        $wpdb->query('ROLLBACK');
+        return new WP_Error('bloguito_status_conflict', '글 상태가 이미 변경되었습니다. 목록을 새로고침한 뒤 다시 시도하세요.');
+    }
+
+    $thumbnail_id = (int) get_post_thumbnail_id($post_id);
+    if ($thumbnail_id > 0) {
+        $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",
+            $thumbnail_id
+        ));
+        $wpdb->get_results($wpdb->prepare(
+            "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s FOR UPDATE",
+            $thumbnail_id,
+            '_wp_attachment_image_alt'
+        ));
+    }
+
+    $gate = bloguito_validate_publishability($post_id);
+    if (is_wp_error($gate)) {
+        $wpdb->query('ROLLBACK');
+        return $gate;
+    }
+
+    $GLOBALS['bloguito_guarded_publish_post_id'] = $post_id;
+    $result = wp_update_post([
+        'ID' => $post_id,
+        'post_status' => 'publish',
+    ], true);
+    unset($GLOBALS['bloguito_guarded_publish_post_id']);
+    if (is_wp_error($result)) {
+        $wpdb->query('ROLLBACK');
+        clean_post_cache($post_id);
+        return $result;
+    }
+
+    clean_post_cache($post_id);
+    $saved = get_post($post_id);
+    if (!$saved || $saved->post_status !== 'publish') {
+        $wpdb->query('ROLLBACK');
+        clean_post_cache($post_id);
+        return new WP_Error('bloguito_publish_gate_blocked', '발행 검증에서 상태 변경이 차단되었습니다.');
+    }
+    if ($wpdb->query('COMMIT') === false) {
+        clean_post_cache($post_id);
+        return new WP_Error('bloguito_publish_gate_commit_failed', '발행 트랜잭션을 완료하지 못했습니다.');
+    }
+    return $post_id;
+}
+
+/**
  * Cover every WordPress draft/pending/future/private -> publish route, including
  * native editor, REST, WP-CLI and custom row actions.
  */
 add_filter('wp_insert_post_data', 'bloguito_guard_publish_transition', 99, 4);
 function bloguito_guard_publish_transition($data, $postarr, $unsanitized_postarr = [], $update = false) {
     $post_id = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
-    if (!$update || $post_id <= 0 || ($data['post_type'] ?? '') !== 'post'
-            || ($data['post_status'] ?? '') !== 'publish') {
+    if (($data['post_type'] ?? '') !== 'post') {
+        return $data;
+    }
+    if (!$update || $post_id <= 0) {
+        if (in_array(($data['post_status'] ?? ''), ['publish', 'future'], true)) {
+            $data['post_status'] = 'draft';
+        }
+        return $data;
+    }
+    if (($data['post_status'] ?? '') === 'future') {
+        $data['post_status'] = 'draft';
+        return $data;
+    }
+    if (($data['post_status'] ?? '') !== 'publish') {
         return $data;
     }
     $current = get_post($post_id);
     if (!$current || $current->post_type !== 'post' || $current->post_status === 'publish') {
         return $data;
     }
-    $content = array_key_exists('post_content', $data)
-        ? wp_unslash((string) $data['post_content'])
-        : (string) $current->post_content;
-    $title = array_key_exists('post_title', $data)
-        ? wp_unslash((string) $data['post_title'])
-        : (string) $current->post_title;
-    $gate = bloguito_validate_publishability($post_id, $content, $title);
-    if (is_wp_error($gate)) {
+    if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) !== $post_id) {
         $data['post_status'] = $current->post_status;
     }
     return $data;
@@ -281,7 +379,20 @@ add_action('transition_post_status', 'bloguito_consume_publish_attestation', 10,
 function bloguito_consume_publish_attestation($new_status, $old_status, $post) {
     if ($new_status === 'publish' && $old_status !== 'publish'
             && is_object($post) && ($post->post_type ?? '') === 'post') {
-        delete_post_meta((int) $post->ID, BLOGUITO_PUBLISH_GATE_META_KEY);
+        $post_id = (int) $post->ID;
+        if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) !== $post_id) {
+            global $wpdb;
+            $wpdb->update(
+                $wpdb->posts,
+                ['post_status' => 'draft'],
+                ['ID' => $post_id],
+                ['%s'],
+                ['%d']
+            );
+            clean_post_cache($post_id);
+            return;
+        }
+        delete_post_meta($post_id, BLOGUITO_PUBLISH_GATE_META_KEY);
     }
 }
 

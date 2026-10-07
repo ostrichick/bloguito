@@ -21,6 +21,25 @@ $test_is_singular_post = true;
 $test_is_preview = true;
 $test_post_id = 837;
 
+class TestWpdb {
+    public $posts = 'wp_posts';
+    public $postmeta = 'wp_postmeta';
+    public $queries = [];
+    public function prepare($query, ...$args) { return $query; }
+    public function query($query) { $this->queries[] = $query; return 1; }
+    public function get_var($query) { $this->queries[] = $query; return 1; }
+    public function get_results($query) { $this->queries[] = $query; return []; }
+    public function update($table, $data, $where, $formats = null, $where_formats = null) {
+        global $test_post;
+        $this->queries[] = 'UPDATE ' . $table;
+        if (($where['ID'] ?? 0) === $test_post->ID && isset($data['post_status'])) {
+            $test_post->post_status = $data['post_status'];
+        }
+        return 1;
+    }
+}
+$wpdb = new TestWpdb();
+
 class WP_Error {
     private $code;
     private $message;
@@ -93,6 +112,7 @@ function delete_post_meta($post_id, $key) {
     return true;
 }
 function wp_unslash($value) { return is_string($value) ? stripslashes($value) : $value; }
+function clean_post_cache($post_id) { return true; }
 function wp_update_post($data, $wp_error = false) {
     global $test_updated, $test_post;
     $test_updated = $data;
@@ -135,6 +155,7 @@ function set_valid_publish_gate() {
         'approval_kind' => 'manual_user_selected',
         'approval_evidence_sha256' => str_repeat('2', 64),
         'expires_at_gmt' => '2099-01-01T00:00:00Z',
+        'requires_live_state' => false,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 set_valid_publish_gate();
@@ -205,11 +226,40 @@ $test_thumbnail_id = 999;
 check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Changed thumbnail invalidates publish action');
 set_valid_publish_gate();
 
+$live_gate = json_decode($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY], true);
+$live_gate['requires_live_state'] = true;
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = json_encode($live_gate);
+check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Live-state draft has no direct WordPress publish action');
+$live_blocked = bloguito_change_post_status(837, 'publish');
+check(is_wp_error($live_blocked) && $live_blocked->get_error_code() === 'bloguito_publish_gate_live_state_requires_canonical_preflight', 'Live-state draft requires canonical promote preflight');
+set_valid_publish_gate();
+
 $guarded = bloguito_guard_publish_transition([
     'post_type' => 'post', 'post_status' => 'publish',
-    'post_content' => '<p>편집기에서 바뀐 본문</p>', 'post_title' => $test_post->post_title,
+    'post_content' => $test_post->post_content, 'post_title' => $test_post->post_title,
 ], ['ID' => 837], [], true);
-check($guarded['post_status'] === 'draft', 'Native publish transition with changed body is forced back to draft');
+check($guarded['post_status'] === 'draft', 'Native existing-post publish is forced back to draft without guarded transaction context');
+$GLOBALS['bloguito_guarded_publish_post_id'] = 837;
+$guarded = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'publish',
+], ['ID' => 837], [], true);
+check($guarded['post_status'] === 'publish', 'Guarded transaction context may publish an existing post');
+unset($GLOBALS['bloguito_guarded_publish_post_id']);
+
+$created = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'publish',
+], [], [], false);
+check($created['post_status'] === 'draft', 'New direct publish creation is forced to draft');
+$scheduled = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'future',
+], ['ID' => 837], [], true);
+check($scheduled['post_status'] === 'draft', 'Native future scheduling is forced to draft');
+
+$test_post->post_status = 'publish';
+set_valid_publish_gate();
+bloguito_consume_publish_attestation('publish', 'draft', $test_post);
+check($test_post->post_status === 'draft', 'Direct wp_publish_post-style transition is reverted to draft');
+check(isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Rejected direct transition does not consume attestation');
 
 $test_post->post_status = 'draft';
 $admin_bar = new TestAdminBar();

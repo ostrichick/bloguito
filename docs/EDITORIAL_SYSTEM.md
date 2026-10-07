@@ -76,7 +76,7 @@ Standard source 검증은 새 source, 변경 source, stale source, 현재 상태
 
 모든 기존 글 수정은 대상 ID와 현재 content SHA를 명시적으로 결합한다. 정규 경로는 저장 전에 최신 상태를 읽고, private backup을 남기고, compare-and-swap(CAS) 조건으로 저장한 뒤 실제 저장값을 다시 읽어 확인한다. slug, 공개 상태, 수동 excerpt, 기존 내부 navigation처럼 변경 범위 밖의 상태는 보존한다.
 
-제목 변경은 별도 명시적 확인이 필요하다. 공개 글의 publish 상태를 변경하거나 draft를 공개로 승격하는 것은 별도의 사용자 확인 단계다. draft→publish는 현재 reviewed 본문·제목과 사용자 선택 또는 자동 비전 검수를 통과한 대표이미지를 함께 결속한 publication attestation이 있어야 한다. 본문·제목·thumbnail·ALT·이미지 파일이 승인 뒤 달라지거나 검토 유효시간이 지나면 CLI, WordPress 목록 액션, 기본 편집기·REST·WP-CLI 상태전환 모두 공개를 거부한다. 코드·정책 수정만으로 WordPress 운영 글이 자동 변경되지는 않는다.
+제목 변경은 별도 명시적 확인이 필요하다. 공개 글의 publish 상태를 변경하거나 draft를 공개로 승격하는 것은 별도의 사용자 확인 단계다. draft→publish는 현재 policy의 review/source 검사를 통과한 reviewed 본문·제목과 사용자 선택 또는 자동 비전 검수를 통과한 대표이미지를 함께 결속한 publication attestation이 있어야 한다. 본문·제목·thumbnail·ALT·이미지 파일이 승인 뒤 달라지거나 검토 유효시간이 지나면 공개를 거부한다. 일반 안정형 글의 WordPress 목록/미리보기 `발행`은 DB transaction에서 post·thumbnail·attachment·ALT를 잠근 뒤 attestation을 다시 확인한다. 기본 편집기·REST·WP-CLI의 직접 publish/create/future 예약은 우회 경로로 차단한다. `requires_live_state=true`인 글은 WordPress 직접 발행을 허용하지 않고 `promote-draft --confirm-publish`가 official source를 publication 직전에 다시 조회해야 한다. 코드·정책 수정만으로 WordPress 운영 글이 자동 변경되지는 않는다.
 
 ## 7. QA 범위
 

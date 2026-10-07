@@ -39,9 +39,11 @@ ChatGPT는 글의 주제와 독자 의도를 바탕으로 대표 이미지 **후
 
 ## 5. 공개 전 이미지 승인 결속
 
-이미지 업로드 성공이나 1200×675 규격 통과만으로 공개 자격을 만들지 않는다. 수동 경로는 사용자 후보 선택, 스케줄러 경로는 자동 비전 검수 통과가 있어야 versioned publication attestation을 만들 수 있다. 이 attestation은 현재 reviewed 본문 SHA, 제목 SHA, 대표 attachment ID, 이미지 파일 SHA, ALT SHA, review digest와 검토 유효시간에 결합한다.
+이미지 업로드 성공이나 1200×675 규격 통과만으로 공개 자격을 만들지 않는다. 수동 경로는 사용자 후보 선택, 스케줄러 경로는 자동 비전 검수 통과가 있어야 versioned publication attestation을 만들 수 있다. 이 attestation은 현재 reviewed 본문 SHA, 제목 SHA, 대표 attachment ID, 이미지 파일 SHA, ALT SHA, review digest, source/review freshness와 `requires_live_state` 여부에 결합한다. attestation 생성 시 current policy의 review binding과 source declaration/freshness 검사를 다시 통과해야 한다.
 
 본문·제목·대표이미지·ALT·원본 파일 중 하나라도 승인 뒤 바뀌거나 검토 시간이 만료되면 공개 게이트는 실패한다. 성공적으로 공개되면 attestation은 소비되어 삭제하므로 공개 글을 다시 draft로 되돌린 경우 과거 승인을 재사용하지 않는다. 과거 draft에는 승인 기록을 임의로 backfill하지 않는다.
+
+`requires_live_state=true`인 글은 WordPress 목록/미리보기의 직접 `발행` 액션을 사용하지 않는다. 현재 판매·신청·예매·재고처럼 publication 시점 재조회가 필요한 source는 정규 `promote-draft --confirm-publish`가 live source를 다시 가져와 reviewed snapshot과 비교한 뒤에만 공개한다.
 
 ## 6. 행사 포스트
 

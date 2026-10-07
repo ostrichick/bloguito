@@ -35,6 +35,8 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertIn('$wpdb->posts', GUARDED_POST_MUTATION_SCRIPT)
         self.assertIn('_bloguito_publish_gate_v1', GUARDED_POST_MUTATION_SCRIPT)
         self.assertIn('bloguito_validate_publishability', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('bloguito_validate_publishability($id,null,null,true)', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('bloguito_guarded_publish_post_id', GUARDED_POST_MUTATION_SCRIPT)
         self.assertIn('_wp_attachment_image_alt', GUARDED_POST_MUTATION_SCRIPT)
         self.assertIn('$wpdb->term_relationships', GUARDED_CATEGORY_MUTATION_SCRIPT)
         self.assertIn('wp_attachment_is_image', GUARDED_THUMBNAIL_MUTATION_SCRIPT)

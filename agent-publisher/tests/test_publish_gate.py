@@ -44,6 +44,14 @@ class PublishGateTests(unittest.TestCase):
                     reviewed_binding_for_post(901, content_sha, "changed title")
                 with self.assertRaisesRegex(ValueError, "reviewed_publish_content_mismatch"):
                     reviewed_binding_for_post(901, "0" * 64, bundle["plan"]["title"])
+                stale = json.loads(json.dumps(bundle))
+                stale["review"]["policy_digest"] = "0" * 64
+                drafts.write_text(json.dumps([{
+                    "id": 901,
+                    "fact_manifest": {"editorial_bundle": stale},
+                }], ensure_ascii=False), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "reviewed_publish_review_not_current"):
+                    reviewed_binding_for_post(901, content_sha, stale["plan"]["title"])
 
         self.assertEqual(bundle["review"]["digest"], binding["review_digest"])
         self.assertEqual(
@@ -51,6 +59,7 @@ class PublishGateTests(unittest.TestCase):
             binding["title_sha256"],
         )
         self.assertTrue(binding["expires_at_gmt"].endswith("Z"))
+        self.assertIs(binding["requires_live_state"], False)
 
     def test_manual_approval_evidence_is_deterministic_and_kind_bound(self):
         evidence = {"post_id": 901, "image_sha256": "a" * 64, "selection_confirmed": True}
@@ -79,11 +88,13 @@ class PublishGateTests(unittest.TestCase):
                     approval_kind="manual_user_selected",
                     approval_evidence_sha256="3" * 64,
                     expires_at_gmt="2099-01-01T00:00:00Z",
+                    requires_live_state=False,
                 )
         payload = json.loads(run.call_args.kwargs["input"])
         self.assertEqual(901, payload["post_id"])
         self.assertEqual(777, payload["thumbnail_id"])
         self.assertEqual(hashlib.sha256(b"approved image bytes").hexdigest(), payload["image_sha256"])
+        self.assertIs(payload["requires_live_state"], False)
         self.assertEqual(
             hashlib.sha256("검토된 대체텍스트".encode("utf-8")).hexdigest(),
             payload["alt_text_sha256"],
