@@ -84,7 +84,11 @@ GUARDED_POST_MUTATION_SCRIPT = (
     '"post_name"=>(string)($e["post_name"]??$cur["post_name"]),'
     '"post_content"=>(string)($u["post_content"]??$cur["post_content"]),'
     '"post_excerpt"=>(string)($u["post_excerpt"]??($e["post_excerpt"]??$cur["post_excerpt"]))];'
-    '$already=true;foreach($desired as $k=>$v){$already=$already&&hash_equals($v,(string)$cur[$k]);}'
+    '$allow_auto_slug=(($u["post_status"]??null)==="publish"&&($e["post_status"]??null)==="draft"'
+    '&&array_key_exists("post_name",$e)&&(string)$e["post_name"]==="");'
+    '$already=true;foreach($desired as $k=>$v){'
+    'if($k==="post_name"&&$allow_auto_slug){continue;}'
+    '$already=$already&&hash_equals($v,(string)$cur[$k]);}'
     'if($desired_meta!==null){foreach($desired_meta as $k=>$v){$already=$already&&is_string($cur_meta[$k])&&hash_equals($v,$cur_meta[$k]);}}'
     'if($already){$wpdb->query("ROLLBACK");$emit(["status"=>"already_applied","saved"=>$cur,"saved_meta"=>$cur_meta,"category_ids"=>$cats??null]);return;}'
     '$ok=true;'
@@ -103,7 +107,9 @@ GUARDED_POST_MUTATION_SCRIPT = (
     'clean_post_cache($id);$saved_post=get_post($id);'
     'if(!$saved_post){$wpdb->query("ROLLBACK");$emit(["status"=>"readback_missing"]);return;}'
     '$saved=$snap($saved_post);$saved_meta=null;$saved_cats=null;$verified=true;'
-    'foreach($desired as $k=>$v){$verified=$verified&&hash_equals((string)$v,(string)$saved[$k]);}'
+    'foreach($desired as $k=>$v){'
+    'if($k==="post_name"&&$allow_auto_slug){continue;}'
+    '$verified=$verified&&hash_equals((string)$v,(string)$saved[$k]);}'
     'if(array_key_exists("category_ids",$e)){$saved_cats=array_map("intval",wp_get_post_categories($id,["fields"=>"ids"]));sort($saved_cats,SORT_NUMERIC);$verified=$verified&&$saved_cats===$expected_cats;}'
     'if($desired_meta!==null){$saved_meta=[];foreach($desired_meta as $k=>$v){'
     '$saved_meta[$k]=metadata_exists("post",$id,$k)?(string)get_post_meta($id,$k,true):null;'
@@ -445,8 +451,16 @@ def _matches_already_applied(
 ) -> bool:
     if not isinstance(current, dict):
         return False
-    if not all(current.get(key) == value for key, value in _desired_state(expected, updates).items()):
-        return False
+    allow_auto_slug = (
+        expected.get("post_status") == "draft"
+        and expected.get("post_name") == ""
+        and updates.get("post_status") == "publish"
+    )
+    for key, value in _desired_state(expected, updates).items():
+        if key == "post_name" and allow_auto_slug:
+            continue
+        if current.get(key) != value:
+            return False
     if "category_ids" in expected:
         if (not isinstance(current_categories, list)
                 or sorted(current_categories) != sorted(expected["category_ids"])):

@@ -286,6 +286,36 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertEqual([4], payload['expected']['category_ids'])
         self.assertEqual(274, payload['target_category_id'])
 
+    def test_guarded_publish_allows_wordpress_to_generate_slug_from_empty_draft_name(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        saved = {
+            'post_status': 'publish',
+            'post_title': '검토된 제목',
+            'post_name': 'wordpress-generated-slug',
+            'post_content': 'reviewed body',
+            'post_excerpt': 'summary',
+        }
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'ok', 'saved': saved}))) as run:
+            result = guarded_update_post(
+                base,
+                885,
+                expected={
+                    'post_status': 'draft',
+                    'post_title': '검토된 제목',
+                    'post_name': '',
+                    'post_excerpt': 'summary',
+                    'content_sha256': content_sha256('reviewed body'),
+                },
+                updates={'post_status': 'publish'},
+            )
+        self.assertEqual('publish', result['post_status'])
+        self.assertEqual('wordpress-generated-slug', result['post_name'])
+        self.assertIn('$allow_auto_slug=', GUARDED_POST_MUTATION_SCRIPT)
+        payload = json.loads(run.call_args.kwargs['input'])
+        self.assertEqual('', payload['expected']['post_name'])
+        self.assertEqual('publish', payload['updates']['post_status'])
+
     def test_guarded_thumbnail_mutation_uses_exact_post_and_thumbnail_cas(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
         saved = {
