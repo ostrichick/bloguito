@@ -37,6 +37,10 @@ sys.path.insert(0, str(ROOT / 'agent-publisher'))
 
 import editorial_cli  # noqa: E402
 from agents.editorial_updater import rank_math_meta_from_brief  # noqa: E402
+from agents.publish_gate import (  # noqa: E402
+    PUBLISH_GATE_RECORD_SCRIPT,
+    PUBLISH_GATE_VALIDATE_SCRIPT,
+)
 from agents.wordpress_transport import wordpress_transport
 from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
@@ -133,7 +137,7 @@ _CREATE_ACTIONS = {
 }
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
 _DRAFT_EDIT_PROFILES = {'draft-fast', 'draft-standard'}
-_IMAGE_EDIT_ACTIONS = {*_DRAFT_EDIT_PROFILES, 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
+_IMAGE_EDIT_ACTIONS = {*_CREATE_ACTIONS, *_DRAFT_EDIT_PROFILES, 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
 _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
 _PRIMARY_CLI_ACTIONS = {
     action for action, meta in _CLI_ACTION_METADATA.items() if meta.group == 'primary'
@@ -522,6 +526,53 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             raise ValueError('invalid_guarded_attachment_alt_expectation')
         return payload
 
+    def validate_publish_gate_record_payload(raw):
+        if action not in _IMAGE_EDIT_ACTIONS:
+            raise ValueError('publish_attestation_write_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else None
+        except ValueError as exc:
+            raise ValueError('invalid_publish_attestation_payload') from exc
+        required = {
+            'protocol', 'post_id', 'content_sha256', 'review_digest', 'title_sha256',
+            'thumbnail_id', 'image_sha256', 'alt_text_sha256', 'approval_kind',
+            'approval_evidence_sha256', 'expires_at_gmt',
+        }
+        sha_keys = {
+            'content_sha256', 'review_digest', 'title_sha256', 'image_sha256',
+            'alt_text_sha256', 'approval_evidence_sha256',
+        }
+        if (not isinstance(payload, dict) or set(payload) != required
+                or payload.get('protocol') != 1
+                or type(payload.get('post_id')) is not int or payload['post_id'] not in allowed_ids
+                or type(payload.get('thumbnail_id')) is not int or payload['thumbnail_id'] <= 0
+                or payload.get('approval_kind') not in {'manual_user_selected', 'automated_visual_review'}
+                or any(not re.fullmatch(r'[0-9a-f]{64}', payload.get(key, '')) for key in sha_keys)
+                or not isinstance(payload.get('expires_at_gmt'), str)
+                or '\x00' in payload['expires_at_gmt']):
+            raise ValueError('invalid_publish_attestation_payload')
+        readable_ids.add(payload['thumbnail_id'])
+        return payload
+
+    def validate_publish_gate_validate_payload(raw):
+        if action != 'promote-draft':
+            raise ValueError('publish_attestation_validate_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else None
+        except ValueError as exc:
+            raise ValueError('invalid_publish_attestation_validate_payload') from exc
+        if (not isinstance(payload, dict)
+                or set(payload) != {'protocol', 'post_id', 'expected_review_digest'}
+                or payload.get('protocol') != 1
+                or type(payload.get('post_id')) is not int or payload['post_id'] not in allowed_ids
+                or not re.fullmatch(r'[0-9a-f]{64}', payload.get('expected_review_digest') or '')):
+            raise ValueError('invalid_publish_attestation_validate_payload')
+        return payload
+
     def validate_section_snapshot_payload(raw):
         if action != 'import-section-image':
             raise ValueError('section_snapshot_not_allowed')
@@ -598,6 +649,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (action == 'replace-featured-image'
                 and wp == ['eval', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_attachment_alt_mutation'
+        if (action in _IMAGE_EDIT_ACTIONS
+                and wp == ['eval', PUBLISH_GATE_RECORD_SCRIPT, '--allow-root']):
+            return 'publish_attestation_write'
+        if (action == 'promote-draft'
+                and wp == ['eval', PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root']):
+            return 'publish_attestation_validate'
         if (action == 'import-section-image'
                 and wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']):
             return 'section_snapshot'
@@ -613,13 +670,6 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 return
             if wp[4] == '_bloguito_permalink_scheme' and wp[5] == 'post-id-v1':
                 return
-        if (action in _CREATE_ACTIONS and len(wp) == 6 and wp[:2] == ['media', 'import']
-                and _REMOTE_IMAGE.fullmatch(wp[2])
-                and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
-                and int(wp[3].split('=', 1)[1]) in allowed_ids
-                and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
-                and wp[4:] == ['--featured_image', '--allow-root']):
-            return
         if (allow_image and action == 'draft-standard' and len(wp) == 6 and wp[:2] == ['media', 'import']
                 and _REMOTE_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
@@ -749,6 +799,18 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                     options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
                 else:
                     options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'publish_attestation_write':
+                validate_publish_gate_record_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(PUBLISH_GATE_RECORD_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'publish_attestation_validate':
+                validate_publish_gate_validate_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(PUBLISH_GATE_VALIDATE_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
                 return remote_run(remote, retry_255=True, **options)
             if kind == 'section_snapshot':
                 raw_payload = kwargs.get('input')

@@ -2,6 +2,7 @@
 import argparse
 from contextlib import contextmanager
 from contextvars import ContextVar
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -69,6 +70,8 @@ def _main():
     parser.add_argument('--expected-thumbnail-id', type=int,
                         help='replace-featured-image: current _thumbnail_id CAS value')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
+    parser.add_argument('--confirm-image-selection', action='store_true',
+                        help='manual image path: confirm the user selected this exact reviewed candidate')
     parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post or reviewed draft')
     parser.add_argument('--edit-intent', help='edit-post: the user-requested scope of this edit')
     parser.add_argument('--resume', action='store_true',
@@ -101,7 +104,7 @@ def _main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
     parser.add_argument('--image-path', type=Path,
-                        help='prepare-draft: required reviewed local representative image; Gemini cover generation is scheduler-only')
+                        help='prepare-draft/replace-featured-image: selected reviewed local representative image; Gemini cover generation is scheduler-only')
     args = parser.parse_args()
 
     if args.media_metadata_file and args.action != 'import-section-image':
@@ -236,8 +239,12 @@ def _main():
             parser.error(f'{label} requires --post-id, --alt-text and --confirm-update')
         if args.alt_only and args.image_path:
             parser.error(f'{label} --alt-only cannot be combined with --image-path')
+        if args.alt_only and args.confirm_image_selection:
+            parser.error(f'{label} --alt-only cannot be combined with --confirm-image-selection')
         if not args.alt_only and not args.image_path:
             parser.error(f'{label} requires --image-path unless --alt-only is used')
+        if not args.alt_only and not args.confirm_image_selection:
+            parser.error(f'{label} requires --confirm-image-selection for the exact user-selected candidate')
         if args.expected_content_sha256 or args.expected_thumbnail_id:
             parser.error(f'{label} reads its own current content SHA and thumbnail baseline')
         if args.alt_only:
@@ -249,11 +256,19 @@ def _main():
             )
         else:
             from agents.featured_image import replace_featured_image_from_live_baseline
+            from agents.publish_gate import approval_evidence_digest
+            evidence_sha = approval_evidence_digest('manual_user_selected', {
+                'post_id': args.post_id,
+                'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
+                'selection_confirmed': True,
+            })
             result = replace_featured_image_from_live_baseline(
                 args.post_id,
                 args.image_path,
                 alt_text=args.alt_text,
                 confirmed=True,
+                approval_kind='manual_user_selected',
+                approval_evidence_sha256=evidence_sha,
             )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
@@ -374,13 +389,15 @@ def _main():
             raise SystemExit(2)
 
         # Interactive/manual authoring (including ChatGPT and CoS) must never
-        # invoke Gemini image generation. Automatic cover generation belongs
-        # exclusively to the scheduled pipeline in main.py/run_daily.sh.
-        if not args.image_path:
+        # invoke Gemini image generation. A complete reviewed article may be saved
+        # as a draft before the user selects an image, but it cannot be published.
+        if args.image_path and (not args.alt_text or not args.confirm_image_selection):
             parser.error(
-                'prepare-draft requires --image-path for manual/interactive runs; '
-                'Gemini cover generation is scheduler-only'
+                'prepare-draft with --image-path requires --alt-text and '
+                '--confirm-image-selection for the exact user-selected candidate'
             )
+        if args.confirm_image_selection and not args.image_path:
+            parser.error('--confirm-image-selection requires --image-path')
 
         existing_review = validate_bundle(
             data, {}, scopes={'content', 'source', 'review'}) if data.get('review') else None
@@ -399,7 +416,7 @@ def _main():
                 return data['review']
             return EditorialWriterAgent(writing_enabled=False).review(data)
 
-        image_path = Path(args.image_path)
+        image_path = Path(args.image_path) if args.image_path else None
         if not review_is_current:
             data['review'] = review_bundle()
 
@@ -415,7 +432,25 @@ def _main():
         args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
 
         from agents.publisher import PublisherAgent
-        post_id = PublisherAgent().publish(article_from_bundle(data), image_path=image_path)
+        post_id = PublisherAgent().publish(article_from_bundle(data))
+        image_result = None
+        if image_path is not None:
+            from agents.featured_image import replace_featured_image_from_live_baseline
+            from agents.publish_gate import approval_evidence_digest
+            evidence_sha = approval_evidence_digest('manual_user_selected', {
+                'post_id': int(post_id),
+                'image_sha256': hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                'review_digest': data.get('review', {}).get('digest'),
+                'selection_confirmed': True,
+            })
+            image_result = replace_featured_image_from_live_baseline(
+                int(post_id),
+                image_path,
+                alt_text=args.alt_text,
+                confirmed=True,
+                approval_kind='manual_user_selected',
+                approval_evidence_sha256=evidence_sha,
+            )
         seo = data.get('brief', {}).get('seo') or {}
         receipt = {
             'action': 'prepare-draft',
@@ -426,8 +461,9 @@ def _main():
             'seo_title': seo.get('title') or data['plan']['title'],
             'seo_description': seo.get('description') or data['plan']['lead']['text'][:160],
             'semantic_review': 'reused' if review_is_current else 'created',
-            'featured_image_path': str(image_path),
-            'featured_image_attached': True,
+            'featured_image_path': str(image_path) if image_path else None,
+            'featured_image_attached': image_result is not None,
+            'publish_attestation': (image_result or {}).get('publish_attestation'),
             'live_inventory_validation': 'passed',
         }
         print('Draft ID:', post_id)

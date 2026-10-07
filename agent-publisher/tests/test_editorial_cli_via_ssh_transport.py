@@ -575,6 +575,26 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'update', '463', '--post_status=publish', '--allow-root'])
 
+        transport(
+            module._WP_PREFIX + ['eval', module.PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1,
+                'post_id': 463,
+                'expected_review_digest': 'a' * 64,
+            }),
+            text=True,
+        )
+        with self.assertRaisesRegex(ValueError, 'invalid_publish_attestation_validate_payload'):
+            transport(
+                module._WP_PREFIX + ['eval', module.PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root'],
+                input=json.dumps({
+                    'protocol': 1,
+                    'post_id': 463,
+                    'expected_review_digest': 'not-a-digest',
+                }),
+                text=True,
+            )
+
     def test_publish_learns_created_id_and_allows_saved_content_read(self):
         module = load_module()
         calls = []
@@ -711,7 +731,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'post', 'term', 'list', '666', 'category',
                 '--fields=term_id,name,slug', '--format=json', '--allow-root'])
 
-    def test_prepare_draft_can_create_and_attach_only_its_generated_image(self):
+    def test_prepare_draft_can_create_then_attach_and_attest_selected_image(self):
         module = load_module()
         calls = []
 
@@ -720,6 +740,8 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             remote = args[-1]
             if ' wp post create ' in remote:
                 return subprocess.CompletedProcess(args, 0, stdout='901\n', stderr='')
+            if ' wp media import ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='777\n', stderr='')
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
         module._RUN = fake_run
@@ -740,12 +762,45 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
 
         transport(module._WP_PREFIX + [
             'media', 'import', '/tmp/editorial_cover_901.jpg', '--post_id=901',
-            '--featured_image', '--allow-root'], capture_output=True, check=True)
+            '--title=title', '--alt=reviewed alt', '--porcelain', '--allow-root'],
+            capture_output=True, text=True, check=True)
+        expected = {
+            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+            'post_excerpt': 'summary', 'content_sha256': '0' * 64,
+        }
+        transport(
+            module._WP_PREFIX + ['eval', module.GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1, 'post_id': 901, 'expected': expected,
+                'expected_thumbnail_id': None, 'attachment_id': 777,
+            }), text=True)
+        transport(module._WP_PREFIX + [
+            'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
+            '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+        transport(module._WP_PREFIX + [
+            'post', 'meta', 'get', '777', '_wp_attachment_image_alt', '--allow-root'],
+            capture_output=True, text=True, check=False)
+        transport(
+            module._WP_PREFIX + ['eval', module.PUBLISH_GATE_RECORD_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1,
+                'post_id': 901,
+                'content_sha256': '0' * 64,
+                'review_digest': '1' * 64,
+                'title_sha256': '2' * 64,
+                'thumbnail_id': 777,
+                'image_sha256': '3' * 64,
+                'alt_text_sha256': '4' * 64,
+                'approval_kind': 'manual_user_selected',
+                'approval_evidence_sha256': '5' * 64,
+                'expires_at_gmt': '2026-10-08T00:00:00Z',
+            }), text=True)
 
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
                 'media', 'import', '/tmp/editorial_cover_902.jpg', '--post_id=902',
-                '--featured_image', '--allow-root'], capture_output=True, check=True)
+                '--title=title', '--alt=reviewed alt', '--porcelain', '--allow-root'],
+                capture_output=True, text=True, check=True)
 
         self.assertTrue(any(b'image' == kwargs.get('input') for _, kwargs in calls))
 

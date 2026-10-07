@@ -2,11 +2,94 @@
 /**
  * Plugin Name: Bloguito Post Row Actions
  * Description: Add guarded publish/draft status actions to the Posts list and draft preview admin bar.
- * Version: 1.1.0
+ * Version: 1.2.0
  */
 
 if (!defined('ABSPATH')) {
     exit;
+}
+
+const BLOGUITO_PUBLISH_GATE_META_KEY = '_bloguito_publish_gate_v1';
+
+/**
+ * Verify the exact reviewed body/title and approved featured image currently
+ * attached to a post. Missing or stale evidence always fails closed.
+ *
+ * @return true|WP_Error
+ */
+function bloguito_validate_publishability($post_id, $content_override = null, $title_override = null) {
+    $post_id = (int) $post_id;
+    $post = $post_id > 0 ? get_post($post_id) : null;
+    if (!$post || $post->post_type !== 'post') {
+        return new WP_Error('bloguito_publish_gate_invalid_post', '발행할 글을 찾을 수 없습니다.');
+    }
+
+    $raw = (string) get_post_meta($post_id, BLOGUITO_PUBLISH_GATE_META_KEY, true);
+    $gate = json_decode($raw, true);
+    $required = [
+        'version', 'post_id', 'content_sha256', 'review_digest', 'title_sha256',
+        'thumbnail_id', 'image_sha256', 'alt_text_sha256', 'approval_kind',
+        'approval_evidence_sha256', 'expires_at_gmt',
+    ];
+    if (!is_array($gate)) {
+        return new WP_Error('bloguito_publish_gate_missing', '대표이미지와 최종 검토 승인이 완료되지 않았습니다.');
+    }
+    $keys = array_keys($gate);
+    sort($keys);
+    $expected_keys = $required;
+    sort($expected_keys);
+    if ($keys !== $expected_keys || ($gate['version'] ?? null) !== 1
+            || (int) ($gate['post_id'] ?? 0) !== $post_id) {
+        return new WP_Error('bloguito_publish_gate_invalid', '발행 승인 정보가 올바르지 않습니다.');
+    }
+
+    $sha_keys = [
+        'content_sha256', 'review_digest', 'title_sha256', 'image_sha256',
+        'alt_text_sha256', 'approval_evidence_sha256',
+    ];
+    foreach ($sha_keys as $key) {
+        if (!is_string($gate[$key]) || !preg_match('/^[0-9a-f]{64}$/D', $gate[$key])) {
+            return new WP_Error('bloguito_publish_gate_invalid', '발행 승인 정보가 올바르지 않습니다.');
+        }
+    }
+    if (!in_array($gate['approval_kind'], ['manual_user_selected', 'automated_visual_review'], true)) {
+        return new WP_Error('bloguito_publish_gate_image_unapproved', '대표이미지 선택 또는 품질 검수가 완료되지 않았습니다.');
+    }
+    $expires = is_string($gate['expires_at_gmt']) ? strtotime($gate['expires_at_gmt']) : false;
+    if ($expires === false || $expires <= time()) {
+        return new WP_Error('bloguito_publish_gate_expired', '최종 검토 유효 시간이 지나 다시 검토해야 합니다.');
+    }
+
+    $content = $content_override === null ? (string) $post->post_content : (string) $content_override;
+    $title = $title_override === null ? (string) $post->post_title : (string) $title_override;
+    if (!hash_equals($gate['content_sha256'], hash('sha256', $content))) {
+        return new WP_Error('bloguito_publish_gate_content_changed', '대표이미지 승인 뒤 본문이 변경되어 다시 검토해야 합니다.');
+    }
+    if (!hash_equals($gate['title_sha256'], hash('sha256', $title))) {
+        return new WP_Error('bloguito_publish_gate_title_changed', '대표이미지 승인 뒤 제목이 변경되어 다시 검토해야 합니다.');
+    }
+
+    $thumbnail_id = (int) get_post_thumbnail_id($post_id);
+    if ($thumbnail_id <= 0 || $thumbnail_id !== (int) $gate['thumbnail_id']) {
+        return new WP_Error('bloguito_publish_gate_image_changed', '승인된 대표이미지가 현재 글과 일치하지 않습니다.');
+    }
+    $attachment = get_post($thumbnail_id);
+    if (!$attachment || $attachment->post_type !== 'attachment' || !wp_attachment_is_image($thumbnail_id)) {
+        return new WP_Error('bloguito_publish_gate_image_invalid', '대표이미지 첨부파일을 검증할 수 없습니다.');
+    }
+    $alt = (string) get_post_meta($thumbnail_id, '_wp_attachment_image_alt', true);
+    if ($alt === '' || !hash_equals($gate['alt_text_sha256'], hash('sha256', $alt))) {
+        return new WP_Error('bloguito_publish_gate_alt_changed', '대표이미지 대체텍스트가 승인 상태와 일치하지 않습니다.');
+    }
+    $file = get_attached_file($thumbnail_id);
+    if (!is_string($file) || $file === '' || !is_file($file)) {
+        return new WP_Error('bloguito_publish_gate_file_missing', '대표이미지 원본 파일을 확인할 수 없습니다.');
+    }
+    $file_sha = hash_file('sha256', $file);
+    if (!is_string($file_sha) || !hash_equals($gate['image_sha256'], $file_sha)) {
+        return new WP_Error('bloguito_publish_gate_file_changed', '승인된 대표이미지 파일이 변경되었습니다.');
+    }
+    return true;
 }
 
 add_filter('post_row_actions', 'bloguito_add_post_status_row_action', 10, 2);
@@ -115,7 +198,8 @@ function bloguito_can_change_post_status($post_id, $target_status) {
         return false;
     }
     if ($target_status === 'publish') {
-        return current_user_can('publish_posts');
+        return current_user_can('publish_posts')
+            && bloguito_validate_publishability($post_id) === true;
     }
     return $target_status === 'draft';
 }
@@ -144,11 +228,61 @@ function bloguito_change_post_status($post_id, $target_status) {
     if ($post->post_status !== $expected_current[$target_status]) {
         return new WP_Error('bloguito_status_conflict', '글 상태가 이미 변경되었습니다. 목록을 새로고침한 뒤 다시 시도하세요.');
     }
+    if ($target_status === 'publish') {
+        $gate = bloguito_validate_publishability($post_id);
+        if (is_wp_error($gate)) {
+            return $gate;
+        }
+    }
 
-    return wp_update_post([
+    $result = wp_update_post([
         'ID' => $post_id,
         'post_status' => $target_status,
     ], true);
+    if (is_wp_error($result)) {
+        return $result;
+    }
+    $saved = get_post($post_id);
+    if (!$saved || $saved->post_status !== $target_status) {
+        return new WP_Error('bloguito_publish_gate_blocked', '발행 검증에서 상태 변경이 차단되었습니다.');
+    }
+    return $result;
+}
+
+/**
+ * Cover every WordPress draft/pending/future/private -> publish route, including
+ * native editor, REST, WP-CLI and custom row actions.
+ */
+add_filter('wp_insert_post_data', 'bloguito_guard_publish_transition', 99, 4);
+function bloguito_guard_publish_transition($data, $postarr, $unsanitized_postarr = [], $update = false) {
+    $post_id = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
+    if (!$update || $post_id <= 0 || ($data['post_type'] ?? '') !== 'post'
+            || ($data['post_status'] ?? '') !== 'publish') {
+        return $data;
+    }
+    $current = get_post($post_id);
+    if (!$current || $current->post_type !== 'post' || $current->post_status === 'publish') {
+        return $data;
+    }
+    $content = array_key_exists('post_content', $data)
+        ? wp_unslash((string) $data['post_content'])
+        : (string) $current->post_content;
+    $title = array_key_exists('post_title', $data)
+        ? wp_unslash((string) $data['post_title'])
+        : (string) $current->post_title;
+    $gate = bloguito_validate_publishability($post_id, $content, $title);
+    if (is_wp_error($gate)) {
+        $data['post_status'] = $current->post_status;
+    }
+    return $data;
+}
+
+add_action('transition_post_status', 'bloguito_consume_publish_attestation', 10, 3);
+function bloguito_consume_publish_attestation($new_status, $old_status, $post) {
+    if ($new_status === 'publish' && $old_status !== 'publish'
+            && is_object($post) && ($post->post_type ?? '') === 'post') {
+        delete_post_meta((int) $post->ID, BLOGUITO_PUBLISH_GATE_META_KEY);
+    }
 }
 
 add_action('admin_post_bloguito_set_post_status', 'bloguito_handle_post_status_action');

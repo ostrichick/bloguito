@@ -140,6 +140,14 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                  patch("agents.featured_image.start_task_state") as start_state, \
                  patch("agents.featured_image.update_task_state"), \
                  patch("agents.featured_image.fail_task_state"), \
+                 patch("agents.featured_image.reviewed_binding_for_post", return_value={
+                     "review_digest": "1" * 64,
+                     "title_sha256": "2" * 64,
+                     "expires_at_gmt": "2026-10-08T00:00:00Z",
+                 }) as reviewed_binding, \
+                 patch("agents.featured_image.record_publish_attestation", return_value={
+                     "version": 1, "thumbnail_id": 777,
+                 }) as record_attestation, \
                  patch("agents.featured_image.subprocess.run", side_effect=run):
                 result = replace_featured_image(
                     641,
@@ -148,10 +156,16 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                     expected_thumbnail_id=642,
                     alt_text="대체텍스트",
                     confirmed=True,
+                    approval_kind="manual_user_selected",
+                    approval_evidence_sha256="3" * 64,
                 )
 
             self.assertEqual(777, result["attachment_id"])
             self.assertEqual("draft", result["status"])
+            self.assertEqual({"version": 1, "thumbnail_id": 777}, result["publish_attestation"])
+            reviewed_binding.assert_called_once_with(641, expected_sha, "검토된 제목")
+            self.assertEqual("manual_user_selected", record_attestation.call_args.kwargs["approval_kind"])
+            self.assertEqual("3" * 64, record_attestation.call_args.kwargs["approval_evidence_sha256"])
             self.assertEqual("stable-slug", live["post_name"])
             self.assertEqual("<p>검토된 본문</p>", live["post_content"])
             self.assertEqual(1, len(list((root / "data" / "editorial_runs").glob("featured-image-edit-641-*.json"))))

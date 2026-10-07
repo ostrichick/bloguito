@@ -222,10 +222,19 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     category_key=cat_key,
                     reviewed_poster_url=curated.get("reviewed_poster_url"),
                 )
+                image_review_evidence = designer.last_review_evidence_sha256
+                if not image_review_evidence:
+                    raise RuntimeError("scheduled_featured_image_review_evidence_missing")
 
                 # 5. 워드프레스 포스팅 및 썸네일 등록 (Publisher)
                 try:
-                    post_id = publisher.publish(article, image_path=img_path)
+                    post_id = publisher.publish(
+                        article,
+                        image_path=img_path,
+                        image_alt_text=article["title"],
+                        image_approval_kind="automated_visual_review",
+                        image_approval_evidence_sha256=image_review_evidence,
+                    )
                 finally:
                     cleanup_generated_cover(img_path)
 

@@ -5,7 +5,16 @@ define('ABSPATH', __DIR__ . '/');
 $registered_filters = [];
 $registered_actions = [];
 $test_caps = ['edit_post' => true, 'publish_posts' => true];
-$test_post = (object) ['ID' => 837, 'post_type' => 'post', 'post_status' => 'draft'];
+$test_post = (object) [
+    'ID' => 837, 'post_type' => 'post', 'post_status' => 'draft',
+    'post_title' => '검토된 글', 'post_content' => '<p>검토된 본문</p>',
+];
+$test_attachment = (object) ['ID' => 938, 'post_type' => 'attachment', 'post_status' => 'inherit'];
+$test_thumbnail_id = 938;
+$test_alt = '검토된 대표이미지';
+$test_meta = [];
+$test_image_file = tempnam(sys_get_temp_dir(), 'bloguito-cover-');
+file_put_contents($test_image_file, 'approved-image-bytes');
 $test_updated = null;
 $test_is_admin = false;
 $test_is_singular_post = true;
@@ -55,16 +64,46 @@ function esc_url($value) { return $value; }
 function esc_attr($value) { return htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); }
 function esc_html($value) { return htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); }
 function get_post($post_id) {
-    global $test_post;
-    return $test_post && $post_id === $test_post->ID ? clone $test_post : null;
+    global $test_post, $test_attachment;
+    if ($test_post && $post_id === $test_post->ID) return clone $test_post;
+    if ($test_attachment && $post_id === $test_attachment->ID) return clone $test_attachment;
+    return null;
 }
+function get_post_meta($post_id, $key, $single = false) {
+    global $test_post, $test_attachment, $test_meta, $test_alt;
+    if ($post_id === $test_post->ID) return $test_meta[$key] ?? '';
+    if ($post_id === $test_attachment->ID && $key === '_wp_attachment_image_alt') return $test_alt;
+    return '';
+}
+function get_post_thumbnail_id($post_id) {
+    global $test_post, $test_thumbnail_id;
+    return $post_id === $test_post->ID ? $test_thumbnail_id : 0;
+}
+function wp_attachment_is_image($post_id) {
+    global $test_attachment;
+    return $post_id === $test_attachment->ID;
+}
+function get_attached_file($post_id) {
+    global $test_attachment, $test_image_file;
+    return $post_id === $test_attachment->ID ? $test_image_file : false;
+}
+function delete_post_meta($post_id, $key) {
+    global $test_meta;
+    unset($test_meta[$key]);
+    return true;
+}
+function wp_unslash($value) { return is_string($value) ? stripslashes($value) : $value; }
 function wp_update_post($data, $wp_error = false) {
     global $test_updated, $test_post;
     $test_updated = $data;
     if (($data['ID'] ?? 0) !== $test_post->ID) {
         return $wp_error ? new WP_Error('bad_id', 'bad id') : 0;
     }
+    $old_status = $test_post->post_status;
     $test_post->post_status = $data['post_status'];
+    if (function_exists('bloguito_consume_publish_attestation')) {
+        bloguito_consume_publish_attestation($test_post->post_status, $old_status, $test_post);
+    }
     return $test_post->ID;
 }
 function is_wp_error($value) { return $value instanceof WP_Error; }
@@ -81,12 +120,34 @@ function check($condition, $message) {
 
 require dirname(__DIR__) . '/mu-plugins/bloguito-post-row-actions.php';
 
+function set_valid_publish_gate() {
+    global $test_post, $test_attachment, $test_meta, $test_alt, $test_image_file, $test_thumbnail_id;
+    $test_thumbnail_id = $test_attachment->ID;
+    $test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = json_encode([
+        'version' => 1,
+        'post_id' => $test_post->ID,
+        'content_sha256' => hash('sha256', $test_post->post_content),
+        'review_digest' => str_repeat('1', 64),
+        'title_sha256' => hash('sha256', $test_post->post_title),
+        'thumbnail_id' => $test_attachment->ID,
+        'image_sha256' => hash_file('sha256', $test_image_file),
+        'alt_text_sha256' => hash('sha256', $test_alt),
+        'approval_kind' => 'manual_user_selected',
+        'approval_evidence_sha256' => str_repeat('2', 64),
+        'expires_at_gmt' => '2099-01-01T00:00:00Z',
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+set_valid_publish_gate();
+
 check(isset($registered_filters['post_row_actions']), 'Row action filter registered');
 check($registered_filters['post_row_actions'][2] === 2, 'Row action filter receives post object');
 check(isset($registered_actions['admin_post_bloguito_set_post_status']), 'Guarded admin-post handler registered');
 check(isset($registered_actions['admin_notices']), 'Success notice hook registered');
 check(isset($registered_actions['admin_bar_menu']), 'Preview publish admin-bar hook registered');
 check($registered_actions['admin_bar_menu'][1] === 82, 'Preview publish button follows the post ID admin-bar item');
+check(isset($registered_filters['wp_insert_post_data']), 'Global publish transition filter registered');
+check($registered_filters['wp_insert_post_data'][2] === 4, 'Global publish transition filter receives full update context');
+check(isset($registered_actions['transition_post_status']), 'Publish attestation consumption hook registered');
 
 $base_actions = [
     'edit' => '<a>Edit</a>',
@@ -128,6 +189,27 @@ $test_post->post_status = 'draft';
 $test_caps['edit_post'] = false;
 check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Users without edit permission see no status action');
 $test_caps['edit_post'] = true;
+
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = '';
+$actions = bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post);
+check($actions === ['edit' => 'keep'], 'Draft without publish attestation has no publish action');
+$blocked = bloguito_change_post_status(837, 'publish');
+check(is_wp_error($blocked) && $blocked->get_error_code() === 'bloguito_publish_gate_missing', 'Draft without attestation cannot publish');
+set_valid_publish_gate();
+
+$test_alt = '변경된 ALT';
+check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Changed ALT invalidates publish action');
+$test_alt = '검토된 대표이미지';
+set_valid_publish_gate();
+$test_thumbnail_id = 999;
+check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Changed thumbnail invalidates publish action');
+set_valid_publish_gate();
+
+$guarded = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'publish',
+    'post_content' => '<p>편집기에서 바뀐 본문</p>', 'post_title' => $test_post->post_title,
+], ['ID' => 837], [], true);
+check($guarded['post_status'] === 'draft', 'Native publish transition with changed body is forced back to draft');
 
 $test_post->post_status = 'draft';
 $admin_bar = new TestAdminBar();
@@ -172,6 +254,7 @@ $test_updated = null;
 $result = bloguito_change_post_status(837, 'publish');
 check($result === 837, 'Draft can transition to publish');
 check($test_updated === ['ID' => 837, 'post_status' => 'publish'], 'Only ID and post_status are sent to wp_update_post');
+check(!isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Successful publication consumes the attestation');
 
 $test_updated = null;
 $result = bloguito_change_post_status(837, 'publish');
@@ -180,6 +263,7 @@ check($test_updated === null, 'Stale transition does not update WordPress');
 
 $result = bloguito_change_post_status(837, 'draft');
 check($result === 837 && $test_post->post_status === 'draft', 'Published post can return to draft');
+check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Returned draft requires fresh approval before republishing');
 $result = bloguito_change_post_status(837, 'pending');
 check(is_wp_error($result) && $result->get_error_code() === 'bloguito_invalid_status', 'Unsupported target statuses fail closed');
 
@@ -187,4 +271,5 @@ $test_post->post_type = 'page';
 $result = bloguito_change_post_status(837, 'publish');
 check(is_wp_error($result) && $result->get_error_code() === 'bloguito_invalid_post', 'Non-post types cannot transition');
 
+@unlink($test_image_file);
 echo 'PASS: post row action tests' . PHP_EOL;

@@ -32,6 +32,9 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                 "GPT-5.6 Sol",
                 "--image-path",
                 str(image_path),
+                "--alt-text",
+                "선풍기 배출 안내 대표 이미지",
+                "--confirm-image-selection",
                 "--output",
                 str(receipt_path),
             ]
@@ -40,7 +43,12 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.load_inventory") as load_inventory, \
                     patch("editorial_cli.EditorialWriterAgent.review", return_value=expected_review) as review, \
                     patch("agents.designer.cleanup_generated_cover") as cleanup, \
-                    patch("agents.publisher.PublisherAgent.publish", return_value=901) as publish:
+                    patch("agents.publisher.PublisherAgent.publish", return_value=901) as publish, \
+                    patch("agents.featured_image.replace_featured_image_from_live_baseline", return_value={
+                        "post_id": 901,
+                        "attachment_id": 777,
+                        "publish_attestation": {"version": 1},
+                    }) as replace:
                 editorial_cli.main()
 
             saved = json.loads(bundle_path.read_text(encoding="utf-8"))
@@ -50,17 +58,22 @@ class PrepareDraftFastPathTests(unittest.TestCase):
         load_inventory.assert_not_called()
         review.assert_called_once()
         publish.assert_called_once()
-        self.assertEqual(image_path, publish.call_args.kwargs["image_path"])
+        self.assertNotIn("image_path", publish.call_args.kwargs)
+        replace.assert_called_once()
+        self.assertEqual(901, replace.call_args.args[0])
+        self.assertEqual(image_path, replace.call_args.args[1])
+        self.assertEqual("manual_user_selected", replace.call_args.kwargs["approval_kind"])
         self.assertEqual("GPT-5.6 Sol", saved["authoring"]["model"])
         self.assertEqual(expected_review, saved["review"])
         self.assertEqual(901, receipt["post_id"])
         self.assertEqual("draft", receipt["status"])
         self.assertEqual("created", receipt["semantic_review"])
         self.assertTrue(receipt["featured_image_attached"])
+        self.assertEqual({"version": 1}, receipt["publish_attestation"])
         cleanup.assert_not_called()
         self.assertGreaterEqual(validate.call_count, 2)
 
-    def test_prepare_draft_reuses_current_review_but_requires_provided_image(self):
+    def test_prepare_draft_reuses_current_review_and_allows_image_to_be_deferred(self):
         bundle = sample()
 
         with tempfile.TemporaryDirectory() as folder:
@@ -74,13 +87,11 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.EditorialWriterAgent.review") as review, \
                     patch("agents.designer.DesignerAgent.generate_image") as generate, \
                     patch("agents.publisher.PublisherAgent.publish", return_value=902) as publish:
-                with self.assertRaises(SystemExit) as error:
-                    editorial_cli.main()
+                editorial_cli.main()
 
-        self.assertEqual(2, error.exception.code)
         review.assert_not_called()
         generate.assert_not_called()
-        publish.assert_not_called()
+        publish.assert_called_once()
 
     def test_prepare_draft_blocks_before_review_image_or_wordpress_when_local_preflight_fails(self):
         bundle = sample()

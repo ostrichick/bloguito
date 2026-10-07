@@ -17,6 +17,14 @@ if (!has_action('admin_bar_menu', 'bloguito_add_preview_publish_admin_bar')) {
     fwrite(STDERR, 'Draft preview publish admin-bar hook is not registered' . PHP_EOL);
     exit(1);
 }
+if (!has_filter('wp_insert_post_data', 'bloguito_guard_publish_transition')) {
+    fwrite(STDERR, 'Global publish transition gate is not registered' . PHP_EOL);
+    exit(1);
+}
+if (!has_action('transition_post_status', 'bloguito_consume_publish_attestation')) {
+    fwrite(STDERR, 'Publish attestation consumption hook is not registered' . PHP_EOL);
+    exit(1);
+}
 
 $admins = get_users(['role' => 'administrator', 'number' => 1, 'fields' => 'ID']);
 if (!$admins) {
@@ -41,8 +49,14 @@ $base = get_post($post_id);
 $draft = clone $base;
 $draft->post_status = 'draft';
 $draft_actions = bloguito_add_post_status_row_action([], $draft);
-if (!isset($draft_actions['bloguito-publish']) || strpos($draft_actions['bloguito-publish'], 'target=publish') === false) {
-    fwrite(STDERR, 'Draft publish row action did not render as expected' . PHP_EOL);
+$publishable = bloguito_validate_publishability($post_id) === true;
+$has_publish_action = isset($draft_actions['bloguito-publish']);
+if ($publishable !== $has_publish_action) {
+    fwrite(STDERR, 'Draft publish row action does not match publish gate state' . PHP_EOL);
+    exit(1);
+}
+if ($has_publish_action && strpos($draft_actions['bloguito-publish'], 'target=publish') === false) {
+    fwrite(STDERR, 'Publishable draft row action has the wrong target' . PHP_EOL);
     exit(1);
 }
 

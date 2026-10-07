@@ -63,6 +63,16 @@ GUARDED_POST_MUTATION_SCRIPT = (
     'if(!$locked){$wpdb->query("ROLLBACK");$emit(["status"=>"missing"]);return;}'
     'clean_post_cache($id);$post=get_post($id);'
     'if(!$post){$wpdb->query("ROLLBACK");$emit(["status"=>"missing"]);return;}'
+    '$publishing=(($u["post_status"]??null)==="publish"&&($e["post_status"]??null)!=="publish");'
+    'if($publishing){'
+    '$wpdb->get_results($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key IN (%s,%s) FOR UPDATE",$id,"_thumbnail_id","_bloguito_publish_gate_v1"));'
+    '$thumb_id=(int)get_post_thumbnail_id($id);'
+    'if($thumb_id>0){$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",$thumb_id));'
+    '$wpdb->get_results($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s FOR UPDATE",$thumb_id,"_wp_attachment_image_alt"));}'
+    'if(!function_exists("bloguito_validate_publishability"))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"publish_gate_blocked","code"=>"gate_unavailable"]);return;}'
+    '$gate=bloguito_validate_publishability($id);if(is_wp_error($gate))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"publish_gate_blocked","code"=>$gate->get_error_code()]);return;}}'
     '$cur=$snap($post);'
     'if(array_key_exists("category_ids",$e)){'
     '$wpdb->get_results($wpdb->prepare("SELECT object_id FROM {$wpdb->term_relationships} WHERE object_id=%d FOR UPDATE",$id));'
@@ -529,6 +539,8 @@ def guarded_update_post(
         raise ValueError("wordpress_guarded_cas_mismatch")
     if status == "verification_failed":
         raise ValueError("wordpress_guarded_readback_failed")
+    if status == "publish_gate_blocked":
+        raise ValueError("publication_gate_blocked:" + str(observed.get("code") or "unknown"))
     if status == "missing":
         raise ValueError("wordpress_guarded_target_missing")
     if status in {"invalid_payload", "invalid_update"}:

@@ -107,10 +107,10 @@ python scripts/run_validation.py --before scratch/tasks/edit/before.json `
 
 | 요청 종류 | 정규 경로 | 핵심 검사 |
 | --- | --- | --- |
-| 일반 신규 draft | `prepare-draft` | content/source preflight, 필요한 semantic review, 최신 inventory, draft 저장/readback, 대표이미지 |
+| 일반 신규 draft | `prepare-draft` | content/source preflight, 필요한 semantic review, 최신 inventory, draft 저장/readback. 대표이미지는 사용자 선택 전까지 미부착 허용 |
 | 기존 reviewed 글 수정 | `edit-post` | 단일 classifier가 Simple/Standard를 선택. 모든 write는 CAS/readback, 사실 변경은 source/full review 추가 |
 | 대표이미지만 교체 | `replace-featured-image` | live 본문 SHA와 `_thumbnail_id`를 명령이 직접 읽고 image-only mutation/readback. article source/review는 열지 않음 |
-| 공개 전환 | `promote-draft --confirm-publish` | 글별 사용자 승인, current review/source binding, draft CAS |
+| 공개 전환 | `promote-draft --confirm-publish` | 글별 사용자 승인, current review/source binding, 승인된 대표이미지 attestation, draft CAS |
 
 과거 `publish`, `edit-draft`, `revise-draft`, `fast-revise-draft`, `update-existing`, `update-draft`, `quick-image-replace`, `replace-legacy-draft` 공개 action은 제거했다. P10 reviewed state가 없는 legacy draft도 별도 호환 mutation 경로로 즉시 이관하지 않는다. 사용자가 해당 글을 수정할 때 현행 편집 지침과 source/review 절차를 적용하며, HTML이나 과거 작업 기록만으로 reviewed provenance를 합성하지 않는다.
 
@@ -177,7 +177,7 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post scratch
 # 대표이미지만 교체: live SHA/thumbnail baseline을 명령이 직접 읽고 image-only CAS 실행
 python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- replace-featured-image `
   --post-id 641 --image-path scratch/tasks/article/cover.jpg `
-  --alt-text "대전 10월 행사 일정 안내" --confirm-update
+  --alt-text "대전 10월 행사 일정 안내" --confirm-update --confirm-image-selection
 
 # ChatGPT native 이미지 생성처럼 turn이 끊길 수 있는 복합 작업: 생성 전에 AFTER_IMAGE 기록
 python agent-publisher/editorial_cli.py checkpoint-after-image `
@@ -198,13 +198,19 @@ python agent-publisher/editorial_cli.py complete-task-qa `
 
 **Standard P1/P2 preflight와 mutation:** `edit-post`가 선택한 draft Standard route와 public Standard route는 inventory sync, 대상 글의 초기 baseline read, 공식 source 동일성 recheck처럼 서로 독립적인 읽기 작업을 병렬화한다. P2부터 저장 직전 CAS → `wp_update_post()` → 저장 후 readback은 고정된 server-side guarded mutation 한 번으로 합친다. reviewed HTML은 JSON stdin으로 전달하며 임의 PHP/명령은 허용하지 않는다. guarded protocol은 status/title/slug/excerpt/content SHA의 전체 expected state를 확인하고, 저장 후 전체 desired state를 다시 검증한다. 따라서 Fast draft의 기본 target 왕복은 `get + guarded mutation` 2회, Standard draft는 경량 inventory + 초기 target read + guarded mutation의 약 3회 수준이 된다. SSH 255에서 guarded request는 desired-state 일치 검사를 전제로 최대 1회만 replay하며, raw `post update`와 media import는 이 재시도 의미론을 공유하지 않는다.
 
-**신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 수동 ChatGPT/CoS 경로에서는 검수된 `--image-path`가 필수이며 Gemini 대표 이미지 생성은 호출하지 않는다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다. Gemini 커버 생성은 `main.py`의 scheduler context에서만 허용된다.
+**신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 수동 ChatGPT/CoS 경로에서 대표이미지 생성은 Gemini를 호출하지 않으며, 아직 후보를 고르지 않았다면 image 없이 draft를 저장할 수 있다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다. Gemini 커버 생성은 `main.py`의 scheduler context에서만 허용된다.
 
-ChatGPT/CoS 로컬 환경에서는 다음 한 명령을 기본으로 사용한다. `--image-path`는 생략할 수 없으며, 이미 별도 생성·검수한 1200×675 jpg/jpeg/png/webp 파일을 전달한다. 수동 작성에서 Gemini 자동 생성을 켜는 fallback은 없다.
+ChatGPT/CoS 로컬 환경에서는 본문 검토가 끝난 시점에 먼저 draft를 저장할 수 있다. 이미지까지 함께 적용할 때에는 이미 사용자에게 보여 주고 선택된 1200×675 jpg/jpeg/png/webp 파일과 ALT, `--confirm-image-selection`을 전달한다. 수동 작성에서 Gemini 자동 생성을 켜는 fallback은 없다.
 
 ```powershell
-python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --image-path scratch/tasks/article/cover.jpg --output scratch/tasks/article/receipt.json
+# 이미지 선택 전: reviewed draft만 저장
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --output scratch/tasks/article/receipt.json
+
+# 사용자가 후보를 선택한 경우: 선택 이미지까지 적용하고 공개용 attestation 생성
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --image-path scratch/tasks/article/cover.jpg --alt-text "대표 이미지 설명" --confirm-image-selection --output scratch/tasks/article/receipt.json
 ```
+
+**Publication gate:** 대표이미지 mutation 자체의 완료 기록은 공개 승인 증거가 아니다. 수동 경로는 `--confirm-image-selection`, 스케줄러는 실제 자동 비전 검수 PASS evidence가 있어야 `_bloguito_publish_gate_v1` attestation을 기록한다. attestation은 reviewed content/title, thumbnail attachment, 파일 SHA, ALT SHA, review digest, freshness deadline을 묶는다. WordPress MU plugin은 목록/미리보기 버튼뿐 아니라 모든 비공개→공개 상태전환을 같은 값으로 검사하고 성공 공개 시 attestation을 소비한다. attestation이 없는 legacy draft는 자동 backfill하지 않으며 현행 review/image 절차를 거쳐야 한다.
 
 이 SSH adapter 경로는 draft 저장 성공 뒤 `scripts/sync_post_catalog.py`를 최대 2회까지 읽기 전용으로 시도한다. 카탈로그 동기화가 두 번 모두 실패한 경우 draft 저장 성공을 실패로 되돌리지 않는다. 이때는 출력된 post ID를 보존하고 `python scripts/sync_post_catalog.py`만 재실행한다. `prepare-draft` 자체를 재실행하면 새 draft가 중복 생성될 수 있으므로 금지한다.
 

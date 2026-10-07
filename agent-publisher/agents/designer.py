@@ -524,6 +524,7 @@ class DesignerAgent:
     def __init__(self, *, scheduler_context: bool = False):
         self.scheduler_context = bool(scheduler_context)
         self.client = None
+        self.last_review_evidence_sha256: str | None = None
         if self.scheduler_context and GEMINI_API_KEY:
             try:
                 from google import genai
@@ -640,6 +641,29 @@ class DesignerAgent:
             return passed, issues
         except Exception as exc:
             return False, [f"vision_review_error:{type(exc).__name__}"]
+
+    def _record_visual_review_evidence(
+        self,
+        output_path: Path,
+        *,
+        title: str,
+        source_kind: str,
+        issues: list[str],
+    ) -> str:
+        payload = {
+            "contract": "featured-image-visual-review-v1",
+            "policy_version": FEATURED_IMAGE_POLICY.get("version", 1),
+            "title": title,
+            "source_kind": source_kind,
+            "passed": True,
+            "issues": list(issues),
+            "image_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
+        }
+        digest = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.last_review_evidence_sha256 = digest
+        return digest
 
     @staticmethod
     def _fit_without_subject_crop(image: Image.Image, width: int, height: int) -> Image.Image:
@@ -823,6 +847,12 @@ class DesignerAgent:
                 )
                 if passed:
                     final.save(output_path, "JPEG", quality=96)
+                    self._record_visual_review_evidence(
+                        output_path,
+                        title=title,
+                        source_kind="generated_scene",
+                        issues=review_issues,
+                    )
                     print(f"[DesignerAgent] 🖼️ 현대적 에디토리얼 커버 생성·검수 완료: {output_path}")
                     return
                 print(f"[DesignerAgent] ⚠️ 이미지 품질 검수 실패 {attempt}/{max_attempts}: {review_issues}")
@@ -910,6 +940,7 @@ class DesignerAgent:
         """
         if not self.scheduler_context:
             raise ValueError("gemini_cover_generation_scheduler_only")
+        self.last_review_evidence_sha256 = None
         output_path = _new_generated_cover_path(title)
         try:
             mode = self.select_mode(category_key, curated, title, keyword, reviewed_poster_url)
@@ -930,6 +961,12 @@ class DesignerAgent:
                             source_kind="official_poster",
                         )
                     if passed:
+                        self._record_visual_review_evidence(
+                            output_path,
+                            title=title,
+                            source_kind="official_poster",
+                            issues=issues,
+                        )
                         return output_path
                     print(f"[DesignerAgent] ⚠️ 공식 공연 이미지 품질 검수 실패: {issues} -> 에디토리얼 커버로 폴백")
                 except Exception as e:

@@ -14,6 +14,7 @@ from PIL import Image
 from agents.editorial import ROOT
 from agents.editorial_updater import RANK_MATH_META_KEYS
 from agents.post_manifest_store import acquire_editorial_lock, release_editorial_lock
+from agents.publish_gate import record_publish_attestation, reviewed_binding_for_post
 from agents.task_state import (
     complete_task_state,
     completion_requirements_for_task,
@@ -314,6 +315,8 @@ def replace_featured_image(
     validation_plan: dict | None = None,
     task_action: str = "replace-featured-image",
     task_baseline_extra: dict | None = None,
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
 ) -> dict:
     """Replace only ``_thumbnail_id`` while preserving post body/SEO/URL/status."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -340,6 +343,12 @@ def replace_featured_image(
             live, content_sha=expected_content_sha256
         ):
             raise ValueError("target_missing_or_modified")
+        publish_binding = None
+        if approval_kind is not None:
+            if not re.fullmatch(r"[0-9a-f]{64}", approval_evidence_sha256 or ""):
+                raise ValueError("image_approval_evidence_required")
+            publish_binding = reviewed_binding_for_post(
+                post_id, expected_content_sha256, live.get("post_title", ""))
         before_thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         expected_thumb_text = None if expected_thumbnail_id is None else str(expected_thumbnail_id)
         if before_thumb != expected_thumb_text:
@@ -506,6 +515,22 @@ def replace_featured_image(
         outcome = {**outcome, "verified": True, "attachment_url": guid}
         record_outcome(outcome)
 
+        publish_attestation = None
+        if publish_binding is not None:
+            publish_attestation = record_publish_attestation(
+                base,
+                post_id,
+                content_sha256=expected_content_sha256,
+                review_digest=publish_binding["review_digest"],
+                title_sha256=publish_binding["title_sha256"],
+                thumbnail_id=int(attachment_id),
+                image_path=image_path,
+                alt_text=alt_text,
+                approval_kind=approval_kind,
+                approval_evidence_sha256=approval_evidence_sha256,
+                expires_at_gmt=publish_binding["expires_at_gmt"],
+            )
+
         if manage_task_state:
             state = update_task_state(
                 post_id,
@@ -518,6 +543,7 @@ def replace_featured_image(
                     "alt_text": alt_text,
                     "image": image_info,
                     "backup": str(backup),
+                    "publish_attestation": publish_attestation,
                 },
             )
             if not qa_requirements and load_task_state(post_id) is not None:
@@ -530,6 +556,7 @@ def replace_featured_image(
             "alt_text": alt_text,
             "image": image_info,
             "backup": str(backup),
+            "publish_attestation": publish_attestation,
         }
     except Exception as exc:
         if state_started:
@@ -594,6 +621,8 @@ def replace_featured_image_from_live_baseline(
     *,
     alt_text: str,
     confirmed: bool = False,
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
 ) -> dict:
     """Canonical image-only path: read live CAS baseline and enforce retry budget."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -620,6 +649,31 @@ def replace_featured_image_from_live_baseline(
     attempt_key = _quick_attempt_key(
         post_id, image_path, alt_text, expected_content_sha256)
 
+    def attest_existing(result: dict) -> dict:
+        if approval_kind is None:
+            return result
+        if not re.fullmatch(r"[0-9a-f]{64}", approval_evidence_sha256 or ""):
+            raise ValueError("image_approval_evidence_required")
+        attachment_id = result.get("attachment_id")
+        if type(attachment_id) is not int or attachment_id <= 0 or attachment_id != expected_thumbnail_id:
+            raise ValueError("quick_image_saved_thumbnail_conflict")
+        binding = reviewed_binding_for_post(
+            post_id, expected_content_sha256, live.get("post_title", ""))
+        attestation = record_publish_attestation(
+            base,
+            post_id,
+            content_sha256=expected_content_sha256,
+            review_digest=binding["review_digest"],
+            title_sha256=binding["title_sha256"],
+            thumbnail_id=attachment_id,
+            image_path=image_path,
+            alt_text=alt_text,
+            approval_kind=approval_kind,
+            approval_evidence_sha256=approval_evidence_sha256,
+            expires_at_gmt=binding["expires_at_gmt"],
+        )
+        return {**result, "publish_attestation": attestation}
+
     previous = load_task_state(post_id)
     attempt_number = 1
     if previous and previous.get("action") in {"replace-featured-image", "quick-image-replace"}:
@@ -636,7 +690,7 @@ def replace_featured_image_from_live_baseline(
                 "already_saved_pending_qa": True,
                 "attempt_number": previous_baseline.get("attempt_number", 1),
             })
-            return result
+            return attest_existing(result)
         if same_attempt and previous.get("status") == "complete":
             result = dict(previous.get("result") or {})
             expected_saved_thumb = result.get("attachment_id")
@@ -648,7 +702,7 @@ def replace_featured_image_from_live_baseline(
                 "already_complete": True,
                 "attempt_number": previous_baseline.get("attempt_number", 1),
             })
-            return result
+            return attest_existing(result)
         if same_attempt and previous.get("status") in {"failed", "blocked"}:
             previous_thumbnail_id = previous_baseline.get("thumbnail_id")
             checkpoint = (previous.get("checkpoints") or {}).get("image_outcome") or {}
@@ -691,6 +745,8 @@ def replace_featured_image_from_live_baseline(
         expected_thumbnail_id=expected_thumbnail_id,
         alt_text=alt_text,
         confirmed=True,
+        approval_kind=approval_kind,
+        approval_evidence_sha256=approval_evidence_sha256,
         task_action="replace-featured-image",
         task_baseline_extra={
             "attempt_key": attempt_key,
@@ -719,6 +775,8 @@ def quick_replace_featured_image(
     *,
     alt_text: str,
     confirmed: bool = False,
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
 ) -> dict:
     """Legacy alias for :func:`replace_featured_image_from_live_baseline`."""
     return replace_featured_image_from_live_baseline(
@@ -726,4 +784,6 @@ def quick_replace_featured_image(
         image_path,
         alt_text=alt_text,
         confirmed=confirmed,
+        approval_kind=approval_kind,
+        approval_evidence_sha256=approval_evidence_sha256,
     )

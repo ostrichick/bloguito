@@ -283,6 +283,7 @@ class DesignerRoutingTests(unittest.TestCase):
         self.assertEqual(review_call.kwargs["model"], "gemini-3.5-flash")
         with Image.open(out_path) as img:
             self.assertEqual(img.size, (1200, 675))
+        self.assertRegex(self.designer.last_review_evidence_sha256 or "", r"^[0-9a-f]{64}$")
 
     def test_generated_editorial_scene_retries_after_visual_review_failure(self):
         generated = MagicMock()
@@ -308,6 +309,7 @@ class DesignerRoutingTests(unittest.TestCase):
         retry_prompt = self.designer.client.models.generate_content.call_args_list[2].kwargs["contents"]
         self.assertIn("cropped hand", retry_prompt)
         self.assertTrue(out_path.exists())
+        self.assertRegex(self.designer.last_review_evidence_sha256 or "", r"^[0-9a-f]{64}$")
 
     def test_render_hybrid_poster_with_mock(self):
         # Create a tiny mock in-memory JPEG poster (100x140)

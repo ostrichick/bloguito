@@ -4,13 +4,13 @@ from unittest.mock import patch, Mock
 from agents.publisher import PublisherAgent
 
 class DraftCommandSafetyTests(unittest.TestCase):
-    def test_editorial_publish_requires_reviewed_featured_image_before_wordpress_io(self):
+    def test_editorial_publish_rejects_unapproved_featured_image_before_wordpress_io(self):
         article = {'editorial_bundle': {}, 'title': '', 'content': ''}
         with patch('agents.publisher.acquire_editorial_lock', return_value=Path('lock')), \
              patch('agents.publisher.release_editorial_lock'), \
              patch('agents.publisher.run_wordpress') as run:
-            with self.assertRaisesRegex(ValueError, 'reviewed_featured_image_required'):
-                PublisherAgent().publish(article, image_path=None)
+            with self.assertRaisesRegex(ValueError, 'featured_image_approval_required'):
+                PublisherAgent().publish(article, image_path=Path('candidate.jpg'))
         run.assert_not_called()
 
     def test_live_drafts_list_read_only_without_index(self):
@@ -70,5 +70,31 @@ class DraftCommandSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'official_source_changed_since_review'):
                     PublisherAgent().promote_draft(243,confirmed=True)
                 run.assert_not_called()
+
+    def test_promotion_blocks_after_source_review_when_image_attestation_is_missing(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root)/'drafts.json'
+            body='original reviewed body'
+            bundle={
+                'plan':{'title':'검토 대기'},
+                'sources':[{'url':'https://example.org/official','sha256':'same'}],
+                'brief':{'category_key':'life-admin','official_urls':['https://example.org/official']},
+                'review':{'digest':'a'*64},
+            }
+            path.write_text(json.dumps([{'id':243,'fact_manifest':{'editorial_bundle':bundle}}]),encoding='utf-8')
+            inventory={'posts':[{'ID':243,'post_status':'draft','post_title':'검토 대기','post_content':body}]}
+            with (patch('agents.editorial.ROOT',Path(root)),patch('agents.publisher.DRAFTS_INDEX_FILE',path),
+                 patch('agents.editorial.render',return_value=body),
+                 patch('agents.editorial.validate_bundle',return_value={'status':'ready','reasons':[]}),
+                 patch('agents.editorial_writer.fetch_sources',return_value=[{'url':'https://example.org/official','sha256':'same'}]),
+                 patch('agents.editorial_writer.load_inventory',return_value=inventory),
+                 patch('sync_wordpress_inventory.sync_inventory'),
+                 patch('agents.publish_gate.validate_publish_attestation',side_effect=ValueError(
+                     'publication_gate_blocked:publish_attestation_missing_or_invalid')) as gate,
+                 patch('agents.publisher.guarded_update_post') as guarded):
+                with self.assertRaisesRegex(ValueError,'publication_gate_blocked'):
+                    PublisherAgent().promote_draft(243,confirmed=True)
+            gate.assert_called_once()
+            guarded.assert_not_called()
 
 if __name__=='__main__': unittest.main()

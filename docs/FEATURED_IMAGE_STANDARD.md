@@ -16,8 +16,10 @@ ChatGPT는 글의 주제와 독자 의도를 바탕으로 대표 이미지 **후
 - 사용자의 후보 선택을 임의로 추정하지 않는다.
 - 선택 전에는 어느 후보도 WordPress 대표 이미지로 확정하지 않는다.
 - 선택된 원본 후보를 그대로 후속 업로드에 사용하며 후보 번호를 바꾸거나 다른 후보로 대체하지 않는다.
-- 선택 후에는 정규 `replace-featured-image` 또는 신규 draft의 `--image-path` 경로로 업로드하고 thumbnail readback을 확인한다.
+- 선택 후에는 정규 `replace-featured-image` 또는 신규 draft의 `--image-path` 경로로 업로드하고 `--confirm-image-selection`으로 **사용자가 실제로 고른 정확한 후보**임을 명시한다. thumbnail/attachment/ALT readback을 확인한다.
 - 이미지 생성 호출 때문에 작업 turn이 끊기는 환경에서는 `AFTER_IMAGE` 체크포인트를 남겨 다음 turn에서 후보 선택·업로드 작업을 이어간다.
+
+본문 검토가 끝났지만 아직 이미지 후보를 고르지 않았다면 `prepare-draft`는 **대표이미지 없이 draft를 저장할 수 있다.** 이미지가 없거나 선택 승인이 없는 draft는 공개할 수 없으며 이미지 선택 뒤 `replace-featured-image --confirm-image-selection`으로 이어간다.
 
 ## 3. 품질 기준
 
@@ -35,6 +37,12 @@ ChatGPT는 글의 주제와 독자 의도를 바탕으로 대표 이미지 **후
 
 스케줄러는 사람이 5개 후보 중 하나를 선택할 수 없으므로 `agent-publisher/editorial_policy.json`의 `scheduled_generation` 설정과 자동 비전 검수 규칙을 사용한다. 이 자동화 전용 규칙을 일반 수동 포스트의 디자인 제약으로 해석하지 않는다.
 
-## 5. 행사 포스트
+## 5. 공개 전 이미지 승인 결속
+
+이미지 업로드 성공이나 1200×675 규격 통과만으로 공개 자격을 만들지 않는다. 수동 경로는 사용자 후보 선택, 스케줄러 경로는 자동 비전 검수 통과가 있어야 versioned publication attestation을 만들 수 있다. 이 attestation은 현재 reviewed 본문 SHA, 제목 SHA, 대표 attachment ID, 이미지 파일 SHA, ALT SHA, review digest와 검토 유효시간에 결합한다.
+
+본문·제목·대표이미지·ALT·원본 파일 중 하나라도 승인 뒤 바뀌거나 검토 시간이 만료되면 공개 게이트는 실패한다. 성공적으로 공개되면 attestation은 소비되어 삭제하므로 공개 글을 다시 draft로 되돌린 경우 과거 승인을 재사용하지 않는다. 과거 draft에는 승인 기록을 임의로 backfill하지 않는다.
+
+## 6. 행사 포스트
 
 도시별 월간 행사 포스트와 공연·콘서트의 공식 포스터 처리에는 별도 현행 규칙이 있을 수 있다. 해당 글에는 `EVENT_POST_STANDARD.md`와 공식 포스터 보존 규칙을 우선 적용한다.
