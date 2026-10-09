@@ -15,7 +15,9 @@ from agents.growth_work_log import (
 from agents.radar import RadarAgent
 from agents.curator import CuratorAgent
 from agents.editorial_writer import EditorialWriterAgent as CopywriterAgent
-from agents.designer import DesignerAgent, cleanup_generated_cover
+from agents.designer import (
+    DesignerAgent, ScheduledImageGenerationUnavailable, cleanup_generated_cover,
+)
 from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import ensure_inventory, sync_inventory
 from notifier import notify_published, notify_error, notify_pipeline_summary
@@ -141,6 +143,16 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
         "growth_target": growth_plan.get('target'),
     }
 
+    def hold_image_generation_unavailable(category_name: str) -> None:
+        # The server cannot call ChatGPT image_gen. This is a policy hold, not
+        # a provider outage to retry or a successful new-draft completion.
+        reason = 'held_image_generation_unavailable'
+        stats['held'] += 1
+        stats['image_generation_status'] = reason
+        stats['held_reasons'].append(f"[{category_name}] {reason}")
+        print(f"[Pipeline] {reason}: ChatGPT image_gen unavailable to unattended scheduler; "
+              "no draft created, no generator fallback or retry")
+
     if growth_plan.get('action') != 'new_draft':
         if growth_plan.get('action') == 'existing_improvement':
             target = growth_plan.get('target') or {}
@@ -204,6 +216,16 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     stats["held_reasons"].append(f"[{cat_info['name']}] 원문 추출 실패/품질 미달")
                     continue
 
+                # Only an explicitly curator-reviewed official poster can
+                # bypass interactive ChatGPT image generation on this server.
+                # Avoid writer/model cost for generic covers that are known to
+                # be impossible here; do not consume the growth work log.
+                reviewed_poster_url = curated.get('reviewed_poster_url')
+                if (not isinstance(reviewed_poster_url, str)
+                        or not reviewed_poster_url.startswith(('https://', 'http://'))):
+                    hold_image_generation_unavailable(cat_info['name'])
+                    continue
+
                 # 3. 인포머티브 딥다이브 원고 집필 (Copywriter)
                 article = copywriter.write_article(curated)
                 if not article:
@@ -214,14 +236,21 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     continue
 
                 # 4. 맞춤형 썸네일 이미지 자율 디자인 (Designer)
-                img_path = designer.generate_image(
-                    title=article["title"],
-                    category_name=cat_info["name"],
-                    keyword=raw_item["keyword"],
-                    curated=curated,
-                    category_key=cat_key,
-                    reviewed_poster_url=curated.get("reviewed_poster_url"),
-                )
+                try:
+                    img_path = designer.generate_image(
+                        title=article["title"],
+                        category_name=cat_info["name"],
+                        keyword=raw_item["keyword"],
+                        curated=curated,
+                        category_key=cat_key,
+                        reviewed_poster_url=reviewed_poster_url,
+                    )
+                except ScheduledImageGenerationUnavailable:
+                    # An official-poster path can become unusable and fall
+                    # through to generated-scene mode. Never treat that as a
+                    # retryable server failure or run an alternate generator.
+                    hold_image_generation_unavailable(cat_info['name'])
+                    continue
                 image_review_evidence = designer.last_review_evidence_sha256
                 if not image_review_evidence:
                     raise RuntimeError("scheduled_featured_image_review_evidence_missing")
@@ -315,7 +344,14 @@ def main(argv=None):
     result = {key: stats.get(key, 0) for key in (
         'candidates', 'published', 'held', 'errors', 'notification_errors', 'growth_log_errors')}
     result['growth_action'] = stats.get('growth_action', 'unknown')
-    result['status'] = 'failed' if stats['errors'] else 'completed'
+    if stats.get('image_generation_status'):
+        result['image_generation_status'] = stats['image_generation_status']
+    result['status'] = (
+        'failed' if stats['errors'] else
+        'held_image_generation_unavailable'
+        if stats.get('image_generation_status') and not stats['published']
+        else 'completed'
+    )
     print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False))
     return 1 if stats['errors'] else 0
 

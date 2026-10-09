@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image, ImageDraw
 
-from agents.designer import DesignerAgent, derive_cover_copy, split_title
+from agents.designer import (
+    DesignerAgent, ScheduledImageGenerationUnavailable, derive_cover_copy, split_title,
+)
 
 
 class DesignerSafetyTests(unittest.TestCase):
@@ -29,9 +31,25 @@ class DesignerSafetyTests(unittest.TestCase):
     def test_unattended_scheduler_cannot_substitute_gemini_for_chatgpt_image_gen(self):
         self.assertIsNone(self.designer.client)
         with self.assertRaisesRegex(
-            RuntimeError, "chatgpt_image_gen_required_unavailable_in_server_scheduler"
+            ScheduledImageGenerationUnavailable,
+            "chatgpt_image_gen_required_unavailable_in_server_scheduler",
         ):
             self.designer._generated_scene("2026 국민내일배움카드 대표이미지")
+
+    def test_reviewed_poster_failure_propagates_unavailable_without_generator_retry(self):
+        with patch("urllib.request.urlopen", side_effect=OSError("official poster offline")), \
+             patch.object(self.designer, "_generated_scene", wraps=self.designer._generated_scene) as generator:
+            with self.assertRaisesRegex(
+                ScheduledImageGenerationUnavailable,
+                "chatgpt_image_gen_required_unavailable_in_server_scheduler",
+            ):
+                self.designer.generate_image(
+                    "콘서트 티켓 예매 안내", "공연/콘서트", "콘서트",
+                    category_key="concert",
+                    reviewed_poster_url="https://official.example/poster.jpg",
+                )
+        generator.assert_called_once()
+        self.assertFalse(list(Path(self.temp_dir.name).glob("thumb_*.jpg")))
 
     def test_scheduler_review_evidence_contract_survives_provider_removal(self):
         self.assertIsNone(self.designer.last_review_evidence_sha256)

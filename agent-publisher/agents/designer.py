@@ -512,6 +512,10 @@ def build_editorial_cover_prompt(
         if key in sections
     )
 
+class ScheduledImageGenerationUnavailable(RuntimeError):
+    """The unattended scheduler cannot invoke the required ChatGPT image tool."""
+
+
 class DesignerAgent:
     """
     [생활정보 24] 대표 이미지 엔진
@@ -553,7 +557,8 @@ class DesignerAgent:
         return int(canvas.get("width", 1200)), int(canvas.get("height", 675))
 
     def _generated_scene(self, prompt: str) -> Image.Image:
-        raise RuntimeError("chatgpt_image_gen_required_unavailable_in_server_scheduler")
+        raise ScheduledImageGenerationUnavailable(
+            "chatgpt_image_gen_required_unavailable_in_server_scheduler")
 
     def _vision_review_cover(
         self,
@@ -829,6 +834,11 @@ class DesignerAgent:
                     print(f"[DesignerAgent] 🖼️ 현대적 에디토리얼 커버 생성·검수 완료: {output_path}")
                     return
                 print(f"[DesignerAgent] ⚠️ 이미지 품질 검수 실패 {attempt}/{max_attempts}: {review_issues}")
+            except ScheduledImageGenerationUnavailable:
+                # An unattended host has no image_gen tool. A reviewed official
+                # poster may be used, but its failure must not trigger retries
+                # through another generator or be reported as a generic error.
+                raise
             except Exception as e:
                 review_issues = [f"generation_error:{type(e).__name__}"]
                 print(f"[DesignerAgent] ⚠️ 장면 생성 실패 ({e}); 저품질 로컬 폴백을 사용하지 않습니다")

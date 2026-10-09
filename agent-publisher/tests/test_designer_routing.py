@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 from agents.designer import (
     DesignerAgent,
+    ScheduledImageGenerationUnavailable,
     _centered_block_top,
     _cover_profile,
     _load_display_font,
@@ -327,7 +328,10 @@ class DesignerRoutingTests(unittest.TestCase):
 
     def test_render_hybrid_poster_network_failure_does_not_make_low_quality_fallback(self):
         with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
-            with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
+            with self.assertRaisesRegex(
+                ScheduledImageGenerationUnavailable,
+                "chatgpt_image_gen_required_unavailable_in_server_scheduler",
+            ):
                 self.designer.generate_image(
                     title="2026 단독 콘서트 예매",
                     category_name="공연/콘서트",
@@ -339,7 +343,10 @@ class DesignerRoutingTests(unittest.TestCase):
 
     def test_backward_compatible_call(self):
         # Call shape remains valid, but without an image client it fails closed.
-        with self.assertRaisesRegex(RuntimeError, "no_publishable_fallback"):
+        with self.assertRaisesRegex(
+            ScheduledImageGenerationUnavailable,
+            "chatgpt_image_gen_required_unavailable_in_server_scheduler",
+        ):
             self.designer.generate_image(
                 title="기초연금 신청 자격 안내",
                 category_name="복지/지원금",

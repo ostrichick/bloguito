@@ -48,7 +48,10 @@ class PipelineExitTests(unittest.TestCase):
             publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
             summary = stack.enter_context(patch.object(pipeline, 'notify_pipeline_summary'))
             radar.search_news.return_value = [{'keyword': 'test', 'link': 'https://example.org'}] if candidate else []
-            curator.curate.return_value = {'link': 'https://example.org'}
+            curator.curate.return_value = {
+                'link': 'https://example.org',
+                'reviewed_poster_url': 'https://official.example.org/poster.jpg',
+            }
             writer.write_article.return_value = None if held else {'title': '검토된 원고'}
             publisher.publish.return_value = 393
             if failed:
@@ -133,13 +136,125 @@ class PipelineExitTests(unittest.TestCase):
             stack.enter_context(patch.object(pipeline, 'DesignerAgent'))
             publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
             radar.search_news.return_value = [{'keyword': 'test', 'link': 'https://example.org'}]
-            curator.curate.return_value = {'link': 'https://example.org'}
+            curator.curate.return_value = {
+                'link': 'https://example.org',
+                'reviewed_poster_url': 'https://official.example.org/poster.jpg',
+            }
             writer.write_article.return_value = {'title': '검토된 원고'}
             publisher.publish.return_value = 393
             stats = pipeline.run_pipeline(['health'])
             self.assertEqual(1, stats['published'])
             self.assertEqual(0, stats['errors'])
             self.assertEqual(1, stats['growth_log_errors'])
+
+    def test_generic_scheduled_image_is_held_before_writer_or_wordpress_mutation(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()) as out:
+            for name in ('sync_inventory', 'ensure_inventory', 'notify_published',
+                         'notify_error', 'record_scheduled_new_draft_completion'):
+                stack.enter_context(patch.object(pipeline, name))
+            stack.enter_context(patch.object(pipeline, 'notify_pipeline_summary'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft', 'reason': 'test',
+                    'target': {'brief_id': 'health-brief', 'category_key': 'health'},
+                }))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
+            curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
+            designer = stack.enter_context(patch.object(pipeline, 'DesignerAgent')).return_value
+            publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
+            summary = pipeline.notify_pipeline_summary
+            growth_complete = pipeline.record_scheduled_new_draft_completion
+            notify_error = pipeline.notify_error
+            radar.search_news.return_value = [{'keyword': '건강관리', 'link': 'https://example.org'}]
+            curator.curate.return_value = {
+                'link': 'https://example.org',
+                'poster_url': 'https://unreviewed.example.org/cover.jpg',
+            }
+            stats = pipeline.run_pipeline(['health'])
+            self.assertEqual((1, 0, 0), (stats['held'], stats['published'], stats['errors']))
+            self.assertEqual('held_image_generation_unavailable', stats['image_generation_status'])
+            self.assertIn('held_image_generation_unavailable', stats['held_reasons'][0])
+            writer.write_article.assert_not_called()
+            designer.generate_image.assert_not_called()
+            publisher.publish.assert_not_called()
+            growth_complete.assert_not_called()
+            notify_error.assert_not_called()
+            summary.assert_called_once()
+            self.assertIn('no draft created', out.getvalue())
+
+    def test_official_poster_fallback_to_unavailable_image_is_hold_not_retry(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            for name in ('sync_inventory', 'ensure_inventory', 'notify_published',
+                         'notify_error', 'notify_pipeline_summary'):
+                stack.enter_context(patch.object(pipeline, name))
+            complete = stack.enter_context(patch.object(
+                pipeline, 'record_scheduled_new_draft_completion'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft', 'reason': 'test',
+                    'target': {'brief_id': 'concert-brief', 'category_key': 'concert'},
+                }))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
+            curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
+            designer = stack.enter_context(patch.object(pipeline, 'DesignerAgent')).return_value
+            publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
+            error_notice = pipeline.notify_error
+            radar.search_news.return_value = [{'keyword': '콘서트', 'link': 'https://example.org'}]
+            curator.curate.return_value = {
+                'link': 'https://example.org',
+                'reviewed_poster_url': 'https://official.example.org/poster.jpg',
+            }
+            writer.write_article.return_value = {'title': '실제 콘서트'}
+            designer.generate_image.side_effect = pipeline.ScheduledImageGenerationUnavailable(
+                'chatgpt_image_gen_required_unavailable_in_server_scheduler')
+            stats = pipeline.run_pipeline(['concert'])
+            self.assertEqual(1, stats['held'])
+            self.assertEqual(0, stats['errors'])
+            self.assertEqual(0, stats['published'])
+            writer.write_article.assert_called_once()
+            designer.generate_image.assert_called_once()
+            self.assertEqual(
+                'https://official.example.org/poster.jpg',
+                designer.generate_image.call_args.kwargs['reviewed_poster_url'])
+            publisher.publish.assert_not_called()
+            complete.assert_not_called()
+            error_notice.assert_not_called()
+
+    def test_generic_hold_does_not_prevent_later_reviewed_official_poster(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            for name in ('sync_inventory', 'ensure_inventory', 'notify_published',
+                         'notify_error', 'notify_pipeline_summary'):
+                stack.enter_context(patch.object(pipeline, name))
+            complete = stack.enter_context(patch.object(
+                pipeline, 'record_scheduled_new_draft_completion'))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft', 'reason': 'test',
+                    'target': {'brief_id': 'concert-brief', 'category_key': 'concert'},
+                }))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
+            curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
+            designer = stack.enter_context(patch.object(pipeline, 'DesignerAgent')).return_value
+            publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
+            radar.search_news.return_value = [
+                {'keyword': '콘서트', 'link': 'https://first.example'},
+                {'keyword': '콘서트', 'link': 'https://second.example'},
+            ]
+            curator.curate.side_effect = [
+                {'link': 'https://first.example', 'poster_url': 'https://unreviewed.example/cover.jpg'},
+                {'link': 'https://second.example', 'reviewed_poster_url': 'https://official.example/poster.jpg'},
+            ]
+            writer.write_article.return_value = {'title': '공식 콘서트'}
+            publisher.publish.return_value = 912
+            stats = pipeline.run_pipeline(['concert'], limit_per_cat=1)
+            self.assertEqual((1, 1, 0), (stats['held'], stats['published'], stats['errors']))
+            writer.write_article.assert_called_once()
+            designer.generate_image.assert_called_once()
+            publisher.publish.assert_called_once()
+            complete.assert_called_once_with(ANY, post_id=912, title='공식 콘서트')
 
     def test_existing_improvement_plan_skips_wordpress_and_writer(self):
         with ExitStack() as stack, redirect_stdout(io.StringIO()):
@@ -184,6 +299,16 @@ class PipelineExitTests(unittest.TestCase):
         stats = {'candidates': 2, 'published': 0, 'held': 2, 'errors': 0, 'notification_errors': 0}
         with patch.object(pipeline, 'run_pipeline', return_value=stats), redirect_stdout(io.StringIO()):
             self.assertEqual(0, pipeline.main(['--category', 'health']))
+
+    def test_cli_emits_explicit_unavailable_status_without_error_exit(self):
+        stats = {'candidates': 1, 'published': 0, 'held': 1, 'errors': 0,
+                 'notification_errors': 0, 'growth_action': 'new_draft',
+                 'image_generation_status': 'held_image_generation_unavailable'}
+        with patch.object(pipeline, 'run_pipeline', return_value=stats), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(0, pipeline.main(['--category', 'health']))
+        payload = out.getvalue()
+        self.assertIn('"status": "held_image_generation_unavailable"', payload)
+        self.assertIn('"published": 0', payload)
 
 
 if __name__ == '__main__':

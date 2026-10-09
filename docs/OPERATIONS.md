@@ -127,7 +127,7 @@ Simple Task는 `baseline 확인 → mutation 1회 → readback → 종료`가 �
 
 **실패 예산:** 같은 방법으로 같은 오류가 연속 두 번 발생하면 그 접근은 중단한다. 세 번째 동일 재시도 대신 다른 transport/provider/도구 경로를 선택한다. 새로운 접근에서도 진전이 없으면 이미 확보한 state·attachment ID·본문 SHA·산출물을 보존하고 blocker를 보고한다. 장시간 sleep, 무한 polling, 같은 명령 반복으로 해결을 기대하지 않는다.
 
-**바이너리 전달:** 이미지·PDF·ZIP 같은 파일은 실제 파일 경로, mount, connector, provider output file, 정식 upload API 중 가능한 경로를 사용한다. Base64 문자열을 터미널 stdout으로 수만 자 출력하거나 stdin에 chunk 단위로 밀어 넣는 방식은 일반 경로로 사용하지 않는다. 파일 handoff가 되지 않으면 동일 Base64 방식을 반복하지 말고 다른 전달 수단이나 생성 provider로 전환한다.
+**바이너리 전달:** 이미지·PDF·ZIP 같은 파일은 실제 파일 경로, mount, connector, provider output file, 정식 upload API 중 가능한 경로를 사용한다. Base64 문자열을 터미널 stdout으로 수만 자 출력하거나 stdin에 chunk 단위로 밀어 넣는 방식은 일반 경로로 사용하지 않는다. 새 대표이미지는 ChatGPT `image_gen` 원본과 CoS `save_image`의 봉인된 경로만 인정하며, 전달 실패 시 생성 provider를 바꾸거나 Base64 bridge로 우회하지 않고 차단한다.
 
 대표이미지 전용 교체의 완료 조건은 아래 순서로 고정한다.
 
@@ -139,7 +139,7 @@ Simple Task는 `baseline 확인 → mutation 1회 → readback → 종료`가 �
 
 위 작업에서 본문 source/review pipeline을 다시 열지 않는다. 관련 없는 regression 실패나 다른 파일의 dirty 상태가 image-only mutation을 막지 않는다면 그 문제를 같은 작업에 끼워 넣지 않는다.
 
-**이미지 생성이 포함된 복합 작업:** 사용자가 “이미지를 만들고 업로드”, “대표이미지를 만들고 본문도 수정”, “여러 포스트에 이미지를 적용”처럼 이미지 생성 뒤 후속 작업을 함께 요청한 경우 이미지 생성은 중간 단계다. Prime은 이미지 생성 자체를 완료로 보고 final하지 않는다. 가능하면 이미지 생성은 후속 실행이 가능한 worker/API/provider에 맡기고 Prime은 파일 handoff 뒤 mutation과 검증을 계속한다.
+**이미지 생성이 포함된 복합 작업:** 사용자가 “이미지를 만들고 업로드”, “대표이미지를 만들고 본문도 수정”, “여러 포스트에 이미지를 적용”처럼 이미지 생성 뒤 후속 작업을 함께 요청한 경우 이미지 생성은 중간 단계다. Prime은 이미지 생성 자체를 완료로 보고 final하지 않는다. ChatGPT `image_gen` 원본을 CoS `save_image`로 전달한 뒤 정규 mutation과 검증을 완료해야 하며, 다른 생성 provider를 대체 경로로 호출하지 않는다.
 
 ChatGPT native image generation처럼 도구 특성상 이미지 생성 호출이 현재 turn의 종료점이 되는 경로를 반드시 써야 한다면, 생성 호출 직전에 task-state 또는 `scratch/tasks/<작업명>/`의 안정된 state 파일에 `AFTER_IMAGE` 체크포인트를 남긴다. 최소 필드는 `post_id`, `remaining_steps`, `expected_content_sha256`, `expected_thumbnail_id`, `target_image_path_or_handle`, `completion_requirements`다. 다음 turn에서는 정책·source·본문을 처음부터 다시 조사하지 않고 이 checkpoint와 live WordPress state만 비교해 후속 단계부터 바로 재개한다.
 
@@ -176,7 +176,9 @@ python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- edit-post scratch
 
 # 대표이미지만 교체: live SHA/thumbnail baseline을 명령이 직접 읽고 image-only CAS 실행
 python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- replace-featured-image `
-  --post-id 641 --image-path scratch/tasks/article/cover.jpg `
+  --post-id 641 --image-path scratch/tasks/article/cover-upload.webp `
+  --candidate-manifest scratch/tasks/article/candidate-manifest.json `
+  --selected-candidate 1 --selection-mode user `
   --alt-text "대전 10월 행사 일정 안내" --confirm-update --confirm-image-selection
 
 # ChatGPT native 이미지 생성처럼 turn이 끊길 수 있는 복합 작업: 생성 전에 AFTER_IMAGE 기록
@@ -198,16 +200,16 @@ python agent-publisher/editorial_cli.py complete-task-qa `
 
 **Standard P1/P2 preflight와 mutation:** `edit-post`가 선택한 draft Standard route와 public Standard route는 inventory sync, 대상 글의 초기 baseline read, 공식 source 동일성 recheck처럼 서로 독립적인 읽기 작업을 병렬화한다. P2부터 저장 직전 CAS → `wp_update_post()` → 저장 후 readback은 고정된 server-side guarded mutation 한 번으로 합친다. reviewed HTML은 JSON stdin으로 전달하며 임의 PHP/명령은 허용하지 않는다. guarded protocol은 status/title/slug/excerpt/content SHA의 전체 expected state를 확인하고, 저장 후 전체 desired state를 다시 검증한다. 따라서 Fast draft의 기본 target 왕복은 `get + guarded mutation` 2회, Standard draft는 경량 inventory + 초기 target read + guarded mutation의 약 3회 수준이 된다. SSH 255에서 guarded request는 desired-state 일치 검사를 전제로 최대 1회만 replay하며, raw `post update`와 media import는 이 재시도 의미론을 공유하지 않는다.
 
-**신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. 수동 ChatGPT/CoS 경로에서 대표이미지 생성은 Gemini를 호출하지 않으며, 아직 후보를 고르지 않았다면 image 없이 draft를 저장할 수 있다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 따라서 별도의 `check`를 다시 실행하는 것은 실패 원인 진단이 필요한 경우에만 한다. Gemini 커버 생성은 `main.py`의 scheduler context에서만 허용된다.
+**신규 draft Fast 경로:** `prepare-draft`는 별도 안전장치를 없애는 명령이 아니라 기존 단계의 중복 왕복을 합친 명령이다. 구조화 원고가 완성된 뒤 먼저 WordPress inventory 없이 content/source 결정론 검사를 수행한다. ChatGPT/CoS 경로에서 새 대표이미지는 반드시 ChatGPT `image_gen`을 사용하며, 후보를 고르지 않았다면 이미지 없이 draft를 저장할 수 있다. current review가 bundle에 이미 결합돼 있으면 reviewer를 다시 호출하지 않는다. 이후 Publisher 잠금 안에서 최신 WordPress lightweight inventory를 한 번 조회하고 site 중복·related post·review binding을 포함한 기존 full `validate_bundle()`을 실행한 뒤에만 draft를 만든다. 별도의 `check`는 실패 원인 진단이 필요한 경우에만 한다. **스케줄러도 Gemini나 로컬 생성으로 새 대표이미지를 만들 수 없다.**
 
-ChatGPT/CoS 로컬 환경에서는 본문 검토가 끝난 시점에 먼저 draft를 저장할 수 있다. 이미지까지 함께 적용할 때에는 이미 사용자에게 보여 주고 선택된 1200×675 jpg/jpeg/png/webp 파일과 ALT, `--confirm-image-selection`을 전달한다. 수동 작성에서 Gemini 자동 생성을 켜는 fallback은 없다.
+ChatGPT/CoS 로컬 환경에서는 본문 검토가 끝난 시점에 먼저 draft를 저장할 수 있다. 이미지까지 함께 적용할 때에는 후보 원본 SHA 봉인과 선택 주체/번호를 기록한 manifest 및 staging receipt와 1200×675 파일, ALT, `--confirm-image-selection`을 전달한다. 수동·자동 어느 쪽도 Gemini 생성 fallback은 없다.
 
 ```powershell
 # 이미지 선택 전: reviewed draft만 저장
 python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --output scratch/tasks/article/receipt.json
 
 # 사용자가 후보를 선택한 경우: 선택 이미지까지 적용하고 공개용 attestation 생성
-python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --image-path scratch/tasks/article/cover.jpg --alt-text "대표 이미지 설명" --confirm-image-selection --output scratch/tasks/article/receipt.json
+python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft scratch/tasks/article/bundle.json --author-model "GPT-5.6 Sol" --image-path scratch/tasks/article/cover-upload.webp --candidate-manifest scratch/tasks/article/candidate-manifest.json --selected-candidate 1 --selection-mode user --alt-text "대표 이미지 설명" --confirm-image-selection --output scratch/tasks/article/receipt.json
 ```
 
 **Publication gate / 관리자 권한 분리:** 대표이미지 mutation 완료는 AI 자동 공개 승인 증거가 아니다. 자동화는 `--confirm-image-selection` 또는 실제 자동 비전 검수 PASS 증빙으로 `_bloguito_publish_gate_v1` attestation을 기록한다. attestation은 현재 reviewed 본문·제목, 대표이미지 attachment·파일 SHA·ALT, review digest, freshness 및 `requires_live_state`를 결속한다. 자동화 `promote-draft --confirm-publish`는 본문·상태 CAS, source/review, 승인 attestation을 재검증하고 live-state source는 공개 직전에 공식 원문을 다시 수집한다. 반대로 **WordPress 관리자에서 로그인한 편집·발행 권한자의 직접 공개는 attestation 요구 대상이 아니다.** 기본 편집기와 인증된 REST 저장, 글 목록, 미리보기 탑바에서 발행을 허용하며 대표이미지 누락은 경고로 알린다. `publish→draft`도 WordPress 편집 권한을 따른다. 로그인 사용자가 없는 WP-CLI/자동화는 정규 guarded 공개 경로 이외에 직접 publish를 수행할 수 없도록 검증한다. 자동화 에이전트가 관리자 인증 쿠키나 무제한 sudo/SSH 자격을 사용하는 경우 앱 수준의 조건만으로 행위 주체를 구별할 수 없다. 따라서 에이전트 자격·운영 접속 권한을 분리해야 하며, 관리자 인증을 통한 우회는 금지한다. 운영 PHP MU 플러그인과 Python agent runtime은 동일 Git revision의 호환 버전으로 함께 배포하고 SHA/readback을 기록한다.
@@ -277,6 +279,8 @@ python scripts/build_daily_growth_plan.py
 ```
 
 정규 `main.py`도 같은 planner 계약을 사용한다. `new_draft`일 때만 WordPress inventory를 갱신하고 Curator/Writer/Designer/Publisher를 생성하며, planner가 선택한 `brief_id` 하나만 scheduled Radar가 소비한다. `existing_improvement` 또는 `no_action`은 정상 성공 결과이며 "오늘 글을 쓰지 않음" 자체가 오류로 처리되지 않는다. 수동 ChatGPT/CoS 집필과 `editorial_cli.py`는 이 scheduled planner의 자동 작성 차단 대상이 아니다.
+
+**스케줄러 대표이미지 사전 차단:** 서버에서 ChatGPT `image_gen`을 직접 호출할 수 없으므로, `new_draft` 후보의 Curator 결과에 정식 `reviewed_poster_url`이 없는 경우 원고 생성과 이미지 생성, WordPress draft 생성 전에 해당 후보를 `held_image_generation_unavailable`로 보류한다. Curator의 미검증 `poster_url`이나 임의 이미지 주소는 허용되지 않는다. 검토된 공식 공연 포스터가 있으면 기존 포스터 검수·업로드 경로는 유지한다. 포스터가 검증에 실패해 새 이미지 생성이 필요해진 경우에도 같은 코드로 보류하며 Gemini·로컬 생성 fallback, 재시도, 해당 brief 완료 기록을 하지 않는다. 이 보류는 오류 알림을 남발하지 않고 `held_reasons`와 `PIPELINE_RESULT.image_generation_status`에 명시한다. 발행 0건·오류 0건인 해당 보류 실행의 `PIPELINE_RESULT.status`는 `held_image_generation_unavailable`이고 종료 코드는 0이다. 기존 `existing_improvement`·`no_action` 결과는 바뀌지 않는다. 해당 후보를 다시 자동 재처리해 공개 글을 생성했다고 간주하지 말고, ChatGPT 원본 이미지 handoff가 가능한 별도 승인된 수동 작업에서 처리한다.
 
 **P4 Growth Work Log:** planner가 기존 글을 추천했다는 사실만으로 완료 처리하지 않는다. 실제 `edit-post` 작업과 CAS/readback 검증이 끝난 뒤에만 `record_growth_work.py complete-existing`으로 private `growth-work-log.json`에 완료 기록을 남긴다. 기록은 **완료 당일** planner의 `post_id`, planner policy digest, 해당 Opportunity report 종료일에 결합되므로 다른 글, 전날 plan, 정책 변경 후의 오래된 plan으로 완료를 기록하지 못한다.
 
