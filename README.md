@@ -1,6 +1,6 @@
 # Bloguito — 생활정보 24
 
-대한민국 생활정보 블로그를 위한 WordPress + Python 에디토리얼 자동화 저장소다. `agent-publisher/main.py`가 후보 탐색, 원문 수집, 근거를 붙인 원고 생성·검토, 썸네일 제작, WordPress **임시글(draft) 등록**을 연결한다. 공개 전환은 사람의 개별 확인과 별도 명시적 명령이 필요하다. 수익·검색 유입·모든 콘텐츠의 사실 정확도는 보장되지 않는다.
+대한민국 생활정보 블로그를 위한 WordPress + Python 에디토리얼 자동화 저장소다. `agent-publisher/main.py`는 후보 탐색, 원문 수집, 원고 생성·검토와 **조건을 충족한 경우의 임시글(draft) 등록**을 연결한다. 새 대표이미지는 ChatGPT `image_gen`만 허용하며, 무인 스케줄러에서 검증된 공식 포스터를 사용할 수 없으면 신규 draft 생성을 보류한다. 공개 전환은 사람의 글별 확인과 별도 명시적 명령이 필요하다. 수익·검색 유입·모든 콘텐츠의 사실 정확도는 보장되지 않는다.
 
 ## 어디부터 읽어야 하나
 
@@ -8,6 +8,7 @@
 | --- | --- |
 | 지침·안전 기준 | [AGENTS.md](AGENTS.md) |
 | 주제 선정·원고·검토·등록·공개 규약 | [docs/EDITORIAL_SYSTEM.md](docs/EDITORIAL_SYSTEM.md) 및 실제 임계값인 [`editorial_policy.json`](agent-publisher/editorial_policy.json) |
+| ChatGPT 대표이미지 생성·선택·업로드 기준 | [docs/FEATURED_IMAGE_STANDARD.md](docs/FEATURED_IMAGE_STANDARD.md) |
 | 로컬 실행, 운영·백업·배포 체크리스트 | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
 | 문서 전체 목차와 날짜별 작업 증거 | [docs/INDEX.md](docs/INDEX.md) |
 | 다른 AI로 인계 | [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) |
@@ -19,7 +20,7 @@
 
 | 위치 | 기능 |
 | --- | --- |
-| `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher 자동 임시글 생성 |
+| `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher; 이미지·검토 요건을 통과한 경우에만 자동 임시글 생성 |
 | `agent-publisher/editorial_cli.py` | 공식 출처 수집, 검토·검사, 임시글 생성/갱신, 사람 확인 후 공개 전환 |
 | `agent-publisher/agents/` | 주제 후보·원문·검증·썸네일·WP 처리. 원고 작성 경로는 `editorial_writer.py` 사용 |
 | `wordpress/` | WordPress·MariaDB Compose와 자체 MU 플러그인. 기존 사이트에서 `setup.sh` 재실행 금지 |
@@ -45,7 +46,7 @@ $env:PYTHONIOENCODING='utf-8'
 
 ## 운영과 검증의 경계
 
-- 글 공개, 기존 글 수정, DB 복구, WordPress 서비스 재시작·배포는 테스트나 문서 정리와 별개의 작업이다. 기본은 draft, 출처/원고/검토가 불일치하면 보류한다.
-- `backup_daily.sh`의 v3 코드에는 플러그인·테마까지 포함한 구성요소 검사가 있으나, **독립 환경에서 전체 사이트의 실제 복원과 비밀정보 암호화는 마지막 기록에서 미검증**이다. [백업 기록](docs/backup-recovery-2026-09-20.md)과 실제 서버 상태를 재확인한다.
+- 글 공개, 기존 글 수정, DB 복구, WordPress 서비스 재시작·배포는 테스트나 문서 정리와 별개의 작업이다. 기본은 draft이며 출처/원고/검토가 불일치하면 보류한다. 무인 실행의 대표이미지 보류 조건은 [운영 가이드](docs/OPERATIONS.md)를 따른다.
+- **2026-09-25** v3 백업으로 WordPress DB·파일·설정의 **격리 애플리케이션 복원**이 검증됐다([복원 훈련](docs/backup-restore-drill-2026-09-25.md)). **2026-09-26** 호스트 구성 확대 훈련의 전체 판정은 **PARTIAL**이었다([호스트 DR 훈련](docs/host-disaster-recovery-drill-2026-09-26.md)). **2026-10-06** Windows 암호화 오프호스트 사본의 인증·복호화 후 v3 아카이브 검증이 기록됐다([보안 후속 기록](docs/security-hardening-2026-09-25.md)). 원본 `secrets.tar.gz` 자체는 암호화되지 않으며, 새 VM 전체 재해복구·복구키의 장비 외 보관 및 다음 예약 실행 성공까지 검증한 것은 아니다. 현재 운영 백업 상태는 별도 재확인이 필요하다.
 - 2026-09-20과 21일의 콘텐츠 목록·테스트 개수·배포 증거는 [문서 목차](docs/INDEX.md)의 해당 날짜별 문서를 참고한다. 예를 들어 9월 20일의 '임시글 11편'은 9월 21일 상태를 뜻하지 않는다.
 - 설정이나 코드 변경 시 기존 미커밋 작업을 보존하고 적절한 테스트를 거친 뒤 의도한 파일만 커밋·푸시한다. 운영 적용 여부는 결과에서 별도로 밝힌다.

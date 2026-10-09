@@ -22,7 +22,7 @@ WordPress 호출은 `agents/wordpress_transport.py`의 실행 context로 adapter
 
 | 경로 | 역할 |
 | --- | --- |
-| `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher의 자동 **임시글 생성** 진입점 |
+| `agent-publisher/main.py` | Radar → Curator → Editorial Writer → Designer → Publisher의 **조건부 임시글 생성** 진입점; 검증된 공식 포스터가 없는 무인 신규 이미지 작업은 보류 |
 | `agent-publisher/editorial_cli.py` | 근거 수집, 검토, 검사, 임시글 등록/갱신, 사람 확인 후 별도 공개 |
 | `agent-publisher/agents/` | 검색·검토·렌더링·WordPress 연결 로직; 자동 파이프라인과 현행 원고 경로는 `editorial_writer.py`를 사용 |
 | `agent-publisher/data/` | 환경별 런타임 상태. 민감·운영 JSON 및 `.env`를 Git에 추가하지 않음 |
@@ -367,7 +367,7 @@ WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, �
 
 - 게시물 한 건의 HTML 조각을 넣거나 바꾸기 위해 `patch_post_<ID>_*.py`를 만들지 않고 `scripts/patch_post_component.py`를 사용한다. 이 도구는 로컬 파일 한 곳만 수정하며 target regex가 0건 또는 2건 이상이면 fail closed한다. WordPress 쓰기는 수행하지 않는다.
 - 한 번만 필요한 조사·변환·검증 Python, 다운로드한 원문, 중간 bundle/HTML/이미지는 `scratch/tasks/<작업명>/`에 둔다. `scratch/`는 Git에 포함하지 않는다.
-- `DesignerAgent`가 자동 생성한 대표이미지는 `%TEMP%/bloguito/covers/`에만 만들고 WordPress 저장 성공·실패 뒤 즉시 삭제한다. 사용자가 `--image-path`로 지정한 파일은 자동 삭제하지 않는다. 프로세스 강제 종료로 남은 24시간 이상 된 generated cover와 과거 `tmp/`의 browser user-data profile만 `python scripts/cleanup_workspaces.py`로 dry-run 확인한 뒤 `--apply`로 정리한다.
+- 스케줄러가 검증된 공식 포스터를 처리하며 생성한 임시 커버는 `%TEMP%/bloguito/covers/`에 저장하고 WordPress 저장 성공·실패 뒤 삭제한다. 새 장면 생성이 필요한 후보는 앞의 이미지 사전 차단 조건을 따른다. 사용자가 `--image-path`로 지정한 파일은 자동 삭제하지 않는다. 프로세스 강제 종료로 남은 24시간 이상 된 임시 커버와 과거 `tmp/`의 browser user-data profile만 `python scripts/cleanup_workspaces.py`로 dry-run 확인한 뒤 `--apply`로 정리한다.
 - 재현·사고 분석을 위해 one-off 코드를 보존해야 하면 작업 종료 후 `scripts/archive/<날짜 또는 작업명>/`로 이동한다. 새 archive 산출물은 Git에 넣지 않고 정규 도구처럼 호출하지 않는다.
 - `scripts/` 루트의 Python 파일은 `scripts/maintained_scripts.json`과 정확히 일치해야 하며 unit test가 이를 검사한다. 두 번째 독립 사용 사례가 생긴 임시 도구만 명시적 인터페이스와 테스트를 갖춘 뒤 루트 도구로 승격한다.
 - 자세한 규칙과 예시는 `scripts/README.md`를 따른다.
@@ -384,6 +384,8 @@ WordPress 전체 inventory는 schema v2에서 각 글의 `ID`, 제목, 상태, �
 - v3의 `secrets.tar.gz`는 일반 압축이며 **암호화된 금고가 아니다**. 접근권한, 오프사이트 암호화·키 보관·독립 복구 계획 없이 완전 백업이라고 표현하지 않는다. 실제 격리 복원 범위와 호스트 단위 미검증 항목은 [2026-09-25 애플리케이션/데이터 복구 훈련](backup-restore-drill-2026-09-25.md)과 [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md)의 PASS/PARTIAL/NOT TESTED 판정을 따른다.
 
 **Windows 암호화 오프호스트 사본:** `scripts/sync_backups_encrypted.py`는 Direct SSH로 서버 snapshot의 원격 SHA를 두 번 확인하고 기존 `sync_backups.verify_archive()`의 v3 component/gzip/nested-path 검증을 통과한 임시 평문만 AES-256-GCM으로 암호화한다. 저장 파일은 `*.tar.gz.blgenc`이며 원본 filename/size/SHA를 인증된 header에 포함한다. `scripts/sync_backups_encrypted_scheduled.ps1`은 기본적으로 `%USERPROFILE%\BloguitoBackupsEncrypted`에 암호화본만 30일 보존하고 recovery key는 `%USERPROFILE%\Documents\Secure\Bloguito-Backup-Recovery.key`에서 읽는다. 평문 임시 파일은 성공/실패 후 삭제한다. recovery key는 Git, 서버, 암호화 backup directory에 복사하지 않는다. 암호화 backup 자체의 검증은 `backup_encryption.verify_or_decrypt()`로 GCM tag와 원본 SHA/size를 함께 검사한다. 이 구조도 같은 노트북 하나에 backup과 key가 함께 존재하면 장비 전체 분실에는 충분하지 않으므로 recovery key의 별도 오프라인 수탁은 운영자 책임으로 남는다.
+
+2026-10-06에는 암호화 사본의 인증·복호화 후 v3 아카이브 독립 검증과 예약 작업 수동 실행이 기록됐다([보안 하드닝 후속 절](security-hardening-2026-09-25.md)). 이는 당시 검증 결과이며 다음 실제 예약 실행·현재 원격 백업 상태·별도 장비에 보관된 키로 수행한 복원·새 VM 전체 DR 검증을 뜻하지 않는다.
 - 운영 서버는 로컬 Compose와 `.env` 구성·systemd 설정이 다를 수 있다. **이미지 digest가 같다는 이유만으로 재생성할 필요는 없다.** 사전 해시·백업·비밀값 비노출 설정 확인, 스테이징 테스트, 서비스별 롤백 계획을 마련한 뒤 변경한다.
 
 ### WP-CLI 재구축

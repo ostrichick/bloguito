@@ -6,8 +6,8 @@
 
 1. [README](README.md) — 시스템 소개와 로컬 개발 환경.
 2. [AGENTS](AGENTS.md) — 협업·수정·배포·공개 안전 규칙.
-3. 글·주제·자동화 작업이면 [공통 편집 규약](docs/EDITORIAL_SYSTEM.md)과 [코드 정책 설정](agent-publisher/editorial_policy.json).
+3. 글·주제·자동화 작업이면 [공통 편집 규약](docs/EDITORIAL_SYSTEM.md), [대표이미지 표준](docs/FEATURED_IMAGE_STANDARD.md)과 [코드 정책 설정](agent-publisher/editorial_policy.json). 신규 이미지 생성에는 ChatGPT `image_gen`이 필수이고 무인 스케줄러는 검증된 공식 포스터가 없으면 신규 draft를 보류한다.
 4. 실행·백업·WordPress 작업이면 [운영 가이드](docs/OPERATIONS.md). 이전 배포의 관측치는 당시 작업 기록과 **실제 서버 재조회**로 구분한다.
 5. 기록을 찾거나 과거 결정 배경을 확인하려면 [문서 목차](docs/INDEX.md). [콘텐츠 전략](docs/CONTENT_STRATEGY_2026-09-20.md)은 실행 전 제안이다.
 
-**핵심 안전 원칙:** 자동 등록은 `draft`; 공개 전환은 사람이 해당 글을 확인하고 검증된 경로로 명시적으로 요청할 때만 한다. 기존 미커밋 변경과 운영 데이터/인증정보는 보존하며, 테스트 성공·Git 푸시와 운영 배포 성공을 혼동하지 않는다. 백업은 실제 격리 복원과 비밀정보 보호가 확인되기 전까지 완전하다고 주장하지 않는다.
+**핵심 안전 원칙:** 자동 등록은 조건부 `draft`; 공개 전환은 사람이 해당 글을 확인하고 검증된 경로로 명시적으로 요청할 때만 한다. 기존 미커밋 변경과 운영 데이터/인증정보는 보존하며, 테스트 성공·Git 푸시와 운영 배포 성공을 혼동하지 않는다. 백업의 [2026-09-25 격리 복원](docs/backup-restore-drill-2026-09-25.md), [2026-09-26 부분 호스트 DR](docs/host-disaster-recovery-drill-2026-09-26.md), [2026-10-06 암호화 사본 인증·복호화 검증](docs/security-hardening-2026-09-25.md)은 서로 다른 범위의 당시 증거다. 새 VM 전체 DR과 현재 운영 상태는 별도 확인이 필요하다.
