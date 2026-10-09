@@ -1,0 +1,7 @@
+# PROPOSAL ONLY. Validate with visudo -cf; do not enable until independent
+# rollback and recovery verification. Dedicated account has no docker/lxd/sudo
+# group membership, and cannot modify either executable or their directories.
+# Empty-string argument syntax permits the fixed executable with NO arguments.
+Defaults:bloguito-ssh-read env_reset
+Defaults:bloguito-ssh-read !setenv
+bloguito-ssh-read ALL=(root) NOPASSWD: /usr/local/libexec/bloguito/wp_readonly.py ""
