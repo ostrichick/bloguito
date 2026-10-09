@@ -6,6 +6,7 @@ Sends instantaneous operational alerts when articles are published or if any err
 import os
 import urllib.request
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -17,13 +18,23 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 
-def send_alert(message: str, title: str = "📢 [생활정보 24] 알림") -> bool:
-    """Send notification to Telegram and/or Discord if configured."""
-    success = False
+@dataclass(frozen=True)
+class AlertDelivery:
+    """Per-alert delivery counts; unconfigured channels are not failures."""
+
+    configured: int = 0
+    delivered: int = 0
+    failed: int = 0
+
+
+def send_alert_report(message: str, title: str = "📢 [생활정보 24] 알림") -> AlertDelivery:
+    """Attempt every configured channel, including after another channel fails."""
+    configured = delivered = failed = 0
     full_text = f"<b>{title}</b>\n\n{message}"
 
     # 1. Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        configured += 1
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = json.dumps({
@@ -34,13 +45,18 @@ def send_alert(message: str, title: str = "📢 [생활정보 24] 알림") -> bo
             req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
-                    success = True
+                    delivered += 1
                     print("✅ 텔레그램 알림 발송 완료")
+                else:
+                    failed += 1
+                    print(f"⚠️ 텔레그램 알림 HTTP 상태: {resp.status}")
         except Exception as e:
-            print(f"⚠️ 텔레그램 알림 발송 실패 (설정 확인 필요): {e}")
+            failed += 1
+            print(f"⚠️ 텔레그램 알림 발송 실패: {type(e).__name__}")
 
     # 2. Discord Webhook
     if DISCORD_WEBHOOK_URL:
+        configured += 1
         try:
             payload = json.dumps({
                 "content": f"**{title}**\n{message}"
@@ -48,16 +64,25 @@ def send_alert(message: str, title: str = "📢 [생활정보 24] 알림") -> bo
             req = urllib.request.Request(DISCORD_WEBHOOK_URL, data=payload, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status in (200, 204):
-                    success = True
+                    delivered += 1
                     print("✅ 디스코드 웹훅 알림 발송 완료")
+                else:
+                    failed += 1
+                    print(f"⚠️ 디스코드 알림 HTTP 상태: {resp.status}")
         except Exception as e:
-            print(f"⚠️ 디스코드 알림 발송 실패: {e}")
+            failed += 1
+            print(f"⚠️ 디스코드 알림 발송 실패: {type(e).__name__}")
 
     # If neither is configured, fallback to console log
-    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID) and not DISCORD_WEBHOOK_URL:
+    if configured == 0:
         print(f"ℹ️ [알림 모의 발송] {title} - {message}")
 
-    return success
+    return AlertDelivery(configured=configured, delivered=delivered, failed=failed)
+
+
+def send_alert(message: str, title: str = "📢 [생활정보 24] 알림") -> bool:
+    """Preserve the existing bool API (True if any channel delivered)."""
+    return send_alert_report(message, title=title).delivered > 0
 
 
 def notify_published(post_title: str, category_name: str, post_url: str, used_model: str = None):
@@ -77,7 +102,7 @@ def notify_published(post_title: str, category_name: str, post_url: str, used_mo
         f"• <b>작성 AI 모델</b>: <code>{model_label}</code>"
         f"{quota_info}"
     )
-    send_alert(msg, title="🚀 [생활정보 24] 초안 생성 성공")
+    return send_alert_report(msg, title="🚀 [생활정보 24] 초안 생성 성공")
 
 
 def notify_error(stage: str, error_msg: str):
@@ -87,7 +112,7 @@ def notify_error(stage: str, error_msg: str):
         f"• <b>단계</b>: {stage}\n"
         f"• <b>오류 내용</b>: {error_msg}"
     )
-    send_alert(msg, title="⚠️ [생활정보 24] 파이프라인 장애 알림")
+    return send_alert_report(msg, title="⚠️ [생활정보 24] 파이프라인 장애 알림")
 
 
 def notify_pipeline_summary(stats: dict):
@@ -99,6 +124,7 @@ def notify_pipeline_summary(stats: dict):
     growth_log_errors = stats.get("growth_log_errors", 0)
     categories = ", ".join(stats.get("categories", []))
     growth_action = stats.get("growth_action")
+    growth_reason = stats.get("growth_reason")
 
     msg = (
         f"📊 <b>파이프라인 실행 종합 리포트</b>\n"
@@ -116,8 +142,14 @@ def notify_pipeline_summary(stats: dict):
             msg += f" (Post #{target['post_id']})"
         elif growth_action == "new_draft" and target.get("brief_id"):
             msg += f" ({target['brief_id']})"
+        if growth_reason:
+            msg += f"\n• <b>판정 사유</b>: {growth_reason}"
+        if stats.get("growth_outcome") == "input_failure" and stats.get("growth_details"):
+            msg += "\n• <b>입력 장애 코드</b>: " + ", ".join(stats["growth_details"][:3])
     if stats.get("held_reasons"):
         reasons_text = "\n".join(f"  - {r}" for r in stats["held_reasons"][:3])
         msg += f"\n• <b>주요 보류 사유</b>:\n{reasons_text}"
 
-    send_alert(msg, title="📈 [생활정보 24] 파이프라인 일일 요약")
+    msg += (f"\n• <b>알림 전송 실패 (일일 요약 전)</b>: {stats.get('notification_errors', 0)}건"
+            f"\n• <b>알림 미설정 (일일 요약 전)</b>: {stats.get('notification_unconfigured', 0)}건")
+    return send_alert_report(msg, title="📈 [생활정보 24] 파이프라인 일일 요약")
