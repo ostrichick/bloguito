@@ -16,7 +16,7 @@
 | 검증 임계값과 모델 설정 | [editorial_policy.json](../agent-publisher/editorial_policy.json) | 코드가 읽는 설정값의 유일한 정본 |
 | 명령어·백업·배포 체크리스트 | [OPERATIONS](OPERATIONS.md) | 현재 저장소의 코드와 확인 날짜를 구분한 운영 가이드 |
 | 콘텐츠 목록과 주제 대시보드 | [POST_CATALOG](POST_CATALOG.md) | 발행·임시글 현황 및 백로그 로컬 단일 정본 |
-| 카테고리 구조와 61편 이관표 | [2026-10-02 카테고리 개편](category-reorganization-2026-10-02.md) | 8개 현행 카테고리, 운영 term, 글별 이동표와 마이그레이션 원칙 |
+| 카테고리 구조와 당시 61편 이관표 | [2026-10-02 카테고리 개편](category-reorganization-2026-10-02.md) | 2026-10-02 기준 8개 카테고리, 당시 운영 term, 글별 이동표와 마이그레이션 원칙 |
 | 다른 AI로 인계 | [PROJECT_HANDOVER](../PROJECT_HANDOVER.md) | 최소 맥락과 정본 링크; 과거 370줄 이력의 재복제 없음 |
 | 콘텐츠 구조·수요 실험 | [CONTENT_STRATEGY](CONTENT_STRATEGY_2026-09-20.md) | **제안**이며 현재 구현이나 배포 규약이 아님 |
 
@@ -32,6 +32,7 @@
 | 편집 시스템 구축·설계 | [검색 의도](search-editorial-policy.md), [공통 시스템 구현](editorial-system-implementation-2026-09-14.md), [벤치마크 반영](benchmark-reflection-2026-09-15.md), [콘텐츠 전략 제안](CONTENT_STRATEGY_2026-09-20.md), [생활정보 본문 UX 비교](article-layout-benchmark-2026-09-21.md) |
 | 정보글 본문 구조 개선 | [기본 구조·코드·운영 적용 기록](article-layout-implementation-2026-09-21.md) |
 | 자동화·안전성 | [운영 감사·수정](audit-remediation-2026-09-20.md), [1~5순위 코드 개선 당시 상태](implementation-execution-2026-09-20.md), [백업·복구 v3 당시 구현과 미검증](backup-recovery-2026-09-20.md), [2026-09-25 애플리케이션/데이터 격리 복구 훈련](backup-restore-drill-2026-09-25.md), [2026-09-26 호스트 단위 DR 확장 훈련](host-disaster-recovery-drill-2026-09-26.md), [Site Kit 이관](sitekit-and-editorial-handoff-2026-09-20.md), [중복 목차 전수 조사·LuckyWP 비활성화](toc-duplicate-plugin-deactivation-2026-09-21.md), [2026-09-26~10-01 작업 흐름 최적화 P1~P8](workflow-optimization-2026-09-26.md), [2026-10-01 P9~P11·WhatsApp 제거](project-simplification-p9-p11-2026-10-01.md), [2026-10-01 P12·P14·P15·P13 후속 단순화](project-simplification-p12-p15-p13-2026-10-01.md) |
+| 2026-10-06 백업 암호화 후속 검증 | [보안 하드닝 기록의 2026-10-06 후속 절](security-hardening-2026-09-25.md) | 암호화 사본 인증·복호화 검증과 예약 작업 수동 실행 당시 결과; 전체 새 VM DR 및 다음 예약 실행 확인과 구분 |
 | Simple Task·이미지 연속 실행 | [2026-09-30 Fast Path·Completion Guard 구현](simple-task-image-continuation-2026-09-30.md) |
 | 태그 거버넌스 | [2026-09-26 운영 태그 258개 분류와 신규 자동 태그 중단](tag-governance-2026-09-26.md) |
 | 공개 콘텐츠 품질 | [2026-09-20 공개 글 점검](published-content-review-2026-09-20.md), [내부 정정 문구 제거](internal-editorial-notes-cleanup-2026-09-21.md), [통신 미환급액 #243](telecom-post-243-revision-2026-09-21.md), [#218 보강·운영 반영](post-218-expansion-2026-09-21.md), [#349 김건모 일정 표·운영 반영](kim-gunmo-schedule-table-2026-09-21.md), [로이킴 #99·무명전설 #70 이미지 교체](concert-cover-update-2026-09-21.md) |
@@ -39,7 +40,7 @@
 | 과거 임시글별 기록 | [9/13](review-drafts-2026-09-13.md), [9/14](review-drafts-2026-09-14.md), [9/15 1차](review-drafts-2026-09-15.md), [9/15 2차](review-drafts-2026-09-15-batch2.md), [9/15 3차](review-drafts-2026-09-15-batch3.md) |
 | 단일 수정 기록 | [편집 중복 정정](editorial-correction-2026-09-13.md), [에너지 FAQ](energy-faq-correction.md), [9/15 서식 복원](format-fix-2026-09-15.md), [세금 카테고리](category-tax-addition-2026-09-15.md), [카테고리 소개 문구](category-description-broadening-2026-09-21.md), [관리자 글 ID](admin-post-id-column-2026-09-21.md) |
 
-`docs/project-optimization-audit-2026-09-20.md`는 기존 **미추적 작업 파일**이므로 이 정리에서는 편집·이동·삭제·커밋하지 않는다. 과거 0바이트 문서에 대한 설명만 남긴 `improvement-editorial-features-2026-09-18.md`는 중복된 안내라 별도 실내용은 없었으며, 감사 근거는 [`audit-remediation-2026-09-20.md`](audit-remediation-2026-09-20.md)에 남는다.
+`project-optimization-audit-2026-09-20.md`는 **2026-10-09 로컬 Git에서 추적 중인 역사 기록**이다([파일](project-optimization-audit-2026-09-20.md)). 과거 0바이트 문서에 대한 설명만 남긴 `improvement-editorial-features-2026-09-18.md`는 중복된 안내라 별도 실내용은 없었으며, 감사 근거는 [`audit-remediation-2026-09-20.md`](audit-remediation-2026-09-20.md)에 남는다.
 
 ## 지침과 작업 기록을 구별하는 방법
 
@@ -74,8 +75,8 @@
 - [2026-09-26 프로젝트 우선순위 감사 및 1·3·5번 개선](project-priority-audit-2026-09-26.md): 검토 결합 보존, 오류 종료 전달, 공개 글 3편 출처 복원과 서버 배포·검증 및 남은 우선순위.
 - [2026-09-28 부산 10월 축제 일정 임시글 #648](busan-october-festivals-draft-2026-09-28.md): 페스티벌 시월, 부산국제영화제, 부산국제록페스티벌, 자갈치축제 등 10월 주요 행사를 비교표·지도·CTA로 정리한 임시글 작업 기록.
 - [2026-09-28 대구 10월 축제 일정 임시글 #657](daegu-october-festivals-draft-2026-09-28.md): 판타지아대구페스타, 대구국제오페라축제, 달성 100대 피아노 등 10월 주요 행사를 비교표·지도·CTA로 정리한 임시글 작업 기록.
-- [2026-09-28 세종 10월 축제 일정 임시글 #665](sejong-october-festivals-draft-2026-09-28.md): 당시 임시글 작성 과정을 보존한 역사 기록. 2026-10-06 공개 REST 재확인 기준 현재 글 상태는 `publish`다.
-- [2026-09-28 광주 10월 축제 일정 임시글 #666](gwangju-october-festivals-draft-2026-09-28.md): 당시 임시글 작성 과정을 보존한 역사 기록. 2026-10-06 공개 REST 재확인 기준 현재 글 상태는 `publish`다.
+- [2026-09-28 세종 10월 축제 일정 임시글 #665](sejong-october-festivals-draft-2026-09-28.md): 당시 임시글 작성 과정을 보존한 역사 기록. 2026-10-06 공개 REST 재확인 당시 글 상태는 `publish`였다.
+- [2026-09-28 광주 10월 축제 일정 임시글 #666](gwangju-october-festivals-draft-2026-09-28.md): 당시 임시글 작성 과정을 보존한 역사 기록. 2026-10-06 공개 REST 재확인 당시 글 상태는 `publish`였다.
 - [2026-10-02 프로젝트 UTF-8 인코딩 하드닝](encoding-hardening-2026-10-02.md): Windows CP949 환경의 subprocess 경계를 UTF-8 strict로 고정하고 저장 정책·CI 검사·PowerShell 로그 인코딩을 보강한 기록.
 
 
