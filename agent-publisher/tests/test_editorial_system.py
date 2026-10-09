@@ -339,13 +339,19 @@ class EditorialTests(unittest.TestCase):
 
     def test_publisher_forces_draft_and_rereads_saved_content(self):
         article=article_from_bundle(self.b)
+        from agents.editorial import excerpt_from_lead
+        expected_excerpt = excerpt_from_lead(self.b['plan']['lead'])
         commands=[]
         def fake(cmd, **kwargs):
             commands.append(cmd)
             if 'create' in cmd:
                 return Mock(stdout='999')
-            if '--fields=post_status,post_content' in cmd:
-                return Mock(stdout=json.dumps({'post_status':'draft','post_content':article['content']}))
+            if '--fields=post_status,post_title,post_name,post_content,post_excerpt' in cmd:
+                return Mock(stdout=json.dumps({
+                    'post_status': 'draft', 'post_title': article['title'],
+                    'post_name': '',
+                    'post_content': article['content'], 'post_excerpt': expected_excerpt,
+                }))
             return Mock(stdout='')
         with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record:
             clock.now.return_value=NOW

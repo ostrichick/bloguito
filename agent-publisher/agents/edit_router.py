@@ -15,7 +15,11 @@ from agents.edit_orchestration import (
     run_combined_image_phase,
     validate_resume_fingerprint,
 )
-from agents.featured_image import reconcile_featured_image_outcome, replace_featured_image
+from agents.featured_image import (
+    reconcile_featured_image_outcome,
+    recover_imported_featured_image_outcome,
+    replace_featured_image,
+)
 from agents.fast_edit import (
     FULL_REVIEW_REQUIRED,
     build_fast_stored_bundle,
@@ -402,6 +406,7 @@ def edit_reviewed_draft(
             state=state,
             update_state=update_task_state,
             reconcile_image=reconcile_featured_image_outcome,
+            recover_imported_image=recover_imported_featured_image_outcome,
             replace_image=replace_featured_image,
         )
         update_task_state(

@@ -257,56 +257,45 @@ class DesignerRoutingTests(unittest.TestCase):
         self.assertFalse(out_path.exists())
 
     def test_generated_editorial_scene_is_used_when_image_client_is_available(self):
-        generated = MagicMock()
-        generated.inline_data = MagicMock()
-        generated.as_image.return_value = Image.new("RGB", (1200, 675), color=(232, 244, 240))
-        self.designer.client = MagicMock()
-        self.designer.client.models.generate_content.side_effect = [
-            MagicMock(parts=[generated]),
-            MagicMock(text='{"pass": true, "issues": []}'),
-        ]
-
         out_path = Path(self.temp_dir.name) / "test_generated_editorial_output.jpg"
-        self.designer._render_editorial_cover(
-            title="전입신고 온라인 신청과 세대주 확인",
-            keyword="전입신고 온라인 신청",
-            category_key="life-admin",
-            category_name="행정/생활서비스",
-            output_path=out_path,
-        )
-        generation_call = self.designer.client.models.generate_content.call_args_list[0]
-        review_call = self.designer.client.models.generate_content.call_args_list[1]
-        self.assertEqual(generation_call.kwargs["model"], "gemini-3.1-flash-image")
-        self.assertEqual(generation_call.kwargs["config"].image_config.aspect_ratio, "16:9")
-        self.assertEqual(generation_call.kwargs["config"].image_config.image_size, "1K")
-        self.assertIn("Render NO text", generation_call.kwargs["contents"])
-        self.assertEqual(review_call.kwargs["model"], "gemini-3.5-flash")
+        with patch.object(
+            self.designer, "_generated_scene",
+            return_value=Image.new("RGB", (1200, 675), color=(232, 244, 240))
+        ) as scene, patch.object(
+            self.designer, "_vision_review_cover", return_value=(True, [])
+        ) as review:
+            self.designer._render_editorial_cover(
+                title="전입신고 온라인 신청과 세대주 확인",
+                keyword="전입신고 온라인 신청",
+                category_key="life-admin",
+                category_name="행정/생활서비스",
+                output_path=out_path,
+            )
+        self.assertEqual(1, scene.call_count)
+        self.assertIn("Render NO text", scene.call_args.args[0])
+        review.assert_called_once()
         with Image.open(out_path) as img:
             self.assertEqual(img.size, (1200, 675))
         self.assertRegex(self.designer.last_review_evidence_sha256 or "", r"^[0-9a-f]{64}$")
 
     def test_generated_editorial_scene_retries_after_visual_review_failure(self):
-        generated = MagicMock()
-        generated.inline_data = MagicMock()
-        generated.as_image.return_value = Image.new("RGB", (1200, 675), color=(232, 244, 240))
-        self.designer.client = MagicMock()
-        self.designer.client.models.generate_content.side_effect = [
-            MagicMock(parts=[generated]),
-            MagicMock(text='{"pass": false, "issues": ["cropped hand"]}'),
-            MagicMock(parts=[generated]),
-            MagicMock(text='{"pass": true, "issues": []}'),
-        ]
-
         out_path = Path(self.temp_dir.name) / "test_generated_editorial_retry.jpg"
-        self.designer._render_editorial_cover(
-            title="전입신고 온라인 신청과 세대주 확인",
-            keyword="전입신고 온라인 신청",
-            category_key="life-admin",
-            category_name="행정/생활서비스",
-            output_path=out_path,
-        )
-        self.assertEqual(self.designer.client.models.generate_content.call_count, 4)
-        retry_prompt = self.designer.client.models.generate_content.call_args_list[2].kwargs["contents"]
+        with patch.object(
+            self.designer, "_generated_scene",
+            return_value=Image.new("RGB", (1200, 675), color=(232, 244, 240))
+        ) as scene, patch.object(
+            self.designer, "_vision_review_cover",
+            side_effect=[(False, ["cropped hand"]), (True, [])],
+        ):
+            self.designer._render_editorial_cover(
+                title="전입신고 온라인 신청과 세대주 확인",
+                keyword="전입신고 온라인 신청",
+                category_key="life-admin",
+                category_name="행정/생활서비스",
+                output_path=out_path,
+            )
+        self.assertEqual(scene.call_count, 2)
+        retry_prompt = scene.call_args_list[1].args[0]
         self.assertIn("cropped hand", retry_prompt)
         self.assertTrue(out_path.exists())
         self.assertRegex(self.designer.last_review_evidence_sha256 or "", r"^[0-9a-f]{64}$")

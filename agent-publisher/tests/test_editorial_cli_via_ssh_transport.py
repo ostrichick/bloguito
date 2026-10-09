@@ -210,6 +210,50 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual(2, ssh_attempts)
         self.assertEqual(2, len([args for args in calls if 'tailscale' in args]))
 
+    def test_ssh_255_retry_shares_original_timeout_budget(self):
+        module = load_module()
+        seen_timeouts = []
+        attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal attempts
+            if 'ssh' in args:
+                attempts += 1
+                seen_timeouts.append(kwargs.get('timeout'))
+                code = 255 if attempts == 1 else 0
+                return subprocess.CompletedProcess(
+                    args, code, stdout='[]' if code == 0 else '', stderr='lost' if code else '')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
+        with patch.object(module.time, 'monotonic', side_effect=[100.0, 106.0]):
+            result = transport(
+                module._WP_PREFIX + module._LIST_ARGS,
+                capture_output=True, text=True, check=False, timeout=10)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual([10, 4.0], seen_timeouts)
+
+    def test_ssh_255_does_not_retry_after_timeout_budget_is_spent(self):
+        module = load_module()
+        attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal attempts
+            if 'ssh' in args:
+                attempts += 1
+                return subprocess.CompletedProcess(args, 255, stdout='', stderr='lost')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('draft-standard', {463}, 'bloguito')
+        with patch.object(module.time, 'monotonic', side_effect=[100.0, 111.0]):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                transport(
+                    module._WP_PREFIX + module._LIST_ARGS,
+                    capture_output=True, text=True, check=False, timeout=10)
+        self.assertEqual(1, attempts)
+
     def test_prepare_draft_create_255_is_not_retried(self):
         module = load_module()
         calls = []
@@ -575,25 +619,45 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'update', '463', '--post_status=publish', '--allow-root'])
 
-        transport(
+    def test_remote_publish_gate_attestation_record_and_validate_still_allowed(self):
+        module = load_module()
+        calls = []
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return subprocess.CompletedProcess(argv, 0, stdout='{"status":"ok"}', stderr='')
+        module._RUN = fake_run
+        image_action = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        payload = {
+            'protocol': 1, 'post_id': 463,
+            'content_sha256': 'a' * 64, 'review_digest': 'b' * 64,
+            'title_sha256': 'c' * 64, 'thumbnail_id': 777,
+            'image_sha256': 'd' * 64, 'alt_text_sha256': 'e' * 64,
+            'approval_kind': 'manual_user_selected',
+            'approval_evidence_sha256': 'f' * 64,
+            'expires_at_gmt': '2026-12-31T00:00:00Z',
+            'requires_live_state': False,
+        }
+        image_action(
+            module._WP_PREFIX + ['eval', module.PUBLISH_GATE_RECORD_SCRIPT, '--allow-root'],
+            input=json.dumps(payload), text=True, capture_output=True)
+        self.assertEqual(1, len(calls))
+        with self.assertRaisesRegex(ValueError, 'invalid_publish_attestation_payload'):
+            image_action(
+                module._WP_PREFIX + ['eval', module.PUBLISH_GATE_RECORD_SCRIPT, '--allow-root'],
+                input=json.dumps({**payload, 'image_sha256': 'invalid'}), text=True)
+        promote = module.make_transport('promote-draft', {463}, 'bloguito')
+        promote(
             module._WP_PREFIX + ['eval', module.PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root'],
             input=json.dumps({
-                'protocol': 1,
-                'post_id': 463,
-                'expected_review_digest': 'a' * 64,
-            }),
-            text=True,
-        )
+                'protocol': 1, 'post_id': 463, 'expected_review_digest': 'b' * 64,
+            }), text=True)
+        self.assertEqual(2, len(calls))
         with self.assertRaisesRegex(ValueError, 'invalid_publish_attestation_validate_payload'):
-            transport(
+            promote(
                 module._WP_PREFIX + ['eval', module.PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root'],
                 input=json.dumps({
-                    'protocol': 1,
-                    'post_id': 463,
-                    'expected_review_digest': 'not-a-digest',
-                }),
-                text=True,
-            )
+                    'protocol': 1, 'post_id': 463, 'expected_review_digest': 'bad',
+                }), text=True)
 
     def test_publish_learns_created_id_and_allows_saved_content_read(self):
         module = load_module()
@@ -620,6 +684,11 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'get', '901', '--fields=post_status,post_content', '--format=json', '--allow-root'],
+            capture_output=True, text=True, check=True)
+        transport(module._WP_PREFIX + [
+            'post', 'get', '901',
+            '--fields=post_status,post_title,post_name,post_content,post_excerpt',
+            '--format=json', '--allow-root'],
             capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'meta', 'set', '901', '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'])
@@ -718,6 +787,23 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'post', 'term', 'list', '649', 'category',
                 '--fields=term_id,name,slug', '--format=json', '--allow-root'])
 
+    def test_exact_848_legacy_draft_allows_thumbnail_baseline_read_only(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout='850\n', stderr='')
+        transport = module.make_transport('draft-standard', {848}, 'bloguito')
+        response = transport(module._WP_PREFIX + [
+            'post', 'meta', 'get', '848', '_thumbnail_id', '--allow-root'],
+            capture_output=True, text=True, check=False)
+        self.assertEqual('850\n', response.stdout)
+        for post_id, key in ((849, '_thumbnail_id'), (848, '_wp_attachment_image_alt'),
+                             (848, 'rank_math_seo_score')):
+            with self.subTest(post_id=post_id, key=key):
+                with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+                    transport(module._WP_PREFIX + [
+                        'post', 'meta', 'get', str(post_id), key, '--allow-root'],
+                        capture_output=True, text=True, check=False)
+
     def test_draft_standard_allows_read_only_category_binding(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
@@ -731,7 +817,7 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'post', 'term', 'list', '666', 'category',
                 '--fields=term_id,name,slug', '--format=json', '--allow-root'])
 
-    def test_prepare_draft_can_create_then_attach_and_attest_selected_image(self):
+    def test_prepare_draft_uses_hardened_featured_image_contract_and_rejects_legacy_import(self):
         module = load_module()
         calls = []
 
@@ -740,8 +826,27 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             remote = args[-1]
             if ' wp post create ' in remote:
                 return subprocess.CompletedProcess(args, 0, stdout='901\n', stderr='')
+            if module.FEATURED_IMAGE_LOCK_SCRIPT in remote:
+                raw = kwargs.get('input')
+                raw = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+                payload = json.loads(raw)
+                status = 'acquired' if payload['action'] == 'acquire' else 'released'
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps({
+                    'status': status, 'expires_at': 9999999999,
+                }), stderr='')
             if ' wp media import ' in remote:
                 return subprocess.CompletedProcess(args, 0, stdout='777\n', stderr='')
+            if module.ATTACHMENT_SHA_LOOKUP_SCRIPT in remote:
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps({
+                    'status': 'ok', 'attachment_ids': [777],
+                }), stderr='')
+            if module.GUARDED_THUMBNAIL_MUTATION_SCRIPT in remote:
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps({
+                    'status': 'ok', 'saved': {
+                        'post_status': 'draft', 'post_title': 'title', 'post_name': '',
+                        'post_content': 'body', 'post_excerpt': 'summary',
+                    }, 'thumbnail_id': '777',
+                }), stderr='')
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
         module._RUN = fake_run
@@ -760,48 +865,51 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'wordpress_app:/tmp/editorial_cover_901.jpg'],
                 capture_output=True, check=True)
 
+        transport([
+            'sudo', 'docker', 'exec', 'wordpress_app', 'sha256sum',
+            '/tmp/editorial_cover_901.jpg'], capture_output=True, text=True, check=True)
+        token = 'a' * 32
+        transport(module._WP_PREFIX + [
+            'eval', module.FEATURED_IMAGE_LOCK_SCRIPT, '--allow-root'],
+            input=json.dumps({
+                'protocol': 1, 'post_id': 901, 'action': 'acquire',
+                'token': token, 'ttl_seconds': 300,
+            }), text=True, capture_output=True, check=True)
         transport(module._WP_PREFIX + [
             'media', 'import', '/tmp/editorial_cover_901.jpg', '--post_id=901',
-            '--title=title', '--alt=reviewed alt', '--porcelain', '--allow-root'],
+            '--title=title', '--alt=alt', '--porcelain', '--allow-root'],
             capture_output=True, text=True, check=True)
-        expected = {
-            'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
-            'post_excerpt': 'summary', 'content_sha256': '0' * 64,
-        }
+        transport(module._WP_PREFIX + [
+            'eval', module.ATTACHMENT_SHA_LOOKUP_SCRIPT, '--allow-root'],
+            input=json.dumps({'protocol': 1, 'post_id': 901, 'sha256': 'b' * 64}),
+            capture_output=True, text=True, check=True)
         transport(
             module._WP_PREFIX + ['eval', module.GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root'],
             input=json.dumps({
-                'protocol': 1, 'post_id': 901, 'expected': expected,
+                'protocol': 1, 'post_id': 901,
+                'expected': {
+                    'post_status': 'draft', 'post_title': 'title', 'post_name': '',
+                    'post_excerpt': 'summary', 'content_sha256': '0' * 64,
+                },
                 'expected_thumbnail_id': None, 'attachment_id': 777,
-            }), text=True)
+            }), text=True, capture_output=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
             '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
             'post', 'meta', 'get', '777', '_wp_attachment_image_alt', '--allow-root'],
             capture_output=True, text=True, check=False)
-        transport(
-            module._WP_PREFIX + ['eval', module.PUBLISH_GATE_RECORD_SCRIPT, '--allow-root'],
+        transport(module._WP_PREFIX + [
+            'eval', module.FEATURED_IMAGE_LOCK_SCRIPT, '--allow-root'],
             input=json.dumps({
-                'protocol': 1,
-                'post_id': 901,
-                'content_sha256': '0' * 64,
-                'review_digest': '1' * 64,
-                'title_sha256': '2' * 64,
-                'thumbnail_id': 777,
-                'image_sha256': '3' * 64,
-                'alt_text_sha256': '4' * 64,
-                'approval_kind': 'manual_user_selected',
-                'approval_evidence_sha256': '5' * 64,
-                'expires_at_gmt': '2026-10-08T00:00:00Z',
-                'requires_live_state': False,
-            }), text=True)
+                'protocol': 1, 'post_id': 901, 'action': 'release',
+                'token': token, 'ttl_seconds': 0,
+            }), text=True, capture_output=True, check=True)
 
         with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
             transport(module._WP_PREFIX + [
-                'media', 'import', '/tmp/editorial_cover_902.jpg', '--post_id=902',
-                '--title=title', '--alt=reviewed alt', '--porcelain', '--allow-root'],
-                capture_output=True, text=True, check=True)
+                'media', 'import', '/tmp/editorial_cover_901.jpg', '--post_id=901',
+                '--featured_image', '--allow-root'], capture_output=True, check=True)
 
         self.assertTrue(any(b'image' == kwargs.get('input') for _, kwargs in calls))
 
@@ -840,6 +948,9 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport([
                 'sudo', 'docker', 'cp', str(source),
                 'wordpress_app:/tmp/editorial_cover_463.jpg'], capture_output=True, check=True)
+        transport([
+            'sudo', 'docker', 'exec', 'wordpress_app', 'sha256sum',
+            '/tmp/editorial_cover_463.jpg'], capture_output=True, text=True, check=True)
         transport(module._WP_PREFIX + [
             'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
             '--title=검토된 제목', '--alt=검토된 대체텍스트',
@@ -868,6 +979,56 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
                 '--featured_image', '--title=검토된 제목', '--alt=검토된 대체텍스트',
                 '--porcelain', '--allow-root'])
+
+    def test_tokenized_featured_image_temp_path_allowlist_is_post_scoped(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((list(args), dict(kwargs)))
+            stdout = '777\n' if ' wp media import ' in args[-1] else ''
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        token = 'a' * 32
+        matching = f'/tmp/editorial_cover_463_{token}.webp'
+        cross_post = f'/tmp/editorial_cover_464_{token}.webp'
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'cover.webp'
+            source.write_bytes(b'candidate-image')
+
+            def copy(path):
+                return ['sudo', 'docker', 'cp', str(source), f'wordpress_app:{path}']
+
+            def sha(path):
+                return ['sudo', 'docker', 'exec', 'wordpress_app', 'sha256sum', path]
+
+            def remove(path):
+                return ['sudo', 'docker', 'exec', 'wordpress_app', 'rm', '-f', path]
+
+            def media_import(path):
+                return module._WP_PREFIX + [
+                    'media', 'import', path, '--post_id=463',
+                    '--title=title', '--alt=alt', '--porcelain', '--allow-root']
+
+            for build in (copy, sha, remove, media_import):
+                with self.subTest(operation=build.__name__, case='matching'):
+                    result = transport(build(matching), capture_output=True, text=True, check=True)
+                    self.assertEqual(0, result.returncode)
+
+            self.assertEqual(4, len(calls))
+            for build, error in (
+                (copy, 'unexpected_docker_copy_during_draft_publish'),
+                (sha, 'unexpected_subprocess_command_during_editorial_ssh'),
+                (remove, 'unexpected_subprocess_command_during_editorial_ssh'),
+                (media_import, 'unexpected_wordpress_command'),
+            ):
+                with self.subTest(operation=build.__name__, case='cross_post'):
+                    with self.assertRaisesRegex(ValueError, error):
+                        transport(build(cross_post), capture_output=True, text=True, check=True)
+            self.assertEqual(4, len(calls), 'Rejected cross-post paths must not reach SSH')
 
     def test_replace_featured_image_accepts_published_target_snapshot(self):
         module = load_module()
@@ -928,6 +1089,82 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             transport(module._WP_PREFIX + [
                 'post', 'meta', 'update', '236', '_wp_attachment_image_alt', '우회', '--allow-root'])
 
+    def test_replace_featured_image_allows_exact_sha_attachment_lookup_and_readback(self):
+        module = load_module()
+
+        def fake_run(args, **kwargs):
+            remote = args[-1] if args else ''
+            if module.ATTACHMENT_SHA_LOOKUP_SCRIPT in remote:
+                return subprocess.CompletedProcess(
+                    args, 0,
+                    stdout=json.dumps({'status': 'ok', 'attachment_ids': [777]}),
+                    stderr='')
+            if ' wp post get 777 ' in remote:
+                return subprocess.CompletedProcess(args, 0, stdout='{}', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        image_sha = 'a' * 64
+        result = transport(
+            module._WP_PREFIX + ['eval', module.ATTACHMENT_SHA_LOOKUP_SCRIPT, '--allow-root'],
+            input=json.dumps({'protocol': 1, 'post_id': 463, 'sha256': image_sha}),
+            capture_output=True, text=True, check=True)
+        self.assertEqual([777], json.loads(result.stdout)['attachment_ids'])
+        transport(module._WP_PREFIX + [
+            'post', 'get', '777', '--fields=ID,guid,post_title,post_mime_type',
+            '--format=json', '--allow-root'], capture_output=True, text=True, check=True)
+
+    def test_featured_image_copy_retries_once_on_ssh_255_before_import(self):
+        module = load_module()
+        copy_attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal copy_attempts
+            remote = args[-1] if args else ''
+            if 'cat > /tmp/editorial_cover_463.jpg' in remote:
+                copy_attempts += 1
+                code = 255 if copy_attempts == 1 else 0
+                return subprocess.CompletedProcess(args, code, stdout='', stderr='lost response' if code else '')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'cover.jpg'
+            source.write_bytes(b'image')
+            result = transport([
+                'sudo', 'docker', 'cp', str(source),
+                'wordpress_app:/tmp/editorial_cover_463.jpg'], capture_output=True, check=False)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, copy_attempts)
+
+    def test_featured_image_copy_retries_once_on_timeout_with_shared_budget(self):
+        module = load_module()
+        copy_attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal copy_attempts
+            remote = args[-1] if args else ''
+            if 'cat > /tmp/editorial_cover_463.jpg' in remote:
+                copy_attempts += 1
+                if copy_attempts == 1:
+                    raise subprocess.TimeoutExpired(args, kwargs.get('timeout', 30))
+                return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'cover.jpg'
+            source.write_bytes(b'image')
+            result = transport([
+                'sudo', 'docker', 'cp', str(source),
+                'wordpress_app:/tmp/editorial_cover_463.jpg'],
+                capture_output=True, check=False, timeout=30)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, copy_attempts)
+
     def test_replace_featured_image_media_import_255_is_not_retried(self):
         module = load_module()
         ssh_attempts = 0
@@ -947,6 +1184,101 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
             '--porcelain', '--allow-root'], capture_output=True, text=True, check=False)
         self.assertEqual(255, result.returncode)
         self.assertEqual(1, ssh_attempts)
+
+    def test_replace_featured_image_media_import_timeout_is_not_retried(self):
+        module = load_module()
+        ssh_attempts = 0
+
+        def fake_run(args, **kwargs):
+            nonlocal ssh_attempts
+            if 'ssh' in args:
+                ssh_attempts += 1
+                raise subprocess.TimeoutExpired(args, kwargs.get('timeout', 90))
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        with self.assertRaises(subprocess.TimeoutExpired):
+            transport(module._WP_PREFIX + [
+                'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
+                '--title=검토된 제목', '--alt=대체텍스트',
+                '--porcelain', '--allow-root'],
+                capture_output=True, text=True, check=True, timeout=90)
+        self.assertEqual(1, ssh_attempts)
+
+    def test_featured_image_lock_255_replays_same_token_once(self):
+        module = load_module()
+        ssh_attempts = 0
+        seen_inputs = []
+
+        def fake_run(args, **kwargs):
+            nonlocal ssh_attempts
+            if 'ssh' in args:
+                ssh_attempts += 1
+                seen_inputs.append(kwargs.get('input'))
+                if ssh_attempts == 1:
+                    return subprocess.CompletedProcess(args, 255, stdout='', stderr='lost')
+                return subprocess.CompletedProcess(
+                    args, 0, stdout=json.dumps({'status': 'acquired', 'expires_at': 9999999999}), stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        payload = json.dumps({
+            'protocol': 1, 'post_id': 463, 'action': 'acquire',
+            'token': 'a' * 32, 'ttl_seconds': 300,
+        })
+        result = transport(
+            module._WP_PREFIX + ['eval', module.FEATURED_IMAGE_LOCK_SCRIPT, '--allow-root'],
+            input=payload, capture_output=True, text=True, check=False, timeout=15)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, ssh_attempts)
+        self.assertEqual(seen_inputs[0], seen_inputs[1])
+
+    def test_featured_image_lock_timeout_replays_same_token_once(self):
+        module = load_module()
+        ssh_attempts = 0
+        seen_inputs = []
+
+        def fake_run(args, **kwargs):
+            nonlocal ssh_attempts
+            if 'ssh' in args:
+                ssh_attempts += 1
+                seen_inputs.append(kwargs.get('input'))
+                if ssh_attempts == 1:
+                    raise subprocess.TimeoutExpired(args, kwargs.get('timeout', 15))
+                return subprocess.CompletedProcess(
+                    args, 0, stdout=json.dumps({'status': 'acquired', 'expires_at': 9999999999}), stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        payload = json.dumps({
+            'protocol': 1, 'post_id': 463, 'action': 'acquire',
+            'token': 'b' * 32, 'ttl_seconds': 300,
+        })
+        result = transport(
+            module._WP_PREFIX + ['eval', module.FEATURED_IMAGE_LOCK_SCRIPT, '--allow-root'],
+            input=payload, capture_output=True, text=True, check=False, timeout=15)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(2, ssh_attempts)
+        self.assertEqual(seen_inputs[0], seen_inputs[1])
+
+    def test_media_import_garbled_success_stdout_is_returned_for_domain_reconcile(self):
+        module = load_module()
+
+        def fake_run(args, **kwargs):
+            if 'ssh' in args:
+                return subprocess.CompletedProcess(args, 0, stdout='warning-only\n', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport('replace-featured-image', {463}, 'bloguito')
+        result = transport(module._WP_PREFIX + [
+            'media', 'import', '/tmp/editorial_cover_463.jpg', '--post_id=463',
+            '--title=검토된 제목', '--alt=대체텍스트', '--porcelain', '--allow-root'],
+            capture_output=True, text=True, check=True)
+        self.assertEqual('warning-only\n', result.stdout)
 
     def test_featured_image_import_accepts_utf8_bom_media_id(self):
         module = load_module()

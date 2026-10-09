@@ -35,6 +35,9 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                 "--alt-text",
                 "선풍기 배출 안내 대표 이미지",
                 "--confirm-image-selection",
+                "--candidate-manifest", str(root / "candidate-manifest.json"),
+                "--selected-candidate", "1",
+                "--selection-mode", "user",
                 "--output",
                 str(receipt_path),
             ]
@@ -42,6 +45,10 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.validate_bundle", return_value=READY) as validate, \
                     patch("editorial_cli.load_inventory") as load_inventory, \
                     patch("editorial_cli.EditorialWriterAgent.review", return_value=expected_review) as review, \
+                    patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
+                        "candidate_number": 1, "selection_mode": "user",
+                        "source_sha256": "a" * 64,
+                    }) as lineage, \
                     patch("agents.designer.cleanup_generated_cover") as cleanup, \
                     patch("agents.publisher.PublisherAgent.publish", return_value=901) as publish, \
                     patch("agents.featured_image.replace_featured_image_from_live_baseline", return_value={
@@ -60,6 +67,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
         publish.assert_called_once()
         self.assertNotIn("image_path", publish.call_args.kwargs)
         replace.assert_called_once()
+        lineage.assert_called_once()
         self.assertEqual(901, replace.call_args.args[0])
         self.assertEqual(image_path, replace.call_args.args[1])
         self.assertEqual("manual_user_selected", replace.call_args.kwargs["approval_kind"])

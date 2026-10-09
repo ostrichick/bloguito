@@ -131,10 +131,11 @@ class PublisherAgent:
                 str(post_id), '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'],
                 check=True, capture_output=True)
             actual = run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
-                '--fields=post_status,post_content', '--format=json', '--allow-root'], check=True,
+                '--fields=post_status,post_title,post_name,post_content,post_excerpt', '--format=json', '--allow-root'], check=True,
                 capture_output=True, text=True, encoding='utf-8', errors='strict')
             saved = json.loads(actual.stdout)
-            if saved['post_status'] != 'draft' or saved['post_content'] != content:
+            if (saved['post_status'] != 'draft' or saved['post_content'] != content
+                    or saved.get('post_title') != title or saved.get('post_excerpt', '') != excerpt):
                 raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
             self._record_post(post_id, title, category['id'], category['name'], status='draft',
                 expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})

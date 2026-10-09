@@ -8,7 +8,6 @@ import tempfile
 import urllib.request
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
-from config import GEMINI_API_KEY
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -87,9 +86,9 @@ DEFAULT_FEATURED_IMAGE_POLICY = {
     },
     "scheduled_generation": {
         "scheduler_only": True,
-        "provider": "gemini",
-        "default_model": "gemini-3.1-flash-image",
-        "image_size": "1K",
+        "provider": "chatgpt_image_gen",
+        "generation_enabled_in_unattended_server": False,
+        "on_unavailable": "block_publication_no_fallback",
         "max_generation_attempts": 2,
     },
     "visual_review": {
@@ -523,14 +522,11 @@ class DesignerAgent:
 
     def __init__(self, *, scheduler_context: bool = False):
         self.scheduler_context = bool(scheduler_context)
+        # ChatGPT image_gen is an interactive host tool, not the Gemini SDK.
+        # The server scheduler cannot call it; it must fail closed rather than
+        # silently switch generators for a newly created cover.
         self.client = None
         self.last_review_evidence_sha256: str | None = None
-        if self.scheduler_context and GEMINI_API_KEY:
-            try:
-                from google import genai
-                self.client = genai.Client(api_key=GEMINI_API_KEY)
-            except Exception as e:
-                print(f"[DesignerAgent] ⚠️ Gemini 초기화 실패: {e}")
 
     def select_mode(
         self,
@@ -557,30 +553,7 @@ class DesignerAgent:
         return int(canvas.get("width", 1200)), int(canvas.get("height", 675))
 
     def _generated_scene(self, prompt: str) -> Image.Image:
-        if not self.client:
-            raise RuntimeError("image generation client unavailable")
-        from google.genai import types
-
-        model = os.getenv(
-            "BLOGUITO_IMAGE_MODEL",
-            FEATURED_IMAGE_POLICY["scheduled_generation"].get("default_model", "gemini-3.1-flash-image"),
-        )
-        image_size = FEATURED_IMAGE_POLICY["scheduled_generation"].get("image_size", "1K")
-        result = self.client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(aspect_ratio="16:9", image_size=image_size),
-            ),
-        )
-        for part in getattr(result, "parts", None) or []:
-            if getattr(part, "inline_data", None) is None:
-                continue
-            image = part.as_image()
-            if image is not None:
-                return image.convert("RGB")
-        raise RuntimeError("image generation returned no image part")
+        raise RuntimeError("chatgpt_image_gen_required_unavailable_in_server_scheduler")
 
     def _vision_review_cover(
         self,

@@ -21,7 +21,11 @@ from agents.fast_edit import (
     validate_fast_edit,
     validate_prepared_delta_review,
 )
-from agents.featured_image import reconcile_featured_image_outcome, replace_featured_image
+from agents.featured_image import (
+    reconcile_featured_image_outcome,
+    recover_imported_featured_image_outcome,
+    replace_featured_image,
+)
 from agents.post_manifest_store import load_record, replace_record
 from agents.public_fast_edit import (
     classify_public_fast_edit,
@@ -619,6 +623,7 @@ def _edit_reviewed_public_post(
             state=state,
             update_state=update_task_state,
             reconcile_image=reconcile_featured_image_outcome,
+            recover_imported_image=recover_imported_featured_image_outcome,
             replace_image=replace_featured_image,
         )
         update_task_state(

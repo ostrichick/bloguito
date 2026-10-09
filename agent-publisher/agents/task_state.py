@@ -172,6 +172,22 @@ def _validate_after_image_steps(values) -> list[str]:
     return list(dict.fromkeys(steps))
 
 
+def _handle_file_sha256(handle: str) -> str | None:
+    """Bind a local selected image to bytes at checkpoint handoff time."""
+    path = Path(handle)
+    try:
+        if not path.is_file():
+            return None
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        # Virtual handles are valid before the ChatGPT image is saved locally.
+        return None
+
+
 def load_after_image_checkpoint(post_id: int, root: Path | None = None) -> dict[str, Any] | None:
     path = after_image_checkpoint_path(post_id, root)
     if not path.is_file():
@@ -187,14 +203,16 @@ def write_after_image_checkpoint(
     *,
     remaining_steps: list[str] | tuple[str, ...],
     expected_content_sha256: str,
-    expected_thumbnail_id: int,
+    expected_thumbnail_id: int | None,
     target_image_handle: str,
     completion_requirements: list[str] | tuple[str, ...],
     root: Path | None = None,
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
         raise ValueError("expected_content_sha256_required")
-    if type(expected_thumbnail_id) is not int or expected_thumbnail_id <= 0:
+    if expected_thumbnail_id is not None and (
+        type(expected_thumbnail_id) is not int or expected_thumbnail_id <= 0
+    ):
         raise ValueError("expected_thumbnail_id_required")
     remaining_steps = [str(step).strip() for step in remaining_steps if str(step).strip()]
     if not remaining_steps:
@@ -218,6 +236,7 @@ def write_after_image_checkpoint(
         "expected_content_sha256": expected_content_sha256,
         "expected_thumbnail_id": expected_thumbnail_id,
         "target_image_handle": target_image_handle,
+        "target_image_sha256": _handle_file_sha256(target_image_handle),
         "remaining_steps": remaining_steps,
         "completion_requirements": completion_requirements,
         "completed": {step: False for step in _AFTER_IMAGE_STEPS},
@@ -245,6 +264,7 @@ def update_after_image_checkpoint(
         if not target_image_handle or "\x00" in target_image_handle:
             raise ValueError("after_image_target_handle_required")
         payload["target_image_handle"] = target_image_handle
+        payload["target_image_sha256"] = _handle_file_sha256(target_image_handle)
     if result:
         payload["result"].update(deepcopy(result))
     missing = [
@@ -500,9 +520,17 @@ def fail_task_state(
     error_type = type(error).__name__ if isinstance(error, BaseException) else "TaskError"
     message = str(error)
     code = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", message.strip())[:160] or "unknown_error"
+    error_payload: dict[str, Any] = {"type": error_type, "code": code}
+    if isinstance(error, BaseException):
+        receipt = getattr(error, "failure_receipt", None)
+        stage = getattr(error, "failure_stage", None)
+        if isinstance(receipt, str) and receipt:
+            error_payload["failure_receipt"] = receipt
+        if isinstance(stage, str) and stage:
+            error_payload["failure_stage"] = stage
     return update_task_state(
         post_id,
         status="blocked" if blocked else "failed",
-        error={"type": error_type, "code": code},
+        error=error_payload,
         root=root,
     )

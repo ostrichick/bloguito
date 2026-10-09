@@ -1,14 +1,17 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agents.wordpress_mutation import (
+    FEATURED_IMAGE_LOCK_SCRIPT,
     GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT,
     GUARDED_CATEGORY_MUTATION_SCRIPT,
     GUARDED_POST_MUTATION_SCRIPT,
     GUARDED_THUMBNAIL_MUTATION_SCRIPT,
+    acquire_featured_image_lock,
     backup_json,
     content_sha256,
     get_post,
@@ -16,6 +19,8 @@ from agents.wordpress_mutation import (
     guarded_set_post_thumbnail,
     guarded_update_featured_image_alt,
     guarded_update_post,
+    release_featured_image_lock,
+    set_featured_image_import_pending,
     verify_cas,
     verify_saved_fields,
 )
@@ -33,18 +38,113 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
             self.assertIn('ROLLBACK', script)
             self.assertIn('COMMIT', script)
         self.assertIn('$wpdb->posts', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('_bloguito_publish_gate_v1', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('bloguito_validate_publishability', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('bloguito_validate_publishability($id,null,null,true)', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('bloguito_guarded_publish_post_id', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('_wp_attachment_image_alt', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('_wp_attached_file', GUARDED_POST_MUTATION_SCRIPT)
-        self.assertIn('wp_cache_delete($thumb_id,"post_meta")', GUARDED_POST_MUTATION_SCRIPT)
         self.assertIn('$wpdb->term_relationships', GUARDED_CATEGORY_MUTATION_SCRIPT)
         self.assertIn('wp_attachment_is_image', GUARDED_THUMBNAIL_MUTATION_SCRIPT)
         self.assertIn('$wpdb->postmeta', GUARDED_THUMBNAIL_MUTATION_SCRIPT)
         self.assertIn('_wp_attachment_image_alt', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT)
         self.assertIn('wp_attachment_is_image', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT)
+        self.assertIn('START TRANSACTION', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('FOR UPDATE', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('add_option', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('transaction_failed', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('AND option_value=%s', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('$expires>=$now', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('import_pending', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('import_already_marked', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('import_pending', FEATURED_IMAGE_LOCK_SCRIPT)
+
+    def test_featured_image_lock_acquire_is_single_shot_and_token_bound(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+
+        def run(args, **kwargs):
+            payload = json.loads(kwargs['input'])
+            self.assertEqual('acquire', payload['action'])
+            self.assertEqual(641, payload['post_id'])
+            self.assertEqual(300, payload['ttl_seconds'])
+            self.assertRegex(payload['token'], r'^[A-Za-z0-9_-]{16,128}$')
+            return Mock(stdout=json.dumps({
+                'status': 'acquired', 'expires_at': 9999999999, 'stale_replaced': False,
+            }))
+
+        with patch('agents.wordpress_mutation.run_wordpress', side_effect=run) as runner:
+            lock = acquire_featured_image_lock(base, 641, timeout=15)
+        self.assertEqual(1, runner.call_count)
+        self.assertEqual(9999999999, lock['expires_at'])
+        self.assertEqual(15, runner.call_args.kwargs['timeout'])
+
+    def test_featured_image_lock_busy_fails_without_polling(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'busy', 'expires_at': 9999999999}))) as runner:
+            with self.assertRaisesRegex(ValueError, 'featured_image_remote_lock_busy'):
+                acquire_featured_image_lock(base, 641)
+        runner.assert_called_once()
+
+    def test_featured_image_lock_preserves_token_on_ambiguous_transport_failure(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        failure = subprocess.TimeoutExpired(['ssh', 'bloguito'], 15)
+        with patch('agents.wordpress_mutation.run_wordpress', side_effect=failure) as runner:
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                acquire_featured_image_lock(base, 641, timeout=15)
+        runner.assert_called_once()
+        self.assertRegex(
+            getattr(raised.exception, 'featured_image_lock_token', ''),
+            r'^[A-Za-z0-9_-]{16,128}$',
+        )
+
+    def test_featured_image_lock_preserves_token_on_committed_acquire_with_bad_stdout(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(stdout='partial-json{')) as runner:
+            with self.assertRaises(json.JSONDecodeError) as raised:
+                acquire_featured_image_lock(base, 641, timeout=15)
+        sent = json.loads(runner.call_args.kwargs['input'])
+        self.assertEqual(sent['token'], raised.exception.featured_image_lock_token)
+
+    def test_featured_image_lock_release_requires_exact_owner_token(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        token = 'a' * 32
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'released'}))) as runner:
+            release_featured_image_lock(base, 641, token, timeout=12)
+        payload = json.loads(runner.call_args.kwargs['input'])
+        self.assertEqual({
+            'protocol': 1, 'post_id': 641, 'action': 'release',
+            'token': token, 'ttl_seconds': 0,
+        }, payload)
+        self.assertEqual(12, runner.call_args.kwargs['timeout'])
+
+    def test_remote_import_fence_requires_exact_token_and_is_not_replay_grant(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        token = 'a' * 32
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'import_marked'}))) as runner:
+            set_featured_image_import_pending(base, 641, token, pending=True, timeout=15)
+        payload = json.loads(runner.call_args.kwargs['input'])
+        self.assertEqual('mark_import', payload['action'])
+        self.assertEqual(token, payload['token'])
+        self.assertEqual(0, payload['ttl_seconds'])
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'import_already_marked'}))) as runner:
+            with self.assertRaisesRegex(ValueError, 'featured_image_import_fence_failed'):
+                set_featured_image_import_pending(base, 641, token, pending=True)
+        runner.assert_called_once()
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'import_completed'}))) as runner:
+            set_featured_image_import_pending(base, 641, token, pending=False)
+        self.assertEqual('complete_import', json.loads(runner.call_args.kwargs['input'])['action'])
+
+    def test_expired_worker_lease_pending_import_rejects_other_owner(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'busy', 'expires_at': 1, 'import_pending': True}))) as runner:
+            with self.assertRaisesRegex(ValueError, 'featured_image_remote_import_pending'):
+                acquire_featured_image_lock(base, 641)
+        runner.assert_called_once()
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'import_pending'}))) as runner:
+            with self.assertRaisesRegex(ValueError, 'featured_image_remote_import_pending'):
+                release_featured_image_lock(base, 641, 'b' * 32)
+        runner.assert_called_once()
 
     def test_get_builds_expected_wp_cli_command(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
@@ -189,24 +289,6 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertEqual('publish', result['post_status'])
         payload = json.loads(run.call_args.kwargs['input'])
         self.assertEqual({'post_status': 'publish'}, payload['updates'])
-
-    def test_guarded_publish_surfaces_wordpress_publish_gate_block(self):
-        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
-        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
-                stdout=json.dumps({
-                    'status': 'publish_gate_blocked',
-                    'code': 'bloguito_publish_gate_image_changed',
-                }))):
-            with self.assertRaisesRegex(
-                    ValueError, 'publication_gate_blocked:bloguito_publish_gate_image_changed'):
-                guarded_update_post(
-                    base, 7,
-                    expected={
-                        'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
-                        'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
-                    },
-                    updates={'post_status': 'publish'},
-                )
 
     def test_guarded_update_can_bind_canonical_category_to_content_cas(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']

@@ -104,8 +104,25 @@ def _main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
     parser.add_argument('--image-path', type=Path,
-                        help='prepare-draft/replace-featured-image: selected reviewed local representative image; Gemini cover generation is scheduler-only')
+                        help='selected staged ChatGPT image_gen cover with sealed candidate provenance')
+    parser.add_argument('--candidate-manifest', type=Path,
+                        help='sealed ChatGPT image_gen/save_image candidate manifest')
+    parser.add_argument('--selected-candidate', type=int,
+                        help='1-based candidate number selected in the manifest')
+    parser.add_argument('--selection-mode', choices=['user', 'agent-delegated'],
+                        help='explicit user selection or delegated choice')
     args = parser.parse_args()
+
+    image_lineage = None
+    if args.action in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
+        if args.image_path:
+            from agents.featured_image import verify_manual_image_upload_lineage
+            image_lineage = verify_manual_image_upload_lineage(
+                args.image_path, args.candidate_manifest,
+                args.selected_candidate, args.selection_mode,
+            )
+        elif args.candidate_manifest or args.selected_candidate is not None or args.selection_mode:
+            parser.error('candidate selection flags require --image-path')
 
     if args.media_metadata_file and args.action != 'import-section-image':
         parser.error('--media-metadata-file is only valid for import-section-image')
@@ -261,6 +278,9 @@ def _main():
                 'post_id': args.post_id,
                 'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
                 'selection_confirmed': True,
+                'candidate_number': image_lineage['candidate_number'],
+                'selection_mode': image_lineage['selection_mode'],
+                'source_sha256': image_lineage['source_sha256'],
             })
             result = replace_featured_image_from_live_baseline(
                 args.post_id,
@@ -442,6 +462,9 @@ def _main():
                 'image_sha256': hashlib.sha256(image_path.read_bytes()).hexdigest(),
                 'review_digest': data.get('review', {}).get('digest'),
                 'selection_confirmed': True,
+                'candidate_number': image_lineage['candidate_number'],
+                'selection_mode': image_lineage['selection_mode'],
+                'source_sha256': image_lineage['source_sha256'],
             })
             image_result = replace_featured_image_from_live_baseline(
                 int(post_id),

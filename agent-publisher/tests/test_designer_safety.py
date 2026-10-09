@@ -26,6 +26,22 @@ class DesignerSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "scheduler_only"):
             manual.generate_image("수동 글", "행정/생활서비스", "수동")
 
+    def test_unattended_scheduler_cannot_substitute_gemini_for_chatgpt_image_gen(self):
+        self.assertIsNone(self.designer.client)
+        with self.assertRaisesRegex(
+            RuntimeError, "chatgpt_image_gen_required_unavailable_in_server_scheduler"
+        ):
+            self.designer._generated_scene("2026 국민내일배움카드 대표이미지")
+
+    def test_scheduler_review_evidence_contract_survives_provider_removal(self):
+        self.assertIsNone(self.designer.last_review_evidence_sha256)
+        with patch.object(self.designer, "_generated_scene", return_value=Image.new("RGB", (1200, 675), "white")), \
+             patch.object(self.designer, "_vision_review_cover", return_value=(True, [])):
+            self.designer.generate_image("대표이미지 증빙 시험", "생활", "증빙")
+        digest = self.designer.last_review_evidence_sha256
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(64, len(digest))
+
     def capture_text(self, render):
         drawn = []
         original = ImageDraw.ImageDraw.text

@@ -82,6 +82,7 @@ def run_combined_image_phase(
     state: dict | None,
     update_state: Callable[..., object],
     reconcile_image: Callable[..., dict],
+    recover_imported_image: Callable[..., dict | None],
     replace_image: Callable[..., dict],
 ) -> dict | None:
     """Run the identical image continuation/checkpoint phase after content save."""
@@ -97,8 +98,43 @@ def run_combined_image_phase(
     if checkpoint and checkpoint.get("attachment_id"):
         image_result = reconcile_image(post_id, checkpoint, alt_text)
     else:
+        import_attempt = (
+            ((state or {}).get("checkpoints") or {}).get("image_import_attempt")
+            if resume else None
+        )
+        if import_attempt and import_attempt.get("started"):
+            # The pending remote import must belong to the exact image and
+            # thumbnail baseline being resumed. Do not reconcile a stale
+            # attempt against another selected file.
+            if (
+                import_attempt.get("image_sha256") != hashlib.sha256(image_path.read_bytes()).hexdigest()
+                or import_attempt.get("expected_thumbnail_id") != expected_thumbnail_id
+            ):
+                raise ValueError("resume_image_import_artifact_conflict")
+            image_result = recover_imported_image(
+                post_id,
+                image_sha256=import_attempt.get("image_sha256"),
+                expected_content_sha256=desired_content_sha256,
+                expected_thumbnail_id=expected_thumbnail_id,
+                alt_text=alt_text,
+                preexisting_attachment_ids=import_attempt.get("preexisting_attachment_ids"),
+                lock_token=import_attempt.get("lock_token"),
+            )
+            if image_result is None:
+                raise ValueError("featured_image_import_outcome_ambiguous")
+            update_state(post_id, checkpoints={"image_outcome": image_result})
+            update_state(
+                post_id,
+                completed=["image_saved"],
+                result={"image_phase": image_result},
+            )
+            return image_result
+
         def image_checkpoint(payload):
             update_state(post_id, checkpoints={"image_outcome": payload})
+
+        def import_attempt_checkpoint(payload):
+            update_state(post_id, checkpoints={"image_import_attempt": payload})
 
         image_result = replace_image(
             post_id,
@@ -109,6 +145,7 @@ def run_combined_image_phase(
             confirmed=True,
             manage_task_state=False,
             outcome_callback=image_checkpoint,
+            import_attempt_callback=import_attempt_checkpoint,
         )
     update_state(
         post_id,

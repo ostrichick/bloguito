@@ -22,6 +22,8 @@ WordPress mutation은 대상 Post ID와 현재 상태를 읽고, 저장 직전 C
 
 대표이미지 전용 교체는 본문 editorial source/review 경로를 열지 않는다. 현재 본문 SHA와 `_thumbnail_id`를 읽고 이미지 파일을 검증한 뒤 media import, thumbnail 확인, attachment/ALT 확인, 본문 SHA·제목·slug·상태·발췌문 보존을 readback한다. media import는 비멱등이므로 결과가 불명확한 실패에서 자동 재import하지 않는다. 이미지 생성이 포함된 복합 작업은 생성만으로 완료 처리하지 않으며, 필요한 경우 `AFTER_IMAGE` 체크포인트로 후속 업로드·지정·readback을 이어간다.
 
+**대표이미지 생성 MUST/CAN/MAY:** 새 대표이미지는 반드시 ChatGPT `image_gen.text2im` 도구로 만든다(MUST). 후보는 별도 지시가 없을 때 5개가 기본값이며 사용자 지정 수량을 우선한다(CAN). 사용자가 직접 선택하거나 명시적으로 선택을 위임한 에이전트가 고를 수 있다(MAY). ChatGPT 원본 저장·SHA 봉인·선택 후보 staging·업로드·readback 중 어느 단계든 실패하면 로컬 그림, Gemini, 스크린샷 등의 대체 경로를 사용하지 않는다. 수동 이미지 포함 CLI는 manifest/선택 번호/선택 주체/staging receipt 없이는 업로드를 차단한다. 자동 스케줄러에도 Gemini 생성 예외는 없다. 세부 계약은 `docs/FEATURED_IMAGE_STANDARD.md`를 따른다.
+
 ## 검증 범위
 
 콘텐츠 한 건을 수정했다는 이유만으로 Python unit/regression suite를 실행하지 않는다. 콘텐츠 무결성은 해당 bundle의 결정론 검사, 필요한 source/review, CAS, backup, readback으로 검증한다. 브라우저 QA는 레이아웃·접근성 또는 CTA 동작처럼 실제 렌더/행동 확인이 필요한 변경에만 요구한다. 단순 문구·메타·대표이미지 교체는 결정론적 readback으로 끝낸다.
@@ -43,5 +45,13 @@ WordPress mutation은 대상 Post ID와 현재 상태를 읽고, 저장 직전 C
 ## 원격 실행과 완료 보고
 
 운영 WordPress 작업의 기본 transport는 Direct SSH `ssh bloguito`다. Tailscale은 Direct SSH로 처리할 수 없는 서버 관리·복구 상황에서만 명시적으로 선택한다. 로컬 코드·원고·테스트·공개 웹 QA에 Tailscale 상태 확인을 선행하지 않는다.
+
+**복합 작업은 전 항목 완료가 원칙이다.** 사용자가 이미지 생성과 업로드·대표이미지 교체·검증 등 여러 작업을 함께 요청했다면 이미지 생성만 수행한 채 작업을 종료하거나 전체 완료로 보고하지 않는다. 생성된 원본을 저장하고 필요한 후속 작업을 모두 실행하며, WordPress 작업은 readback까지 확인한다. 진행 중 상태 공유는 가능하지만 완료 보고는 요청된 전체 작업의 성공 여부를 확인한 뒤에 한다. 불가피한 blocker가 있으면 완료로 표현하지 않고 완료 항목·미완료 항목·실제 실패 원인을 구분한다.
+
+**CoS/SSH 연결 실패는 복구 시도가 먼저다.** CoS 또는 SSH 도구가 보이지 않거나 호출에 실패했다는 이유만으로 즉시 작업 불가를 선언하지 않는다. 우선 해당 도구를 다시 검색·호출하고, 접근 권한/세션/연결 상태와 재접속 가능한 경로를 점검하여 실제 복구를 시도한다. 복구에 성공하면 원래 작업을 끝까지 계속한다. 복구 시도 뒤에도 접속할 수 없는 경우에만 수행한 복구 단계와 관측된 오류, 미완료 작업을 명시하여 보고한다. 시도하지 않은 복구를 했다고 주장하지 않는다.
+
+**이미지+업로드 연속 작업 진입:** 기존 post에 **한 개 후보의 즉시 업로드/에이전트 선택이 허용된** 새 대표이미지를 만들 때 `scripts/featured_image_followthrough.py begin --post-id ID`로 CoS/SSH 접근과 WordPress 기준 상태, `AFTER_IMAGE`를 **image_gen 호출 이전**에 확인·기록한다. 이미지 생성 직후 같은 대화의 CoS Core `save_image`로 원본을 저장하고 `featured_image_followthrough.py continue --post-id ID --source <저장원본> --alt-text <설명>`을 실행한다. 마지막 `status --post-id ID`가 `wordpress_verified=true`인지 확인하기 전에는 요청 전체를 완료로 답하지 않는다. 도구가 턴을 종료시켜 즉시 후속 실행이 불가능한 경우, 남은 작업을 완료로 주장하지 않고 체크포인트에서 재개한다. 선택 절차/다중 후보/안전 계약은 `docs/FEATURED_IMAGE_STANDARD.md`가 우선한다.
+
+**도구 부재 판단의 증거:** CoS는 현재 도구 목록/코드 모드에서 Core 함수를 찾아 실제 `read` 또는 `exec_command` 호출까지 시도한다. SSH는 CoS `exec_command`로 `ssh -o BatchMode=yes -o ConnectTimeout=8 bloguito 'echo BLOGUITO_SSH_OK'` 등 읽기 전용 호출을 실행한다. 실패하면 도구 재탐색·세션/접속 경로 점검 및 가능한 한 번의 안전한 재시도를 기록한다. `image_gen`은 ChatGPT 호스트 제공 도구이므로 실제 도구 노출/호출 가능 여부를 확인하며, **로컬 Python 또는 CoS가 이미지 생성 도구 자체를 강제로 활성화할 수 있다고 주장하지 않는다.** 호출 가능한 도구가 없으면 접근 가능한 대체 연결·UI 활성화 경로를 점검하고 한계와 시도 결과를 보고한다. **실제 호출 없이** '도구가 없다/활성화 불가능하다'고 단정하지 않는다. 호스트 도구 호출 성공/실패는 로컬 CLI의 자가 신고보다 실제 호출 로그를 우선한다.
 
 작업 종료에는 대상, 실제 변경, 공개 상태, 적용한 source/review/CAS/readback/QA 범위, 남은 blocker만 보고한다. 같은 기능의 기존 작업 기록이 있으면 그 문서에 후속 이력을 추가한다. 문서 역할은 `docs/INDEX.md`, 명령·복구·배포 상세는 `docs/OPERATIONS.md`를 따른다.

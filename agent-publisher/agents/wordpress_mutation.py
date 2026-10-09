@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
+import uuid
 from agents.wordpress_transport import run_wordpress
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +19,7 @@ GUARDED_POST_MUTATION_PROTOCOL = 1
 GUARDED_CATEGORY_MUTATION_PROTOCOL = 1
 GUARDED_THUMBNAIL_MUTATION_PROTOCOL = 1
 GUARDED_ATTACHMENT_ALT_MUTATION_PROTOCOL = 1
+FEATURED_IMAGE_LOCK_PROTOCOL = 1
 GUARDED_POST_META_KEYS = (
     "rank_math_focus_keyword",
     "rank_math_title",
@@ -31,6 +34,85 @@ POST_THUMBNAIL_SNAPSHOT_SCRIPT = (
     '$thumb=metadata_exists("post",$post->ID,"_thumbnail_id")'
     '?(string)get_post_meta($post->ID,"_thumbnail_id",true):null;'
     'echo wp_json_encode(["post"=>$row,"thumbnail_id"=>$thumb],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);'
+)
+
+
+ATTACHMENT_SHA_LOOKUP_SCRIPT = (
+    '$p=json_decode(file_get_contents("php://stdin"),true);'
+    '$emit=function($v){echo wp_json_encode($v,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);};'
+    'if(!is_array($p)||($p["protocol"]??null)!==1||empty($p["post_id"])||empty($p["sha256"]))'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$id=(int)$p["post_id"];$sha=strtolower((string)$p["sha256"]);'
+    'if(!preg_match("/^[0-9a-f]{64}$/",$sha)){$emit(["status"=>"invalid_payload"]);return;}'
+    '$ids=get_posts(["post_type"=>"attachment","post_parent"=>$id,"post_status"=>"inherit",'
+    '"posts_per_page"=>-1,"fields"=>"ids","orderby"=>"ID","order"=>"DESC"]);'
+    '$matches=[];foreach($ids as $aid){$aid=(int)$aid;if(!wp_attachment_is_image($aid)){continue;}'
+    '$file=get_attached_file($aid);if(!is_string($file)||!is_file($file)){continue;}'
+    '$observed=hash_file("sha256",$file);'
+    'if(is_string($observed)&&hash_equals($sha,strtolower($observed))){$matches[]=$aid;}}'
+    '$emit(["status"=>"ok","attachment_ids"=>$matches]);'
+)
+
+
+FEATURED_IMAGE_LOCK_SCRIPT = (
+    '$raw=file_get_contents("php://stdin");$p=json_decode($raw,true);'
+    '$emit=function($v){echo wp_json_encode($v,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);};'
+    'if(!is_array($p)||($p["protocol"]??null)!==1||empty($p["post_id"])'
+    '||!isset($p["action"])||!isset($p["token"])||!is_string($p["token"])'
+    '||!preg_match("/^[A-Za-z0-9_-]{16,128}$/",$p["token"]))'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$id=(int)$p["post_id"];$action=(string)$p["action"];$token=(string)$p["token"];'
+    '$ttl=(int)($p["ttl_seconds"]??0);'
+    'if($id<=0||!in_array($action,["acquire","release","mark_import","complete_import"],true)'
+    '||($action==="acquire"&&($ttl<30||$ttl>900)))'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$name="_bloguito_featured_image_lock_".$id;$now=time();global $wpdb;'
+    'if($action==="acquire"){'
+    '$new=wp_json_encode(["token"=>$token,"expires_at"=>$now+$ttl,"import_pending"=>false,"import_phase"=>"reserved"]);'
+    'if(add_option($name,$new,"","no")){$emit(["status"=>"acquired","expires_at"=>$now+$ttl,"stale_replaced"=>false]);return;}'
+    'if($wpdb->query("START TRANSACTION")===false){$emit(["status"=>"transaction_failed"]);return;}'
+    '$row=$wpdb->get_row($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name=%s FOR UPDATE",$name),ARRAY_A);'
+    'if(!$row){$wpdb->query("ROLLBACK");$emit(["status"=>"busy","code"=>"lock_race"]);return;}'
+    '$observed=(string)$row["option_value"];$cur=json_decode($observed,true);'
+    '$expires=is_array($cur)?(int)($cur["expires_at"]??0):0;'
+    '$pending=is_array($cur)&&($cur["import_pending"]??false)===true;'
+    'if(is_array($cur)&&hash_equals((string)($cur["token"]??""),$token)&&($expires>=$now||$pending))'
+    '{$wpdb->query("ROLLBACK");'
+    '$emit(["status"=>"acquired","expires_at"=>$expires,"reentrant"=>true,"stale_replaced"=>false]);return;}'
+    'if($pending||$expires>=$now){$wpdb->query("ROLLBACK");$emit(["status"=>"busy","expires_at"=>$expires,"import_pending"=>$pending]);return;}'
+    '$updated=$wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value=%s WHERE option_name=%s AND option_value=%s",$new,$name,$observed));'
+    'if($updated!==1){$wpdb->query("ROLLBACK");$emit(["status"=>"busy","code"=>"stale_replace_race"]);return;}'
+    'if($wpdb->query("COMMIT")===false){$emit(["status"=>"update_failed","code"=>"commit_failed"]);return;}'
+    'wp_cache_delete($name,"options");$emit(["status"=>"acquired","expires_at"=>$now+$ttl,"stale_replaced"=>true]);return;}'
+    'if($wpdb->query("START TRANSACTION")===false){$emit(["status"=>"transaction_failed"]);return;}'
+    '$row=$wpdb->get_row($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name=%s FOR UPDATE",$name),ARRAY_A);'
+    'if(!$row){$wpdb->query("ROLLBACK");$emit(["status"=>"released","already_missing"=>true]);return;}'
+    '$observed=(string)$row["option_value"];$cur=json_decode($observed,true);'
+    'if(!is_array($cur)||!hash_equals((string)($cur["token"]??""),$token))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"owner_mismatch"]);return;}'
+    'if($action==="mark_import"||$action==="complete_import"){'
+    '$pending=($cur["import_pending"]??false)===true;$mark=$action==="mark_import";'
+    '$phase=(string)($cur["import_phase"]??"reserved");'
+    'if($mark&&((int)($cur["expires_at"]??0)<=time()))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"expired_owner"]);return;}'
+    'if($mark&&($pending||$phase!=="reserved"))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"import_already_marked"]);return;}'
+    'if(!$mark&&$phase==="completed")'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"import_completed","reentrant"=>true]);return;}'
+    'if(!$mark&&(!$pending||$phase!=="claimed"))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"invalid_import_phase"]);return;}'
+    '$cur["import_pending"]=$mark;$cur["import_phase"]=$mark?"claimed":"completed";'
+    '$new=wp_json_encode($cur);'
+    '$updated=$wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value=%s WHERE option_name=%s AND option_value=%s",$new,$name,$observed));'
+    'if($updated!==1){$wpdb->query("ROLLBACK");$emit(["status"=>"update_failed"]);return;}'
+    'if($wpdb->query("COMMIT")===false){$emit(["status"=>"update_failed"]);return;}'
+    'wp_cache_delete($name,"options");$emit(["status"=>$mark?"import_marked":"import_completed"]);return;}'
+    'if(($cur["import_pending"]??false)===true){$wpdb->query("ROLLBACK");'
+    '$emit(["status"=>"import_pending"]);return;}'
+    '$deleted=$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name=%s AND option_value=%s",$name,$observed));'
+    'if($deleted!==1){$wpdb->query("ROLLBACK");$emit(["status"=>"owner_mismatch","code"=>"release_race"]);return;}'
+    'if($wpdb->query("COMMIT")===false){$emit(["status"=>"update_failed","code"=>"commit_failed"]);return;}'
+    'wp_cache_delete($name,"options");$emit(["status"=>"released"]);'
 )
 GUARDED_POST_MUTATION_SCRIPT = (
     '$raw=file_get_contents("php://stdin");'
@@ -58,7 +140,8 @@ GUARDED_POST_MUTATION_SCRIPT = (
     '{$emit(["status"=>"invalid_payload"]);return;}'
     'foreach($em as $k=>$v){if(!isset($allowed_meta[$k])||(!is_string($v)&&$v!==null)||!is_string($um[$k]))'
     '{$emit(["status"=>"invalid_payload"]);return;}}}'
-    'global $wpdb;$wpdb->query("START TRANSACTION");'
+    'global $wpdb;if($wpdb->query("START TRANSACTION")===false)'
+    '{$emit(["status"=>"transaction_failed"]);return;}'
     '$locked=$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",$id));'
     'if(!$locked){$wpdb->query("ROLLBACK");$emit(["status"=>"missing"]);return;}'
     'clean_post_cache($id);$post=get_post($id);'
@@ -273,16 +356,176 @@ def content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def get_post(base, post_id, *, fields=None):
+def get_post(base, post_id, *, fields=None, timeout=None):
     command = list(base) + ["post", "get", str(int(post_id))]
     if fields:
         command.append("--fields=" + ",".join(fields))
     command += ["--format=json", "--allow-root"]
     with timed("wp_target_read"):
         increment("wp_roundtrips")
-        result = run_wordpress(
-            command, capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
+        kwargs = dict(
+            capture_output=True, text=True, encoding="utf-8", errors="strict", check=True)
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        result = run_wordpress(command, **kwargs)
     return json.loads((result.stdout or "").lstrip("\ufeff"))
+
+
+def find_attachment_ids_by_sha(base, post_id: int, image_sha256: str, *, timeout=None) -> list[int]:
+    if (not isinstance(post_id, int) or post_id <= 0
+            or not isinstance(image_sha256, str)
+            or len(image_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in image_sha256)):
+        raise ValueError("invalid_attachment_sha_lookup")
+    payload = {"protocol": 1, "post_id": post_id, "sha256": image_sha256}
+    command = list(base) + ["eval", ATTACHMENT_SHA_LOOKUP_SCRIPT, "--allow-root"]
+    with timed("wp_target_read"):
+        increment("wp_roundtrips")
+        kwargs = dict(
+            input=json.dumps(payload, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            check=True,
+        )
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        result = run_wordpress(command, **kwargs)
+    observed = json.loads((result.stdout or "").lstrip("\ufeff"))
+    ids = observed.get("attachment_ids") if isinstance(observed, dict) else None
+    if observed.get("status") != "ok" or not isinstance(ids, list) or any(
+            type(value) is not int or value <= 0 for value in ids):
+        raise ValueError("invalid_attachment_sha_lookup_response")
+    return ids
+
+
+def acquire_featured_image_lock(
+    base,
+    post_id: int,
+    *,
+    ttl_seconds: int = 300,
+    resume_token: str | None = None,
+    timeout=None,
+) -> dict:
+    """Acquire one cross-machine per-post featured-image lock without polling."""
+    if (not isinstance(post_id, int) or post_id <= 0
+            or not isinstance(ttl_seconds, int) or not 30 <= ttl_seconds <= 900
+            or (resume_token is not None and not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", resume_token))):
+        raise ValueError("invalid_featured_image_lock_request")
+    token = resume_token or uuid.uuid4().hex
+    payload = {
+        "protocol": FEATURED_IMAGE_LOCK_PROTOCOL,
+        "post_id": post_id,
+        "action": "acquire",
+        "token": token,
+        "ttl_seconds": ttl_seconds,
+    }
+    command = list(base) + ["eval", FEATURED_IMAGE_LOCK_SCRIPT, "--allow-root"]
+    kwargs = dict(
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=True,
+    )
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    try:
+        result = run_wordpress(command, **kwargs)
+        observed = json.loads((result.stdout or "").lstrip("\ufeff"))
+        status = observed.get("status") if isinstance(observed, dict) else None
+        if status == "busy":
+            if observed.get("import_pending"):
+                raise ValueError("featured_image_remote_import_pending")
+            raise ValueError("featured_image_remote_lock_busy")
+        if status != "acquired":
+            raise ValueError("featured_image_remote_lock_failed")
+    except Exception as exc:
+        # The server may have committed the acquire before an SSH response was
+        # lost. Preserve the exact token so the caller can release only its own
+        # possible lock; never guess or poll for ownership.
+        if not (isinstance(exc, ValueError) and str(exc) in {
+                "featured_image_remote_lock_busy", "featured_image_remote_import_pending"}):
+            try:
+                setattr(exc, "featured_image_lock_token", token)
+            except Exception:
+                pass
+        raise
+    return {
+        "token": token,
+        "expires_at": observed.get("expires_at"),
+        "stale_replaced": bool(observed.get("stale_replaced")),
+    }
+
+
+def set_featured_image_import_pending(
+    base, post_id: int, token: str, *, pending: bool, timeout=None
+) -> None:
+    """Fence in-flight WP import; clear only after verified post/attachment readback.
+
+    Unlike the expiring worker lease, an unfinished import fence remains set
+    until its original token finishes reconciliation. This prevents another PC
+    from importing while the original SSH-disconnected process may still run.
+    """
+    if (type(post_id) is not int or post_id <= 0
+            or not isinstance(token, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", token)):
+        raise ValueError("invalid_featured_image_import_fence")
+    payload = {
+        "protocol": FEATURED_IMAGE_LOCK_PROTOCOL,
+        "post_id": post_id,
+        "action": "mark_import" if pending else "complete_import",
+        "token": token,
+        "ttl_seconds": 0,
+    }
+    kwargs = dict(
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True, text=True, encoding="utf-8", errors="strict", check=True,
+    )
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    result = run_wordpress(
+        list(base) + ["eval", FEATURED_IMAGE_LOCK_SCRIPT, "--allow-root"], **kwargs)
+    observed = json.loads((result.stdout or "").lstrip("\ufeff"))
+    expected = "import_marked" if pending else "import_completed"
+    if not isinstance(observed, dict) or observed.get("status") != expected:
+        raise ValueError("featured_image_import_fence_failed")
+
+
+def release_featured_image_lock(base, post_id: int, token: str, *, timeout=None) -> None:
+    """Release the exact lock token. Missing is idempotent; another owner is not."""
+    if (not isinstance(post_id, int) or post_id <= 0
+            or not isinstance(token, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", token)):
+        raise ValueError("invalid_featured_image_lock_release")
+    payload = {
+        "protocol": FEATURED_IMAGE_LOCK_PROTOCOL,
+        "post_id": post_id,
+        "action": "release",
+        "token": token,
+        "ttl_seconds": 0,
+    }
+    command = list(base) + ["eval", FEATURED_IMAGE_LOCK_SCRIPT, "--allow-root"]
+    kwargs = dict(
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=True,
+    )
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    result = run_wordpress(command, **kwargs)
+    observed = json.loads((result.stdout or "").lstrip("\ufeff"))
+    if not isinstance(observed, dict) or observed.get("status") != "released":
+        if isinstance(observed, dict) and observed.get("status") == "owner_mismatch":
+            raise ValueError("featured_image_remote_lock_owner_mismatch")
+        if isinstance(observed, dict) and observed.get("status") == "import_pending":
+            raise ValueError("featured_image_remote_import_pending")
+        raise ValueError("featured_image_remote_lock_release_failed")
 
 
 def _guarded_payload(
@@ -543,8 +786,6 @@ def guarded_update_post(
         raise ValueError("wordpress_guarded_cas_mismatch")
     if status == "verification_failed":
         raise ValueError("wordpress_guarded_readback_failed")
-    if status == "publish_gate_blocked":
-        raise ValueError("publication_gate_blocked:" + str(observed.get("code") or "unknown"))
     if status == "missing":
         raise ValueError("wordpress_guarded_target_missing")
     if status in {"invalid_payload", "invalid_update"}:
@@ -601,6 +842,7 @@ def guarded_set_post_thumbnail(
     expected: dict[str, str],
     expected_thumbnail_id: int | None,
     attachment_id: int,
+    timeout=None,
 ) -> dict:
     """CAS a featured-image attachment while preserving the exact post snapshot."""
     payload = _guarded_thumbnail_payload(
@@ -613,8 +855,7 @@ def guarded_set_post_thumbnail(
     with timed("wp_guarded_thumbnail_mutation"):
         increment("wp_roundtrips")
         increment("wp_guarded_mutations")
-        result = run_wordpress(
-            command,
+        kwargs = dict(
             input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             capture_output=True,
             text=True,
@@ -622,6 +863,9 @@ def guarded_set_post_thumbnail(
             errors="strict",
             check=True,
         )
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        result = run_wordpress(command, **kwargs)
     observed = _guarded_result(result.stdout)
     status = observed.get("status")
     expected_thumb = str(attachment_id)
@@ -658,6 +902,7 @@ def guarded_update_featured_image_alt(
     attachment_id: int,
     expected_alt: str | None,
     alt_text: str,
+    timeout=None,
 ) -> dict:
     """CAS featured-image ALT while preserving the attachment relation and post snapshot."""
     payload = _guarded_attachment_alt_payload(
@@ -671,8 +916,7 @@ def guarded_update_featured_image_alt(
     with timed("wp_guarded_attachment_alt_mutation"):
         increment("wp_roundtrips")
         increment("wp_guarded_mutations")
-        result = run_wordpress(
-            command,
+        kwargs = dict(
             input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             capture_output=True,
             text=True,
@@ -680,6 +924,9 @@ def guarded_update_featured_image_alt(
             errors="strict",
             check=True,
         )
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        result = run_wordpress(command, **kwargs)
     observed = _guarded_result(result.stdout)
     status = observed.get("status")
     expected_thumb = str(attachment_id)

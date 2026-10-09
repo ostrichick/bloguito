@@ -28,6 +28,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -47,6 +48,8 @@ from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
 from agents.workflow_metrics import annotate, increment, timed, workflow_run  # noqa: E402
 from agents.wordpress_mutation import (  # noqa: E402
+    ATTACHMENT_SHA_LOOKUP_SCRIPT,
+    FEATURED_IMAGE_LOCK_SCRIPT,
     GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT,
     GUARDED_CATEGORY_MUTATION_SCRIPT,
     GUARDED_POST_MUTATION_SCRIPT,
@@ -67,7 +70,7 @@ _LIST_ARGS = [
 ]
 _LIGHT_INVENTORY_ARGS = list(LIGHTWEIGHT_INVENTORY_ARGS)
 _REMOTE_HTML = re.compile(r'/tmp/editorial_[A-Za-z0-9_.-]+\.html')
-_REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
+_REMOTE_IMAGE = re.compile(r'/tmp/editorial_cover_([1-9][0-9]*)(?:_[0-9a-f]{32})?\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 _REMOTE_SECTION_IMAGE = re.compile(
     r'/tmp/editorial_section_([1-9][0-9]*)_[0-9a-f]{12}\.(?:jpg|jpeg|png|webp)', re.IGNORECASE)
 
@@ -137,7 +140,7 @@ _CREATE_ACTIONS = {
 }
 _PUBLIC_EDIT_ACTIONS = {'public-fast', 'public-standard'}
 _DRAFT_EDIT_PROFILES = {'draft-fast', 'draft-standard'}
-_IMAGE_EDIT_ACTIONS = {*_CREATE_ACTIONS, *_DRAFT_EDIT_PROFILES, 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
+_IMAGE_EDIT_ACTIONS = {*_DRAFT_EDIT_PROFILES, 'replace-featured-image', *_PUBLIC_EDIT_ACTIONS}
 _FEATURED_IMAGE_ACTIONS = _CREATE_ACTIONS | _IMAGE_EDIT_ACTIONS
 _PRIMARY_CLI_ACTIONS = {
     action for action, meta in _CLI_ACTION_METADATA.items() if meta.group == 'primary'
@@ -298,13 +301,26 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             except (OSError, subprocess.SubprocessError):
                 pass
 
-    def remote_run(remote, *, retry_255=False, **kwargs):
+    def remote_run(remote, *, retry_255=False, retry_timeout=False, **kwargs):
         increment('ssh_roundtrips')
         options = dict(kwargs)
         if options.get('text') or options.get('universal_newlines'):
             options.setdefault('encoding', 'utf-8')
         options.setdefault('timeout', 120)
+        timeout_budget = options.get('timeout')
+        started = time.monotonic()
         argv = ssh_argv(remote)
+
+        def retry_once():
+            retry_options = dict(options)
+            if isinstance(timeout_budget, (int, float)):
+                remaining = float(timeout_budget) - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout_budget)
+                retry_options['timeout'] = remaining
+            increment('ssh_roundtrips')
+            return _RUN(argv, **retry_options)
+
         try:
             result = _RUN(argv, **options)
         except subprocess.CalledProcessError as exc:
@@ -312,16 +328,18 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 raise
             diagnose_once()
             if retry_255:
-                increment('ssh_roundtrips')
-                return _RUN(argv, **options)
+                return retry_once()
+            raise
+        except subprocess.TimeoutExpired:
+            if retry_timeout:
+                return retry_once()
             raise
         except (OSError, subprocess.SubprocessError):
             raise
         if getattr(result, 'returncode', 0) == 255:
             diagnose_once()
             if retry_255:
-                increment('ssh_roundtrips')
-                return _RUN(argv, **options)
+                return retry_once()
         return result
 
     def validate_guarded_payload(raw):
@@ -449,7 +467,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         return payload
 
     def validate_thumbnail_payload(raw):
-        if not image_mutation_allowed or action not in _IMAGE_EDIT_ACTIONS:
+        if not image_mutation_allowed or action not in _FEATURED_IMAGE_ACTIONS:
             raise ValueError('guarded_thumbnail_mutation_not_allowed')
         if isinstance(raw, bytes):
             raw = raw.decode('utf-8')
@@ -526,8 +544,26 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             raise ValueError('invalid_guarded_attachment_alt_expectation')
         return payload
 
+    def validate_attachment_sha_lookup_payload(raw):
+        if action not in _FEATURED_IMAGE_ACTIONS:
+            raise ValueError('attachment_sha_lookup_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_attachment_sha_lookup_payload') from exc
+        if (not isinstance(payload, dict)
+                or set(payload) != {'protocol', 'post_id', 'sha256'}
+                or payload.get('protocol') != 1
+                or type(payload.get('post_id')) is not int
+                or payload['post_id'] not in allowed_ids
+                or not re.fullmatch(r'[0-9a-f]{64}', payload.get('sha256', ''))):
+            raise ValueError('invalid_attachment_sha_lookup_payload')
+        return payload
+
     def validate_publish_gate_record_payload(raw):
-        if action not in _IMAGE_EDIT_ACTIONS:
+        if action not in _FEATURED_IMAGE_ACTIONS:
             raise ValueError('publish_attestation_write_not_allowed')
         if isinstance(raw, bytes):
             raw = raw.decode('utf-8')
@@ -572,6 +608,29 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 or type(payload.get('post_id')) is not int or payload['post_id'] not in allowed_ids
                 or not re.fullmatch(r'[0-9a-f]{64}', payload.get('expected_review_digest') or '')):
             raise ValueError('invalid_publish_attestation_validate_payload')
+        return payload
+
+    def validate_featured_image_lock_payload(raw):
+        if action not in _FEATURED_IMAGE_ACTIONS:
+            raise ValueError('featured_image_lock_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_featured_image_lock_payload') from exc
+        if (not isinstance(payload, dict)
+                or set(payload) != {'protocol', 'post_id', 'action', 'token', 'ttl_seconds'}
+                or payload.get('protocol') != 1
+                or type(payload.get('post_id')) is not int
+                or payload['post_id'] not in allowed_ids
+                or payload.get('action') not in {'acquire', 'release', 'mark_import', 'complete_import'}
+                or not isinstance(payload.get('token'), str)
+                or not re.fullmatch(r'[A-Za-z0-9_-]{16,128}', payload['token'])
+                or type(payload.get('ttl_seconds')) is not int
+                or (payload['action'] == 'acquire' and not 30 <= payload['ttl_seconds'] <= 900)
+                or (payload['action'] != 'acquire' and payload['ttl_seconds'] != 0)):
+            raise ValueError('invalid_featured_image_lock_payload')
         return payload
 
     def validate_section_snapshot_payload(raw):
@@ -644,13 +703,19 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (action == 'repair-draft-category'
                 and wp == ['eval', GUARDED_CATEGORY_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_category_mutation'
-        if (image_mutation_allowed and action in _IMAGE_EDIT_ACTIONS
+        if (image_mutation_allowed and action in _FEATURED_IMAGE_ACTIONS
                 and wp == ['eval', GUARDED_THUMBNAIL_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_thumbnail_mutation'
         if (action == 'replace-featured-image'
                 and wp == ['eval', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_attachment_alt_mutation'
-        if (action in _IMAGE_EDIT_ACTIONS
+        if (action in _FEATURED_IMAGE_ACTIONS
+                and wp == ['eval', ATTACHMENT_SHA_LOOKUP_SCRIPT, '--allow-root']):
+            return 'attachment_sha_lookup'
+        if (action in _FEATURED_IMAGE_ACTIONS
+                and wp == ['eval', FEATURED_IMAGE_LOCK_SCRIPT, '--allow-root']):
+            return 'featured_image_lock'
+        if (action in _FEATURED_IMAGE_ACTIONS
                 and wp == ['eval', PUBLISH_GATE_RECORD_SCRIPT, '--allow-root']):
             return 'publish_attestation_write'
         if (action == 'promote-draft'
@@ -678,7 +743,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and int(_REMOTE_IMAGE.fullmatch(wp[2]).group(1)) == int(wp[3].split('=', 1)[1])
                 and wp[4:] == ['--porcelain', '--allow-root']):
             return 'media_import'
-        if (image_mutation_allowed and action in _IMAGE_EDIT_ACTIONS
+        if (image_mutation_allowed and action in _FEATURED_IMAGE_ACTIONS
                 and len(wp) == 8 and wp[:2] == ['media', 'import']
                 and _REMOTE_IMAGE.fullmatch(wp[2])
                 and wp[3].startswith('--post_id=') and wp[3].split('=', 1)[1].isdigit()
@@ -701,7 +766,15 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4:] == ['_thumbnail_id', '--allow-root']):
             return
-        if (image_mutation_allowed and action in {*_IMAGE_EDIT_ACTIONS, 'import-section-image'}
+        # The exact #848 full-reviewed legacy-draft onboarding must read the
+        # preserved thumbnail baseline even though it performs NO image import.
+        # Scope this extra read-only permission to that immutable post ID.
+        if (action == 'draft-standard' and len(wp) == 6
+                and wp[:3] == ['post', 'meta', 'get']
+                and wp[3] == '848' and 848 in allowed_ids
+                and wp[4:] == ['_thumbnail_id', '--allow-root']):
+            return
+        if (image_mutation_allowed and action in {*_FEATURED_IMAGE_ACTIONS, 'import-section-image'}
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in readable_ids
                 and wp[4] in {'_thumbnail_id', '_wp_attachment_image_alt',
@@ -801,6 +874,39 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 else:
                     options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
                 return remote_run(remote, retry_255=True, **options)
+            if kind == 'attachment_sha_lookup':
+                validate_attachment_sha_lookup_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(ATTACHMENT_SHA_LOOKUP_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
+                result = remote_run(remote, retry_255=True, **options)
+                if result.returncode == 0:
+                    observed = json.loads(result.stdout or '{}')
+                    ids = observed.get('attachment_ids') if isinstance(observed, dict) else None
+                    if observed.get('status') != 'ok' or not isinstance(ids, list) or any(
+                            type(value) is not int or value <= 0 for value in ids):
+                        raise ValueError('invalid_attachment_sha_lookup_response')
+                    readable_ids.update(ids)
+                return result
+            if kind == 'featured_image_lock':
+                validate_featured_image_lock_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(FEATURED_IMAGE_LOCK_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
+                # The payload token makes acquire/release replay-safe: an acquire
+                # with the same token is reentrant and release of a missing lock is
+                # idempotent. One SSH-255 replay is therefore bounded and safe.
+                return remote_run(remote, retry_255=True, retry_timeout=True, **options)
             if kind == 'publish_attestation_write':
                 validate_publish_gate_record_payload(kwargs.get('input'))
                 remote = ('sudo docker exec -i wordpress_app wp eval '
@@ -851,9 +957,12 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             if kind == 'media_import' and getattr(result, 'returncode', 0) == 0:
                 raw = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout or '')
                 attachment_id = raw.lstrip('\ufeff').strip()
-                if not attachment_id.isdigit() or int(attachment_id) <= 0:
-                    raise ValueError('invalid_imported_media_id')
-                readable_ids.add(int(attachment_id))
+                # The domain helper owns ambiguous import reconciliation.  The
+                # transport only expands readable IDs when stdout is a valid ID;
+                # empty/garbled success output must reach the helper so it can do
+                # exactly one SHA reconcile instead of inviting a re-import.
+                if attachment_id.isdigit() and int(attachment_id) > 0:
+                    readable_ids.add(int(attachment_id))
             return result
 
         if image_mutation_allowed and command[:3] == ['sudo', 'docker', 'cp'] and len(command) == 5:
@@ -881,7 +990,21 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             options.pop('text', None)
             options.pop('universal_newlines', None)
             options['input'] = payload
-            return remote_run(remote, **options)
+            return remote_run(remote, retry_255=True, retry_timeout=True, **options)
+
+        if (image_mutation_allowed
+                and command[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'sha256sum']
+                and len(command) == 6):
+            remote_path = command[5]
+            image_match = _REMOTE_IMAGE.fullmatch(remote_path)
+            section_image_match = _REMOTE_SECTION_IMAGE.fullmatch(remote_path)
+            allowed_hash = (
+                (image_match and int(image_match.group(1)) in allowed_ids)
+                or (section_image_match and int(section_image_match.group(1)) in allowed_ids)
+            )
+            if allowed_hash:
+                remote = 'sudo docker exec wordpress_app sha256sum ' + shlex.quote(remote_path)
+                return remote_run(remote, retry_255=True, **kwargs)
 
         if (image_mutation_allowed and command[:5] == ['sudo', 'docker', 'exec', 'wordpress_app', 'rm']
                 and len(command) == 7 and command[5] == '-f'):
@@ -945,6 +1068,8 @@ def _main():
         if request.image_path_supplied and image_path is None:
             parser.error('--image-path requires a value')
         if bundle is None:
+            if '--onboard-legacy-draft' in request.cli_args:
+                parser.error('legacy draft onboarding requires a fully reviewed bundle')
             from agents.edit_post import reviewed_target_kind
             from agents.validation_router import build_validation_plan
             target_status = reviewed_target_kind(post_ids[0])
@@ -958,13 +1083,25 @@ def _main():
                     expected_content_sha256=request.expected_content_sha256),
             }
         else:
-            from agents.edit_post import classify_reviewed_post_route
-            decision = classify_reviewed_post_route(
-                post_ids[0], bundle,
-                expected_content_sha256=request.expected_content_sha256,
-                confirm_title_change=request.confirm_title_change,
-                image_path=image_path,
-                resume=request.resume)
+            if '--onboard-legacy-draft' in request.cli_args:
+                from agents.legacy_draft_onboarding import classify_legacy_draft_848
+                decision = classify_legacy_draft_848(
+                    post_ids[0], bundle, request.expected_content_sha256,
+                    confirmed='--confirm-update' in request.cli_args,
+                    edit_intent=request.cli_args[request.cli_args.index('--edit-intent') + 1]
+                    if '--edit-intent' in request.cli_args and
+                    request.cli_args.index('--edit-intent') + 1 < len(request.cli_args)
+                    else '',
+                    image_path=image_path, resume=request.resume,
+                    confirm_title_change=request.confirm_title_change)
+            else:
+                from agents.edit_post import classify_reviewed_post_route
+                decision = classify_reviewed_post_route(
+                    post_ids[0], bundle,
+                    expected_content_sha256=request.expected_content_sha256,
+                    confirm_title_change=request.confirm_title_change,
+                    image_path=image_path,
+                    resume=request.resume)
             if decision['target_status'] == 'draft':
                 transport_action = 'draft-fast' if decision['route'] == 'fast' else 'draft-standard'
             else:
@@ -1015,7 +1152,25 @@ def _main():
     with timed('remote_editorial_cli'):
         with decision_context, wordpress_transport(transport), \
                 patch.object(sys, 'argv', ['editorial_cli.py', *request.cli_args]):
-            editorial_cli.main()
+            try:
+                editorial_cli.main()
+            except Exception as exc:
+                receipt = getattr(exc, 'failure_receipt', None)
+                stage = getattr(exc, 'failure_stage', None)
+                if receipt:
+                    failure = {
+                        'status': 'blocked',
+                        'failure_stage': stage,
+                        'failure_receipt': receipt,
+                        'automatic_retry': False,
+                    }
+                    if request.output_path is not None:
+                        request.output_path.parent.mkdir(parents=True, exist_ok=True)
+                        request.output_path.write_text(
+                            json.dumps(failure, ensure_ascii=False, indent=2) + '\n',
+                            encoding='utf-8')
+                    print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
+                raise
 
     # prepare-draft is the user-facing one-shot path. Keep the catalog follow-up
     # outside the WordPress transport context so it uses the normal Direct SSH
