@@ -52,13 +52,30 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertIn('wp_attachment_is_image', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT)
         self.assertIn('START TRANSACTION', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('FOR UPDATE', FEATURED_IMAGE_LOCK_SCRIPT)
-        self.assertIn('add_option', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('INSERT IGNORE INTO {$wpdb->options}', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('if($inserted===1)', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('if($inserted===false)', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertNotIn('add_option(', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('transaction_failed', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('AND option_value=%s', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('$expires>=$now', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('import_pending', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('import_already_marked', FEATURED_IMAGE_LOCK_SCRIPT)
         self.assertIn('import_pending', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('invalid_lock_state', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('is_int($state["expires_at"]??null)', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('is_bool($state["import_pending"]??null)', FEATURED_IMAGE_LOCK_SCRIPT)
+        self.assertIn('count($state)===4', FEATURED_IMAGE_LOCK_SCRIPT)
+
+    def test_corrupt_remote_lock_state_fails_without_reusing_token(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        token = 'a' * 32
+        with patch('agents.wordpress_mutation.run_wordpress', return_value=Mock(
+                stdout=json.dumps({'status': 'invalid_lock_state'}))) as runner:
+            with self.assertRaisesRegex(ValueError, 'featured_image_remote_lock_failed') as raised:
+                acquire_featured_image_lock(base, 641, resume_token=token)
+        self.assertEqual(token, raised.exception.featured_image_lock_token)
+        runner.assert_called_once()
 
     def test_featured_image_lock_acquire_is_single_shot_and_token_bound(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']

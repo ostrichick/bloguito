@@ -36,3 +36,11 @@ Windows native OpenSSH가 실제 loopback SSH 연결 종료에서 255 대신 429
 - 검증 harness의 기대 결과를 완화하거나 실패를 무시해서 PASS로 만들지 마라. 최초 획득 경쟁과 malformed 처리 모두 통과해야 한다.
 - production 게시물/이미지/options/cron은 변경하지 말고 배포하지 마라. 운영 승인이나 실제 production 복구 권한을 이 전달문에서 추정하지 마라. private DB dump·token·로컬 설정·시험 의존성은 Git에 넣지 마라.
 - 기존 문서에 수정과 증거를 추가하고, 최종 보고를 `시험 실행 완료 여부 / 코드 합격 여부 / 수정 revision / 통과·실패·미검증 / 운영 적용 여부`로 명확히 분리해라. 반복 시험 성공만으로 production 배포 완료를 주장하지 마라.
+
+## 2026-10-09 노트북 수정 후 인계
+
+- `fix/featured-image-lock-concurrency-20261009` 작업 트리에서 `FEATURED_IMAGE_LOCK_SCRIPT`의 최초 `add_option()`을 `wp_options.option_name` 유니크 제약에 의존하는 원자적 `INSERT IGNORE`로 교체했다. 영향을 받은 행이 정확히 1일 때만 신규 획득으로 간주하며, 기존 잠금은 `SELECT ... FOR UPDATE`와 CAS를 사용한다. 잘못된 DB 삽입 응답은 성공으로 취급하지 않는다.
+- 잠금 JSON은 정확한 네 필드의 타입과 phase/pending 일치를 확인한다. invalid JSON·필드 누락·타입 오류·불일치 상태는 `invalid_lock_state`로 중단하고 원본 option을 변경하지 않는다. 이 검사는 acquire와 release/mark/complete 모두에 적용한다.
+- Windows 노트북 Python 3.12.10에서 `test_wordpress_mutation.py` 표적 테스트 **26 PASS**와 Python 전체 회귀 **1,143 PASS, 0 FAIL**을 확인했다. `git diff --check`도 통과했다. 이 검사는 PHP/실제 DB 동시성 결과를 대신하지 않는다.
+- 이 노트북에서는 Docker CLI, PHP CLI, WSL Linux 배포판이 확인되지 않았다. 따라서 PC가 기록한 15그룹 중 실패했던 **최초 획득 경쟁과 malformed lock byte preservation의 실제 WordPress/MariaDB 재검증은 미실시**이며 배포 판정은 여전히 **NO-GO**다.
+- 다음 PC 실행은 위 코드 수정 branch를 가져와 기존 격리 staging의 *현재* 볼륨/인증 설정을 유지하면서 동일한 실패 재현 및 전체 이미지 잠금/SSH 유실 통합 그룹을 재검증한다. 두 문제의 실제 DB 검증이 통과할 때까지 운영 배포, production post/options/cron 변경을 하지 않는다.
