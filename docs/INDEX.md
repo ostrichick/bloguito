@@ -12,6 +12,7 @@
 | 일반 정보글 작성·수정 | [GENERAL_POST_STANDARD](GENERAL_POST_STANDARD.md) | 행사 포스트가 아닌 생활정보·정부서비스·복지·세금·건강·비용/조회형 글의 현행 표준 |
 | 행사 일정형 글 전용 확장 | [EVENT_POST_STANDARD](EVENT_POST_STANDARD.md) | 월간 다중 행사 글의 작성·이미지·CTA·SEO·QA 세부 표준 |
 | 대표 이미지 | [FEATURED_IMAGE_STANDARD](FEATURED_IMAGE_STANDARD.md) | 일반·행사 글의 서술형 이미지 품질 규칙; 기계 설정은 editorial_policy.json |
+| 대표이미지 잠금 PC 검증 후속 | [수정·재검증 전달문](FEATURED_IMAGE_PC_VALIDATION_HANDOFF.md), [검증·복구 기록](FEATURED_IMAGE_LOCK_RECOVERY.md) | 2026-10-09 실제 DB 검증 실패 두 결함과 재현·완료 기준; 현재 정책이나 배포 승인으로 사용하지 않음 |
 | 검증 임계값과 모델 설정 | [editorial_policy.json](../agent-publisher/editorial_policy.json) | 코드가 읽는 설정값의 유일한 정본 |
 | 명령어·백업·배포 체크리스트 | [OPERATIONS](OPERATIONS.md) | 현재 저장소의 코드와 확인 날짜를 구분한 운영 가이드 |
 | 콘텐츠 목록과 주제 대시보드 | [POST_CATALOG](POST_CATALOG.md) | 발행·임시글 현황 및 백로그 로컬 단일 정본 |
