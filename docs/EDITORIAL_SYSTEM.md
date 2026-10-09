@@ -76,7 +76,9 @@ Standard source 검증은 새 source, 변경 source, stale source, 현재 상태
 
 모든 기존 글 수정은 대상 ID와 현재 content SHA를 명시적으로 결합한다. 정규 경로는 저장 전에 최신 상태를 읽고, private backup을 남기고, compare-and-swap(CAS) 조건으로 저장한 뒤 실제 저장값을 다시 읽어 확인한다. slug, 공개 상태, 수동 excerpt, 기존 내부 navigation처럼 변경 범위 밖의 상태는 보존한다.
 
-제목 변경은 별도 명시적 확인이 필요하다. 공개 글의 publish 상태를 변경하거나 draft를 공개로 승격하는 것은 별도의 사용자 확인 단계다. draft→publish는 현재 policy의 review/source 검사를 통과한 reviewed 본문·제목과 사용자 선택 또는 자동 비전 검수를 통과한 대표이미지를 함께 결속한 publication attestation이 있어야 한다. 본문·제목·thumbnail·ALT·이미지 파일이 승인 뒤 달라지거나 검토 유효시간이 지나면 공개를 거부한다. 일반 안정형 글의 WordPress 목록/미리보기 `발행`은 DB transaction에서 post·thumbnail·attachment·ALT를 잠근 뒤 attestation을 다시 확인한다. 기본 편집기·REST·WP-CLI의 직접 publish/create/future 예약은 우회 경로로 차단한다. `requires_live_state=true`인 글은 WordPress 직접 발행을 허용하지 않고 `promote-draft --confirm-publish`가 official source를 publication 직전에 다시 조회해야 한다. 코드·정책 수정만으로 WordPress 운영 글이 자동 변경되지는 않는다.
+제목 변경은 별도 명시적 확인이 필요하다. **AI/자동화의 공개 상태 변경**은 별도의 글별 사용자 승인 단계이며, 기본 동작은 draft이다. 정규 `promote-draft --confirm-publish`는 현재 정책의 review/source와 대표이미지 승인 attestation, 현재 본문·제목·이미지/ALT SHA와 유효시간을 검증한다. `requires_live_state=true`이면 공개 직전에 공식 source를 다시 확인한다. 자동화는 WP-CLI/REST/SQL이나 관리자 로그인 세션으로 정규 발행 검증을 우회해서는 안 된다.
+
+**WordPress 관리자의 직접 발행은 별도 권한이다.** 실제 로그인한 편집/발행 권한자가 기본 편집기, 게시글 목록, 미리보기에서 직접 `발행` 또는 `임시글로 전환`을 선택하면 WordPress 권한 검증에 따라 처리하며 자동화용 attestation이 없어도 허용한다. 대표이미지나 reviewed 증빙 누락은 경고할 수 있지만 관리자 발행 버튼을 숨기거나 수동 전환을 강제 차단하지 않는다. 로그인된 관리자 REST 요청도 동일하게 적용한다. 코드·정책 변경만으로 실제 WordPress 게시물 상태가 자동 변경되지는 않는다.
 
 ## 7. QA 범위
 
@@ -98,7 +100,7 @@ python agent-publisher/editorial_cli.py check bundle.json --inventory inventory.
 python scripts/editorial_cli_via_ssh.py --ssh-host bloguito -- prepare-draft bundle.json
 ```
 
-아직 대표이미지를 고르지 않은 신규 글은 위 명령으로 draft를 먼저 저장할 수 있다. 선택한 이미지를 함께 저장할 때에는 `--image-path <파일> --alt-text <ALT> --confirm-image-selection`을 추가한다. 이미 reviewed 글을 수정할 때에는 변경 bundle과 `--edit-intent`를 준비하고 `edit-post --post-id <ID> --expected-content-sha256 <현재본문해시> --confirm-update`를 사용한다. 공개는 사람이 글을 확인한 후에만 `promote-draft <ID> --confirm-publish`로 수행한다. 검사 실패를 피하기 위해 직접 WP-CLI나 임시 PHP로 본문·상태를 우회 저장하지 않는다.
+아직 대표이미지를 고르지 않은 신규 글은 위 명령으로 draft를 먼저 저장할 수 있다. 선택한 이미지를 함께 저장할 때에는 `--image-path <파일> --alt-text <ALT> --confirm-image-selection`을 추가한다. 이미 reviewed 글을 수정할 때에는 변경 bundle과 `--edit-intent`를 준비하고 `edit-post --post-id <ID> --expected-content-sha256 <현재본문해시> --confirm-update`를 사용한다. **AI/자동화가 공개를 실행할 때** 사람이 해당 글의 공개를 명시 승인한 후에만 `promote-draft <ID> --confirm-publish`를 사용한다. 자동화는 검사 실패를 피하기 위해 직접 WP-CLI나 임시 PHP로 본문·상태를 우회 저장하지 않는다. 사람이 WordPress 관리자 UI에서 직접 공개하는 경우에는 앞 절의 수동 발행 권한이 우선한다.
 
 ## 9. 운영 한계
 

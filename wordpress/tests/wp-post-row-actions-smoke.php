@@ -26,24 +26,16 @@ if (!has_action('transition_post_status', 'bloguito_consume_publish_attestation'
     exit(1);
 }
 if (!has_filter('query', 'bloguito_guard_unguarded_publish_sql')) {
-    fwrite(STDERR, 'Direct publish SQL guard is not registered' . PHP_EOL);
+    fwrite(STDERR, 'Unattended publish SQL guard is not registered' . PHP_EOL);
     exit(1);
 }
 
-$new_publish = bloguito_guard_publish_transition([
+$new_publish_unattended = bloguito_guard_publish_transition([
     'post_type' => 'post',
     'post_status' => 'publish',
 ], [], [], false);
-if (($new_publish['post_status'] ?? '') !== 'draft') {
-    fwrite(STDERR, 'New direct publish creation is not forced to draft' . PHP_EOL);
-    exit(1);
-}
-$new_future = bloguito_guard_publish_transition([
-    'post_type' => 'post',
-    'post_status' => 'future',
-], [], [], false);
-if (($new_future['post_status'] ?? '') !== 'draft') {
-    fwrite(STDERR, 'New native future scheduling is not forced to draft' . PHP_EOL);
+if (($new_publish_unattended['post_status'] ?? '') !== 'draft') {
+    fwrite(STDERR, 'Unauthenticated new direct publish was not forced to draft' . PHP_EOL);
     exit(1);
 }
 
@@ -70,14 +62,43 @@ $base = get_post($post_id);
 $draft = clone $base;
 $draft->post_status = 'draft';
 $draft_actions = bloguito_add_post_status_row_action([], $draft);
-$publishable = bloguito_validate_publishability($post_id) === true;
 $has_publish_action = isset($draft_actions['bloguito-publish']);
-if ($publishable !== $has_publish_action) {
-    fwrite(STDERR, 'Draft publish row action does not match publish gate state' . PHP_EOL);
+$can_publish = is_user_logged_in()
+    && current_user_can('edit_post', $post_id)
+    && current_user_can('publish_posts')
+    && !(defined('WP_CLI') && WP_CLI);
+if ($can_publish !== $has_publish_action) {
+    fwrite(STDERR, 'Draft publish action does not match editor permission' . PHP_EOL);
     exit(1);
 }
-if ($has_publish_action && strpos($draft_actions['bloguito-publish'], 'target=publish') === false) {
-    fwrite(STDERR, 'Publishable draft row action has the wrong target' . PHP_EOL);
+if ($can_publish && strpos($draft_actions['bloguito-publish'], 'target=publish') === false) {
+    fwrite(STDERR, 'Editor draft publish action has the wrong target' . PHP_EOL);
+    exit(1);
+}
+
+$native_publish = bloguito_guard_publish_transition([
+    'post_type' => 'post',
+    'post_status' => 'publish',
+], ['ID' => $post_id], [], true);
+if (($native_publish['post_status'] ?? '') !== ($can_publish ? 'publish' : $base->post_status)) {
+    fwrite(STDERR, 'Authenticated native post publish is not permitted as expected' . PHP_EOL);
+    exit(1);
+}
+
+$new_publish = bloguito_guard_publish_transition([
+    'post_type' => 'post',
+    'post_status' => 'publish',
+], [], [], false);
+if (($new_publish['post_status'] ?? '') !== ($can_publish ? 'publish' : 'draft')) {
+    fwrite(STDERR, 'WP-CLI publish creation did not obey interactive-only policy' . PHP_EOL);
+    exit(1);
+}
+$new_future = bloguito_guard_publish_transition([
+    'post_type' => 'post',
+    'post_status' => 'future',
+], [], [], false);
+if (($new_future['post_status'] ?? '') !== 'draft') {
+    fwrite(STDERR, 'Native future scheduling is not kept on canonical path' . PHP_EOL);
     exit(1);
 }
 

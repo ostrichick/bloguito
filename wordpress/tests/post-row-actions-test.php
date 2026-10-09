@@ -4,7 +4,8 @@ define('ABSPATH', __DIR__ . '/');
 
 $registered_filters = [];
 $registered_actions = [];
-$test_caps = ['edit_post' => true, 'publish_posts' => true];
+$test_caps = ['edit_post' => true, 'edit_posts' => true, 'publish_posts' => true];
+$test_logged_in = true;
 $test_post = (object) [
     'ID' => 837, 'post_type' => 'post', 'post_status' => 'draft',
     'post_title' => '검토된 글', 'post_content' => '<p>검토된 본문</p>',
@@ -20,6 +21,7 @@ $test_is_admin = false;
 $test_is_singular_post = true;
 $test_is_preview = true;
 $test_post_id = 837;
+$test_screen = (object) ['base' => 'post', 'post_type' => 'post'];
 
 class TestWpdb {
     public $posts = 'wp_posts';
@@ -65,6 +67,14 @@ function current_user_can($capability, ...$args) {
     global $test_caps;
     return $test_caps[$capability] ?? false;
 }
+function is_user_logged_in() {
+    global $test_logged_in;
+    return $test_logged_in;
+}
+function get_current_screen() {
+    global $test_screen;
+    return $test_screen;
+}
 function is_admin() {
     global $test_is_admin;
     return $test_is_admin;
@@ -87,6 +97,7 @@ function wp_create_nonce($action) { return 'nonce-for-' . $action; }
 function esc_url($value) { return $value; }
 function esc_attr($value) { return htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); }
 function esc_html($value) { return htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); }
+function absint($value) { return abs((int) $value); }
 function get_post($post_id) {
     global $test_post, $test_attachment;
     if ($test_post && $post_id === $test_post->ID) return clone $test_post;
@@ -178,19 +189,30 @@ check($registered_actions['admin_bar_menu'][1] === 82, 'Preview publish button f
 check(isset($registered_filters['wp_insert_post_data']), 'Global publish transition filter registered');
 check($registered_filters['wp_insert_post_data'][2] === 4, 'Global publish transition filter receives full update context');
 check(isset($registered_actions['transition_post_status']), 'Publish attestation consumption hook registered');
-check(isset($registered_filters['query']), 'Direct publish SQL guard registered');
+check(isset($registered_filters['query']), 'Unattended SQL publish guard registered');
 
 $raw_publish_sql = "UPDATE wp_posts SET post_status = 'publish' WHERE ID = 837";
+$test_logged_in = false;
 $blocked_sql = false;
 try {
     bloguito_guard_unguarded_publish_sql($raw_publish_sql);
 } catch (RuntimeException $error) {
     $blocked_sql = strpos($error->getMessage(), '발행') !== false;
 }
-check($blocked_sql, 'Direct wp_publish_post-style SQL is blocked before execution');
+check($blocked_sql, 'Unauthenticated direct wp_publish_post-style SQL is blocked');
 $GLOBALS['bloguito_guarded_publish_post_id'] = 837;
 check(bloguito_guard_unguarded_publish_sql($raw_publish_sql) === $raw_publish_sql, 'Guarded publish transaction may execute publish SQL');
 unset($GLOBALS['bloguito_guarded_publish_post_id']);
+$test_logged_in = true;
+check(bloguito_guard_unguarded_publish_sql($raw_publish_sql) === $raw_publish_sql, 'Logged-in editor may publish through native SQL');
+$malformed_sql = "UPDATE wp_posts SET post_status = 'publish' WHERE ID = 837 OR ID = 838";
+$blocked_sql = false;
+try {
+    bloguito_guard_unguarded_publish_sql($malformed_sql);
+} catch (RuntimeException $error) {
+    $blocked_sql = true;
+}
+check($blocked_sql, 'Ambiguous multi-row publish SQL remains blocked');
 
 $base_actions = [
     'edit' => '<a>Edit</a>',
@@ -235,53 +257,75 @@ $test_caps['edit_post'] = true;
 
 $test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = '';
 $actions = bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post);
-check($actions === ['edit' => 'keep'], 'Draft without publish attestation has no publish action');
-$blocked = bloguito_change_post_status(837, 'publish');
-check(is_wp_error($blocked) && $blocked->get_error_code() === 'bloguito_publish_gate_missing', 'Draft without attestation cannot publish');
+check(isset($actions['bloguito-publish']), 'Logged-in editor sees publish action without attestation');
+check(is_wp_error(bloguito_validate_publishability(837)), 'Missing attestation is still rejected by canonical validator');
+$test_logged_in = false;
+check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'No logged-in editor means no publish action');
+$test_logged_in = true;
 set_valid_publish_gate();
 
 $test_alt = '변경된 ALT';
-check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Changed ALT invalidates publish action');
+check(isset(bloguito_add_post_status_row_action([], $test_post)['bloguito-publish']), 'Changed ALT shows publish action to editor');
+check(is_wp_error(bloguito_validate_publishability(837)), 'Changed ALT remains invalid for canonical promotion');
 $test_alt = '검토된 대표이미지';
 set_valid_publish_gate();
 $test_thumbnail_id = 999;
-check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Changed thumbnail invalidates publish action');
+check(isset(bloguito_add_post_status_row_action([], $test_post)['bloguito-publish']), 'Changed thumbnail does not hide editor action');
+check(is_wp_error(bloguito_validate_publishability(837)), 'Changed thumbnail remains invalid for automation');
 set_valid_publish_gate();
 
 $live_gate = json_decode($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY], true);
 $live_gate['requires_live_state'] = true;
 $test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = json_encode($live_gate);
-check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Live-state draft has no direct WordPress publish action');
-$live_blocked = bloguito_change_post_status(837, 'publish');
-check(is_wp_error($live_blocked) && $live_blocked->get_error_code() === 'bloguito_publish_gate_live_state_requires_canonical_preflight', 'Live-state draft requires canonical promote preflight');
+check(isset(bloguito_add_post_status_row_action([], $test_post)['bloguito-publish']), 'Live-state draft remains manually publishable');
+$live_blocked = bloguito_validate_publishability(837);
+check(is_wp_error($live_blocked) && $live_blocked->get_error_code() === 'bloguito_publish_gate_live_state_requires_canonical_preflight', 'Canonical live-state preflight requirement remains intact');
 set_valid_publish_gate();
 
 $guarded = bloguito_guard_publish_transition([
     'post_type' => 'post', 'post_status' => 'publish',
     'post_content' => $test_post->post_content, 'post_title' => $test_post->post_title,
 ], ['ID' => 837], [], true);
-check($guarded['post_status'] === 'draft', 'Native existing-post publish is forced back to draft without guarded transaction context');
+check($guarded['post_status'] === 'publish', 'Authenticated native editor or REST draft publish proceeds');
+$test_logged_in = false;
+$guarded = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'publish',
+], ['ID' => 837], [], true);
+check($guarded['post_status'] === 'draft', 'Bare WP-CLI or unauthenticated existing-post publish is denied');
 $GLOBALS['bloguito_guarded_publish_post_id'] = 837;
 $guarded = bloguito_guard_publish_transition([
     'post_type' => 'post', 'post_status' => 'publish',
 ], ['ID' => 837], [], true);
-check($guarded['post_status'] === 'publish', 'Guarded transaction context may publish an existing post');
+check($guarded['post_status'] === 'publish', 'Canonical transaction context may publish without a logged-in user');
 unset($GLOBALS['bloguito_guarded_publish_post_id']);
 
 $created = bloguito_guard_publish_transition([
     'post_type' => 'post', 'post_status' => 'publish',
 ], [], [], false);
-check($created['post_status'] === 'draft', 'New direct publish creation is forced to draft');
+check($created['post_status'] === 'draft', 'Unauthenticated new publish creation is forced to draft');
+$test_logged_in = true;
+$created = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'publish',
+], [], [], false);
+check($created['post_status'] === 'publish', 'Authenticated native new post publish proceeds');
 $scheduled = bloguito_guard_publish_transition([
     'post_type' => 'post', 'post_status' => 'future',
 ], ['ID' => 837], [], true);
-check($scheduled['post_status'] === 'draft', 'Native future scheduling is forced to draft');
+check($scheduled['post_status'] === 'draft', 'Native future scheduling stays gated');
 
 $test_post->post_status = 'publish';
 set_valid_publish_gate();
 bloguito_consume_publish_attestation('publish', 'draft', $test_post);
-check($test_post->post_status === 'draft', 'Direct wp_publish_post-style transition is reverted to draft');
-check(isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Rejected direct transition does not consume attestation');
+check($test_post->post_status === 'publish', 'Authenticated native publish transition is retained');
+check(!isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Successful native publish consumes old attestation');
+
+$test_post->post_status = 'publish';
+set_valid_publish_gate();
+$test_logged_in = false;
+bloguito_consume_publish_attestation('publish', 'draft', $test_post);
+check($test_post->post_status === 'draft', 'Unauthenticated raw transition is reverted');
+check(isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Rejected unattended transition retains attestation');
+$test_logged_in = true;
 
 $test_post->post_status = 'draft';
 $admin_bar = new TestAdminBar();
@@ -322,11 +366,31 @@ bloguito_add_preview_publish_admin_bar($admin_bar);
 check($admin_bar->nodes === [], 'Non-post preview screens do not show preview publish button');
 $test_is_singular_post = true;
 
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = '';
+$test_is_admin = true;
+$_GET['post'] = '837';
+ob_start();
+bloguito_publish_review_warning();
+$notice = ob_get_clean();
+check(strpos($notice, '관리자 직접 발행은 가능') !== false, 'Editor shows advisory warning when attestation is absent');
+set_valid_publish_gate();
+ob_start();
+bloguito_publish_review_warning();
+check(ob_get_clean() === '', 'Valid attestation does not trigger warning');
+$test_screen = (object) ['base' => 'edit', 'post_type' => 'post'];
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = '';
+ob_start();
+bloguito_publish_review_warning();
+check(ob_get_clean() === '', 'Post listing does not receive editor warning');
+$test_screen = (object) ['base' => 'post', 'post_type' => 'post'];
+unset($_GET['post']);
+$test_is_admin = false;
+
 $test_updated = null;
 $result = bloguito_change_post_status(837, 'publish');
-check($result === 837, 'Draft can transition to publish');
+check($result === 837, 'Editor can publish draft with missing attestation');
 check($test_updated === ['ID' => 837, 'post_status' => 'publish'], 'Only ID and post_status are sent to wp_update_post');
-check(!isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Successful publication consumes the attestation');
+check(!isset($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]), 'Editor publish leaves no stale attestation');
 
 $test_updated = null;
 $result = bloguito_change_post_status(837, 'publish');
@@ -335,13 +399,29 @@ check($test_updated === null, 'Stale transition does not update WordPress');
 
 $result = bloguito_change_post_status(837, 'draft');
 check($result === 837 && $test_post->post_status === 'draft', 'Published post can return to draft');
-check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'Returned draft requires fresh approval before republishing');
+check(isset(bloguito_add_post_status_row_action([], $test_post)['bloguito-publish']), 'Returned draft still has manual republish action');
 $result = bloguito_change_post_status(837, 'pending');
 check(is_wp_error($result) && $result->get_error_code() === 'bloguito_invalid_status', 'Unsupported target statuses fail closed');
 
 $test_post->post_type = 'page';
 $result = bloguito_change_post_status(837, 'publish');
 check(is_wp_error($result) && $result->get_error_code() === 'bloguito_invalid_post', 'Non-post types cannot transition');
+
+$test_post->post_type = 'post';
+define('WP_CLI', true);
+check(!bloguito_human_can_publish_post(837), 'WP-CLI with a selected administrator is not an interactive human');
+check(bloguito_add_post_status_row_action(['edit' => 'keep'], $test_post) === ['edit' => 'keep'], 'WP-CLI --user cannot expose human publish action');
+$cli_publish = bloguito_guard_publish_transition([
+    'post_type' => 'post', 'post_status' => 'publish',
+], ['ID' => 837], [], true);
+check($cli_publish['post_status'] === 'draft', 'WP-CLI --user cannot bypass native publish gate');
+$cli_blocked = false;
+try {
+    bloguito_guard_unguarded_publish_sql($raw_publish_sql);
+} catch (RuntimeException $error) {
+    $cli_blocked = true;
+}
+check($cli_blocked, 'WP-CLI --user cannot bypass SQL publish guard');
 
 @unlink($test_image_file);
 echo 'PASS: post row action tests' . PHP_EOL;

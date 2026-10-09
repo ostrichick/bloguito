@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bloguito Post Row Actions
  * Description: Add guarded publish/draft status actions to the Posts list and draft preview admin bar.
- * Version: 1.3.1
+ * Version: 1.4.0
  */
 
 if (!defined('ABSPATH')) {
@@ -12,10 +12,23 @@ if (!defined('ABSPATH')) {
 const BLOGUITO_PUBLISH_GATE_META_KEY = '_bloguito_publish_gate_v1';
 
 /**
- * Last-resort database guard for core paths such as wp_publish_post() that
- * bypass wp_insert_post_data. Abort before a non-publish post can be written
- * as publish unless the exact post is inside our guarded transaction.
+ * Native WordPress publishing remains available to an authenticated editor.
+ * Bare WP-CLI and unattended calls have no logged-in user, so the canonical
+ * automation path continues to require its own validated transaction.
+ * A client holding administrator credentials is indistinguishable from that
+ * administrator here; the Python canonical gate must stay fail-closed.
  */
+function bloguito_human_can_publish_post($post_id = 0) {
+    if ((defined('WP_CLI') && WP_CLI)
+            || !is_user_logged_in() || !current_user_can('publish_posts')) {
+        return false;
+    }
+    return $post_id > 0
+        ? current_user_can('edit_post', (int) $post_id)
+        : current_user_can('edit_posts');
+}
+
+/** Catch the direct wp_publish_post() SQL path without blocking editors. */
 add_filter('query', 'bloguito_guard_unguarded_publish_sql', PHP_INT_MIN);
 function bloguito_guard_unguarded_publish_sql($query) {
     global $wpdb;
@@ -30,21 +43,26 @@ function bloguito_guard_unguarded_publish_sql($query) {
     if (!preg_match('/`?post_status`?\s*=\s*[\'\"]publish[\'\"]/i', $parts[1])) {
         return $query;
     }
-    if (!preg_match('/`?ID`?\s*=\s*[\'\"]?(\d+)[\'\"]?/i', $parts[2], $id_match)) {
+    if (!preg_match('/^\s*`?ID`?\s*=\s*[\'\"]?(\d+)[\'\"]?\s*$/i', $parts[2], $id_match)) {
         wp_die('비가드 공개 상태 변경을 차단했습니다.', '발행 차단', ['response' => 409]);
     }
     $post_id = (int) $id_match[1];
     if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) === $post_id) {
         return $query;
     }
+    $post = get_post($post_id);
+    if (!$post || $post->post_type !== 'post') {
+        return $query;
+    }
     $current_status = $wpdb->get_var($wpdb->prepare(
         "SELECT post_status FROM {$wpdb->posts} WHERE ID=%d",
         $post_id
     ));
-    if ((string) $current_status !== 'publish') {
-        wp_die('정규 발행 검증을 거치지 않은 공개 상태 변경을 차단했습니다.', '발행 차단', ['response' => 409]);
+    if ((string) $current_status === 'publish'
+            || bloguito_human_can_publish_post($post_id)) {
+        return $query;
     }
-    return $query;
+    wp_die('수동 발행은 로그인한 편집 권한 사용자만 할 수 있습니다.', '발행 차단', ['response' => 403]);
 }
 
 /**
@@ -244,12 +262,11 @@ function bloguito_can_change_post_status($post_id, $target_status) {
     $post_id = (int) $post_id;
     $target_status = (string) $target_status;
 
-    if ($post_id <= 0 || !current_user_can('edit_post', $post_id)) {
+    if ($post_id <= 0 || !is_user_logged_in() || !current_user_can('edit_post', $post_id)) {
         return false;
     }
     if ($target_status === 'publish') {
-        return current_user_can('publish_posts')
-            && bloguito_validate_publishability($post_id) === true;
+        return bloguito_human_can_publish_post($post_id);
     }
     return $target_status === 'draft';
 }
@@ -297,9 +314,8 @@ function bloguito_change_post_status($post_id, $target_status) {
 }
 
 /**
- * Publish one draft under the same row locks used by the canonical Python
- * mutation. This path is only for non-live-state posts whose attestation is
- * already current; high-volatility posts must use promote-draft.
+ * Publish a user-selected draft under a status lock. Python automation still
+ * validates its own attestation and CAS before entering its publish mutation.
  *
  * @return int|WP_Error
  */
@@ -307,7 +323,7 @@ function bloguito_atomic_publish_post($post_id) {
     global $wpdb;
 
     $post_id = (int) $post_id;
-    if ($post_id <= 0 || !isset($wpdb)) {
+    if ($post_id <= 0 || !isset($wpdb) || !bloguito_human_can_publish_post($post_id)) {
         return new WP_Error('bloguito_publish_gate_unavailable', '발행 검증기를 사용할 수 없습니다.');
     }
 
@@ -320,13 +336,6 @@ function bloguito_atomic_publish_post($post_id) {
         $wpdb->query('ROLLBACK');
         return new WP_Error('bloguito_invalid_post', '글을 찾을 수 없습니다.');
     }
-    $wpdb->get_results($wpdb->prepare(
-        "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key IN (%s,%s) FOR UPDATE",
-        $post_id,
-        '_thumbnail_id',
-        BLOGUITO_PUBLISH_GATE_META_KEY
-    ));
-    wp_cache_delete($post_id, 'post_meta');
     clean_post_cache($post_id);
     $post = get_post($post_id);
     if (!$post || $post->post_type !== 'post' || $post->post_status !== 'draft') {
@@ -334,34 +343,10 @@ function bloguito_atomic_publish_post($post_id) {
         return new WP_Error('bloguito_status_conflict', '글 상태가 이미 변경되었습니다. 목록을 새로고침한 뒤 다시 시도하세요.');
     }
 
-    $thumbnail_id = (int) get_post_thumbnail_id($post_id);
-    if ($thumbnail_id > 0) {
-        $wpdb->get_var($wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",
-            $thumbnail_id
-        ));
-        $wpdb->get_results($wpdb->prepare(
-            "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key IN (%s,%s) FOR UPDATE",
-            $thumbnail_id,
-            '_wp_attachment_image_alt',
-            '_wp_attached_file'
-        ));
-        wp_cache_delete($thumbnail_id, 'post_meta');
-        clean_post_cache($thumbnail_id);
-    }
-
-    $gate = bloguito_validate_publishability($post_id);
-    if (is_wp_error($gate)) {
-        $wpdb->query('ROLLBACK');
-        return $gate;
-    }
-
-    $GLOBALS['bloguito_guarded_publish_post_id'] = $post_id;
     $result = wp_update_post([
         'ID' => $post_id,
         'post_status' => 'publish',
     ], true);
-    unset($GLOBALS['bloguito_guarded_publish_post_id']);
     if (is_wp_error($result)) {
         $wpdb->query('ROLLBACK');
         clean_post_cache($post_id);
@@ -383,8 +368,10 @@ function bloguito_atomic_publish_post($post_id) {
 }
 
 /**
- * Cover every WordPress draft/pending/future/private -> publish route, including
- * native editor, REST, WP-CLI and custom row actions.
+ * Permit logged-in editors' native WordPress/REST draft -> publish actions.
+ * Unattended WP-CLI remains fail-closed; automation uses the canonical
+ * transaction after its attestation/source/CAS checks. Native scheduling
+ * remains unavailable without the canonical context.
  */
 add_filter('wp_insert_post_data', 'bloguito_guard_publish_transition', 99, 4);
 function bloguito_guard_publish_transition($data, $postarr, $unsanitized_postarr = [], $update = false) {
@@ -392,24 +379,27 @@ function bloguito_guard_publish_transition($data, $postarr, $unsanitized_postarr
     if (($data['post_type'] ?? '') !== 'post') {
         return $data;
     }
+    if (!in_array(($data['post_status'] ?? ''), ['publish', 'future'], true)) {
+        return $data;
+    }
     if (!$update || $post_id <= 0) {
-        if (in_array(($data['post_status'] ?? ''), ['publish', 'future'], true)) {
-            $data['post_status'] = 'draft';
+        if (($data['post_status'] ?? '') === 'publish' && bloguito_human_can_publish_post()) {
+            return $data;
         }
-        return $data;
-    }
-    if (($data['post_status'] ?? '') === 'future') {
         $data['post_status'] = 'draft';
-        return $data;
-    }
-    if (($data['post_status'] ?? '') !== 'publish') {
         return $data;
     }
     $current = get_post($post_id);
     if (!$current || $current->post_type !== 'post' || $current->post_status === 'publish') {
         return $data;
     }
-    if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) !== $post_id) {
+    if (($data['post_status'] ?? '') === 'publish'
+            && (((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) === $post_id)
+                || bloguito_human_can_publish_post($post_id))) {
+        return $data;
+    }
+    if (($data['post_status'] ?? '') === 'future'
+            || !bloguito_human_can_publish_post($post_id)) {
         $data['post_status'] = $current->post_status;
     }
     return $data;
@@ -420,7 +410,8 @@ function bloguito_consume_publish_attestation($new_status, $old_status, $post) {
     if ($new_status === 'publish' && $old_status !== 'publish'
             && is_object($post) && ($post->post_type ?? '') === 'post') {
         $post_id = (int) $post->ID;
-        if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) !== $post_id) {
+        if ((int) ($GLOBALS['bloguito_guarded_publish_post_id'] ?? 0) !== $post_id
+                && !bloguito_human_can_publish_post($post_id)) {
             global $wpdb;
             $wpdb->update(
                 $wpdb->posts,
@@ -503,4 +494,24 @@ function bloguito_post_status_changed_notice() {
         ? sprintf('글 #%d을 발행했습니다.', $post_id)
         : sprintf('글 #%d을 임시글로 전환했습니다.', $post_id);
     echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($message) . '</p></div>';
+}
+
+/** Display a review warning in the editor without disabling native Publish. */
+add_action('admin_notices', 'bloguito_publish_review_warning');
+function bloguito_publish_review_warning() {
+    $screen = get_current_screen();
+    if (!$screen || $screen->base !== 'post' || $screen->post_type !== 'post') {
+        return;
+    }
+    $post_id = isset($_GET['post']) ? absint($_GET['post']) : 0;
+    $post = $post_id > 0 ? get_post($post_id) : null;
+    if (!$post || $post->post_type !== 'post' || $post->post_status !== 'draft'
+            || !bloguito_human_can_publish_post($post_id)) {
+        return;
+    }
+    if (is_wp_error(bloguito_validate_publishability($post_id))) {
+        echo '<div class="notice notice-warning"><p>'
+            . esc_html('자동 발행 검토 기록이 없거나 최신 상태가 아닙니다. 관리자 직접 발행은 가능하므로 발행 전에 본문과 대표이미지를 확인하세요.')
+            . '</p></div>';
+    }
 }
