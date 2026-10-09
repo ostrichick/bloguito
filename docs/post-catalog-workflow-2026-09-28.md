@@ -25,3 +25,10 @@
 - 두 번째 동기화에서도 새 5순위 인감증명서 후보가 유지되고, 이미 작성된 `임플란트 건강보험` 후보가 백로그에 다시 생기지 않는 것을 확인했다.
 - `python -m unittest agent-publisher/tests/test_post_catalog.py agent-publisher/tests/test_post_233_score_boost.py agent-publisher/tests/test_post_233_seo_body.py agent-publisher/tests/test_post_233_cover.py`: 18개 테스트 통과.
 - `git diff --check`: 통과. 기존 작업트리의 다른 미커밋 파일은 수정하지 않았다.
+
+## 2026-10-09 운영 상태 재조회 및 카탈로그 갱신
+
+- 2026-10-09 13:55 KST Direct SSH 정규 `python scripts/sync_post_catalog.py` 성공. 실제 WordPress 조회는 총 **73편(공개 68, draft 5)**이며, 10/06 로컬 카탈로그는 총 73편(공개 69, draft 4)이었다. 게시물 개수는 같고 상태별 집계가 달랐다.
+- 카탈로그 대비 상태 변경은 `#848 draft→publish`, `#889 publish→draft`, `#891 publish→draft`다. `#887`은 카탈로그에서 이미 publish였으나 로컬 reviewed index에는 draft로 남아 있어 정규 sync가 `draft→publish`로 보정했다. 네 ID 모두 정규 스크립트가 검토된 title/content SHA의 exact-match 조건을 통과해 로컬 reviewed index 상태를 보정했다. **실제 WordPress 상태 변경 주체·시점은 확인되지 않았다.**
+- `docs/POST_CATALOG.md`와 비추적 `agent-publisher/data/catalog_inventory.json`이 갱신됐고, 기존 백로그 행은 보존됐다. 로컬 비추적 `draft_posts.json`과 `published_posts.json`도 스크립트의 정규 reviewed-state reconciliation으로 변경됐다. 운영 private index를 로컬에 복사하지 않았으며 WordPress 본문·상태·메타는 변경하지 않았다.
+- sync 이후 `docs/POST_CATALOG.md`의 Git diff는 머리말과 위 ID의 published/draft 행 이동만 포함한다. 추가 읽기 전용 점검은 `scratch/tasks/bloguito-readonly-audit-20261009/`에 보관했다.

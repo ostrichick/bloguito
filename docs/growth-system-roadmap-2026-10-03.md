@@ -265,3 +265,10 @@ P0를 로컬 정본에 구현했다.
 - `git diff --check`는 통과했다. `docs/INDEX.md`의 기존 CRLF 작업트리 경고만 출력됐고 공백 오류는 없었다.
 
 이번 P0에서는 WordPress 게시물, 공개 상태, 운영 cron, 서버 코드를 변경하지 않았다. P1은 이 분리된 inventory 경계를 전제로 private Growth Analyzer와 Opportunity Queue를 구현한다.
+
+## 2026-10-09 08:00 scheduler 입력 및 no_action 재확인 (읽기 전용)
+
+- 확인 시각: 2026-10-09 13:59 KST, Direct SSH. 운영 cron은 04:00 backup, 08:00 `run_daily.sh`로 관측됐고, 10/09 실행은 08:00:01 시작·08:00:11 종료했다. `PIPELINE_RESULT`의 `growth_action=no_action`, `published=0`, `errors=0`이었다.
+- 실행 시점 최신 analytics 파일은 `google-analytics-2026-10-05.json`이며 10/08 18:02 KST에 도착했다. Opportunity 기간은 09/08~10/05, `provenance_contract_version=1`, Topic score `as_of_date=2026-10-09`다. 두 파생 보고서는 동일한 `refresh_id`, Opportunity payload SHA, analytics snapshot SHA에 결합돼 있었다.
+- `daily-growth-plan.json`의 정확한 사유는 `no_actionable_existing_or_eligible_new_topic`(details 빈 배열)이다. Opportunity 65개 페이지 가운데 `quick_win` 4개·`growth_candidate` 1개가 있지만 이 5개는 `reviewed_exact + auto_adoptable` 조건을 만족하지 않는다. private topic candidate와 scored candidate는 각각 0개다. 이는 당일 유효 후보가 없는 경우이며, 10/05~10/06의 `growth_inputs_unavailable_or_stale` 장애로 동일시하지 않는다.
+- 보고서의 `published_posts=65`는 **08:00 분석 당시 스냅샷** 값이며 13:55 재조회한 WordPress 68개 공개글과 시점·대상이 다르다. 불일치 원인을 게시물 변경 주체로 추정하지 않는다. 이번 조사는 운영 scheduler나 state를 변경하지 않았다.
