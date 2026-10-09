@@ -337,6 +337,19 @@ def _main():
             parser.error('edit-post with --image-path requires --expected-thumbnail-id and --alt-text')
         if bundle is None and not args.image_path:
             parser.error('edit-post requires either a bundle file or --image-path')
+        image_approval_kind = None
+        image_approval_evidence = None
+        if args.image_path:
+            from agents.publish_gate import approval_evidence_digest
+            image_approval_kind = 'manual_user_selected'
+            image_approval_evidence = approval_evidence_digest(image_approval_kind, {
+                'post_id': args.post_id,
+                'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
+                'selection_confirmed': True,
+                'candidate_number': image_lineage['candidate_number'],
+                'selection_mode': image_lineage['selection_mode'],
+                'source_sha256': image_lineage['source_sha256'],
+            })
         from agents.edit_post import edit_reviewed_post
         result = edit_reviewed_post(
             args.post_id,
@@ -348,6 +361,8 @@ def _main():
             image_path=args.image_path,
             expected_thumbnail_id=args.expected_thumbnail_id,
             alt_text=args.alt_text,
+            approval_kind=image_approval_kind,
+            approval_evidence_sha256=image_approval_evidence,
             resume=args.resume,
             prepared_decision=_prepared_edit_decision.get(),
         )

@@ -1,6 +1,6 @@
 # Bloguito 대표 이미지 표준
 
-이 문서는 대표 이미지에 적용하는 현행 규약이다. 일반 정보글의 수동 작성과 스케줄러 자동 발행은 이미지 생성 경로가 다르다. 도시별 월간 행사 포스트에는 [EVENT_POST_STANDARD.md](EVENT_POST_STANDARD.md)의 추가 규칙을 적용한다.
+이 문서는 대표 이미지에 적용하는 현행 규약이다. 수동 작업과 스케줄러 모두 새로운 이미지 생성은 ChatGPT `image_gen` 결과만 허용한다. 무인 스케줄러가 해당 도구의 원본을 확보할 수 없으면 생성·발행을 차단한다. 도시별 월간 행사 포스트에는 [EVENT_POST_STANDARD.md](EVENT_POST_STANDARD.md)의 추가 규칙을 적용한다.
 
 ## 1. 일반 정보글의 기본 경로
 
@@ -25,7 +25,7 @@
 
 1. 먼저 CoS Core 연결을 실제 호출로 확인한다. `python scripts/featured_image_followthrough.py probe --post-id 856`로 SSH/WordPress 읽기도 검증하고, `begin --post-id 856`로 기준 본문 SHA·기존 이미지 ID와 `AFTER_IMAGE`를 **이미지 생성 전에** 저장한다. 기존 active 체크포인트가 있으면 `status`부터 확인하고 중복 `begin`을 하지 않는다.
 2. ChatGPT 네이티브 `image_gen`에서 해당 포스트 주제에 맞는 후보를 생성한다. 한글 이미지라면 글자가 정확히 보이는지 확인한다. 생성에 성공하면 **같은 채팅의 CoS Core `save_image`로 원본을 로컬 `scratch/tasks/<작업명>/candidate-1.png`에 저장**한다. 이미지 생성 직후 턴이 종료된 경우 이 작업을 재개할 수 있도록 사전 체크포인트를 유지한다.
-3. `python scripts/featured_image_followthrough.py continue --post-id 856 --source scratch/tasks/<작업명>/candidate-1.png --alt-text "해당 이미지 설명"`을 실행한다. 이 명령은 기존 SHA 봉인·WebP staging과 정규 `replace-featured-image`를 잇고 이미지 변경 CAS·readback을 수행한다. 업로드가 이미 시작된 뒤 결과가 불명확하면 **동일 명령을 무작정 재실행하지 않는다.** 먼저 failure receipt/WordPress 상태와 import fence를 검사한다.
+3. `python scripts/featured_image_followthrough.py continue --post-id 856 --source scratch/tasks/<작업명>/candidate-1.png --selected-candidate 1 --selection-mode agent-delegated --alt-text "해당 이미지 설명"`을 실행한다. 이 명령은 기존 SHA 봉인·WebP staging과 정규 `replace-featured-image`를 잇고 이미지 변경 CAS·readback을 수행한다. 업로드가 이미 시작된 뒤 결과가 불명확하면 **동일 명령을 무작정 재실행하지 않는다.** 먼저 failure receipt/WordPress 상태와 import fence를 검사한다.
 4. `python scripts/featured_image_followthrough.py status --post-id 856`에서 `missing_requirements=[]`, `wordpress_verified=true`를 확인한 뒤에만 업로드 완료라고 보고한다.
 
 이 단일 명령 경로는 **한 개 후보를 바로 업로드하도록 선택이 위임된 경우**만 지원한다. 기본 5개/다중 후보를 비교·선택하는 요청에는 기존 후보 전체 봉인 및 사용자 선택 경로를 사용한다. CLI는 ChatGPT `image_gen`을 실행하거나 비활성화된 호스트 도구를 활성화하지 못하며, 이미지 생성 호출 자체가 턴을 종료시키는 플랫폼 동작을 강제로 바꾸지 못한다. 따라서 체크포인트는 **중단 후 이어하기 보장 장치**이지 호스트의 자동 재호출을 보장하는 기능은 아니다.

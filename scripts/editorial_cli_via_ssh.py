@@ -766,14 +766,6 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 and wp[3].isdigit() and int(wp[3]) in allowed_ids
                 and wp[4:] == ['_thumbnail_id', '--allow-root']):
             return
-        # The exact #848 full-reviewed legacy-draft onboarding must read the
-        # preserved thumbnail baseline even though it performs NO image import.
-        # Scope this extra read-only permission to that immutable post ID.
-        if (action == 'draft-standard' and len(wp) == 6
-                and wp[:3] == ['post', 'meta', 'get']
-                and wp[3] == '848' and 848 in allowed_ids
-                and wp[4:] == ['_thumbnail_id', '--allow-root']):
-            return
         if (image_mutation_allowed and action in {*_FEATURED_IMAGE_ACTIONS, 'import-section-image'}
                 and len(wp) == 6 and wp[:3] == ['post', 'meta', 'get']
                 and wp[3].isdigit() and int(wp[3]) in readable_ids
@@ -1038,6 +1030,8 @@ def _main():
         cli_args.pop(0)
     if not cli_args or cli_args[0] not in _CLI_ACTIONS:
         parser.error('use -- followed by a supported editorial_cli action')
+    if '--onboard-legacy-draft' in cli_args:
+        parser.error('legacy_draft_onboarding_not_supported: post 848 is already published')
     request = _parse_cli_request(cli_args)
     action = request.action
     targets = set(request.target_ids)
@@ -1068,8 +1062,6 @@ def _main():
         if request.image_path_supplied and image_path is None:
             parser.error('--image-path requires a value')
         if bundle is None:
-            if '--onboard-legacy-draft' in request.cli_args:
-                parser.error('legacy draft onboarding requires a fully reviewed bundle')
             from agents.edit_post import reviewed_target_kind
             from agents.validation_router import build_validation_plan
             target_status = reviewed_target_kind(post_ids[0])
@@ -1083,25 +1075,13 @@ def _main():
                     expected_content_sha256=request.expected_content_sha256),
             }
         else:
-            if '--onboard-legacy-draft' in request.cli_args:
-                from agents.legacy_draft_onboarding import classify_legacy_draft_848
-                decision = classify_legacy_draft_848(
-                    post_ids[0], bundle, request.expected_content_sha256,
-                    confirmed='--confirm-update' in request.cli_args,
-                    edit_intent=request.cli_args[request.cli_args.index('--edit-intent') + 1]
-                    if '--edit-intent' in request.cli_args and
-                    request.cli_args.index('--edit-intent') + 1 < len(request.cli_args)
-                    else '',
-                    image_path=image_path, resume=request.resume,
-                    confirm_title_change=request.confirm_title_change)
-            else:
-                from agents.edit_post import classify_reviewed_post_route
-                decision = classify_reviewed_post_route(
-                    post_ids[0], bundle,
-                    expected_content_sha256=request.expected_content_sha256,
-                    confirm_title_change=request.confirm_title_change,
-                    image_path=image_path,
-                    resume=request.resume)
+            from agents.edit_post import classify_reviewed_post_route
+            decision = classify_reviewed_post_route(
+                post_ids[0], bundle,
+                expected_content_sha256=request.expected_content_sha256,
+                confirm_title_change=request.confirm_title_change,
+                image_path=image_path,
+                resume=request.resume)
             if decision['target_status'] == 'draft':
                 transport_action = 'draft-fast' if decision['route'] == 'fast' else 'draft-standard'
             else:

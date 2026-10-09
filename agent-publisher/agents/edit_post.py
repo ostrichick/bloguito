@@ -409,6 +409,8 @@ def _edit_reviewed_public_post(
     image_path: Path | str | None = None,
     expected_thumbnail_id: int | None = None,
     alt_text: str | None = None,
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
     resume: bool = False,
     prepared_decision: dict | None = None,
 ) -> dict:
@@ -625,6 +627,8 @@ def _edit_reviewed_public_post(
             reconcile_image=reconcile_featured_image_outcome,
             recover_imported_image=recover_imported_featured_image_outcome,
             replace_image=replace_featured_image,
+            approval_kind=approval_kind,
+            approval_evidence_sha256=approval_evidence_sha256,
         )
         update_task_state(
             post_id, completed=["wordpress_saved"], status="saved_pending_qa",
@@ -657,6 +661,8 @@ def edit_reviewed_post(
     image_path: Path | str | None = None,
     expected_thumbnail_id: int | None = None,
     alt_text: str | None = None,
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
     resume: bool = False,
     prepared_decision: dict | None = None,
 ) -> dict:
@@ -672,7 +678,9 @@ def edit_reviewed_post(
         result = replace_featured_image(
             post_id, image_path, expected_content_sha256,
             expected_thumbnail_id=expected_thumbnail_id,
-            alt_text=alt_text, confirmed=confirmed, validation_plan=validation_plan)
+            alt_text=alt_text, confirmed=confirmed, validation_plan=validation_plan,
+            approval_kind=approval_kind,
+            approval_evidence_sha256=approval_evidence_sha256)
         payload = {**result, "route": "image-only", "target_status": kind,
                    "validation_plan": validation_plan}
         if kind == "publish":
@@ -699,7 +707,9 @@ def edit_reviewed_post(
                 post_id, bundle, expected_content_sha256, confirmed=confirmed,
                 edit_intent=edit_intent, confirm_title_change=confirm_title_change,
                 image_path=image_path, expected_thumbnail_id=expected_thumbnail_id,
-                alt_text=alt_text, resume=resume, prepared_decision=recovery)
+                alt_text=alt_text, approval_kind=approval_kind,
+                approval_evidence_sha256=approval_evidence_sha256,
+                resume=resume, prepared_decision=recovery)
         prepared = _validated_prepared_decision(
             prepared_decision,
             post_id=post_id,
@@ -713,10 +723,14 @@ def edit_reviewed_post(
             post_id, bundle, expected_content_sha256, confirmed=confirmed,
             edit_intent=edit_intent, confirm_title_change=confirm_title_change,
             image_path=image_path, expected_thumbnail_id=expected_thumbnail_id,
-            alt_text=alt_text, resume=resume, prepared_decision=prepared)
+            alt_text=alt_text, approval_kind=approval_kind,
+            approval_evidence_sha256=approval_evidence_sha256,
+            resume=resume, prepared_decision=prepared)
         return {**result, "target_status": "draft"}
     return _edit_reviewed_public_post(
         post_id, bundle, expected_content_sha256, confirmed=confirmed,
         edit_intent=edit_intent, confirm_title_change=confirm_title_change,
         image_path=image_path, expected_thumbnail_id=expected_thumbnail_id,
-        alt_text=alt_text, resume=resume, prepared_decision=prepared_decision)
+        alt_text=alt_text, approval_kind=approval_kind,
+        approval_evidence_sha256=approval_evidence_sha256,
+        resume=resume, prepared_decision=prepared_decision)

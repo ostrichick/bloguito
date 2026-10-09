@@ -235,6 +235,22 @@ class UnifiedEditPostTests(unittest.TestCase):
         public_edit.assert_called_once()
         draft_edit.assert_not_called()
 
+    def test_reviewed_draft_edit_forwards_exact_image_approval_binding(self):
+        bundle = current_bundle()
+        bundle['brief']['existing_post_id'] = 243
+        with patch('agents.edit_post.reviewed_target_kind', return_value='draft'), \
+             patch('agents.edit_post._stale_draft_public_recovery_decision', return_value=None), \
+             patch('agents.edit_post._validated_prepared_decision', return_value=None), \
+             patch('agents.edit_post.edit_reviewed_draft', return_value={'post_id': 243}) as draft_edit:
+            edit_reviewed_post(
+                243, bundle, 'a' * 64, confirmed=True,
+                edit_intent='reviewed content and image', image_path='cover.webp',
+                expected_thumbnail_id=850, alt_text='Approved cover',
+                approval_kind='manual_user_selected', approval_evidence_sha256='b' * 64,
+            )
+        self.assertEqual('manual_user_selected', draft_edit.call_args.kwargs['approval_kind'])
+        self.assertEqual('b' * 64, draft_edit.call_args.kwargs['approval_evidence_sha256'])
+
 
 if __name__ == '__main__':
     unittest.main()

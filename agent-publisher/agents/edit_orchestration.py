@@ -84,11 +84,17 @@ def run_combined_image_phase(
     reconcile_image: Callable[..., dict],
     recover_imported_image: Callable[..., dict | None],
     replace_image: Callable[..., dict],
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
 ) -> dict | None:
     """Run the identical image continuation/checkpoint phase after content save."""
     if image_path is None:
+        if approval_kind is not None or approval_evidence_sha256 is not None:
+            raise ValueError("image_approval_requires_image")
         update_state(post_id, completed=["image_saved"])
         return None
+    if (approval_kind is None) != (approval_evidence_sha256 is None):
+        raise ValueError("image_approval_pair_required")
 
     update_state(post_id, completed=["image_validated"])
     checkpoint = (
@@ -97,6 +103,8 @@ def run_combined_image_phase(
     )
     if checkpoint and checkpoint.get("attachment_id"):
         image_result = reconcile_image(post_id, checkpoint, alt_text)
+        if approval_kind is not None and not image_result.get("publish_attestation"):
+            raise ValueError("recovered_image_requires_separate_publish_attestation")
     else:
         import_attempt = (
             ((state or {}).get("checkpoints") or {}).get("image_import_attempt")
@@ -122,6 +130,8 @@ def run_combined_image_phase(
             )
             if image_result is None:
                 raise ValueError("featured_image_import_outcome_ambiguous")
+            if approval_kind is not None and not image_result.get("publish_attestation"):
+                raise ValueError("recovered_image_requires_separate_publish_attestation")
             update_state(post_id, checkpoints={"image_outcome": image_result})
             update_state(
                 post_id,
@@ -146,6 +156,8 @@ def run_combined_image_phase(
             manage_task_state=False,
             outcome_callback=image_checkpoint,
             import_attempt_callback=import_attempt_checkpoint,
+            approval_kind=approval_kind,
+            approval_evidence_sha256=approval_evidence_sha256,
         )
     update_state(
         post_id,

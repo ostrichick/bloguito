@@ -12,6 +12,50 @@ from agents.task_state import (
 
 
 class CombinedImagePhaseTests(unittest.TestCase):
+    def test_approved_combined_image_passes_exact_evidence_to_wordpress_mutator(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = Path(folder) / "selected.webp"
+            image_path.write_bytes(b"verified-candidate")
+            sent = []
+
+            def replace(post_id, path, sha, **kwargs):
+                sent.append((post_id, path, sha, kwargs))
+                return {"attachment_id": 906, "publish_attestation": {"version": 1}}
+
+            result = run_combined_image_phase(
+                887, image_path=image_path, desired_content_sha256="a" * 64,
+                expected_thumbnail_id=888, alt_text="Approved image", resume=False,
+                state=None, update_state=lambda *args, **kwargs: None,
+                reconcile_image=lambda *args, **kwargs: self.fail("unexpected reconcile"),
+                recover_imported_image=lambda *args, **kwargs: self.fail("unexpected recovery"),
+                replace_image=replace, approval_kind="manual_user_selected",
+                approval_evidence_sha256="b" * 64)
+            self.assertEqual(906, result["attachment_id"])
+            self.assertEqual(1, len(sent))
+            self.assertEqual("manual_user_selected", sent[0][3]["approval_kind"])
+            self.assertEqual("b" * 64, sent[0][3]["approval_evidence_sha256"])
+
+    def test_approved_import_recovery_never_claims_attestation_without_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "selected.webp"
+            path.write_bytes(b"verified-candidate")
+            image_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(ValueError, "recovered_image_requires_separate_publish_attestation"):
+                run_combined_image_phase(
+                    887, image_path=path, desired_content_sha256="a" * 64,
+                    expected_thumbnail_id=888, alt_text="Approved image", resume=True,
+                    state={"checkpoints": {"image_import_attempt": {
+                        "started": True, "image_sha256": image_sha,
+                        "expected_thumbnail_id": 888,
+                    }}},
+                    update_state=lambda *args, **kwargs: None,
+                    reconcile_image=lambda *args, **kwargs: None,
+                    recover_imported_image=lambda *args, **kwargs: {"attachment_id": 906},
+                    replace_image=lambda *args, **kwargs: self.fail("do not duplicate import"),
+                    approval_kind="manual_user_selected",
+                    approval_evidence_sha256="b" * 64,
+                )
+
     def test_after_image_allows_absent_baseline_thumbnail_and_seals_saved_file(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

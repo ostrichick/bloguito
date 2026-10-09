@@ -150,6 +150,8 @@ def edit_reviewed_draft(
     image_path: Path | str | None = None,
     expected_thumbnail_id: int | None = None,
     alt_text: str | None = None,
+    approval_kind: str | None = None,
+    approval_evidence_sha256: str | None = None,
     resume: bool = False,
     prepared_decision: dict | None = None,
 ) -> dict:
@@ -408,6 +410,8 @@ def edit_reviewed_draft(
             reconcile_image=reconcile_featured_image_outcome,
             recover_imported_image=recover_imported_featured_image_outcome,
             replace_image=replace_featured_image,
+            approval_kind=approval_kind,
+            approval_evidence_sha256=approval_evidence_sha256,
         )
         update_task_state(
             post_id,

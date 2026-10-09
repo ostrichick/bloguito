@@ -787,17 +787,13 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
                 'post', 'term', 'list', '649', 'category',
                 '--fields=term_id,name,slug', '--format=json', '--allow-root'])
 
-    def test_exact_848_legacy_draft_allows_thumbnail_baseline_read_only(self):
+    def test_obsolete_848_legacy_draft_thumbnail_exception_is_denied(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
             args, 0, stdout='850\n', stderr='')
         transport = module.make_transport('draft-standard', {848}, 'bloguito')
-        response = transport(module._WP_PREFIX + [
-            'post', 'meta', 'get', '848', '_thumbnail_id', '--allow-root'],
-            capture_output=True, text=True, check=False)
-        self.assertEqual('850\n', response.stdout)
-        for post_id, key in ((849, '_thumbnail_id'), (848, '_wp_attachment_image_alt'),
-                             (848, 'rank_math_seo_score')):
+        for post_id, key in ((848, '_thumbnail_id'), (849, '_thumbnail_id'),
+                             (848, '_wp_attachment_image_alt'), (848, 'rank_math_seo_score')):
             with self.subTest(post_id=post_id, key=key):
                 with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
                     transport(module._WP_PREFIX + [

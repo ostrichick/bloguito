@@ -38,6 +38,13 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
             self.assertIn('ROLLBACK', script)
             self.assertIn('COMMIT', script)
         self.assertIn('$wpdb->posts', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('_bloguito_publish_gate_v1', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('bloguito_validate_publishability', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('bloguito_validate_publishability($id,null,null,true)', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('bloguito_guarded_publish_post_id', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('_wp_attachment_image_alt', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('_wp_attached_file', GUARDED_POST_MUTATION_SCRIPT)
+        self.assertIn('wp_cache_delete($thumb_id,"post_meta")', GUARDED_POST_MUTATION_SCRIPT)
         self.assertIn('$wpdb->term_relationships', GUARDED_CATEGORY_MUTATION_SCRIPT)
         self.assertIn('wp_attachment_is_image', GUARDED_THUMBNAIL_MUTATION_SCRIPT)
         self.assertIn('$wpdb->postmeta', GUARDED_THUMBNAIL_MUTATION_SCRIPT)
@@ -289,6 +296,24 @@ class WordPressMutationPrimitiveTests(unittest.TestCase):
         self.assertEqual('publish', result['post_status'])
         payload = json.loads(run.call_args.kwargs['input'])
         self.assertEqual({'post_status': 'publish'}, payload['updates'])
+
+    def test_guarded_publish_surfaces_wordpress_publish_gate_block(self):
+        base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']
+        with patch('agents.wordpress_mutation.subprocess.run', return_value=Mock(
+                stdout=json.dumps({
+                    'status': 'publish_gate_blocked',
+                    'code': 'bloguito_publish_gate_image_changed',
+                }))):
+            with self.assertRaisesRegex(
+                    ValueError, 'publication_gate_blocked:bloguito_publish_gate_image_changed'):
+                guarded_update_post(
+                    base, 7,
+                    expected={
+                        'post_status': 'draft', 'post_title': 'title', 'post_name': 'slug',
+                        'post_excerpt': 'old excerpt', 'content_sha256': content_sha256('old'),
+                    },
+                    updates={'post_status': 'publish'},
+                )
 
     def test_guarded_update_can_bind_canonical_category_to_content_cas(self):
         base = ['sudo', 'docker', 'exec', 'wordpress_app', 'wp']

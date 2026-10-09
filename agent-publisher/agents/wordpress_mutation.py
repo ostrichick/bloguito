@@ -786,6 +786,8 @@ def guarded_update_post(
         raise ValueError("wordpress_guarded_cas_mismatch")
     if status == "verification_failed":
         raise ValueError("wordpress_guarded_readback_failed")
+    if status == "publish_gate_blocked":
+        raise ValueError("publication_gate_blocked:" + str(observed.get("code") or "unknown"))
     if status == "missing":
         raise ValueError("wordpress_guarded_target_missing")
     if status in {"invalid_payload", "invalid_update"}:
