@@ -44,7 +44,12 @@ def validate_rent_benefit(item, text, quote_text):
         return set(), ['invalid_derived_calculation']
     annual = Decimal(monthly * months)
     rent_credit = min(annual,Decimal(1000))*Decimal(credit)/100
-    receipt_deduction = annual*Decimal('0.30')
+    # Basic credit-card deduction cap differs above 70m KRW gross salary.
+    # Other eligible card expenditures are assumed to exactly reach the 25%
+    # floor and consume none of the basic deduction limit. Child supplements
+    # and other statutory cap extensions are excluded from this example.
+    deduction_cap = Decimal(250 if salary > 7000 else 300)
+    receipt_deduction = min(annual*Decimal('0.30'), deduction_cap)
     receipt_saving = receipt_deduction*Decimal(marginal)/100
     receipt_total = receipt_saving+Decimal(standard)
     gap=abs(rent_credit-receipt_total)

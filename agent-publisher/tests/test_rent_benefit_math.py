@@ -55,6 +55,14 @@ class RentBenefitMathTests(unittest.TestCase):
         text='총급여 9000만원, 월세 50만원 × 12개월 가정. 현금영수증.'
         self.assertIn('invalid_derived_calculation',validate_rent_benefit(data,text,self.LAW)[1])
 
+    def test_high_salary_and_rent_respect_card_deduction_basic_cap(self):
+        data=self.sample(9000,80,24,0)
+        text='총급여 9000만원, 월세 80만원 × 12개월(가정). 현금영수증 소득공제 250만원, 세금 감소 60만원 + 표준세액공제 13만원 = 합계 73만원.'
+        allowed,errors=validate_rent_benefit(data,text,self.LAW)
+        self.assertEqual([],errors)
+        self.assertTrue({'250','60','73'}.issubset(allowed))
+        self.assertNotIn('82.12',allowed)
+
 
 if __name__=='__main__':
     unittest.main()
