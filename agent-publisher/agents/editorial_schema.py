@@ -66,6 +66,16 @@ class AddDurationCalculation(BaseModel):
     result: str
 
 
+class RentBenefitExample(BaseModel):
+    operation: Literal['rent_benefit_example']
+    salary_man: int
+    monthly_rent_man: int
+    months: int
+    credit_percent: int
+    marginal_percent: int
+    standard_credit_man: int
+
+
 DerivedCalculation = (
     SumCalculation
     | ThousandWonToWonCalculation
@@ -74,6 +84,7 @@ DerivedCalculation = (
     | PensionProjectionCalculation
     | MonthlyFromTotalDaysCalculation
     | AddDurationCalculation
+    | RentBenefitExample
 )
 
 

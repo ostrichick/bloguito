@@ -23,6 +23,7 @@ from agents.event_post_standard import overview_event_date_labels, validate_even
 from agents.policy_exceptions import get_policy_exception
 from agents.reader_tools import validate_reader_tools
 from agents.volatility import explicit_contract, lifecycle_reasons, temporal_contract_reasons
+from agents.rent_benefit_math import validate_rent_benefit
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDERER_PROVENANCE_FILE = ROOT / 'data' / 'renderer_provenance.json'
@@ -340,6 +341,11 @@ def supported_currency_sums(text, quote_text, calculations):
     for item in calculations:
         if not isinstance(item, dict):
             errors.append('invalid_derived_calculation')
+            continue
+        if item.get('operation') == 'rent_benefit_example':
+            additions, faults = validate_rent_benefit(item, text, quote_text)
+            supported.update(additions)
+            errors.extend(faults)
             continue
         if item.get('operation') == 'thousand_won_to_won':
             if (set(item) != {'operation', 'source_thousand_won', 'result_won'}
