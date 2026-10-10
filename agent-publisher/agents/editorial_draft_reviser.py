@@ -216,6 +216,22 @@ def _matches_reviewed_draft_content(old_bundle, current_content, *, post_id):
     return current_sha in set(recognized_hashes.values())
 
 
+def _assert_reviewed_draft_identity(old_brief: dict, new_brief: dict, post_id: int) -> None:
+    """Permit strengthening a legacy tracked draft with its exact post-ID binding.
+
+    Older reviewed manifests omit existing_post_id. Explicitly binding the
+    revision to the *same* post is not a topic change, but any different
+    identity, removed prior binding, or retargeted ID remains forbidden.
+    """
+    old_binding = old_brief.get("existing_post_id")
+    new_binding = new_brief.get("existing_post_id")
+    if (old_brief.get("id") != new_brief.get("id")
+            or old_brief.get("entity") != new_brief.get("entity")
+            or not (old_binding == new_binding
+                    or (old_binding is None and new_binding == post_id))):
+        raise ValueError("draft_revision_topic_or_title_mismatch")
+
+
 def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed=False,
                            confirm_title_change=False, image_path=None,
                            checkpoint_callback=None):
@@ -248,10 +264,7 @@ def revise_reviewed_draft(post_id, bundle, expected_content_sha256, *, confirmed
         new_brief = bundle.get("brief", {})
         reviewed_meta = rank_math_meta_from_brief(new_brief)
         new_title = bundle.get("plan", {}).get("title")
-        if (old_brief.get("id") != new_brief.get("id")
-                or old_brief.get("entity") != new_brief.get("entity")
-                or old_brief.get("existing_post_id") != new_brief.get("existing_post_id")):
-            raise ValueError("draft_revision_topic_or_title_mismatch")
+        _assert_reviewed_draft_identity(old_brief, new_brief, post_id)
 
         base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
         post_fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]

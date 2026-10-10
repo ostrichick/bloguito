@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from agents.editorial import excerpt_from_lead, render
 from agents.editorial_draft_reviser import (
+    _assert_reviewed_draft_identity,
     _before_generated_source_footer,
     _matches_reviewed_draft_content,
     _normalize_renderer_migrations,
@@ -26,6 +27,27 @@ def _wp_args(args):
 
 
 class EditorialDraftReviserTests(unittest.TestCase):
+    def test_legacy_tracked_draft_may_only_add_same_post_id(self):
+        old = {"id": "pension-estimate", "entity": "국민연금 예상수령액"}
+        new = {**old, "existing_post_id": 889}
+        _assert_reviewed_draft_identity(old, new, 889)
+        _assert_reviewed_draft_identity({**old, "existing_post_id": 889}, new, 889)
+        with self.assertRaisesRegex(ValueError, "topic_or_title_mismatch"):
+            _assert_reviewed_draft_identity(old, {**old, "existing_post_id": 890}, 889)
+        with self.assertRaisesRegex(ValueError, "topic_or_title_mismatch"):
+            _assert_reviewed_draft_identity(
+                {**old, "existing_post_id": 889}, old, 889)
+        with self.assertRaisesRegex(ValueError, "topic_or_title_mismatch"):
+            _assert_reviewed_draft_identity(
+                {**old, "existing_post_id": 889},
+                {**old, "existing_post_id": 890}, 889)
+        with self.assertRaisesRegex(ValueError, "topic_or_title_mismatch"):
+            _assert_reviewed_draft_identity(
+                old, {"id": "different", "entity": old["entity"], "existing_post_id": 889}, 889)
+        with self.assertRaisesRegex(ValueError, "topic_or_title_mismatch"):
+            _assert_reviewed_draft_identity(
+                old, {**new, "entity": "주택연금"}, 889)
+
     def test_revision_source_plan_rechecks_only_new_source_when_existing_sources_are_fresh(self):
         old = sample()
         new = copy.deepcopy(old)
