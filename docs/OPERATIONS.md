@@ -143,6 +143,10 @@ Simple Task는 `baseline 확인 → mutation 1회 → readback → 종료`가 �
 
 **이미지 생성이 포함된 복합 작업:** 사용자가 “이미지를 만들고 업로드”, “대표이미지를 만들고 본문도 수정”, “여러 포스트에 이미지를 적용”처럼 이미지 생성 뒤 후속 작업을 함께 요청한 경우 이미지 생성은 중간 단계다. Prime은 이미지 생성 자체를 완료로 보고 final하지 않는다. ChatGPT `image_gen` 원본을 CoS `save_image`로 전달한 뒤 정규 mutation과 검증을 완료해야 하며, 다른 생성 provider를 대체 경로로 호출하지 않는다.
 
+**네이티브 생성 도구 확인:** CoS 함수 검색 결과에 `image_gen`이 보이지 않아도 ChatGPT 호스트의 이미지 생성 가능 여부까지 단정하지 않는다. #889에서는 같은 채팅의 네이티브 생성 요청이 성공했다. 사용자가 이미지 생성을 요청했다면 실제로 사용할 수 있는 네이티브 호출 경로를 시도하고 그 결과를 기준으로 판단한다. 해당 턴의 호스트 호출 경로 자체가 보이지 않으면 관측 범위를 한정하여 설명하며, 내부 라우팅 원인을 추측하거나 CoS/로컬 코드로 도구를 강제 활성화할 수 있다고 주장하지 않는다.
+
+**대표이미지 교체 실행 관찰:** `featured_image_followthrough.py`의 `probe`/`begin`/`continue`/`status`는 `scratch/tasks/featured-image-runs/post-<ID>.jsonl`에 실행별 `attempt_id`, 단계 시작·종료, 시간(ms), 오류 유형과 검증된 attachment/source SHA/업로드 receipt의 제한된 값을 추가한다. 이전 실패와 이후 성공은 같은 post의 파일에서 시도별로 구분한다. 로컬 CLI가 직접 관찰할 수 없는 ChatGPT `image_gen`·CoS `save_image` 시간은 `null`로 기록하며 추정하지 않는다. 전체 전후 성능은 **같은 구간끼리** 비교하고, 로그 실패가 실제 업로드를 막지는 않는다. 기록에는 계정·토큰·원본 본문/ALT와 SSH 명령 전체를 포함하지 않는다.
+
 ChatGPT native image generation처럼 도구 특성상 이미지 생성 호출이 현재 turn의 종료점이 되는 경로를 반드시 써야 한다면, 생성 호출 직전에 task-state 또는 `scratch/tasks/<작업명>/`의 안정된 state 파일에 `AFTER_IMAGE` 체크포인트를 남긴다. 최소 필드는 `post_id`, `remaining_steps`, `expected_content_sha256`, `expected_thumbnail_id`, `target_image_path_or_handle`, `completion_requirements`다. 다음 turn에서는 정책·source·본문을 처음부터 다시 조사하지 않고 이 checkpoint와 live WordPress state만 비교해 후속 단계부터 바로 재개한다.
 
 실제 체크포인트는 `checkpoint-after-image`로 기록하고 이미지 생성 뒤 `update-after-image-checkpoint`로 진행 상태를 갱신한다. `complete-task-qa`는 현재 작업의 필수 phase뿐 아니라 같은 본문 SHA에 결합된 `AFTER_IMAGE` 완료 조건도 확인하므로, 업로드·대표이미지 지정·요청된 후속 수정·readback 중 필요한 항목이 남아 있으면 `complete`로 닫히지 않는다.

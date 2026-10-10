@@ -105,16 +105,26 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "candidate-1.png"
-            source.write_bytes(b"saved-original")
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            def local_only(argv, **kwargs):
+                if "editorial_cli_via_ssh.py" in " ".join(str(item) for item in argv):
+                    self.fail("stale WordPress baseline started media import")
+                return ""
+
             with (patch.object(follow, "load_after_image_checkpoint", return_value=checkpoint),
                   patch.object(follow, "read_wordpress",
                                return_value={**self.baseline, "thumbnail_id": 858}),
-                  patch.object(follow, "_run") as run):
-                with self.assertRaisesRegex(ValueError, "wordpress_changed_since_image"):
+                  patch.object(follow, "_run", side_effect=local_only) as run,
+                  patch.object(follow, "update_after_image_checkpoint"),
+                  patch.object(follow, "verify_manual_image_upload_lineage", return_value={
+                      "source_sha256": follow.hashlib.sha256(source.read_bytes()).hexdigest(),
+                      "staged_sha256": "f" * 64,
+                  })):
+                with self.assertRaisesRegex(ValueError, "wordpress_changed_before_media_import"):
                     follow.continue_upload(
                         856, source, "설명",
                         selected_candidate=1, selection_mode="agent-delegated")
-            run.assert_not_called()
+            self.assertEqual(2, run.call_count)  # local seal and stage only
 
     def test_existing_staging_prevents_blind_second_import(self):
         checkpoint = {
@@ -166,7 +176,7 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
             }
             checkpoint["result"] = initial
             with (patch.object(follow, "load_after_image_checkpoint", return_value=checkpoint),
-                  patch.object(follow, "read_wordpress", return_value=self.baseline),
+                  patch.object(follow, "read_wordpress", return_value=self.baseline) as live,
                   patch.object(follow, "_run", side_effect=transport_only_mock) as run,
                   patch.object(follow, "update_after_image_checkpoint") as update,
                   patch.object(follow, "assert_after_image_complete") as guard,
@@ -177,6 +187,7 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                     856, source, "장기요양보험 신청 안내",
                     selected_candidate=1, selection_mode="agent-delegated")
             self.assertEqual(3, run.call_count)
+            live.assert_called_once_with(856, "bloguito")
             self.assertIn("replace-featured-image", run.call_args.args[0])
             self.assertIn("--confirm-image-selection", run.call_args.args[0])
             self.assertEqual("completed", result["status"])
@@ -303,16 +314,57 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
             self.assertEqual(1, run.call_count)
             self.assertIn("editorial_cli_via_ssh.py", " ".join(run.call_args.args[0]))
 
-    def test_read_wordpress_treats_missing_thumbnail_meta_as_none(self):
+    def test_read_wordpress_uses_one_combined_snapshot_with_missing_thumbnail(self):
         post = {
-            "ID": 856, "post_content": "text", "post_title": "Title",
+            "post_content": "text", "post_title": "Title",
             "post_status": "draft", "post_name": "slug", "post_excerpt": "",
         }
-        with patch.object(follow, "_wp", side_effect=[
-                json.dumps(post),
-                RuntimeError("command_exit_1:Error: Could not find the specified post meta field."),
-        ]):
-            self.assertIsNone(follow.read_wordpress(856)["thumbnail_id"])
+        with patch.object(follow, "_wp", return_value=json.dumps({
+                 "post": post, "thumbnail_id": None,
+             })) as wp:
+            result = follow.read_wordpress(856)
+        self.assertIsNone(result["thumbnail_id"])
+        self.assertEqual("draft", result["status"])
+        self.assertEqual(1, wp.call_count)
+        self.assertEqual(856, json.loads(wp.call_args.kwargs["input_text"])["post_id"])
+        self.assertEqual("eval", wp.call_args.args[1][0])
+
+    def test_read_wordpress_rejects_invalid_snapshot_without_fallback(self):
+        with patch.object(follow, "_wp", return_value=json.dumps({
+            "post": {"post_content": "text", "post_title": "title",
+                     "post_status": "publish", "post_name": "slug", "post_excerpt": ""},
+            "thumbnail_id": "not-an-id",
+        })) as wp:
+            with self.assertRaisesRegex(RuntimeError, "wordpress_readback_invalid"):
+                follow.read_wordpress(856)
+        wp.assert_called_once()
+
+    def test_observation_links_attempts_with_minimal_nonsecret_events(self):
+        with tempfile.TemporaryDirectory() as temp:
+            journal = Path(temp) / "events.jsonl"
+            first = follow.TaskObservation(856, "begin", path=journal)
+            second = follow.TaskObservation(856, "continue", path=journal)
+            with self.assertRaisesRegex(RuntimeError, "mock-failure"):
+                with first.phase("begin_wordpress_snapshot"):
+                    raise RuntimeError("mock-failure:secret-should-not-be-recorded")
+            with second.phase("stage_candidate"):
+                pass
+            second.receipt(source_sha256="a" * 64, attachment_id=904,
+                           old_thumbnail_id=857, pipeline={
+                               "import_attempts": 1, "sha_reconcile_attempts": 0,
+                               "elapsed_ms": "sensitive-string-must-not-be-recorded",
+                           })
+            events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(5, len(events))
+            self.assertEqual({first.attempt_id, second.attempt_id},
+                             {event["attempt_id"] for event in events})
+            self.assertEqual("error", events[1]["status"])
+            self.assertGreaterEqual(events[3]["duration_ms"], 0)
+            self.assertEqual(904, events[-1]["attachment_id"])
+            self.assertEqual(1, events[-1]["import_attempts"])
+            self.assertIsNone(events[-1]["pipeline_elapsed_ms"])
+            self.assertNotIn("secret-should-not-be-recorded", journal.read_text(encoding="utf-8"))
+            self.assertNotIn("sensitive-string-must-not-be-recorded", journal.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

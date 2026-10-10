@@ -13,6 +13,10 @@ import re
 import shlex
 import subprocess
 import sys
+import time
+import uuid
+from contextlib import contextmanager, nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +30,7 @@ from agents.task_state import (  # noqa: E402
     write_after_image_checkpoint,
 )
 from agents.featured_image import verify_manual_image_upload_lineage  # noqa: E402
+from agents.wordpress_mutation import POST_THUMBNAIL_SNAPSHOT_SCRIPT  # noqa: E402
 
 REQUIRED = (
     "image_generated", "image_saved_or_handed_off", "uploaded",
@@ -33,10 +38,77 @@ REQUIRED = (
 )
 
 
-def _run(argv: list[str], *, timeout: int = 120) -> str:
+class TaskObservation:
+    """Append nonsecret, timestamped CLI events for one post across attempts.
+
+    Host image_gen/save_image events cannot be inferred by this local CLI.
+    The WordPress mutation fence remains in the separate after-image checkpoint.
+    """
+
+    def __init__(self, post_id: int, action: str, path: Path | None = None):
+        self.post_id = post_id
+        self.action = action
+        self.attempt_id = uuid.uuid4().hex
+        self.path = path or (ROOT / "scratch" / "tasks" / "featured-image-runs"
+                             / f"post-{post_id}.jsonl")
+
+    def _append(self, data: dict) -> None:
+        payload = {"schema_version": 1, "post_id": self.post_id,
+                   "attempt_id": self.attempt_id, "action": self.action, **data}
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except OSError:
+            # Diagnostic writes must not change whether an image gets uploaded.
+            pass
+
+    @contextmanager
+    def phase(self, name: str):
+        start = datetime.now(timezone.utc).isoformat()
+        started = time.perf_counter()
+        self._append({"phase": name, "event": "started", "at": start})
+        try:
+            yield
+        except BaseException as exc:
+            status, error_type = "error", type(exc).__name__
+            raise
+        else:
+            status, error_type = "ok", None
+        finally:
+            self._append({"phase": name, "event": "ended", "started_at": start,
+                          "ended_at": datetime.now(timezone.utc).isoformat(),
+                          "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                          "status": status, "error_type": error_type})
+
+    def receipt(self, *, source_sha256: str, attachment_id: int,
+                old_thumbnail_id: int | None, staged_sha256: str | None = None,
+                pipeline: dict | None = None) -> None:
+        pipeline = pipeline if isinstance(pipeline, dict) else {}
+        def numeric_metric(name: str) -> int | float | None:
+            value = pipeline.get(name)
+            return value if type(value) in (int, float) else None
+
+        self._append({"phase": "verified_receipt", "event": "recorded",
+                      "at": datetime.now(timezone.utc).isoformat(),
+                      "source_sha256": source_sha256,
+                      "staged_sha256": staged_sha256,
+                      "attachment_id": attachment_id,
+                      "old_thumbnail_id": old_thumbnail_id,
+                      "import_attempts": numeric_metric("import_attempts"),
+                      "sha_reconcile_attempts": numeric_metric("sha_reconcile_attempts"),
+                      "pipeline_elapsed_ms": numeric_metric("elapsed_ms"),
+                      "host_image_gen_ms": None, "host_save_image_ms": None})
+
+
+def _phase(observer: TaskObservation | None, name: str):
+    return observer.phase(name) if observer else nullcontext()
+
+
+def _run(argv: list[str], *, timeout: int = 120, input_text: str | None = None) -> str:
     try:
         completed = subprocess.run(
-            argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+            argv, cwd=ROOT, capture_output=True, input=input_text, text=True, encoding="utf-8",
             errors="replace", timeout=timeout, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -47,38 +119,36 @@ def _run(argv: list[str], *, timeout: int = 120) -> str:
     return completed.stdout.strip()
 
 
-def _wp(host: str, args: list[str]) -> str:
+def _wp(host: str, args: list[str], *, input_text: str | None = None) -> str:
     # Each argument is fixed or validated; no shell interpolation of untrusted text.
-    remote = "sudo docker exec wordpress_app wp " + " ".join(
+    remote = "sudo docker exec " + ("-i " if input_text is not None else "") + "wordpress_app wp " + " ".join(
         shlex.quote(str(arg)) for arg in [*args, "--allow-root"]
     )
     return _run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host, remote],
-        timeout=35,
+        timeout=35, input_text=input_text,
     )
 
 
 def read_wordpress(post_id: int, host: str = "bloguito") -> dict:
-    raw = _wp(host, [
-        "post", "get", str(post_id),
-        "--fields=ID,post_content,post_title,post_status,post_name,post_excerpt",
-        "--format=json",
-    ])
+    # Reuse the exact read-only post+thumbnail snapshot used by the restricted
+    # image transport. One SSH round trip instead of two independent wp calls.
+    raw = _wp(host, ["eval", POST_THUMBNAIL_SNAPSHOT_SCRIPT],
+              input_text=json.dumps({"post_id": post_id}))
     try:
-        post = json.loads(raw)
-        assert int(post["ID"]) == post_id
-        assert isinstance(post["post_content"], str)
-        try:
-            thumb_text = _wp(host, ["post", "meta", "get", str(post_id), "_thumbnail_id"]).strip()
-        except RuntimeError as exc:
-            # wp post meta get exits 1 for a newly created draft without a
-            # thumbnail. Treat *only* this documented absence as missing.
-            description = str(exc).lower()
-            if not (description.startswith("command_exit_1:")
-                    and "could not find the specified post meta field" in description):
-                raise
-            thumb_text = ""
-        thumbnail_id = int(thumb_text) if thumb_text.isdecimal() else None
+        snapshot = json.loads(raw)
+        if not isinstance(snapshot, dict) or set(snapshot) != {"post", "thumbnail_id"}:
+            raise ValueError("invalid_image_snapshot_shape")
+        post = snapshot["post"]
+        if not isinstance(post, dict) or set(post) != {
+            "post_content", "post_title", "post_status", "post_name", "post_excerpt",
+        } or any(not isinstance(value, str) for value in post.values()):
+            raise ValueError("invalid_image_snapshot_post")
+        thumb_text = snapshot["thumbnail_id"]
+        if thumb_text is not None and (not isinstance(thumb_text, str)
+                                       or not thumb_text.isdecimal() or int(thumb_text) <= 0):
+            raise ValueError("invalid_image_snapshot_thumbnail")
+        thumbnail_id = int(thumb_text) if thumb_text is not None else None
     except (ValueError, KeyError, TypeError, AssertionError) as exc:
         raise RuntimeError("wordpress_readback_invalid") from exc
     return {
@@ -92,11 +162,13 @@ def read_wordpress(post_id: int, host: str = "bloguito") -> dict:
     }
 
 
-def begin(post_id: int, host: str = "bloguito") -> dict:
+def begin(post_id: int, host: str = "bloguito", *,
+          observer: TaskObservation | None = None) -> dict:
     existing = load_after_image_checkpoint(post_id)
     if existing and existing.get("status") == "in_progress":
         raise ValueError("active_after_image_checkpoint_exists:use_status_or_continue")
-    baseline = read_wordpress(post_id, host)
+    with _phase(observer, "begin_wordpress_snapshot"):
+        baseline = read_wordpress(post_id, host)
     write_after_image_checkpoint(
         post_id,
         remaining_steps=[
@@ -123,7 +195,8 @@ def begin(post_id: int, host: str = "bloguito") -> dict:
     }
 
 
-def inspect(post_id: int, host: str = "bloguito") -> dict:
+def inspect(post_id: int, host: str = "bloguito", *,
+            observer: TaskObservation | None = None) -> dict:
     state = load_after_image_checkpoint(post_id)
     if not state:
         raise ValueError("after_image_checkpoint_missing:run_begin_before_image_gen")
@@ -140,12 +213,14 @@ def inspect(post_id: int, host: str = "bloguito") -> dict:
         if outcome["upload_attempt_started"]:
             # Read-only diagnosis after a lost SSH response. Never infer import
             # failure from a timeout and never invoke a second media import.
-            live = read_wordpress(post_id, host)
+            with _phase(observer, "diagnostic_wordpress_snapshot"):
+                live = read_wordpress(post_id, host)
             outcome["current_thumbnail_id"] = live["thumbnail_id"]
             outcome["thumbnail_changed"] = live["thumbnail_id"] != state["expected_thumbnail_id"]
             outcome["content_sha_preserved"] = live["content_sha256"] == state["expected_content_sha256"]
         return outcome
-    live = read_wordpress(post_id, host)
+    with _phase(observer, "final_wordpress_readback"):
+        live = read_wordpress(post_id, host)
     expected = state["result"]
     required_initial = ("initial_status", "initial_title", "initial_slug", "initial_excerpt")
     unchanged = (
@@ -184,6 +259,7 @@ def continue_upload(
     post_id: int, source: Path, alt_text: str, host: str = "bloguito", *,
     candidate_manifest: Path | None = None, selected_candidate: int | None = None,
     selection_mode: str | None = None, resume: bool = False,
+    observer: TaskObservation | None = None,
 ) -> dict:
     state = load_after_image_checkpoint(post_id)
     if not state or state.get("status") != "in_progress":
@@ -211,13 +287,8 @@ def continue_upload(
         raise ValueError("checkpoint_selection_conflict")
     if result.get("staged_alt_text") is not None and result["staged_alt_text"] != alt_text.strip():
         raise ValueError("checkpoint_alt_text_conflict")
-    # Check live WordPress state before any non-idempotent import.
-    baseline = read_wordpress(post_id, host)
-    if (baseline["content_sha256"] != state["expected_content_sha256"]
-            or baseline["thumbnail_id"] != state["expected_thumbnail_id"]
-            or any(baseline[key] != result.get("initial_" + key)
-                   for key in ("status", "title", "slug", "excerpt"))):
-        raise ValueError("wordpress_changed_since_image_generation_preflight")
+    # Seal and stage only local artifacts first. The fresh server read below is
+    # the sole pre-import read, followed by canonical server-side CAS.
     manifest = (candidate_manifest or source.with_name("candidate-manifest.json")).resolve()
     staged = source.with_name(source.stem + "-upload.webp")
     stage_receipt = staged.with_suffix(staged.suffix + ".stage.json")
@@ -226,16 +297,18 @@ def continue_upload(
             raise ValueError("sealed_candidate_manifest_required")
         if staged.exists() or stage_receipt.exists():
             raise ValueError("existing_handoff_artifacts:inspect_before_retry")
-        _run([sys.executable, str(ROOT / "scripts/seal_featured_image_candidates.py"),
-              str(source), "--output", str(manifest)])
+        with _phase(observer, "seal_candidate"):
+            _run([sys.executable, str(ROOT / "scripts/seal_featured_image_candidates.py"),
+                  str(source), "--output", str(manifest)])
     if staged.exists() or stage_receipt.exists():
         if not resume or not staged.exists() or not stage_receipt.exists():
             raise ValueError("existing_staging_requires_explicit_resume_and_complete_receipt")
     else:
-        _run([sys.executable, str(ROOT / "scripts/stage_featured_image.py"),
-              str(source), str(staged), "--candidate-manifest", str(manifest),
-              "--selected-candidate", str(selected_candidate), "--selection-mode", selection_mode,
-              "--selection-actor", selection_mode])
+        with _phase(observer, "stage_candidate"):
+            _run([sys.executable, str(ROOT / "scripts/stage_featured_image.py"),
+                  str(source), str(staged), "--candidate-manifest", str(manifest),
+                  "--selected-candidate", str(selected_candidate), "--selection-mode", selection_mode,
+                  "--selection-actor", selection_mode])
     binding = verify_manual_image_upload_lineage(
         staged, manifest, selected_candidate, selection_mode)
     if binding["source_sha256"] != source_sha:
@@ -257,26 +330,33 @@ def continue_upload(
     )
     # Stage and selection may be resumed safely. A transport attempt cannot:
     # its result can be lost after media import and before caller acknowledgement.
-    baseline = read_wordpress(post_id, host)
+    with _phase(observer, "before_import_wordpress_snapshot"):
+        baseline = read_wordpress(post_id, host)
     if (baseline["content_sha256"] != state["expected_content_sha256"]
             or baseline["thumbnail_id"] != state["expected_thumbnail_id"]
             or any(baseline[key] != result.get("initial_" + key)
                    for key in ("status", "title", "slug", "excerpt"))):
         raise ValueError("wordpress_changed_before_media_import")
     update_after_image_checkpoint(post_id, result={"upload_attempt_started": True})
-    raw = _run([
-        sys.executable, str(ROOT / "scripts/editorial_cli_via_ssh.py"),
-        "--ssh-host", host, "--", "replace-featured-image",
-        "--post-id", str(post_id), "--image-path", str(staged),
-        "--candidate-manifest", str(manifest), "--selected-candidate", str(selected_candidate),
-        "--selection-mode", selection_mode, "--alt-text", alt_text.strip(),
-        "--confirm-update", "--confirm-image-selection",
-    ], timeout=240)
+    with _phase(observer, "canonical_wordpress_upload"):
+        raw = _run([
+            sys.executable, str(ROOT / "scripts/editorial_cli_via_ssh.py"),
+            "--ssh-host", host, "--", "replace-featured-image",
+            "--post-id", str(post_id), "--image-path", str(staged),
+            "--candidate-manifest", str(manifest), "--selected-candidate", str(selected_candidate),
+            "--selection-mode", selection_mode, "--alt-text", alt_text.strip(),
+            "--confirm-update", "--confirm-image-selection",
+        ], timeout=240)
     receipt = _parse_upload_receipt(raw, post_id)
     assert_after_image_complete(post_id, expected_content_sha256=state["expected_content_sha256"])
-    verified = inspect(post_id, host)
+    verified = inspect(post_id, host, observer=observer)
     if not verified.get("wordpress_verified"):
         raise RuntimeError("wordpress_final_readback_mismatch:do_not_retry_import")
+    if observer:
+        observer.receipt(source_sha256=source_sha, attachment_id=receipt["attachment_id"],
+                         old_thumbnail_id=state["expected_thumbnail_id"],
+                         staged_sha256=binding["staged_sha256"],
+                         pipeline=receipt.get("pipeline"))
     return {"status": "completed", "post_id": post_id, "receipt": receipt, "verification": verified}
 
 
@@ -301,20 +381,23 @@ def main() -> int:
     args = parser.parse_args()
     if args.post_id <= 0 or not re.fullmatch(r"[A-Za-z0-9_.-]+", args.ssh_host):
         parser.error("valid_post_id_and_ssh_host_required")
+    observer = TaskObservation(args.post_id, args.action)
     try:
-        if args.action == "probe":
-            result = {"status": "ssh_wordpress_connected",
-                      "wordpress": read_wordpress(args.post_id, args.ssh_host)}
-        elif args.action == "begin":
-            result = begin(args.post_id, args.ssh_host)
-        elif args.action == "status":
-            result = inspect(args.post_id, args.ssh_host)
-        else:
-            result = continue_upload(
-                args.post_id, args.source, args.alt_text, args.ssh_host,
-                candidate_manifest=args.candidate_manifest,
-                selected_candidate=args.selected_candidate, selection_mode=args.selection_mode,
-                resume=args.resume)
+        with observer.phase("cli_total"):
+            if args.action == "probe":
+                with observer.phase("probe_wordpress_snapshot"):
+                    result = {"status": "ssh_wordpress_connected",
+                              "wordpress": read_wordpress(args.post_id, args.ssh_host)}
+            elif args.action == "begin":
+                result = begin(args.post_id, args.ssh_host, observer=observer)
+            elif args.action == "status":
+                result = inspect(args.post_id, args.ssh_host, observer=observer)
+            else:
+                result = continue_upload(
+                    args.post_id, args.source, args.alt_text, args.ssh_host,
+                    candidate_manifest=args.candidate_manifest,
+                    selected_candidate=args.selected_candidate, selection_mode=args.selection_mode,
+                    resume=args.resume, observer=observer)
         # ASCII JSON avoids Windows PowerShell 5.1 output-codepage corruption.
         print(json.dumps(result, ensure_ascii=True, indent=2))
         return 0 if (args.action != "status" or result.get("wordpress_verified")) else 2
