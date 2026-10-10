@@ -6,11 +6,13 @@ import json
 import hashlib
 import io
 import re
+import base64
 import subprocess
 import time
 from datetime import datetime
 from agents.wordpress_transport import run_wordpress
 from pathlib import Path
+from urllib.parse import urlparse
 
 from PIL import Image, ImageFilter, ImageOps
 
@@ -47,6 +49,46 @@ from agents.workflow_metrics import increment, timed
 ALLOWED_POST_STATUSES = {"publish", "draft", "pending", "future", "private"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_SOURCE_FORMATS = {"JPEG", "PNG", "WEBP"}
+SHARED_CHATGPT_ORIGIN = {
+    "generator_tool": "image_gen.text2im",
+    "save_tool": "chatgpt_user_shared_original_url",
+}
+
+
+def verify_user_shared_chatgpt_origin(manifest: dict) -> dict:
+    """Prove that a selected original occurs in the *user-provided* ChatGPT share.
+
+    This is a distinct provenance route from the same-chat CoS save_image flow.
+    Never label a public-share download as a CoS save_image invocation.
+    """
+    if not isinstance(manifest, dict) or manifest.get("origin_claim") != SHARED_CHATGPT_ORIGIN:
+        raise ValueError("user_shared_chatgpt_origin_required")
+    proof = manifest.get("user_shared_image")
+    if not isinstance(proof, dict) or set(proof) != {
+            "share_url", "share_page_path", "share_page_sha256",
+            "original_asset_url", "file_id"}:
+        raise ValueError("user_shared_image_proof_required")
+    match = re.fullmatch(r"https://chatgpt\.com/s/(m_[0-9a-f]{32})", proof["share_url"])
+    if not match or not re.fullmatch(r"file_[0-9a-f]{32}", proof["file_id"]):
+        raise ValueError("invalid_chatgpt_share_identity")
+    parsed = urlparse(proof["original_asset_url"])
+    if (parsed.scheme != "https" or parsed.netloc != "chatgpt.com"
+            or not parsed.path.startswith("/backend-api/estuary/public_content/enc/")
+            or parsed.query or parsed.fragment):
+        raise ValueError("invalid_chatgpt_public_asset_url")
+    try:
+        token = parsed.path.rsplit("/", 1)[-1]
+        decoded = json.loads(base64.b64decode(token, validate=True).decode("utf-8"))
+        page = Path(proof["share_page_path"]).resolve()
+        page_bytes = page.read_bytes()
+    except (OSError, ValueError, UnicodeError, TypeError) as exc:
+        raise ValueError("user_shared_page_or_asset_invalid") from exc
+    if (decoded.get("id") != match.group(1) + ":" + proof["file_id"]
+            or _sha256_file(page) != proof["share_page_sha256"]
+            or proof["original_asset_url"].encode("utf-8") not in page_bytes
+            or proof["share_url"].encode("utf-8") not in page_bytes):
+        raise ValueError("user_shared_page_or_asset_conflict")
+    return proof
 NEAR_TARGET_ASPECT_RELATIVE_ERROR = 0.003
 SIMPLE_TASK_MAX_ATTEMPTS = 2
 FEATURED_IMAGE_PIPELINE_BUDGET_SECONDS = 180
@@ -108,13 +150,19 @@ def verify_manual_image_upload_lineage(
         stage = json.loads(stage_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         raise ValueError("manual_cover_missing_valid_stage_or_manifest") from exc
-    expected_origin = {
+    cos_origin = {
         "generator_tool": "image_gen.text2im",
         "save_tool": "cos_core.save_image",
     }
+    expected_origin = manifest.get("origin_claim") if isinstance(manifest, dict) else None
+    if expected_origin == SHARED_CHATGPT_ORIGIN:
+        if selection_mode != "user":
+            raise ValueError("shared_image_requires_user_selection")
+        verify_user_shared_chatgpt_origin(manifest)
+    elif expected_origin != cos_origin:
+        raise ValueError("manual_cover_chatgpt_origin_claim_required")
     if (not isinstance(manifest, dict)
             or manifest.get("version") != 2
-            or manifest.get("origin_claim") != expected_origin
             or not isinstance(manifest.get("candidates"), list)):
         raise ValueError("manual_cover_chatgpt_origin_claim_required")
     entries = [

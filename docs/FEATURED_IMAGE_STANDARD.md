@@ -21,6 +21,12 @@
 - 선택 후에는 정규 `replace-featured-image` 또는 신규 draft의 `--image-path` 경로로 업로드하고 thumbnail readback을 확인한다.
 - 이미지 생성 호출 때문에 작업 turn이 끊기는 환경에서는 `AFTER_IMAGE` 체크포인트를 남겨 다음 turn에서 후보 선택·업로드 작업을 이어간다.
 
+### 사용자가 ChatGPT 이미지 공유 링크로 기존 원본을 지정한 경우
+
+사용자가 **직접** `https://chatgpt.com/s/m_...` 링크를 제공하고 그 안의 이미지를 선택한 경우, 동일 채팅의 CoS `save_image` 호출을 과거에 수행했다고 거짓으로 기록하지 않는다. 공유 페이지의 실제 HTML에 포함된 `chatgpt.com/backend-api/estuary/public_content/enc/...` 공식 원본 다운로드 URL을 통해 ChatGPT `image_gen` 원본 PNG를 받을 수 있을 때만 허용한다. 캐시 썸네일/OG 미리보기/스크린샷은 원본 대신 사용하지 않는다.
+
+공유 페이지 원본·원본 이미지의 SHA256, 원본 토큰에 명시된 정확한 공유 메시지 ID와 이미지 file ID, 원본 사이즈를 `user_shared_image` provenance로 봉인한다. `origin_claim.save_tool=chatgpt_user_shared_original_url`로 명시하며 `cos_core.save_image` 호출로 포장하지 않는다. 사용자가 지정한 후보만 `selection_mode=user`로 검증하고 동일 stage/manifest/CAS/readback 정규 업로드를 거친다. 타 도메인·다른 파일 ID·변경된 HTML·불일치 SHA·agent-delegated 선택은 모두 차단한다. 이 경로는 **이미 생성된 사용자 지정 ChatGPT 원본의 전달**만 허용하며 로컬/타사 이미지 생성 예외가 아니다.
+
 ### ChatGPT + CoS 즉시 업로드 경로 (기존 포스트, 1개 후보 즉시 업로드)
 
 1. 먼저 CoS Core 연결을 실제 호출로 확인한다. `python scripts/featured_image_followthrough.py probe --post-id 856`로 SSH/WordPress 읽기도 검증하고, `begin --post-id 856`로 기준 본문 SHA·기존 이미지 ID와 `AFTER_IMAGE`를 **이미지 생성 전에** 저장한다. 기존 active 체크포인트가 있으면 `status`부터 확인하고 중복 `begin`을 하지 않는다.
