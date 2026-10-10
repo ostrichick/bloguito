@@ -316,6 +316,10 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             self.assertEqual("image-metadata-only", start_state.call_args.kwargs["validation_plan"]["profile"])
 
     def test_replace_preserves_post_and_rank_math_and_verifies_alt(self):
+        def completion_guard(post_id):
+            self.assertEqual(641, post_id)
+            self.assertTrue(advance.called, "AFTER_IMAGE must be advanced before task completion")
+
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             image_path = self._image(folder)
@@ -387,6 +391,9 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                  patch("agents.featured_image.start_task_state") as start_state, \
                  patch("agents.featured_image.update_task_state"), \
                  patch("agents.featured_image.fail_task_state"), \
+                 patch("agents.featured_image.load_task_state", return_value={"status": "in_progress"}), \
+                 patch("agents.featured_image.complete_task_state", side_effect=completion_guard) as completed_task, \
+                 patch("agents.featured_image._advance_matching_after_image_checkpoint") as advance, \
                  patch("agents.featured_image.subprocess.run", side_effect=run):
                 result = replace_featured_image(
                     641,
@@ -404,6 +411,10 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             reviewed_binding.assert_called_once_with(641, expected_sha, "검토된 제목")
             self.assertEqual("manual_user_selected", record_attestation.call_args.kwargs["approval_kind"])
             self.assertEqual("3" * 64, record_attestation.call_args.kwargs["approval_evidence_sha256"])
+            completed_task.assert_called_once_with(641)
+            advance.assert_called_once()
+            self.assertEqual(expected_sha, advance.call_args.kwargs["expected_content_sha256"])
+            self.assertEqual(642, advance.call_args.kwargs["expected_thumbnail_id"])
             self.assertEqual("draft", result["status"])
             self.assertEqual("stable-slug", live["post_name"])
             self.assertEqual("<p>검토된 본문</p>", live["post_content"])

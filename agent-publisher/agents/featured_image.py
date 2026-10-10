@@ -1555,6 +1555,19 @@ def replace_featured_image(
                     "backup": str(backup),
                 },
             )
+            # An AFTER_IMAGE handoff may already be active. The guarded media
+            # mutation and its readback have now succeeded, so mark only the
+            # exact same sealed image/post checkpoint complete *before* the
+            # shared task-completion guard checks it. Deferring this until the
+            # caller returns leaves a successful upload misclassified as failed
+            # and makes an unsafe second import tempting.
+            _advance_matching_after_image_checkpoint(
+                post_id,
+                expected_content_sha256=expected_content_sha256,
+                expected_thumbnail_id=expected_thumbnail_id,
+                image_path=image_path,
+                result={**result, "image": image_info},
+            )
             if not qa_requirements and load_task_state(post_id) is not None:
                 complete_task_state(post_id)
         return result
