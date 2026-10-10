@@ -19,6 +19,40 @@ SPEC.loader.exec_module(MODULE)
 
 
 class StageFeaturedImageCliTests(unittest.TestCase):
+    def test_codex_native_original_stages_and_rejects_changed_host_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            original = root / "generated_images" / "session" / "output.png"
+            original.parent.mkdir(parents=True)
+            Image.new("RGB", (1672, 941), "white").save(original, "PNG")
+            source = root / "candidate-1.png"
+            source.write_bytes(original.read_bytes())
+            staged = root / "upload.webp"
+            manifest = root / "manifest.json"
+            spec = importlib.util.spec_from_file_location(
+                "codex_sealer", SCRIPT.parent / "seal_featured_image_candidates.py")
+            sealer = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sealer)
+            receipt = sealer.seal_candidates([source], manifest, codex_originals=[original])
+            self.assertEqual("codex_native_output", receipt["origin_claim"]["save_tool"])
+            with self.assertRaisesRegex(ValueError, "codex_image_requires_user_selection"):
+                MODULE.verify_candidate_manifest(
+                    source, manifest, selected_candidate=1, selection_mode="agent-delegated")
+            with patch("sys.argv", [
+                "stage_featured_image.py", str(source), str(staged),
+                "--candidate-manifest", str(manifest), "--selected-candidate", "1",
+                "--selection-mode", "user", "--selection-actor", "user",
+            ]):
+                self.assertEqual(0, MODULE.main())
+            self.assertEqual(receipt["candidates"][0]["sha256"],
+                             verify_manual_image_upload_lineage(
+                                 staged, manifest, 1, "user")["source_sha256"])
+            Image.new("RGB", (1672, 941), "black").save(original, "PNG")
+            with self.assertRaisesRegex(ValueError, "codex_original_sha_conflict"):
+                verify_manual_image_upload_lineage(staged, manifest, 1, "user")
+            with self.assertRaisesRegex(ValueError, "codex_original_sha_conflict"):
+                sealer.seal_candidates([source], root / "changed.json", codex_originals=[original])
+
     def test_selected_only_candidate_three_seals_and_stages_without_renumbering(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -18,6 +18,7 @@ if str(PUBLISHER) not in sys.path:
 from agents.featured_image import (  # noqa: E402
     stage_featured_image, SHARED_CHATGPT_ORIGIN,
     verify_user_shared_chatgpt_origin,
+    CODEX_CHATGPT_ORIGIN, verify_codex_chatgpt_origin,
 )
 
 
@@ -43,13 +44,15 @@ def verify_candidate_manifest(
         "save_tool": "cos_core.save_image",
     }
     if (not isinstance(payload, dict) or payload.get("version") != 2
-            or payload.get("origin_claim") not in (legacy_origin, SHARED_CHATGPT_ORIGIN)
+            or payload.get("origin_claim") not in (legacy_origin, SHARED_CHATGPT_ORIGIN, CODEX_CHATGPT_ORIGIN)
             or not isinstance(rows, list) or not rows):
         raise ValueError("invalid_candidate_manifest")
     if payload["origin_claim"] == SHARED_CHATGPT_ORIGIN:
         if selection_mode != "user":
             raise ValueError("shared_image_requires_user_selection")
         verify_user_shared_chatgpt_origin(payload)
+    if payload["origin_claim"] == CODEX_CHATGPT_ORIGIN:
+        verify_codex_chatgpt_origin(payload, selection_mode)
     if type(selected_candidate) is not int or selected_candidate < 1:
         raise ValueError("invalid_selected_candidate")
     if selection_mode not in {"user", "agent-delegated"}:

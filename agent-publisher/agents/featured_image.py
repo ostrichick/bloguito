@@ -53,6 +53,32 @@ SHARED_CHATGPT_ORIGIN = {
     "generator_tool": "image_gen.text2im",
     "save_tool": "chatgpt_user_shared_original_url",
 }
+CODEX_CHATGPT_ORIGIN = {
+    "generator_tool": "image_gen.imagegen",
+    "save_tool": "codex_native_output",
+}
+
+
+def verify_codex_chatgpt_origin(manifest: dict, selection_mode: str) -> None:
+    """Bind user-selected Codex originals to the host's saved output bytes.
+
+    As with CoS origin claims, actual host tool evidence belongs in the task
+    record. This checks file continuity, not cryptographic tool attestation.
+    """
+    if selection_mode != "user":
+        raise ValueError("codex_image_requires_user_selection")
+    rows = manifest.get("candidates")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("codex_original_proof_required")
+    for row in rows:
+        try:
+            original = Path(row["codex_original_path"]).resolve()
+            if "generated_images" not in original.parts:
+                raise ValueError("codex_generated_output_path_required")
+            if _sha256_file(original) != row["sha256"]:
+                raise ValueError("codex_original_sha_conflict")
+        except (KeyError, OSError, TypeError) as exc:
+            raise ValueError("codex_original_proof_required") from exc
 
 
 def verify_user_shared_chatgpt_origin(manifest: dict) -> dict:
@@ -159,6 +185,8 @@ def verify_manual_image_upload_lineage(
         if selection_mode != "user":
             raise ValueError("shared_image_requires_user_selection")
         verify_user_shared_chatgpt_origin(manifest)
+    elif expected_origin == CODEX_CHATGPT_ORIGIN:
+        verify_codex_chatgpt_origin(manifest, selection_mode)
     elif expected_origin != cos_origin:
         raise ValueError("manual_cover_chatgpt_origin_claim_required")
     if (not isinstance(manifest, dict)

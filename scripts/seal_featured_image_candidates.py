@@ -55,7 +55,8 @@ def inspect_candidate(path: Path, candidate_number: int) -> dict:
     }
 
 
-def seal_candidates(paths: list[Path], output: Path, *, candidate_number: int | None = None) -> dict:
+def seal_candidates(paths: list[Path], output: Path, *, candidate_number: int | None = None,
+                    codex_originals: list[Path] | None = None) -> dict:
     if not paths:
         raise ValueError("candidate_files_required")
     if candidate_number is not None and (
@@ -78,6 +79,19 @@ def seal_candidates(paths: list[Path], output: Path, *, candidate_number: int | 
         },
         "candidates": rows,
     }
+    if codex_originals is not None:
+        if len(codex_originals) != len(rows):
+            raise ValueError("codex_original_count_mismatch")
+        for row, original in zip(rows, codex_originals):
+            original = original.resolve()
+            if "generated_images" not in original.parts:
+                raise ValueError("codex_generated_output_path_required")
+            if hashlib.sha256(original.read_bytes()).hexdigest() != row["sha256"]:
+                raise ValueError("codex_original_sha_conflict")
+            row["codex_original_path"] = str(original)
+        receipt["origin_claim"] = {
+            "generator_tool": "image_gen.imagegen", "save_tool": "codex_native_output",
+        }
     output = output.resolve()
     if any(output == Path(row["path"]) for row in rows):
         raise ValueError("candidate_manifest_must_differ_from_original")
@@ -101,9 +115,12 @@ def main() -> int:
         "--candidate-number", type=int,
         help="Preserve the original selected candidate number when only that ChatGPT original survives",
     )
+    parser.add_argument("--codex-originals", nargs="+", type=Path,
+                        help="Actual native image_gen output files; requires user selection at upload.")
     args = parser.parse_args()
     output = args.output or args.candidates[0].resolve().parent / "candidate-manifest.json"
-    receipt = seal_candidates(args.candidates, output, candidate_number=args.candidate_number)
+    receipt = seal_candidates(args.candidates, output, candidate_number=args.candidate_number,
+                              codex_originals=args.codex_originals)
     print(json.dumps(receipt, ensure_ascii=False))
     return 0
 
