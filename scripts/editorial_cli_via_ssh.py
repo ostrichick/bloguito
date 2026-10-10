@@ -724,7 +724,8 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (action == 'import-section-image'
                 and wp == ['eval', SECTION_IMAGE_SNAPSHOT_SCRIPT, '--allow-root']):
             return 'section_snapshot'
-        if (action in _PERMALINK_ACTIONS and len(wp) == 3 and wp[0] == 'eval'
+        if ((action in _PERMALINK_ACTIONS or action == 'draft-standard')
+                and len(wp) == 3 and wp[0] == 'eval'
                 and re.fullmatch(r'echo get_permalink\(([1-9][0-9]*)\);', wp[1])
                 and int(re.fullmatch(r'echo get_permalink\(([1-9][0-9]*)\);', wp[1]).group(1)) in allowed_ids
                 and wp[2] == '--allow-root'):

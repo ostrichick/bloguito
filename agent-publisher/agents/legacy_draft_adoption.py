@@ -58,7 +58,7 @@ def adopt_reviewed_legacy_draft(
         inventory = load_inventory()
         original = next((row for row in inventory["posts"] if int(row["ID"]) == post_id), None)
         live = get_post(base, post_id, fields=[
-            "post_status", "post_title", "post_name", "post_excerpt", "post_content"])
+            "post_status", "post_title", "post_name", "post_content", "post_excerpt"])
         if (original is None or original.get("post_status") != "draft"
                 or inventory_content_sha(original) != expected_content_sha256
                 or live.get("post_status") != "draft"

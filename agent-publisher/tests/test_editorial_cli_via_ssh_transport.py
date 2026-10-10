@@ -19,6 +19,31 @@ def load_module():
 
 
 class EditorialCliViaSshTransportTests(unittest.TestCase):
+    def test_draft_standard_permalink_read_is_limited_to_exact_target(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(
+                args, 0, stdout='https://lifeinfo24.org/p/858/', stderr='')
+
+        module._RUN = fake_run
+        transport = module.make_transport(
+            'draft-standard', {858}, 'bloguito', allow_title_change=True)
+        exact = module._WP_PREFIX + [
+            'eval', 'echo get_permalink(858);', '--allow-root']
+        result = transport(exact, capture_output=True, text=True, check=True)
+        self.assertEqual('https://lifeinfo24.org/p/858/', result.stdout)
+        self.assertEqual(1, len(calls))
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'eval', 'echo get_permalink(857);', '--allow-root'])
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'eval', 'echo get_option("siteurl");', '--allow-root'])
+        self.assertEqual(1, len(calls))
+
     def test_image_snapshot_batches_only_the_immediately_following_thumbnail_read(self):
         module = load_module()
         calls = []
