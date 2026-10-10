@@ -2,7 +2,7 @@
 
 **최신 판정 — 2026-10-10:** 노트북 수정 commit `43bd95c0d7a59482da36acdeae88fe54542cbcdd`의 PC 재검증을 완료했다. 이전 두 결함은 실제 WordPress/MariaDB 시험에서 모두 해소됐고, 통합 15그룹과 별도 실제 loopback SSH 연결 유실 시험이 통과했다. **수정 검증 합격이며 운영 배포는 미수행이다.** 아래 2026-10-09 실패 기록은 수정 전 이력이다. 다음 에이전트는 같은 두 결함을 미수정 상태로 가정하지 말고 마지막 PC 후속 결과와 별도 배포 전제조건을 읽는다.
 
-이 문서는 Git 추적 대상이며 다른 기기에서도 pull 후 읽을 수 있다. `scratch/`의 실행 파일·원시 증거·DB snapshot은 PC 로컬 비추적 자료이므로 이 문서와 검증 기록을 기준으로 필요한 시험 환경을 다시 구성한다.
+이 문서는 Git 추적 대상이며 다른 기기에서도 pull 후 읽을 수 있다. `scratch/`의 실행 파일·원시 증거·DB snapshot은 PC 로컬 비추적 자료다. **노트북의 다음 작업은 아래 마지막 절을 먼저 읽는다. 완료된 PC 검증을 노트북에서 다시 구성하는 것은 기본 인계 절차가 아니다.**
 
 ## 2026-10-09 최초 PC 검사 당시 판정
 
@@ -57,3 +57,35 @@ Windows native OpenSSH가 실제 loopback SSH 연결 종료에서 255 대신 429
 - PC 로컬 증거의 보존 위치는 `scratch/tasks/pc-validation-2026-10-10/`: `staging-acceptance.json`/`.log`, `staging_acceptance.py`, `full-validation.json`/`.log`, `ssh-disconnect-acceptance.json`/`.log`, `ssh_disconnect_acceptance.py`, `wordpress-tests.log`, `skip-check.log`, private `staging-before.sql`. 이전 날짜 증거는 보존했다. 원시 증거·DB snapshot·설정·token은 Git에 올리지 않는다.
 - 시험 완료 후 disposable 컨테이너는 중지하고 볼륨을 보존한다. production에 대한 SSH 호출·post/options/media mutation·cron 변경·배포는 이번 PC 검증에서 하지 않았다.
 - **남은 경계:** 이 결과는 위 수정의 PC 회귀·격리 통합 검증 PASS다. production OpenSSH/network, container OOM, 실운영 배포 readback은 검증하지 않았다. 실제 배포에는 별도 승인과 `FEATURED_IMAGE_LOCK_RECOVERY.md`/`OPERATIONS.md`의 정확한 release revision·최신 backup·운영 lock/provenance/plugin 호환성 사전 확인이 필요하다. 이전 두 결함 때문에 남았던 PC 검증 blocker는 해소됐다.
+
+## 2026-10-10 PC 추가 점검 및 Docker/WSL 없는 노트북 인계
+
+사용자의 주 작업 기기는 Docker/WSL 없는 Windows 노트북이다. 따라서 이번 점검은 기존 잠금 시험 이외의 실제 MU 플러그인 로딩, Linux 릴리스 설치·롤백, 실제 컨테이너 OOM과 격리 DB 복원까지 PC에서 확장했다. 시험 대상은 clean `8a5714df3c219d9f107b8e8bcd0a3992182dc816`의 80파일 release이며, `43bd95c` 대비 publisher/MU 플러그인/installer/builder 소스 차이는 없다. 이후 이 절을 기록하는 문서 commit은 실행 코드 변경이 아니다.
+
+### 추가 완료한 검사
+
+- **실제 WordPress MU 플러그인:** 저장소의 9개 PHP 파일을 운영 자격 없는 기존 staging에 설치하고 SHA256을 모두 비교했다. `wp-post-row-actions-smoke.php`와 `wp-post-id-column-smoke.php`를 통과했다. 실제 무인 `--post_status=publish` 요청도 draft로 저장되는 것을 확인했다. 공개 운영 글은 변경하지 않았다.
+- **9개 MU 플러그인 로딩 후 전체 실제 DB 15/15그룹 재검증 PASS:** 최초 INSERT 경쟁, malformed 32조합 byte 보존, lease/pending/owner resume, 7종 import 결과·장애, 본문/thumbnail/ALT CAS/readback을 같은 기대값으로 다시 통과했다. 플러그인 없는 staging에서의 기존 결과에만 의존하지 않았다. `staging-acceptance.json`/`.log`와 당시 snapshot을 이번 audit scratch에 별도 보존했다. 검사 뒤 컨테이너를 중지하고 볼륨·설정은 보존했다.
+- **글 ID의 front-end admin bar:** 기존 column smoke에 `--user=1`을 추가하면 앞서 설정한 `edit-post` admin 화면이 남아 front-end 전용 노드가 표시되지 않아 실패한다. 플러그인은 `is_admin()`에서 의도대로 반환한다. 정규 CLI 기본 컨텍스트의 smoke를 통과시키고, 별도 probe에서 관리자 사용자와 front-end 화면·실제 published fixture query를 설정해 해당 노드와 정확한 ID를 검증했다. 이 발견을 플러그인 결함으로 보고하지 않았고 테스트 기대값/소스를 완화하지 않았다. 이 검사는 브라우저 시각 QA는 아니다.
+- **Linux 실제 설치:** 일회용 WSL Linux app/venv에 고정 runtime requirements를 설치하고 정규 `install_editorial_release.py`를 실행했다. 실제 Python entrypoint import, critical-fact 및 두 provenance registry 검증, 80파일 readback, installed revision, retired module 제거를 확인했다. synthetic `.env`와 `data/search_briefs.json`은 보존됐다.
+- **변조 차단과 두 롤백:** manifest와 다른 runtime bytes는 쓰기 전에 차단됐다. 성공 설치의 rollback manifest로 기존 파일·정책 문서를 복구했다. 별도 실행에서는 잘못된 synthetic `PYTHONHOME`으로 실제 interpreter 시작 실패를 주입했고 installer의 자동 rollback 뒤 runtime·정책·비공개 sentinel·retired file bytes가 원래 상태와 일치했다. 로그의 `encodings` 시작 실패는 이 의도적인 시험이며 미해결 설치 오류가 아니다.
+- **실제 컨테이너 OOM:** network none/read-only/64MiB의 일회용 PHP worker를 media-import transport 지점에 대입해 실제 `OOMKilled=true`, exit 137을 발생시켰다. pipeline 호출은 1회, attachment 생성 0건, post 보존, pending fence 유지, 새 owner 차단, 자동 재import 금지를 확인했다. 운영 WordPress 컨테이너 자체를 죽인 시험이나 전체 사이트 OOM 복구 시험은 아니다.
+- **격리 DB snapshot 복원:** synthetic MariaDB dump를 저장하고 임시 marker·draft·tags를 만든 뒤 원래 dump를 복원했다. snapshot 전후 SQL 전체가 dump 시각 주석 제외 동일하며 marker 부재를 readback했다. 실제 운영 v3 backup 전체 복원으로 확대 해석하지 않는다.
+- **현재 Direct SSH/운영 lock 읽기 전용 확인:** `ssh bloguito` 응답을 확인했다. 정규 `featured_image_lock_preflight.py` 결과 options/postmeta 모두 InnoDB, lock 0개, blockers 0개였다. 이는 이 PC의 당시 확인이고 노트북 SSH 자격·접속 성공을 대신 증명하지 않으며 배포 시점에 다시 확인해야 한다. 운영 파일·posts/options/media/cron 변경이나 배포는 하지 않았다.
+
+### 노트북에서 이어갈 작업과 경계
+
+| 작업 | 노트북 로컬 Docker/WSL | 다음 에이전트의 처리 |
+| --- | --- | --- |
+| Git pull, 문서/코드 검토, release 생성, Python 표적 검사 | 불필요 | Windows Python/기존 venv로 수행하고 필요한 의존성만 복구 |
+| 콘텐츠 prepare-draft/edit-post/대표이미지 후속 처리 | 불필요 | 정규 publisher와 Direct SSH 사용; 이미지 생성은 실제 호스트 도구 제공 여부 별도 확인 |
+| PHP 계약, shell 문법, Compose 정적 설정 검사 | 로컬 필수 아님 | 기존 GitHub Actions Linux jobs 결과 확인; 정적 검사를 실제 DB 검사로 간주하지 않음 |
+| 운영 preflight, backup 확인, 승인된 설치/readback | 불필요 | native SSH가 서버의 Docker/WP-CLI를 실행; 실제 적용은 별도 사용자 승인 뒤 수행 |
+| 현재 수정본의 PC 회귀·격리 장애 시험 | PC에서 완료한 근거 재사용 | 노트북 이동만을 이유로 같은 시험/환경 구축을 다시 요구하지 않음 |
+| 향후 잠금/transport/DB/WordPress 조건 변경의 통합 시험 | 격리 runtime 필요 | 그때 영향 범위에 맞춰 재검증. 원격 staging/통합 CI는 아직 자동 구성하지 않았으므로 제공된다고 가정하지 않음 |
+
+현재 수정본의 PC 검증 blocker는 해소됐다. **운영 배포는 미수행**이다. 최신 운영 backup 확인, 적용 시점의 lock/provenance/plugin 호환성 확인, 승인된 배포와 실제 서버 readback은 남아 있지만 노트북에서 SSH로 진행할 수 있다. 과거 호스트 DR 문서의 새 VM 부팅·새 인증서 발급·신규 노드 등록 미검증 항목은 별도 재해복구 훈련 범위이며, 이번 릴리스 검증이나 PC에서 Docker를 더 실행하는 것만으로 완료 처리하지 않는다.
+
+PC 원시 증거는 Git 비추적 `scratch/tasks/pc-docker-final-audit-2026-10-10/`에 보존한다: `wp-integration-results.json`/`.log`, `linux-release-results.json`/`.log`, `container-oom-results.json`/`.log`, `production-lock-preflight.json`, release/manifest/archive, synthetic private SQL, 임시 harness. 노트북에는 이 자료가 자동 전달되지 않는다. 이 Git 문서의 검증 요약을 인계 근거로 사용한다.
+
+**다음 에이전트용 지시:** pull 후 AGENTS.md, 이 문서의 마지막 절, `FEATURED_IMAGE_LOCK_RECOVERY.md`, `OPERATIONS.md`를 읽어라. 사용자의 주 작업 기기는 Docker/WSL 없는 노트북이며 현재 수정본의 PC 검사 blocker는 해소됐다. 완료된 PC 시험을 환경 부재 때문에 미완료로 되돌리거나 재구축을 선행하지 마라. 먼저 노트북의 Python/Direct SSH 접근을 확인하고 사용자가 요청한 후속 작업을 정규 경로로 진행하라. 배포 승인 없이 운영을 변경하지 말고, 승인이 있으면 최신 backup·정확한 release revision·운영 preflight·설치 hash/readback을 확인하라. 관련 코드 변경으로 검증 전제가 바뀌면 기존 PASS를 새 수정본의 PASS로 전용하지 말고 필요한 격리 통합 시험을 계획하라.

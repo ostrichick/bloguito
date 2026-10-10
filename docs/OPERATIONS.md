@@ -37,6 +37,8 @@ WordPress 호출은 `agents/wordpress_transport.py`의 실행 context로 adapter
 
 Python 3.12와 Docker/Git Bash를 작업 종류에 맞춰 준비한다. Python 환경은 **로컬** `agent-publisher/.venv`, **Linux 운영 예시** `agent-publisher/venv`로 다르다. `.env.example`에는 실제 비밀번호를 쓰지 않는다.
 
+**Docker/WSL 없는 Windows 노트북:** 일반 콘텐츠 작업, Python 표적 검사, Git/release 생성, Direct SSH 기반 서버 조회·승인된 운영 작업에는 로컬 Docker/WSL이 필수 조건이 아니다. 서버의 Docker/WP-CLI는 정규 SSH transport가 서버에서 실행한다. PHP 계약·shell/Compose 정적 검사는 기존 `.github/workflows/test.yml`의 Linux jobs에서도 수행할 수 있다. 실제 WordPress/MariaDB 동시성·장애 주입 검사는 별도 격리 runtime이 필요하며, 정적 CI로 대체하지 않는다. 현재 수정본의 PC 완료 근거와 노트북 인계 범위는 [PC validation handoff](FEATURED_IMAGE_PC_VALIDATION_HANDOFF.md)의 마지막 절을 따른다. 기기 이동만을 이유로 완료된 통합 검사를 반복하지 않으며, 관련 코드/DB/WordPress 조건이 바뀌면 영향 범위에 맞춰 재검증한다. 향후 원격 staging/CI에서 실제 DB 통합을 수행하려면 별도로 구성·검증해야 하며, 현재 자동 제공되는 환경이라고 가정하지 않는다.
+
 ```powershell
 # 프로젝트 루트의 Windows PowerShell: 실제 게시물/서비스는 수정하지 않는 테스트
 $env:PYTHONPATH=(Resolve-Path './agent-publisher').Path

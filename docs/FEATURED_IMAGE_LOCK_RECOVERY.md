@@ -4,6 +4,8 @@ Scope: the image lock introduced after editorial release `b9de470` and included 
 
 **Latest validation — 2026-10-10:** the two defects recorded below were fixed in `43bd95c` and passed PC disposable WordPress/MariaDB acceptance (15/15 groups), plus a separate real loopback SSH-disconnect safety/recovery check. This supersedes the earlier NO-GO **for those two PC acceptance blockers only**. No production deployment was performed; deployment authorization and the predeployment checks below remain separate. See [PC handoff](FEATURED_IMAGE_PC_VALIDATION_HANDOFF.md#2026-10-10-pc-재검증-완료--수정-검증-pass-운영-미적용).
 
+**Additional PC checks — 2026-10-10:** clean `8a5714d` passed real Linux release installation, 80-file readback, tamper rejection, manual/automatic rollback, nine-MU-plugin WordPress smoke checks, synthetic DB dump restoration, and a real memory-limited disposable worker OOM (exit 137) substituted at the staging import transport. The OOM preserved the post and pending fence and prohibited reimport; it was not a production WordPress container restart drill. Current production read-only preflight found InnoDB options/postmeta and zero locks/blockers. These results and the Docker/WSL-free laptop handoff are in the final section of [PC handoff](FEATURED_IMAGE_PC_VALIDATION_HANDOFF.md). Deployment authorization, a fresh backup, and install-time production readback remain required.
+
 ## Preflight (read-only)
 
 Run from the exact reviewed Git checkout:
