@@ -6,7 +6,10 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 from agents.editorial import digest, policy, policy_fingerprint, render, validate_bundle
-from agents.reader_tools import minimum_wage_monthly_projection
+from agents.reader_tools import (
+    minimum_wage_monthly_projection, rent_comparison_projection,
+    validate_reader_tools, render_reader_tools,
+)
 from agents.temporal_validation import KST
 
 
@@ -114,3 +117,100 @@ class ReaderToolTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RentComparisonReaderToolTests(unittest.TestCase):
+    def sample(self):
+        sources = [{
+            'id': sid, 'source_type': 'official', 'text': '2026년 관련 법률 확인 및 공제 요건',
+        } for sid in ('s2', 's3', 's5', 's6')]
+        tool = {
+            'kind': 'rent_tax_comparison', 'title': '월세 비교 간이 계산기',
+            'formula_version': 'rent_credit_receipt_2026_v1',
+            'monthly_gross_default_man': 420, 'annual_bonus_default_man': 0,
+            'monthly_rent_default_man': 50, 'months_default': 12,
+            'marginal_percent_default': 15, 'card_deduction_used_default_man': 0,
+            'other_card_floor_met_default': True, 'rent_eligible_default': True,
+            'evidence': [{'source_id': s['id'], 'quote': s['text']} for s in sources],
+        }
+        brief = {'intent_type': 'comparison', 'primary_keyword': '월세 세액공제',
+                 'entity': '월세 세액공제', 'added_value': ['comparison', 'calculator']}
+        return {'reader_tools': [tool]}, sources, brief
+
+    def test_simplified_fixture_and_no_standard_credit(self):
+        actual = rent_comparison_projection(420, 50, 12, 15, 0, True, True)
+        self.assertEqual(5040, actual['salary_man'])
+        self.assertEqual(102, actual['rent_nominal_man'])
+        self.assertEqual(27, actual['receipt_tax_simple_man'])
+        self.assertEqual(17, actual['credit_percent'])
+
+    def test_annual_salary_threshold_and_card_limit(self):
+        cases = [
+            (458, 80, 0, 17, 300),   # below 55m annual
+            (459, 80, 0, 15, 300),   # above 55m annual
+            (583, 80, 0, 15, 300),   # <=70m cap
+            (584, 80, 0, 15, 250),   # >70m cap
+            (666, 80, 0, 15, 250),   # <=80m credit
+            (667, 80, 0, None, 250), # >80m ineligible
+            (420, 80, 2000, 15, 250), # annual bonus changes pay bracket
+        ]
+        for salary, rent, bonus, credit, cap in cases:
+            with self.subTest(salary=salary, bonus=bonus):
+                actual = rent_comparison_projection(salary, rent, 12, 15, 0, True, True, bonus)
+                self.assertEqual(credit, actual['credit_percent'])
+                self.assertEqual(cap, actual['base_card_cap_man'])
+        high = rent_comparison_projection(750, 80, 12, 24, 0, True, True)
+        self.assertIsNone(high['rent_nominal_man'])
+        self.assertEqual(60, high['receipt_tax_simple_man'])
+
+    def test_rent_annual_limit_partial_months_and_used_card_cap(self):
+        self.assertEqual(170, rent_comparison_projection(
+            420, 100, 12, 15, 0, True, True)['rent_nominal_man'])
+        self.assertEqual(25.5, rent_comparison_projection(
+            420, 50, 3, 15, 0, True, True)['rent_nominal_man'])
+        self.assertEqual(7.5, rent_comparison_projection(
+            750, 80, 12, 15, 200, True, True)['receipt_tax_simple_man'])
+        self.assertEqual(0, rent_comparison_projection(
+            750, 80, 12, 15, 300, True, True)['receipt_tax_simple_man'])
+
+    def test_unknown_eligibility_or_card_threshold_returns_unknown(self):
+        self.assertIsNone(rent_comparison_projection(
+            420, 50, 12, 15, 0, False, True)['receipt_tax_simple_man'])
+        self.assertIsNone(rent_comparison_projection(
+            420, 50, 12, 15, 0, True, False)['rent_nominal_man'])
+
+    def test_bounds_and_arbitrary_content_fail_closed(self):
+        for bad in [(-1,50,12,15,0,True,True), (420,0,12,15,0,True,True),
+                    (420,50,13,15,0,True,True), (420,50,12,12,0,True,True),
+                    (420,50,12,15,-1,True,True)]:
+            with self.assertRaises(ValueError):
+                rent_comparison_projection(*bad)
+        plan, sources, brief = self.sample()
+        self.assertEqual([], validate_reader_tools(plan, sources, brief))
+        for change in ('script', 'formula_version', 'source', 'scope'):
+            p,s,b = copy.deepcopy((plan,sources,brief))
+            if change == 'script':
+                p['reader_tools'][0]['script'] = 'alert(1)'
+            elif change == 'formula_version':
+                p['reader_tools'][0]['formula_version'] = 'arbitrary_js'
+            elif change == 'source':
+                p['reader_tools'][0]['evidence'][0]['quote'] = 'injected'
+            else:
+                b['primary_keyword'] = '연금'; b['entity'] = '연금'
+            self.assertNotEqual([], validate_reader_tools(p,s,b))
+
+    def test_stable_accessible_widget_no_network_or_script_injection(self):
+        plan, sources, brief = self.sample()
+        self.assertEqual([], validate_reader_tools(plan, sources, brief))
+        markup = render_reader_tools(plan)
+        soup = BeautifulSoup(markup, 'html.parser')
+        widget = soup.select_one('[data-reader-tool="rent_tax_comparison"]')
+        self.assertIsNotNone(widget)
+        self.assertEqual(1, len(widget.find_all('script')))
+        self.assertTrue(widget.find('noscript'))
+        self.assertTrue(widget.select('[aria-live="polite"]'))
+        self.assertEqual(7, len(widget.find_all('input')))
+        self.assertEqual(1, len(widget.find_all('select')))
+        self.assertEqual(2, len(widget.find_all('output')))
+        for forbidden in ('fetch(', 'eval(', 'XMLHttpRequest', 'innerHTML', 'document.cookie'):
+            self.assertNotIn(forbidden, markup)

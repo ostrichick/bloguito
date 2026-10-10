@@ -220,6 +220,21 @@ class ReaderTool(BaseModel):
     evidence: list[Evidence]
 
 
+class RentComparisonReaderTool(BaseModel):
+    kind: Literal['rent_tax_comparison']
+    title: str
+    formula_version: Literal['rent_credit_receipt_2026_v1']
+    monthly_gross_default_man: int
+    annual_bonus_default_man: int
+    monthly_rent_default_man: int
+    months_default: int
+    marginal_percent_default: int
+    card_deduction_used_default_man: int
+    other_card_floor_met_default: bool
+    rent_eligible_default: bool
+    evidence: list[Evidence]
+
+
 class OfficialNavigation(BaseModel):
     label: str
     url: str
@@ -239,7 +254,7 @@ class GeneralPlan(BaseModel):
         'Optional, at most two already-published articles on the same site, '
         'with verified https://lifeinfo24.org/?p=ID URLs; never official CTA or evidence.'
     ))
-    reader_tools: list[ReaderTool] = Field(default_factory=list, description=(
+    reader_tools: list[ReaderTool | RentComparisonReaderTool] = Field(default_factory=list, description=(
         'Optional reviewed reader utility. Tool type and formula are allowlisted; arbitrary model JS is never rendered.'
     ))
 

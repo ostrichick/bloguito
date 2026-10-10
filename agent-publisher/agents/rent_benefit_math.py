@@ -11,7 +11,7 @@ def _str(value):
     return format(value.normalize(), 'f') if isinstance(value, Decimal) else str(value)
 
 
-def validate_rent_benefit(item, text, quote_text):
+def validate_rent_benefit(item, text, quote_text, shared_context=''):
     keys = {'operation','salary_man','monthly_rent_man','months','credit_percent',
             'marginal_percent','standard_credit_man'}
     if not isinstance(item, dict) or set(item) != keys or item.get('operation') != 'rent_benefit_example':
@@ -30,12 +30,16 @@ def validate_rent_benefit(item, text, quote_text):
         return set(), ['invalid_derived_calculation']
     # This must be labelled as an assumption and the cited official law must
     # contain each operative statutory number (not merely an unrelated rate).
+    # A table can state shared assumptions once in its visible caption/headers.
+    # Keep case-specific salary and rent bound to the individual row.
+    visible_context = text + ' ' + shared_context
+    normalized_row = text.replace(',', '')
     markers = ('가정','현금영수증','월세')
     tax_rate_section = quote_text.rsplit('과세표준과 기본세율의 표', 1)
-    if (not all(x in text for x in markers)
-            or not re.search(rf'(?<!\d){salary}\s*만원',text)
-            or not re.search(rf'(?<!\d){monthly}\s*만원',text)
-            or not re.search(rf'(?<!\d){months}\s*개월',text)
+    if (not all(x in visible_context for x in markers)
+            or not re.search(rf'(?<!\d){salary}\s*만원',normalized_row)
+            or not re.search(rf'(?<!\d){monthly}\s*만원',normalized_row)
+            or not re.search(rf'(?<!\d){months}\s*개월',visible_context)
             or '100분의 25' not in quote_text or '100분의 30' not in quote_text
             or ('100분의 17' if credit == 17 else '100분의 15') not in quote_text
             or len(tax_rate_section) != 2

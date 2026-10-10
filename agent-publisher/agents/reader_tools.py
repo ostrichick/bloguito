@@ -9,6 +9,80 @@ import re
 
 MINIMUM_WAGE_TOOL_KIND = "minimum_wage_monthly"
 MINIMUM_WAGE_FORMULA_VERSION = "moel_weekly_holiday_v1"
+RENT_TAX_TOOL_KIND = "rent_tax_comparison"
+RENT_TAX_FORMULA_VERSION = "rent_credit_receipt_2026_v1"
+RENT_TAX_RATES = frozenset((6, 15, 24, 35, 38, 40, 42, 45))
+
+
+def rent_comparison_projection(monthly_gross_man: int, monthly_rent_man: int,
+                               months: int, marginal_percent: int,
+                               card_deduction_used_man: int,
+                               other_card_floor_met: bool,
+                               rent_eligible: bool, annual_bonus_man: int = 0) -> dict:
+    """Conditional upper-level comparison, deliberately NOT a tax assessment.
+
+    Assumes other card spend already passes salary's 25% threshold and doesn't
+    consume the 300/250 basic deduction cap beyond the explicit used amount.
+    Statutory rent credit eligibility depends on other legal tests the model
+    cannot determine from gross pay alone. No standard 130k credit is added.
+    """
+    if (any(type(v) is not int for v in (monthly_gross_man, monthly_rent_man,
+                                        months, marginal_percent, card_deduction_used_man,
+                                        annual_bonus_man))
+            or not 1 <= monthly_gross_man <= 10_000
+            or not 1 <= monthly_rent_man <= 500
+            or not 1 <= months <= 12
+            or marginal_percent not in RENT_TAX_RATES
+            or not 0 <= card_deduction_used_man <= 400
+            or not 0 <= annual_bonus_man <= 100_000
+            or type(other_card_floor_met) is not bool or type(rent_eligible) is not bool):
+        raise ValueError("invalid_rent_comparison_inputs")
+    salary = monthly_gross_man * 12 + annual_bonus_man
+    annual_rent = monthly_rent_man * months
+    rate = 17 if salary <= 5500 else 15
+    base_cap = 250 if salary > 7000 else 300
+    card_headroom = max(0, base_cap - card_deduction_used_man)
+    deduction = min(annual_rent * 0.30, card_headroom)
+    return {
+        "salary_man": salary,
+        "credit_percent": rate if salary <= 8000 and rent_eligible else None,
+        "rent_nominal_man": round(min(annual_rent, 1000) * rate / 100, 4)
+                            if salary <= 8000 and rent_eligible else None,
+        "credit_ineligible_salary": salary > 8000,
+        "receipt_tax_simple_man": round(deduction * marginal_percent / 100, 4)
+                                   if other_card_floor_met else None,
+        "receipt_deduction_man": round(deduction, 4) if other_card_floor_met else None,
+        "base_card_cap_man": base_cap,
+    }
+
+
+def _validate_rent_shape(tool: dict) -> dict:
+    required = {"kind", "title", "formula_version", "monthly_gross_default_man",
+                "annual_bonus_default_man",
+                "monthly_rent_default_man", "months_default", "marginal_percent_default",
+                "card_deduction_used_default_man", "other_card_floor_met_default",
+                "rent_eligible_default", "evidence"}
+    if (not isinstance(tool, dict) or set(tool) != required
+            or tool.get("kind") != RENT_TAX_TOOL_KIND
+            or tool.get("formula_version") != RENT_TAX_FORMULA_VERSION
+            or not isinstance(tool.get("title"), str)
+            or not 4 <= len(tool["title"].strip()) <= 80
+            or re.search(r"[<>\r\n]", tool["title"])):
+        raise ValueError("invalid_rent_reader_tool")
+    values = rent_comparison_projection(
+        tool.get("monthly_gross_default_man"), tool.get("monthly_rent_default_man"),
+        tool.get("months_default"), tool.get("marginal_percent_default"),
+        tool.get("card_deduction_used_default_man"),
+        tool.get("other_card_floor_met_default"), tool.get("rent_eligible_default"),
+        tool.get("annual_bonus_default_man"))
+    if (not isinstance(tool.get("evidence"), list) or len(tool["evidence"]) != 4
+            or any(not isinstance(row, dict) or set(row) != {"source_id", "quote"}
+                   or not isinstance(row.get("source_id"), str)
+                   or not isinstance(row.get("quote"), str)
+                   for row in tool["evidence"])):
+        raise ValueError("invalid_rent_reader_tool_evidence")
+    return values
+
 
 
 def _round_positive(value: float) -> int:
@@ -73,14 +147,21 @@ def validate_reader_tools(plan: dict, sources: list[dict], brief: dict) -> list[
     if not tools:
         return []
     tool = tools[0]
+    kind = tool.get("kind") if isinstance(tool, dict) else None
     try:
-        _validated_shape(tool)
+        if kind == RENT_TAX_TOOL_KIND:
+            _validate_rent_shape(tool)
+        else:
+            _validated_shape(tool)
     except ValueError:
         return ["invalid_reader_tools"]
     keyword = " ".join(str(brief.get(key, "")) for key in ("entity", "primary_keyword"))
-    if (brief.get("intent_type") != "calculator"
-            or "calculator" not in brief.get("added_value", [])
-            or "최저임금" not in keyword):
+    rent_scope = (kind == RENT_TAX_TOOL_KIND and "월세" in keyword
+                  and brief.get("intent_type") in {"calculator", "comparison", "decision"})
+    wage_scope = (kind == MINIMUM_WAGE_TOOL_KIND and "최저임금" in keyword
+                  and brief.get("intent_type") == "calculator")
+    if (not (rent_scope or wage_scope)
+            or "calculator" not in brief.get("added_value", [])):
         return ["reader_tool_outside_brief_scope"]
     source_map = {row.get("id"): row for row in sources if isinstance(row, dict)}
     for evidence in tool["evidence"]:
@@ -91,7 +172,127 @@ def validate_reader_tools(plan: dict, sources: list[dict], brief: dict) -> list[
         source_text = " ".join(str(source.get("text", "")).split())
         if quote not in source_text:
             return ["invalid_reader_tool_evidence"]
+    if kind == RENT_TAX_TOOL_KIND and {e["source_id"] for e in tool["evidence"]} != {
+            "s2", "s3", "s5", "s6"}:
+        return ["invalid_reader_tool_evidence"]
     return []
+
+
+def _render_rent_comparison(tool: dict) -> str:
+    result = _validate_rent_shape(tool)
+    salary = tool["monthly_gross_default_man"]
+    bonus = tool["annual_bonus_default_man"]
+    rent = tool["monthly_rent_default_man"]
+    months = tool["months_default"]
+    rate = tool["marginal_percent_default"]
+    used = tool["card_deduction_used_default_man"]
+    floor_checked = " checked" if tool["other_card_floor_met_default"] else ""
+    eligible_checked = " checked" if tool["rent_eligible_default"] else ""
+    title = html.escape(tool["title"])
+    credit = (f'{result["rent_nominal_man"]:g}만원'
+              if result["rent_nominal_man"] is not None else "요건 확인 필요")
+    receipt = (f'{result["receipt_tax_simple_man"]:g}만원'
+               if result["receipt_tax_simple_man"] is not None else "25% 사용기준 확인 필요")
+    rates = "".join(
+        f'<option value="{n}"{" selected" if n == rate else ""}>{n}%</option>'
+        for n in sorted(RENT_TAX_RATES))
+    # Static, reviewed JS only: input values go to textContent, never innerHTML,
+    # and there are no network calls or user-entered script fields.
+    script = r"""(function(){
+      "use strict";
+      const root=document.currentScript.parentElement;
+      const el=(name)=>root.querySelector('[data-role="'+name+'"]');
+      const money=(number)=>(Math.round(number*100)/100).toLocaleString('ko-KR',{maximumFractionDigits:2})+'만원';
+      function update(){
+        const income=Number(el('income').value),rent=Number(el('rent').value);
+        const months=Number(el('months').value),rate=Number(el('rate').value);
+        const used=Number(el('used').value),bonus=Number(el('bonus').value);
+        const valid=[income,rent,months,rate,used,bonus].every(Number.isFinite)
+          &&[income,rent,used,bonus].every(Number.isInteger)
+          &&income>=1&&income<=10000&&rent>=1&&rent<=500
+          &&Number.isInteger(months)&&months>=1&&months<=12
+          &&[6,15,24,35,38,40,42,45].includes(rate)
+          &&used>=0&&used<=400&&bonus>=0&&bonus<=100000;
+        if(!valid || [el('income'),el('rent'),el('months'),el('used'),el('bonus')].some(x=>!x.value.trim())){
+          el('credit').textContent='입력값 확인';el('receipt').textContent='입력값 확인';
+          el('detail').textContent='금액과 납부 개월 수를 올바르게 입력하세요.';return;
+        }
+        const gross=income*12+bonus, annualRent=rent*months;
+        const creditRate=gross<=5500?17:15;
+        const cardCap=gross>7000?250:300;
+        const nominalRent=Math.min(annualRent,1000)*creditRate/100;
+        const deductible=Math.min(annualRent*.30,Math.max(0,cardCap-used));
+        const saving=deductible*rate/100;
+        el('credit').textContent=gross>8000?'총급여 기준 초과'
+          :(!el('eligible').checked?'주택·거주 요건 확인 필요':money(nominalRent));
+        el('receipt').textContent=el('floor').checked?money(saving):'25% 사용기준 확인 필요';
+        el('detail').textContent='가정 연 총급여 '+money(gross)+' · 월세 '+months
+          +'개월 · 카드 소득공제 기본한도 '+money(cardCap)
+          +' · 공제율 '+(gross>8000?'대상 아님':creditRate+'%')
+          +' (실제 절세·환급액 아님)';
+      }
+      root.querySelectorAll('input,select').forEach((input)=>{
+        input.addEventListener('input',update);input.addEventListener('change',update);
+      });
+      update();
+    })();"""
+    return (
+        '<section class="bloguito-reader-tool" data-reader-tool="rent_tax_comparison" '
+        'style="margin:24px 0 30px;padding:18px;border:1px solid #cbd5e1;border-radius:12px;background:#ffffff">'
+        f'<h2 style="margin:0 0 8px;font-size:21px">{title}</h2>'
+        '<p style="margin:0 0 14px;font-size:14px;line-height:1.6">'
+        '금액을 바꿔 두 제도의 <strong>조건부 계산값</strong>을 확인하세요. '
+        '연 총급여는 월급 12개월분과 아래 상여금의 합으로 가정하며 실제 환급액은 계산하지 않습니다.</p>'
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">'
+        '<label>월 총급여(세전·만원)'
+        f'<input data-role="income" type="number" min="1" max="10000" step="1" value="{salary}" '
+        'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
+        '<label>월세(만원)'
+        f'<input data-role="rent" type="number" min="1" max="500" step="1" value="{rent}" '
+        'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
+        '<label>월세 납부 개월 수'
+        f'<input data-role="months" type="number" min="1" max="12" step="1" value="{months}" '
+        'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
+        '</div>'
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">'
+        '계산 조건 설정 (정확도를 위해 확인)</summary>'
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:12px">'
+        '<label>연간 상여금 등 추가 총급여(만원)'
+        f'<input data-role="bonus" type="number" min="0" max="100000" step="1" value="{bonus}" '
+        'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
+        '<label>과세표준상 가정 세율'
+        '<select data-role="rate" style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px">'
+        + rates + '</select></label>'
+        '<label>이미 사용한 카드 소득공제 한도(만원)'
+        f'<input data-role="used" type="number" min="0" max="400" step="1" value="{used}" '
+        'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
+        '</div><p style="font-size:13px;margin:10px 0 0;color:#475569">'
+        '종합소득금액 요건도 별도로 충족해야 합니다. 자녀에 따른 카드 공제한도 가산, '
+        '다른 소득공제와 세액공제, 남은 소득세, 표준세액공제 13만원의 영향은 반영하지 않았습니다.</p></details>'
+        '<fieldset style="border:0;padding:0;margin:12px 0 0">'
+        '<legend style="font-weight:700;font-size:14px">계산을 위한 확인사항 (확인 후 체크)</legend>'
+        '<label style="display:block;margin-top:8px">'
+        f'<input type="checkbox" data-role="floor"{floor_checked}> '
+        '월세 외 카드와 현금영수증 사용액이 총급여 25%를 이미 넘음</label>'
+        '<label style="display:block;margin-top:8px">'
+        f'<input type="checkbox" data-role="eligible"{eligible_checked}> '
+        '무주택, 임대차계약, 실거주, 종합소득금액 등 공제 요건을 충족함</label>'
+        '</fieldset>'
+        '<div aria-live="polite" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:16px">'
+        '<div style="padding:13px;border:1px solid #dbe5e1;border-radius:8px">'
+        '<div style="font-size:13px">월세 세액공제 · 법정 명목액</div>'
+        f'<output data-role="credit" style="display:block;font-size:23px;font-weight:800">{credit}</output></div>'
+        '<div style="padding:13px;border:1px solid #dbe5e1;border-radius:8px">'
+        '<div style="font-size:13px">현금영수증 · 단순 세율 추정</div>'
+        f'<output data-role="receipt" style="display:block;font-size:23px;font-weight:800">{receipt}</output></div>'
+        '</div>'
+        f'<p data-role="detail" style="font-size:13px;margin:12px 0 0;color:#475569">'
+        f'가정 연 총급여 {result["salary_man"]}만원 · 실제 환급액 아님</p>'
+        '<p style="font-size:13px;color:#7c2d12;margin:7px 0 0">'
+        '어느 쪽이 실제 유리한지는 연말정산에서 남은 소득세, 과세표준과 다른 공제를 모두 반영해야 합니다.</p>'
+        '<noscript><p style="color:#7c2d12">입력값을 변경하는 계산 기능에는 JavaScript가 필요합니다.</p></noscript>'
+        '<script>' + script + '</script></section>'
+    )
 
 
 def render_reader_tools(plan: dict) -> str:
@@ -101,6 +302,8 @@ def render_reader_tools(plan: dict) -> str:
     if not isinstance(tools, list) or len(tools) != 1:
         raise ValueError("invalid_reader_tools")
     tool = tools[0]
+    if tool.get("kind") == RENT_TAX_TOOL_KIND:
+        return _render_rent_comparison(tool)
     projection = _validated_shape(tool)
     hourly = tool["hourly_wage_default"]
     weekly = float(tool["weekly_hours_default"])

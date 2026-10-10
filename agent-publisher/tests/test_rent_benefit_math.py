@@ -63,6 +63,19 @@ class RentBenefitMathTests(unittest.TestCase):
         self.assertTrue({'250','60','73'}.issubset(allowed))
         self.assertNotIn('82.12',allowed)
 
+    def test_compact_table_row_uses_visible_shared_caption_and_headers(self):
+        data=self.sample(9000,80,24,0)
+        row='9,000만원 / 80만원 신청 불가 60만원'
+        context='2026년 월세 12개월 납부 가정 / 현금영수증 단순 환산액'
+        allowed,errors=supported_currency_sums(row,self.LAW,[data],context)
+        self.assertEqual([],errors)
+        self.assertTrue({'9000','80','60'}.issubset(allowed))
+        self.assertIn('invalid_derived_calculation',supported_currency_sums(row,self.LAW,[data])[1])
+        self.assertIn('invalid_derived_calculation',supported_currency_sums(
+            row.replace('80만원','30만원'),self.LAW,[data],context)[1])
+        self.assertIn('invalid_derived_calculation',supported_currency_sums(
+            row,self.LAW,[data],context.replace('12개월','11개월'))[1])
+
 
 if __name__=='__main__':
     unittest.main()

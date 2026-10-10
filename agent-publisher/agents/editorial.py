@@ -308,6 +308,7 @@ def all_blocks(plan):
                'answers': fact.get('answers', []), 'calculations': fact.get('calculations', [])}
               for s in plan['sections'] for fact in s.get('facts', [])],
             *[{'text': ' '.join(row['cells']), 'evidence': row['evidence'],
+               'shared_calculation_context': ' '.join([s['table']['caption'], *s['table']['headers']]),
                'answers': row.get('answers', []), 'calculations': row.get('calculations', [])}
               for s in plan['sections'] for row in (s.get('table') or {}).get('rows', [])],
             *[{'text': f"{s['location']['venue']} {s['location']['address']}",
@@ -316,7 +317,7 @@ def all_blocks(plan):
             *[f['answer'] for f in plan.get('faq', [])]]
 
 
-def supported_currency_sums(text, quote_text, calculations):
+def supported_currency_sums(text, quote_text, calculations, shared_context=''):
     """Allow only narrowly defined derived values whose inputs are in evidence.
 
     Supported operations are reader-useful KRW sums, exact thousand-won to won
@@ -343,7 +344,7 @@ def supported_currency_sums(text, quote_text, calculations):
             errors.append('invalid_derived_calculation')
             continue
         if item.get('operation') == 'rent_benefit_example':
-            additions, faults = validate_rent_benefit(item, text, quote_text)
+            additions, faults = validate_rent_benefit(item, text, quote_text, shared_context)
             supported.update(additions)
             errors.extend(faults)
             continue
@@ -1115,7 +1116,8 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
             unsupported -= supported_official_number_notations(
                 b['text'], ' '.join(evidence_text), unsupported)
             derived_numbers, calculation_errors = supported_currency_sums(
-                b['text'], ' '.join(evidence_text), b.get('calculations', []))
+                b['text'], ' '.join(evidence_text), b.get('calculations', []),
+                b.get('shared_calculation_context', ''))
             unsupported -= derived_numbers
             reasons.extend(calculation_errors)
             if unsupported:

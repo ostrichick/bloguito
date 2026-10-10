@@ -182,12 +182,17 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
                      + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>')
             if mobile_cards:
                 cards = []
-                mobile_title_index = next(
+                # Rent comparison cards identify a row by its salary + rent,
+                # not by an unrelated numeric benefit in the second column.
+                salary_rent_table = (bool(table['headers']) and
+                                     '총급여' in table['headers'][0] and
+                                     '월세' in table['headers'][0])
+                mobile_title_index = (0 if salary_rent_table else next(
                     (idx for idx, header in enumerate(table['headers'])
                      if isinstance(header, str)
                      and any(token in header for token in ('행사', '축제'))),
                     1 if len(table['headers']) > 1 else 0,
-                )
+                ))
                 for row in table['rows']:
                     pairs = ''.join(
                         '<div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;padding:4px 0">'
