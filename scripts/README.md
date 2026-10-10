@@ -35,6 +35,7 @@
 6. **재시도 산출물**: 같은 작업의 retry마다 timestamp 폴더를 추가하지 않고 동일 task workspace의 안정된 파일명(`candidate.json`, `qa.json`, `mobile.png` 등)을 갱신한다. 별도 보존이 필요한 실패본만 명시적으로 `failed/`에 남긴다.
 7. **관리형 task workspace**: 새 disposable 작업은 `python scripts/task_workspace.py open <task>`로 `scratch/tasks/<task>/`를 생성·재사용한다. 완료는 `mark <task> completed`, 실패 후 재개용은 `failed`, 장기 보존은 `preserved --reason ...`로 표시한다. manifest가 없는 기존 scratch 파일은 자동 TTL 정리 대상으로 소급 해석하지 않는다.
 8. **TTL**: 관리형 `completed` workspace는 기본 72시간, `failed` workspace는 기본 168시간 뒤 `cleanup_workspaces.py` 후보가 된다. `active`, `preserved`, manifest가 없거나 손상된 workspace는 자동 삭제하지 않는다. 브라우저 프로필은 가능하면 `agents.workspace_lifecycle.temporary_browser_profile()`로 OS temp에서 한 QA batch 동안만 사용한다.
+9. **Git worktree 수명주기**: 전용 worktree에서 마지막으로 필요한 작업(검증·통합·승인된 배포·readback)을 마치면 최종 보고 전에 `python scripts/ops/retire_worktree.py C:/Projects/<워크트리>`로 dry-run, 그 결과가 안전하면 같은 명령에 `--apply`를 붙여 정리한다. 대상은 `main`의 형제 디렉터리에 Git으로 등록된 worktree여야 하며, 미반영 commit/dirty 상태/잠긴 worktree는 자동 차단한다. Git 무시 파일도 SHA 검증 후 `scratch/tasks/worktree-retirement/<워크트리명>/ignored/`에 보존하고 정리한다. 이 보관 영역은 Git 비추적이며 개인정보/자격정보가 포함될 수 있으니 push하지 않는다. 원격 branch와 stash, 작업이 진행 중인 브랜치는 자동 삭제하지 않는다. 안전 차단 시 이유를 후속 작업에 남기고 수동 강제 삭제로 우회하지 않는다.
 
 ## 왜 이 규칙이 필요한가
 

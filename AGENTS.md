@@ -40,6 +40,8 @@ WordPress mutation은 대상 Post ID와 현재 상태를 읽고, 저장 직전 C
 
 사용자가 요청한 범위를 우선 완료한다. 작업을 막지 않는 공통 코드·renderer·validator 개선점은 별도 TODO로 남기며 콘텐츠 작업에 끼워 넣지 않는다. 공통 코드 변경처럼 충돌 가능성이 큰 작업은 전용 Git worktree에서 격리한다. 정책 변경과 콘텐츠 적용을 같은 미검증 상태에서 섞지 않는다.
 
+**임시 worktree는 작업 종료까지 책임진다:** 새 worktree가 필요한 작업은 코드 작성·표적/통합 검증·필요한 commit/push·승인된 배포와 readback 등 그 worktree가 필요한 **마지막 작업**을 마친 직후, 최종 결과 보고 전에 `python scripts/ops/retire_worktree.py <정확한 worktree 경로>` dry-run으로 확인하고 안전하면 `--apply`까지 실행한다. 주 사용 `main`은 유지한다. 이 도구는 통합됐거나 동일 패치가 반영된 브랜치, 미커밋/일반 미추적 변경이 없는 등록 worktree만 제거하며, Git 무시 파일은 main의 비추적 `scratch/tasks/worktree-retirement/`에 SHA 검증 후 보존한다. 브랜치에 미반영 변경이 있거나 뒤이어 테스트·배포·검토가 남아 있으면 자동 제거하지 말고 이유를 보고한다. `git worktree remove --force`, `git clean -fdx`, 직접 폴더 삭제로 안전 검사·증거 보존을 우회하지 않는다. 로컬 브랜치 정리는 이 도구가 안전한 조건에서 수행하고 원격 브랜치·stash는 자동 삭제하지 않는다. 여러 에이전트가 동시에 해당 worktree를 사용 중인 경우 마지막 작업자가 실행하도록 작업 책임자를 정한다.
+
 일회성 probe·중간 JSON/HTML·다운로드 원문은 Git 비추적 `scratch/tasks/<작업명>/`에 두고 같은 작업에서 재사용한다. 일회성 작업 때문에 `scripts/`나 `agent-publisher/tests/`에 임시 파일을 늘리지 않는다. 바이너리는 파일 경로·mount·정식 upload를 사용하고 Base64 chunk 전송을 일반 전달 경로로 만들지 않는다. 자세한 파일 수명주기는 `scripts/README.md`를 따른다.
 
 ## 원격 실행과 완료 보고
