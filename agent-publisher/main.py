@@ -1,5 +1,5 @@
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -20,7 +20,7 @@ from agents.designer import (
 )
 from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import ensure_inventory, sync_inventory
-from notifier import notify_published, notify_error, notify_pipeline_summary
+from notifier import AlertDelivery, notify_published, notify_error, notify_pipeline_summary
 from agents.temporal_validation import KST
 
 
@@ -31,6 +31,11 @@ GROWTH_OPPORTUNITIES = GROWTH_DIR / 'latest-opportunities.json'
 TOPIC_SCORES = GROWTH_DIR / 'topic-candidate-scores.json'
 GROWTH_WORK_LOG = GROWTH_DIR / 'growth-work-log.json'
 GROWTH_POLICY = Path(__file__).resolve().parent / 'growth_policy.json'
+GROWTH_INPUT_FAILURE_REASONS = frozenset({
+    'growth_inputs_unavailable_or_stale',
+    'growth_planner_runtime_unavailable',
+    'growth_plan_new_draft_target_invalid',
+})
 
 
 def _load_private_json(path: Path):
@@ -79,18 +84,66 @@ def build_scheduled_growth_plan(category_keys: list) -> dict:
             category_keys=category_keys,
             category_slug_map=slug_map,
         )
+        if plan.get('action') == 'new_draft':
+            target = plan.get('target') or {}
+            if (target.get('category_key') not in category_keys
+                    or not isinstance(target.get('brief_id'), str)):
+                raise GrowthPlannerError('growth_plan_new_draft_target_invalid')
+        plan['plan_persisted'] = True
         save_daily_plan(plan, GROWTH_DIR)
         return plan
-    except (OSError, ValueError, GrowthPlannerError, GrowthAnalysisError) as exc:
+    except Exception as exc:
         # Missing or malformed private growth state is not evidence that a new
-        # article should be written. Scheduled automation fails closed.
-        return {
+        # article should be written. Always replace yesterday's decision.
+        detail = str(exc)
+        if (not detail or len(detail) > 96 or not detail.isascii()
+                or not detail.replace('_', '').isalnum()):
+            detail = type(exc).__name__
+        plan = {
             'schema_version': 1,
+            'generated_at_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'as_of_date': datetime.now(KST).date().isoformat(),
             'action': 'no_action',
             'target': None,
             'reason': 'growth_planner_runtime_unavailable',
-            'details': [str(exc)] if str(exc) else [],
+            'details': [detail],
+            'plan_persisted': True,
         }
+        try:
+            save_daily_plan(plan, GROWTH_DIR)
+        except Exception as save_error:
+            # Do not leave a previous actionable plan as the latest decision.
+            plan['plan_persisted'] = False
+            plan['details'].append('daily_growth_plan_persist_failed')
+            previous = GROWTH_DIR / 'daily-growth-plan.json'
+            try:
+                if not GROWTH_DIR.is_symlink() and not previous.is_symlink():
+                    previous.unlink(missing_ok=True)
+                else:
+                    plan['details'].append('daily_growth_plan_invalidation_failed')
+            except OSError:
+                plan['details'].append('daily_growth_plan_invalidation_failed')
+            print('[Growth Planner] failure decision could not be saved: '
+                  + type(save_error).__name__)
+        return plan
+
+
+def _record_notification(stats: dict, callback, *args, **kwargs) -> None:
+    """Account for unconfigured delivery and each failed configured channel."""
+    try:
+        delivery = callback(*args, **kwargs)
+        if isinstance(delivery, AlertDelivery):
+            if delivery.configured == 0:
+                stats['notification_unconfigured'] += 1
+            if delivery.failed:
+                stats['notification_errors'] += 1
+                stats['notification_channel_failures'] += delivery.failed
+        elif delivery is False:
+            # Support notification adapters exposing the legacy bool contract.
+            stats['notification_errors'] += 1
+    except Exception as exc:
+        stats['notification_errors'] += 1
+        print(f"⚠️ 알림 처리 실패: {type(exc).__name__}")
 
 
 def record_scheduled_new_draft_completion(growth_plan: dict, *, post_id: int, title: str) -> None:
@@ -136,11 +189,21 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
         "held": 0,
         "errors": 0,
         "notification_errors": 0,
+        "notification_channel_failures": 0,
+        "notification_unconfigured": 0,
         "growth_log_errors": 0,
         "held_reasons": [],
         "growth_action": growth_plan.get('action', 'no_action'),
         "growth_reason": growth_plan.get('reason', ''),
+        "growth_details": growth_plan.get('details', []),
+        "growth_plan_persisted": growth_plan.get('plan_persisted'),
         "growth_target": growth_plan.get('target'),
+        "growth_outcome": (
+            'input_failure' if growth_plan.get('reason') in GROWTH_INPUT_FAILURE_REASONS
+            else 'editorial_hold' if growth_plan.get('action') == 'existing_improvement'
+            else 'no_action' if growth_plan.get('action') == 'no_action'
+            else 'new_draft_selected'
+        ),
     }
 
     def hold_image_generation_unavailable(category_name: str) -> None:
@@ -164,11 +227,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
         else:
             print("[Growth Planner] 오늘 자동 작성할 신규 주제가 없습니다: "
                   + str(growth_plan.get('reason') or 'no_action'))
-        try:
-            notify_pipeline_summary(stats)
-        except Exception as e:
-            stats['notification_errors'] += 1
-            print(f"⚠️ 요약 리포트 발송 실패: {e}")
+        _record_notification(stats, notify_pipeline_summary, stats)
         return stats
 
     # Only a planner-approved new draft reaches WordPress inventory refresh and
@@ -277,11 +336,8 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                     stats["held_reasons"].append(
                         "[Growth Planner] 신규 draft 완료 기록 실패: "
                         + type(growth_log_error).__name__)
-                    try:
-                        notify_error("Growth work log", str(growth_log_error))
-                    except Exception as notification_error:
-                        stats['notification_errors'] += 1
-                        print(f"⚠️ Growth work log 오류 알림 발송 실패: {type(notification_error).__name__}")
+                    _record_notification(stats, notify_error, "Growth work log",
+                                         str(growth_log_error))
 
                 # 6. 중복 방지 히스토리 저장 (구글 뉴스 URL + 언론사 원문 URL 모두 기록)
                 radar.save_to_history(raw_item.get("link", ""), curated.get("link", ""))
@@ -289,28 +345,26 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 processed_for_this_cat += 1
                 stats["published"] += 1
                 print(f"🎉 처리 완료 ({processed_for_this_cat}/{limit_per_cat}): Post #{post_id} - {article['title']}")
-                notify_published(article['title'], cat_info['name'], f"Post #{post_id}", used_model=article.get('used_model'))
+                _record_notification(stats, notify_published, article['title'],
+                                     cat_info['name'], f"Post #{post_id}",
+                                     used_model=article.get('used_model'))
 
             except Exception as e:
                 print(f"❌ 작업 중 에러 발생: {e}")
                 stats["errors"] += 1
                 stats["held_reasons"].append(f"[{cat_info['name']}] 오류: {str(e)[:30]}")
-                try:
-                    notify_error(f"{cat_info['name']} 발행 단계", str(e))
-                except Exception as notification_error:
-                    stats['notification_errors'] += 1
-                    print(f"⚠️ 오류 알림 발송 실패: {type(notification_error).__name__}")
+                _record_notification(stats, notify_error, f"{cat_info['name']} 발행 단계", str(e))
 
     print("\n" + "=" * 60)
     print(f"🎉 총 {stats['published']}건의 포스팅 작업 완료 (탐색: {stats['candidates']}건, 보류: {stats['held']}건, 에러: {stats['errors']}건)")
     print("=" * 60)
 
+    if (stats['growth_outcome'] == 'new_draft_selected' and stats['held']
+            and not stats['published'] and not stats['errors']):
+        stats['growth_outcome'] = 'editorial_hold'
+
     # 파이프라인 일일 종합 리포트 발송 (사일런트 실패 방지)
-    try:
-        notify_pipeline_summary(stats)
-    except Exception as e:
-        stats['notification_errors'] += 1
-        print(f"⚠️ 요약 리포트 발송 실패: {e}")
+    _record_notification(stats, notify_pipeline_summary, stats)
     return stats
 
 
@@ -342,18 +396,24 @@ def main(argv=None):
     # Holds and an empty candidate list are valid editorial outcomes. Actual
     # processing errors must propagate to cron/systemd even after partial success.
     result = {key: stats.get(key, 0) for key in (
-        'candidates', 'published', 'held', 'errors', 'notification_errors', 'growth_log_errors')}
+        'candidates', 'published', 'held', 'errors', 'notification_errors', 'growth_log_errors',
+        'notification_channel_failures', 'notification_unconfigured')}
     result['growth_action'] = stats.get('growth_action', 'unknown')
+    result['growth_reason'] = stats.get('growth_reason', '')
+    result['growth_details'] = stats.get('growth_details', [])
+    result['growth_outcome'] = stats.get('growth_outcome', 'unknown')
+    if stats.get('growth_plan_persisted') is not None:
+        result['growth_plan_persisted'] = stats['growth_plan_persisted']
     if stats.get('image_generation_status'):
         result['image_generation_status'] = stats['image_generation_status']
     result['status'] = (
-        'failed' if stats['errors'] else
+        'failed' if stats['errors'] or result['growth_outcome'] == 'input_failure' else
         'held_image_generation_unavailable'
         if stats.get('image_generation_status') and not stats['published']
         else 'completed'
     )
     print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False))
-    return 1 if stats['errors'] else 0
+    return 1 if result['status'] == 'failed' else 0
 
 
 if __name__ == "__main__":
