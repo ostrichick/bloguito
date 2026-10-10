@@ -693,6 +693,19 @@ def edit_reviewed_post(
     except ValueError as exc:
         if str(exc) != "reviewed_post_manifest_required" or not _legacy_public_bundle_target(post_id, bundle):
             raise
+        if image_path is not None or resume:
+            raise ValueError("legacy_reviewed_onboarding_requires_content_only_first")
+        from agents.legacy_draft_adoption import adopt_reviewed_legacy_draft
+        live = get_post(
+            ["sudo", "docker", "exec", "wordpress_app", "wp"], post_id,
+            fields=["post_status", "post_title", "post_name", "post_content", "post_excerpt"],
+        )
+        if live.get("post_status") == "draft":
+            return adopt_reviewed_legacy_draft(
+                post_id, bundle, expected_content_sha256, confirmed=confirmed,
+                confirm_title_change=confirm_title_change)
+        if live.get("post_status") != "publish":
+            raise ValueError("legacy_edit_target_status_invalid")
         kind = "publish"
     if kind == "draft":
         recovery = _stale_draft_public_recovery_decision(

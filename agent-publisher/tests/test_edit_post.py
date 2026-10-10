@@ -34,6 +34,25 @@ def current_bundle():
 
 
 class UnifiedEditPostTests(unittest.TestCase):
+    def test_untracked_draft_dispatches_only_to_full_reviewed_onboarding(self):
+        bundle = current_bundle()
+        bundle["brief"]["existing_post_id"] = 858
+        live = {"post_status": "draft", "post_title": "Existing draft"}
+        with patch("agents.edit_post.reviewed_target_kind",
+                   side_effect=ValueError("reviewed_post_manifest_required")), \
+             patch("agents.edit_post.get_post", return_value=live), \
+             patch("agents.legacy_draft_adoption.adopt_reviewed_legacy_draft",
+                   return_value={"post_id": 858, "target_status": "draft"}) as adopt:
+            result = edit_reviewed_post(
+                858, bundle, "a" * 64, confirmed=True, edit_intent="full new review",
+                confirm_title_change=True)
+            self.assertEqual("draft", result["target_status"])
+            adopt.assert_called_once()
+            with self.assertRaisesRegex(ValueError, "content_only_first"):
+                edit_reviewed_post(
+                    858, bundle, "a" * 64, confirmed=True, edit_intent="new review",
+                    image_path="cover.webp")
+
     def test_public_edit_receipt_is_bound_to_exact_live_reviewed_readback(self):
         bundle = current_bundle()
         html = render(bundle['plan'], bundle['sources'])
