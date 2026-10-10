@@ -55,10 +55,14 @@ def inspect_candidate(path: Path, candidate_number: int) -> dict:
     }
 
 
-def seal_candidates(paths: list[Path], output: Path) -> dict:
+def seal_candidates(paths: list[Path], output: Path, *, candidate_number: int | None = None) -> dict:
     if not paths:
         raise ValueError("candidate_files_required")
-    rows = [inspect_candidate(path, index) for index, path in enumerate(paths, start=1)]
+    if candidate_number is not None and (
+            len(paths) != 1 or type(candidate_number) is not int or candidate_number < 1):
+        raise ValueError("selected_only_seal_requires_one_original_and_positive_number")
+    numbers = [candidate_number] if candidate_number is not None else range(1, len(paths) + 1)
+    rows = [inspect_candidate(path, index) for index, path in zip(numbers, paths)]
     if len({row["path"] for row in rows}) != len(rows):
         raise ValueError("duplicate_candidate_path")
     if len({row["sha256"] for row in rows}) != len(rows):
@@ -93,9 +97,13 @@ def main() -> int:
         type=Path,
         help="Manifest path (default: candidate-manifest.json next to first candidate)",
     )
+    parser.add_argument(
+        "--candidate-number", type=int,
+        help="Preserve the original selected candidate number when only that ChatGPT original survives",
+    )
     args = parser.parse_args()
     output = args.output or args.candidates[0].resolve().parent / "candidate-manifest.json"
-    receipt = seal_candidates(args.candidates, output)
+    receipt = seal_candidates(args.candidates, output, candidate_number=args.candidate_number)
     print(json.dumps(receipt, ensure_ascii=False))
     return 0
 

@@ -33,6 +33,17 @@ class FeaturedImageCandidateSealTests(unittest.TestCase):
             self.assertEqual("image_gen.text2im", saved["origin_claim"]["generator_tool"])
             self.assertEqual("cos_core.save_image", saved["origin_claim"]["save_tool"])
 
+    def test_reseal_only_historically_selected_candidate_keeps_its_number(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-3-original.png"
+            Image.new("RGB", (1672, 941), "white").save(source, "PNG")
+            receipt = MODULE.seal_candidates(
+                [source], root / "manifest.json", candidate_number=3)
+            self.assertEqual([3], [c["candidate_number"] for c in receipt["candidates"]])
+            with self.assertRaisesRegex(ValueError, "selected_only_seal_requires"):
+                MODULE.seal_candidates([source], root / "invalid.json", candidate_number=0)
+
     def test_rejects_duplicate_candidate_content(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

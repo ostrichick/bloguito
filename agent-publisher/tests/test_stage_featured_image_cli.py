@@ -19,6 +19,30 @@ SPEC.loader.exec_module(MODULE)
 
 
 class StageFeaturedImageCliTests(unittest.TestCase):
+    def test_selected_only_candidate_three_seals_and_stages_without_renumbering(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-3-original.png"
+            staged = root / "candidate-3-upload.webp"
+            manifest = root / "manifest.json"
+            Image.new("RGB", (1672, 941), "white").save(source, "PNG")
+            seal_spec = importlib.util.spec_from_file_location(
+                "selected_only_sealer", SCRIPT.parent / "seal_featured_image_candidates.py")
+            sealer = importlib.util.module_from_spec(seal_spec)
+            seal_spec.loader.exec_module(sealer)
+            sealer.seal_candidates([source], manifest, candidate_number=3)
+            with patch("sys.argv", [
+                "stage_featured_image.py", str(source), str(staged),
+                "--candidate-manifest", str(manifest), "--selected-candidate", "3",
+                "--selection-mode", "user", "--selection-actor", "user",
+            ]):
+                self.assertEqual(0, MODULE.main())
+            self.assertEqual(3, verify_manual_image_upload_lineage(
+                staged, manifest, 3, "user")["candidate_number"])
+            with self.assertRaisesRegex(ValueError, "invalid_candidate_manifest"):
+                MODULE.verify_candidate_manifest(
+                    source, manifest, selected_candidate=1, selection_mode="user")
+
     def test_all_manual_cli_actions_refuse_unsealed_local_cover(self):
         with tempfile.TemporaryDirectory() as folder:
             local_cover = Path(folder) / "locally-drawn.webp"

@@ -46,12 +46,16 @@ def verify_candidate_manifest(
         raise ValueError("invalid_selected_candidate")
     if selection_mode not in {"user", "agent-delegated"}:
         raise ValueError("invalid_candidate_selection_mode")
-    if any(
+    candidate_numbers = [row.get("candidate_number") for row in rows if isinstance(row, dict)]
+    is_full_set = candidate_numbers == list(range(1, len(rows) + 1))
+    is_selected_only = (len(rows) == 1 and candidate_numbers == [selected_candidate]
+                        and type(selected_candidate) is int and selected_candidate >= 1)
+    if not (is_full_set or is_selected_only) or any(
         not isinstance(row, dict) or type(row.get("candidate_number")) is not int
-        or row["candidate_number"] != index
+        or row["candidate_number"] < 1
         or not isinstance(row.get("path"), str)
         or not isinstance(row.get("sha256"), str)
-        for index, row in enumerate(rows, 1)
+        for row in rows
     ) or len({str(Path(row["path"]).resolve()) for row in rows}) != len(rows):
         raise ValueError("invalid_candidate_manifest")
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
