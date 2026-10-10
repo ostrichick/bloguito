@@ -2,6 +2,8 @@
 
 Scope: the image lock introduced after editorial release `b9de470` and included in `e694eee`. The lock is a per-post WordPress `wp_options` record, updated in an SQL transaction. Never use this procedure to change the content or publication status of a real post.
 
+**Latest validation — 2026-10-10:** the two defects recorded below were fixed in `43bd95c` and passed PC disposable WordPress/MariaDB acceptance (15/15 groups), plus a separate real loopback SSH-disconnect safety/recovery check. This supersedes the earlier NO-GO **for those two PC acceptance blockers only**. No production deployment was performed; deployment authorization and the predeployment checks below remain separate. See [PC handoff](FEATURED_IMAGE_PC_VALIDATION_HANDOFF.md#2026-10-10-pc-재검증-완료--수정-검증-pass-운영-미적용).
+
 ## Preflight (read-only)
 
 Run from the exact reviewed Git checkout:
@@ -16,7 +18,7 @@ Review output before the deploy. If any lock has `import_pending=true`, **pause 
 
 ## Normal lock state machine
 
-1. Acquire: a fresh token is created; first `add_option(..., autoload=no)` succeeds, or an **expired, nonpending** lock may be replaced only within a transaction with `SELECT ... FOR UPDATE` and an exact old-value compare.
+1. Acquire: a fresh token is created; atomic `INSERT IGNORE` against the unique option name grants first ownership only when exactly one row is inserted, with autoload off. Existing state must pass strict token/expiry/pending/phase validation. An **expired, nonpending** valid lock may be replaced only within a transaction with `SELECT ... FOR UPDATE` and an exact old-value compare; malformed state is preserved and rejected.
 2. Read post SHA, title, status, previous thumbnail; verify selected local original SHA.
 3. Copy to a **token-specific** temporary path, read remote SHA and inspect pre-existing attachments with that SHA.
 4. Persist a local `image_import_attempt` checkpoint (token, previous SHA IDs, old thumbnail); mark the per-post option `import_pending=true` before invoking non-idempotent `wp media import`.
@@ -102,3 +104,11 @@ At the user's request, the two failed acceptance conditions were retried against
 - **Stop/rollback criteria:** any manifest/target mismatch, inline credential config, unexpected module, registry validation failure, staging fault/concurrency failure, missing verified backup or pending image import prevents GO. After installation, failed CLI/renderer/provenance/readback requires restoring the installer's per-file backup manifest; this does **not** reverse WordPress DB, media, options or task state. Never roll back to a lock-unaware runtime while a media import could remain in flight; reconcile pending import liveness and per-post receipts first, then choose verified full-backup recovery or carefully reviewed forward recovery for any data-side mutation.
 
 No production deploy, cron/service change, image import or WordPress mutation was performed during this audit. Nonsecret read-only diagnostic evidence is in ignored `scratch/tasks/bloguito-readonly-audit-20261009/`.
+
+## 2026-10-10 PC acceptance of laptop lock fix
+
+The clean candidate `43bd95c0d7a59482da36acdeae88fe54542cbcdd` was tested in a dedicated PC worktree against the retained internal-only staging project and synthetic drafts. Existing credentials/volumes were reused, a new private pretest DB dump was taken, and the old failure evidence was preserved. Docker Engine 29.7.2 was recovered from stale runtime sockets without a factory reset or volume deletion.
+
+**All 15 DB/pipeline groups passed.** Six natural simultaneous acquisitions and the query-filter barrier at the actual INSERT each produced exactly one successful owner. Eight invalid-state variants across all four lock operations (32 combinations) returned `invalid_lock_state` and preserved the exact stored option bytes. Active/stale/pending ownership rules, exactly-once import marking, normal media import, malformed response, lost-response injection, zero/one/multiple SHA matches, timeout, PHP allocation failure, owner reconciliation and body/thumbnail/ALT CAS/readback passed. A separate actual loopback SSH-disconnect test also preserved the fence, performed one import only, and resumed under the original owner after independent process-exit confirmation. Windows native OpenSSH still returned 4294967295, so its 255-specific automatic SHA lookup was not reached; safety preservation and automatic recovery coverage are distinct.
+
+PC targeted Python tests: 26 PASS. Full Python suite ran once: 1,143 tests, 1,142 PASS + 1 SKIP (`symlinks unavailable`), 0 failures/errors. PHP standalone syntax/contracts, encoding, tracked-secret scan and dependency checks passed. No application source changed during this PC validation. Private raw evidence is retained under ignored `scratch/tasks/pc-validation-2026-10-10/`; the detailed cross-device-readable summary is in the tracked PC handoff. Staging containers are stopped after testing, with volumes preserved. No production post/media/options/cron or deployment was changed. The two prior PC acceptance blockers are resolved for this candidate; production deployment still requires its own release/backup/provenance/plugin/lock preflight and authorization.
