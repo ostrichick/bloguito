@@ -19,6 +19,41 @@ def load_module():
 
 
 class EditorialCliViaSshTransportTests(unittest.TestCase):
+    def test_draft_standard_preserved_manual_excerpt_requires_opt_in(self):
+        module = load_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(
+                args, 0, stdout='{"status":"ok","saved":{}}', stderr='')
+
+        module._RUN = fake_run
+        payload = {
+            'protocol': 1, 'post_id': 592,
+            'expected': {
+                'post_status': 'draft', 'post_title': 'Original', 'post_name': '',
+                'post_excerpt': 'Human-authored existing summary',
+                'content_sha256': 'a' * 64, 'category_ids': [275],
+            },
+            'updates': {'post_content': '<p>Reviewed new body</p>',
+                        'post_title': 'Reviewed title'},
+            'expected_meta': None,
+            'updates_meta': None,
+        }
+        call = module._WP_PREFIX + [
+            'eval', module.GUARDED_POST_MUTATION_SCRIPT, '--allow-root']
+        strict = module.make_transport('draft-standard', {592}, 'bloguito',
+                                       allow_title_change=True)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_update_flags'):
+            strict(call, input=json.dumps(payload), capture_output=True, text=True)
+        self.assertFalse(calls)
+        adopted = module.make_transport('draft-standard', {592}, 'bloguito',
+            allow_title_change=True, allow_preserved_draft_excerpt=True)
+        result = adopted(call, input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(1, len(calls))
+
     def test_featured_image_transport_allows_only_explicit_gate_readback(self):
         module = load_module()
         module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(

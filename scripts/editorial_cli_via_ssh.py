@@ -246,7 +246,8 @@ def _mark_catalog_sync(request, status, attempts):
 
 def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                    allow_title_change=False, use_tailscale=False,
-                   expected_rank_math_meta=None, allow_image=False):
+                   expected_rank_math_meta=None, allow_image=False,
+                   allow_preserved_draft_excerpt=False):
     if action not in _SUPPORTED_ACTIONS:
         raise ValueError('unsupported_editorial_ssh_action')
     if action == 'edit-post':
@@ -413,6 +414,13 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             allowed_field_sets = {frozenset({'post_content', 'post_excerpt'})}
             if allow_title_change:
                 allowed_field_sets.add(frozenset({'post_content', 'post_excerpt', 'post_title'}))
+            # A *newly* reviewed legacy draft may preserve its unrelated manual
+            # excerpt; do not require overwriting it to satisfy the SSH profile.
+            # This opt-in is never enabled by ordinary reviewed-draft edits.
+            if allow_preserved_draft_excerpt:
+                allowed_field_sets.add(frozenset({'post_content'}))
+                if allow_title_change:
+                    allowed_field_sets.add(frozenset({'post_content', 'post_title'}))
         elif action == 'public-fast':
             allowed_field_sets = {
                 frozenset({'post_content'}),
@@ -1126,7 +1134,9 @@ def _main():
                             and request.confirm_title_change),
         use_tailscale=config.mode == 'tailscale',
         expected_rank_math_meta=expected_rank_math_meta,
-        allow_image=image_path is not None)
+        allow_image=image_path is not None,
+        allow_preserved_draft_excerpt=(
+            action == 'edit-post' and '--adopt-untracked-draft' in request.cli_args))
     decision_context = (
         editorial_cli.prepared_edit_decision(decision)
         if action == 'edit-post' else nullcontext()
