@@ -53,6 +53,25 @@ class UnifiedEditPostTests(unittest.TestCase):
                     858, bundle, "a" * 64, confirmed=True, edit_intent="new review",
                     image_path="cover.webp")
 
+    def test_explicit_legacy_draft_transport_is_full_standard_with_draft_binding(self):
+        bundle = current_bundle()
+        bundle["brief"]["existing_post_id"] = 858
+        with tempfile.TemporaryDirectory() as folder:
+            draft = Path(folder) / "draft_posts.json"
+            public = Path(folder) / "published_posts.json"
+            draft.write_text("[]", encoding="utf-8")
+            public.write_text("[]", encoding="utf-8")
+            with patch("agents.edit_post.DRAFTS_INDEX_FILE", draft), \
+                 patch("agents.edit_post.POSTS_INDEX_FILE", public):
+                decision = classify_reviewed_post_route(
+                    858, bundle, expected_content_sha256="a" * 64,
+                    adopt_untracked_draft=True)
+        self.assertEqual("draft", decision["target_status"])
+        self.assertEqual("standard", decision["route"])
+        self.assertEqual("full", decision["validation_plan"]["source_validation"])
+        self.assertEqual("full", decision["validation_plan"]["semantic_review"])
+        self.assertEqual("draft", decision["validation_plan"]["binding"]["target_status"])
+
     def test_public_edit_receipt_is_bound_to_exact_live_reviewed_readback(self):
         bundle = current_bundle()
         html = render(bundle['plan'], bundle['sources'])

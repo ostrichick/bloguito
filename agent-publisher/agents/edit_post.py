@@ -195,6 +195,38 @@ def _legacy_public_standard_decision(
     }
 
 
+def _legacy_draft_standard_decision(
+    post_id: int, bundle: dict, expected_content_sha256: str | None,
+    *, image_path: Path | str | None, resume: bool,
+) -> dict:
+    """Preclassify explicitly ID-bound, newly reviewed draft adoption as full Standard."""
+    if not _legacy_public_bundle_target(post_id, bundle):
+        raise ValueError("legacy_draft_explicit_post_id_binding_required")
+    if image_path is not None or resume:
+        raise ValueError("legacy_reviewed_onboarding_requires_content_only_first")
+    classification = classify_change(
+        None, bundle, target_status="draft", force_standard=True)
+    classification.update(
+        route="standard", sources_changed=True, factual_risk=True,
+        reasons=["untracked_draft_requires_new_full_review"],
+        qa_scopes=["content-mobile-desktop", "layout-accessibility"],
+    )
+    validation = build_validation_plan(
+        None, bundle, route="standard", target_status="draft",
+        post_id=post_id, expected_content_sha256=expected_content_sha256,
+        classification=classification,
+    )
+    return {
+        "route": "standard",
+        "target_status": "draft",
+        "reasons": classification["reasons"],
+        "classification": classification,
+        "qa_requirements": classification["qa_scopes"],
+        "validation_plan": validation,
+        "legacy_draft_adoption": True,
+    }
+
+
 def _stale_draft_public_recovery_decision(
     post_id: int,
     bundle: dict,
@@ -284,12 +316,17 @@ def classify_reviewed_post_route(
     confirm_title_change: bool = False,
     image_path: Path | str | None = None,
     resume: bool = False,
+    adopt_untracked_draft: bool = False,
 ) -> dict:
     try:
         kind = reviewed_target_kind(post_id)
     except ValueError as exc:
         if str(exc) != "reviewed_post_manifest_required":
             raise
+        if adopt_untracked_draft:
+            return _legacy_draft_standard_decision(
+                post_id, bundle, expected_content_sha256,
+                image_path=image_path, resume=resume)
         return _legacy_public_standard_decision(
             post_id,
             bundle,

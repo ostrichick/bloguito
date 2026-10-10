@@ -73,6 +73,8 @@ def _main():
     parser.add_argument('--confirm-image-selection', action='store_true',
                         help='manual image path: confirm the user selected this exact reviewed candidate')
     parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post or reviewed draft')
+    parser.add_argument('--adopt-untracked-draft', action='store_true',
+                        help='edit-post: replace an untracked existing draft only after new full official-source and semantic review')
     parser.add_argument('--edit-intent', help='edit-post: the user-requested scope of this edit')
     parser.add_argument('--resume', action='store_true',
                         help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')

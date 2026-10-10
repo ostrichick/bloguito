@@ -1081,7 +1081,8 @@ def _main():
                 expected_content_sha256=request.expected_content_sha256,
                 confirm_title_change=request.confirm_title_change,
                 image_path=image_path,
-                resume=request.resume)
+                resume=request.resume,
+                adopt_untracked_draft='--adopt-untracked-draft' in request.cli_args)
             if decision['target_status'] == 'draft':
                 transport_action = 'draft-fast' if decision['route'] == 'fast' else 'draft-standard'
             else:
