@@ -292,6 +292,98 @@ def validate_featured_image_file(image_path: Path | str) -> dict:
     }
 
 
+def attest_current_featured_image(
+    post_id: int,
+    image_path: Path | str,
+    expected_content_sha256: str,
+    expected_thumbnail_id: int,
+    *,
+    alt_text: str,
+    approval_evidence_sha256: str,
+    confirmed: bool = False,
+) -> dict:
+    """Attest a visually reviewed *unchanged* existing cover without reimporting.
+
+    Requires exact current WP post/thumbnail/ALT match, reviewed body binding,
+    and identical remote attachment bytes.  This is for preserving an already
+    acceptable legacy image; unlike creating a new image, no source provenance
+    or candidate-generation claim is made.
+    """
+    import re as _re
+    from agents.publish_gate import validate_publish_attestation
+
+    if not confirmed or type(post_id) is not int or post_id <= 0:
+        raise ValueError("specific_existing_image_confirmation_required")
+    if type(expected_thumbnail_id) is not int or expected_thumbnail_id <= 0:
+        raise ValueError("existing_thumbnail_id_required")
+    if not _re.fullmatch(r"[a-f0-9]{64}", expected_content_sha256 or ""):
+        raise ValueError("expected_content_sha256_required")
+    if not _re.fullmatch(r"[a-f0-9]{64}", approval_evidence_sha256 or ""):
+        raise ValueError("existing_image_visual_approval_required")
+    alt_text = (alt_text or "").strip()
+    if not alt_text or len(alt_text) > 180:
+        raise ValueError("existing_image_alt_required")
+    image = validate_featured_image_file(image_path)
+    base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
+    lock = acquire_editorial_lock(ROOT)
+    try:
+        fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
+        current = get_post(base, post_id, fields=fields)
+        if (current.get("post_status") != "draft"
+                or content_sha256(current.get("post_content", "")) != expected_content_sha256):
+            raise ValueError("existing_image_post_baseline_mismatch")
+        thumb = _read_post_meta(base, post_id, "_thumbnail_id")
+        if thumb != str(expected_thumbnail_id):
+            raise ValueError("existing_image_thumbnail_changed")
+        attachment = get_post(
+            base, expected_thumbnail_id,
+            fields=["ID", "guid", "post_title", "post_mime_type"],
+        )
+        mimetype = {"JPEG":"image/jpeg", "PNG":"image/png", "WEBP":"image/webp"}[image["format"]]
+        if (attachment.get("post_mime_type") != mimetype
+                or _read_post_meta(base, expected_thumbnail_id, "_wp_attachment_image_alt") != alt_text):
+            raise ValueError("existing_image_attachment_or_alt_changed")
+        # An exact reviewed-content SHA and full model/source review is required
+        # *before* writing the attestation.  The PHP gate independently hashes
+        # the actual server attachment; a downloaded but different file fails.
+        binding = reviewed_binding_for_post(post_id, expected_content_sha256, current["post_title"])
+        backup = backup_json(ROOT, "existing-cover-attestation", post_id, {
+            "post": current, "thumbnail_id": expected_thumbnail_id,
+            "attachment": attachment, "alt_text": alt_text,
+            "image_sha256": image["sha256"],
+        })
+        attestation = record_publish_attestation(
+            base, post_id,
+            content_sha256=expected_content_sha256,
+            review_digest=binding["review_digest"],
+            title_sha256=binding["title_sha256"],
+            thumbnail_id=expected_thumbnail_id,
+            image_path=image_path, alt_text=alt_text,
+            approval_kind="automated_visual_review",
+            approval_evidence_sha256=approval_evidence_sha256,
+            expires_at_gmt=binding["expires_at_gmt"],
+            requires_live_state=binding["requires_live_state"],
+        )
+        validate_publish_attestation(
+            base, post_id, expected_review_digest=binding["review_digest"])
+        after = get_post(base, post_id, fields=fields)
+        if after != current or _read_post_meta(base, post_id, "_thumbnail_id") != thumb:
+            raise ValueError("existing_image_post_changed_during_attestation")
+        return {
+            "post_id": post_id,
+            "status": "draft",
+            "thumbnail_id": expected_thumbnail_id,
+            "image_sha256": image["sha256"],
+            "content_sha256": expected_content_sha256,
+            "image_unchanged": True,
+            "readback_verified": True,
+            "publish_attestation": attestation,
+            "backup": str(backup),
+        }
+    finally:
+        release_editorial_lock(lock)
+
+
 def _read_post_meta(base, post_id: int, key: str, *, timeout=None) -> str | None:
     with timed("wp_meta_read"):
         increment("wp_roundtrips")

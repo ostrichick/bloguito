@@ -73,6 +73,8 @@ def _main():
     parser.add_argument('--confirm-image-selection', action='store_true',
                         help='manual image path: confirm the user selected this exact reviewed candidate')
     parser.add_argument('--confirm-title-change', action='store_true', help='explicit authorization to apply the reviewed title when updating an existing public post or reviewed draft')
+    parser.add_argument('--attest-existing', action='store_true',
+                        help='replace-featured-image: keep an independently visually reviewed current image with byte-exact server verification; no upload')
     parser.add_argument('--adopt-untracked-draft', action='store_true',
                         help='edit-post: replace an untracked existing draft only after new full official-source and semantic review')
     parser.add_argument('--edit-intent', help='edit-post: the user-requested scope of this edit')
@@ -117,7 +119,10 @@ def _main():
 
     image_lineage = None
     if args.action in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
-        if args.image_path:
+        if args.action == 'replace-featured-image' and args.attest_existing:
+            if args.candidate_manifest or args.selected_candidate is not None or args.selection_mode:
+                parser.error('attest-existing must not claim new image generation provenance')
+        elif args.image_path:
             from agents.featured_image import verify_manual_image_upload_lineage
             image_lineage = verify_manual_image_upload_lineage(
                 args.image_path, args.candidate_manifest,
@@ -254,6 +259,31 @@ def _main():
         label = args.action
         if args.inventory or args.file:
             parser.error(f'{label} uses --post-id/--image-path and no bundle file')
+        if args.attest_existing:
+            if (not args.post_id or not args.image_path or not args.alt_text
+                    or not args.confirm_update or not args.expected_thumbnail_id
+                    or not args.expected_content_sha256 or args.confirm_image_selection or args.alt_only):
+                parser.error('attest-existing requires exact post/content/thumbnail/image/ALT and --confirm-update')
+            from agents.publish_gate import approval_evidence_digest
+            from agents.featured_image import attest_current_featured_image, validate_featured_image_file
+            visual_file = validate_featured_image_file(args.image_path)
+            approval = approval_evidence_digest('automated_visual_review', {
+                'post_id': args.post_id,
+                'current_attachment_id': args.expected_thumbnail_id,
+                'image_sha256': visual_file['sha256'],
+                'visual_reviewed': True,
+                'existing_image_preserved': True,
+                'selection_mode': 'agent-delegated',
+            })
+            result = attest_current_featured_image(
+                args.post_id, args.image_path,
+                args.expected_content_sha256, args.expected_thumbnail_id,
+                alt_text=args.alt_text, approval_evidence_sha256=approval,
+                confirmed=True)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if args.output:
+                args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+            return
         if not args.post_id or not args.alt_text or not args.confirm_update:
             parser.error(f'{label} requires --post-id, --alt-text and --confirm-update')
         if args.alt_only and args.image_path:

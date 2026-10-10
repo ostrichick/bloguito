@@ -19,6 +19,20 @@ def load_module():
 
 
 class EditorialCliViaSshTransportTests(unittest.TestCase):
+    def test_featured_image_transport_allows_only_explicit_gate_readback(self):
+        module = load_module()
+        module._RUN = lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, stdout='{"status":"ready","attestation":{}}', stderr='')
+        transport = module.make_transport('replace-featured-image', {592}, 'bloguito')
+        payload = module._WP_PREFIX + [
+            'eval', module.PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root']
+        response = transport(payload, input='{"protocol":1,"post_id":592,"expected_review_digest":"' + 'a' * 64 + '"}',
+                             capture_output=True, text=True, check=True)
+        self.assertIn('"status":"ready"', response.stdout)
+        with self.assertRaisesRegex(ValueError, 'unexpected_wordpress_command'):
+            transport(module._WP_PREFIX + [
+                'eval', 'echo get_option("admin_email");', '--allow-root'])
+
     def test_draft_standard_permalink_read_is_limited_to_exact_target(self):
         module = load_module()
         calls = []

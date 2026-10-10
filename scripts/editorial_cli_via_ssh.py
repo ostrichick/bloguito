@@ -594,7 +594,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         return payload
 
     def validate_publish_gate_validate_payload(raw):
-        if action != 'promote-draft':
+        if action not in {'promote-draft', 'replace-featured-image'}:
             raise ValueError('publish_attestation_validate_not_allowed')
         if isinstance(raw, bytes):
             raw = raw.decode('utf-8')
@@ -718,7 +718,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (action in _FEATURED_IMAGE_ACTIONS
                 and wp == ['eval', PUBLISH_GATE_RECORD_SCRIPT, '--allow-root']):
             return 'publish_attestation_write'
-        if (action == 'promote-draft'
+        if (action in {'promote-draft', 'replace-featured-image'}
                 and wp == ['eval', PUBLISH_GATE_VALIDATE_SCRIPT, '--allow-root']):
             return 'publish_attestation_validate'
         if (action == 'import-section-image'
