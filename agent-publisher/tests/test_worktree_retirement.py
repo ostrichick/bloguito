@@ -74,6 +74,17 @@ class WorktreeRetirementTests(unittest.TestCase):
         with self.assertRaisesRegex(retire_worktree.RetirementBlocked, 'never main'):
             retire_worktree.retire(self.main, apply=True)
 
+    def test_removes_integrated_branch_even_when_its_upstream_is_stale(self):
+        self.git('branch', 'old-upstream', cwd=self.main)
+        (self.target / 'feature.txt').write_text('finished\n', encoding='utf-8')
+        self.git('add', 'feature.txt', cwd=self.target)
+        self.git('commit', '-m', 'finished feature', cwd=self.target)
+        self.git('merge', '--no-ff', '-m', 'merge feature', 'feature', cwd=self.main)
+        self.git('branch', '--set-upstream-to=old-upstream', 'feature', cwd=self.main)
+        result = retire_worktree.retire(self.target, apply=True)
+        self.assertTrue(result['applied'])
+        self.assertNotIn('feature', self.git('branch', '--list', cwd=self.main).stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

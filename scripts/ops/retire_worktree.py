@@ -149,7 +149,12 @@ def retire(target: Path, apply: bool) -> dict:
     git("worktree", "remove", "--force", str(state["target"]))
     if state["target"].exists():
         raise RetirementBlocked("worktree path remains; local branch preserved")
-    git("branch", "-d" if state["merged"] else "-D", state["branch"])
+    # git branch -d uses a branch's *upstream* as the merge target when one
+    # exists. Some completed task branches track old origin/main, so -d can
+    # reject an otherwise verified main ancestor after the worktree is gone.
+    # inspect() proved exact ancestry or patch-equivalence to current main;
+    # at this point -D is the correct narrowly scoped branch-ref cleanup.
+    git("branch", "-D", state["branch"])
     result["applied"] = True
     return result
 
