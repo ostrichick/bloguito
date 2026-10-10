@@ -29,7 +29,13 @@
 
 ## 결과와 남은 승인
 
-- WordPress: **#889 draft**, 동일 제목/slug, 본문 SHA `9ae30527049af7d1e11f7c43d4d5e4d0ee61b6e78a32784a8531e9564a8cb978`, **새 썸네일 #912**/새 ALT, source-link 중복 0.
+- 이미지 적용 직후(16:58 KST) WordPress는 **#889 draft**, 동일 제목/slug, 본문 SHA `9ae30527049af7d1e11f7c43d4d5e4d0ee61b6e78a32784a8531e9564a8cb978`, **새 썸네일 #912**/새 ALT, source-link 중복 0이었다. **이후 게시 상태는 아래 후속 상태 변경을 참조.**
 - 기록: `scratch/tasks/post-889-audit-20261010/final-qa.json`, `edit-receipt.json`, `qa-completion.json`, `image-alt-receipt.json`, `independent-semantic-review.md`; WordPress 저장 전 백업은 정규 publisher receipt에 보존.
 - 테스트: 이전 shared editorial draft identity guard의 표적 테스트 29+12 PASS. 이번 한시적 #889 외부 출처 예외 검증 테스트 7 PASS, 기존 image 교체 테스트 32 PASS, 후속 체크포인트 테스트 15 PASS, SSH CLI transport 62 PASS. 임시 예외 런타임 모듈을 아직 Git에 등록하지 않았을 때 전체 1,195개 중 릴리스 manifest 검사 10개가 실패해 해당 로그를 별도 보존했다. **예외 코드를 원위치 복원한 후 전체 common Python 최종 1,188 PASS, skipped=1, exit 0** (`scratch/tasks/post-889-audit-20261010/full-regression.log`). 정규 운영 코드에 영구적인 예외는 남기지 않았다.
 - **사용자 발행 전 검토 필수**. 대표이미지 크고 정확한 한글 문구는 완료했으나 **Rank Math 실제 숫자 점수는 여전히 확인 불가**. 게시물 자동 발행 승인은 따로 생성하지 않았다. 관리자의 실제 편집기에서 점수가 확인되면 현재 본문/이미지와 같은 revision인지 대조해야 한다. `promote-draft`/발행 실행 없음.
+
+## 17:05 KST 이후의 외부 WordPress 편집/게시 상태 변경 — 사용자 확인 필요
+
+위 내용은 이미지 교체 직후의 기록이다. 그 뒤 별도 read-only 조회에서 **#889 `post_status=publish`, `post_modified=2026-10-10 17:05:17 KST`**, `_edit_last=1`, `_edit_lock`에 WordPress 로그인 사용자 1의 흔적이 확인됐다. **이번 #889 에이전트 작업에서는 `promote-draft`나 `post_status=publish` 변경 명령을 실행하지 않았다.** 관리자 편집기에서 변경됐을 가능성과 부합하지만 누가 어떤 의도로 실행했는지는 로그만으로 확정하지 않는다. 사람이 의도적으로 발행했을 수도 있어 에이전트는 역으로 `draft` 상태를 강제하지 않았다. 사용자에게 직접 발행한 것인지 확인할 필요가 있다.
+
+같은 시점 Rank Math의 원래 미설정됐던 점수 메타가 **`rank_math_seo_score=71`**로 새로 저장됐다. 이 수치는 가정/예상이 아닌 **WordPress 실제 저장값**으로, 원래 사용자의 70~80점 이상 목표 중 최저 70점 조건을 충족한다. 마지막 읽기 전용 재검증 `scratch/tasks/post-889-new-image-20261010/post889-live-status-after-external-publish.json`의 8/8 검사에서 본문 SHA 유지, 대표이미지 #912/서버 JPG SHA 일치, 1200×675, 포커스 키워드 일치, 공식 링크 4개 각각 1회, 내부 #724 1회, Rank Math 점수 71 저장이 확인됐다. **공개 URL `https://lifeinfo24.org/p/889/`는 HTTP 200**, canonical 일치, 공개 HTML 및 OG/Twitter 이미지 모두 새 #912 JPG URL로 연결됐고, 종전 #890 이미지가 OG에 남아 있지 않다(`post889-public-render.json`, 6/6 PASS). **자동 발행 게이트를 위해 임의로 attestation을 생성하거나 게시 상태를 다시 변경하지 않았다.**
