@@ -43,6 +43,10 @@ from agents.wordpress_mutation import (
     verify_cas,
 )
 from agents.designer import FEATURED_IMAGE_POLICY
+from agents.image_baseline import (
+    image_baseline_sha256,
+    post_image_baseline_sha256 as _post_image_baseline_sha256,
+)
 from agents.workflow_metrics import increment, timed
 
 
@@ -51,35 +55,6 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_SOURCE_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 
-def image_baseline_sha256(*, content_sha256: str, thumbnail_id: int | None,
-                          status: str, title: str, slug: str, excerpt: str) -> str:
-    """Fingerprint all image-handoff CAS fields, including an explicit null cover.
-
-    Unlike a newly read baseline, this fingerprint is fixed when AFTER_IMAGE
-    begins. It is not an authorization token or an image provenance claim.
-    """
-    if not re.fullmatch(r"[0-9a-f]{64}", content_sha256 or ""):
-        raise ValueError("invalid_image_initial_baseline")
-    if thumbnail_id is not None and (type(thumbnail_id) is not int or thumbnail_id <= 0):
-        raise ValueError("invalid_image_initial_baseline")
-    if any(not isinstance(value, str) for value in (status, title, slug, excerpt)):
-        raise ValueError("invalid_image_initial_baseline")
-    payload = {
-        "content_sha256": content_sha256, "thumbnail_id": thumbnail_id,
-        "status": status, "title": title, "slug": slug, "excerpt": excerpt,
-    }
-    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False,
-                         separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _post_image_baseline_sha256(live: dict, thumbnail_id: int | None) -> str:
-    return image_baseline_sha256(
-        content_sha256=content_sha256(live.get("post_content", "")),
-        thumbnail_id=thumbnail_id,
-        status=live.get("post_status", ""), title=live.get("post_title", ""),
-        slug=live.get("post_name", ""), excerpt=live.get("post_excerpt", ""),
-    )
 SHARED_CHATGPT_ORIGIN = {
     "generator_tool": "image_gen.text2im",
     "save_tool": "chatgpt_user_shared_original_url",
