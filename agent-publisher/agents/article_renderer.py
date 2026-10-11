@@ -82,7 +82,13 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
             'style="display:block;width:100%;max-width:100%;height:auto;border-radius:10px" />'
             '</figure>'
         )
-    result += render_reader_tools(plan)
+    rent_tool_after_first_table = bool(
+        plan.get('reader_tools') and
+        plan['reader_tools'][0].get('kind') == 'rent_tax_comparison' and
+        plan['sections'] and plan['sections'][0].get('table')
+    )
+    if not rent_tool_after_first_table:
+        result += render_reader_tools(plan)
 
     # A source-reviewed overview table belongs immediately after the answer.
     sections = plan['sections']
@@ -194,10 +200,14 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
                     1 if len(table['headers']) > 1 else 0,
                 ))
                 for row in table['rows']:
+                    pair_columns = 'minmax(0,1fr)' if salary_rent_table else '78px minmax(0,1fr)'
+                    pair_gap = '4px' if salary_rent_table else '8px'
                     pairs = ''.join(
-                        '<div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;padding:4px 0">'
+                        f'<div style="display:grid;grid-template-columns:{pair_columns};gap:{pair_gap};padding:8px 0;'
+                        'border-top:1px solid #edf2f7">'
                         f'<span style="font-size:12px;font-weight:700;color:#64748b">{html.escape(table["headers"][idx])}</span>'
-                        f'<span style="font-size:14px;color:#334155;line-height:1.5">{html.escape(cell)}</span></div>'
+                        f'<span style="font-size:{"19px;font-weight:800" if salary_rent_table else "14px"};'
+                        f'color:#334155;line-height:1.5">{html.escape(cell)}</span></div>'
                         for idx, cell in enumerate(row['cells']) if idx != mobile_title_index and cell.strip())
                     cards.append(
                         '<article style="padding:14px 15px;background:#ffffff;border:1px solid #dbe5e1;border-left:4px solid #0d7d59;border-radius:10px">'
@@ -263,6 +273,8 @@ def render_article(plan, sources, category_key=None, *, helpers, map_key):
                 'font-size:13px;font-weight:700;border-radius:6px;text-decoration:none !important">네이버지도 위치 보기 <span aria-hidden="true">↗</span></a>'
                 '</div></div>'
             )
+        if number == 1 and rent_tool_after_first_table:
+            body += render_reader_tools(plan)
         return body
 
     def event_map_markup():

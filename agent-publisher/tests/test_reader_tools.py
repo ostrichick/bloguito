@@ -212,5 +212,11 @@ class RentComparisonReaderToolTests(unittest.TestCase):
         self.assertEqual(7, len(widget.find_all('input')))
         self.assertEqual(1, len(widget.find_all('select')))
         self.assertEqual(2, len(widget.find_all('output')))
+        js = widget.find('script').get_text()
+        # WordPress text filters may encode logical AND and wrap script in a p.
+        self.assertNotIn('&&', js)
+        self.assertNotIn('document.currentScript.parentElement', js)
+        self.assertIn('document.querySelector(', js)
+        self.assertIn('bloguito-rent-basic-grid', markup)
         for forbidden in ('fetch(', 'eval(', 'XMLHttpRequest', 'innerHTML', 'document.cookie'):
             self.assertNotIn(forbidden, markup)

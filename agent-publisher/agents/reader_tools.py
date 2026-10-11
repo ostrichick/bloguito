@@ -200,19 +200,26 @@ def _render_rent_comparison(tool: dict) -> str:
     # and there are no network calls or user-entered script fields.
     script = r"""(function(){
       "use strict";
-      const root=document.currentScript.parentElement;
+      // WordPress may wrap this script in a paragraph during the_content filtering.
+      // Locate the reviewed single tool by its stable attribute, not the script parent.
+      const root=document.querySelector('[data-reader-tool="rent_tax_comparison"]');
+      if(!root)return;
       const el=(name)=>root.querySelector('[data-role="'+name+'"]');
       const money=(number)=>(Math.round(number*100)/100).toLocaleString('ko-KR',{maximumFractionDigits:2})+'만원';
       function update(){
         const income=Number(el('income').value),rent=Number(el('rent').value);
         const months=Number(el('months').value),rate=Number(el('rate').value);
         const used=Number(el('used').value),bonus=Number(el('bonus').value);
-        const valid=[income,rent,months,rate,used,bonus].every(Number.isFinite)
-          &&[income,rent,used,bonus].every(Number.isInteger)
-          &&income>=1&&income<=10000&&rent>=1&&rent<=500
-          &&Number.isInteger(months)&&months>=1&&months<=12
-          &&[6,15,24,35,38,40,42,45].includes(rate)
-          &&used>=0&&used<=400&&bonus>=0&&bonus<=100000;
+        // Avoid logical AND characters: WordPress may entity-encode them
+        // inside inline scripts and make the real page invalid JavaScript.
+        const valid=[
+          [income,rent,months,rate,used,bonus].every(Number.isFinite),
+          [income,rent,used,bonus].every(Number.isInteger),
+          income>=1,income<=10000,rent>=1,rent<=500,
+          Number.isInteger(months),months>=1,months<=12,
+          [6,15,24,35,38,40,42,45].includes(rate),
+          used>=0,used<=400,bonus>=0,bonus<=100000
+        ].every(Boolean);
         if(!valid || [el('income'),el('rent'),el('months'),el('used'),el('bonus')].some(x=>!x.value.trim())){
           el('credit').textContent='입력값 확인';el('receipt').textContent='입력값 확인';
           el('detail').textContent='금액과 납부 개월 수를 올바르게 입력하세요.';return;
@@ -228,6 +235,7 @@ def _render_rent_comparison(tool: dict) -> str:
         el('receipt').textContent=el('floor').checked?money(saving):'25% 사용기준 확인 필요';
         el('detail').textContent='가정 연 총급여 '+money(gross)+' · 월세 '+months
           +'개월 · 카드 소득공제 기본한도 '+money(cardCap)
+          +' · 현금영수증 가정 한계세율 '+rate+'%'
           +' · 공제율 '+(gross>8000?'대상 아님':creditRate+'%')
           +' (실제 절세·환급액 아님)';
       }
@@ -239,11 +247,18 @@ def _render_rent_comparison(tool: dict) -> str:
     return (
         '<section class="bloguito-reader-tool" data-reader-tool="rent_tax_comparison" '
         'style="margin:24px 0 30px;padding:18px;border:1px solid #cbd5e1;border-radius:12px;background:#ffffff">'
+        '<style>.bloguito-reader-tool input[type=number],.bloguito-reader-tool select{'
+        'min-width:0;max-width:100%;font:inherit;color:#1e293b}'
+        '@media(max-width:640px){.bloguito-rent-basic-grid,.bloguito-rent-advanced-grid{'
+        'grid-template-columns:minmax(0,1fr)!important}}'
+        '</style>'
         f'<h2 style="margin:0 0 8px;font-size:21px">{title}</h2>'
         '<p style="margin:0 0 14px;font-size:14px;line-height:1.6">'
         '금액을 바꿔 두 제도의 <strong>조건부 계산값</strong>을 확인하세요. '
-        '연 총급여는 월급 12개월분과 아래 상여금의 합으로 가정하며 실제 환급액은 계산하지 않습니다.</p>'
-        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">'
+        '연 총급여는 월급 12개월분과 아래 상여금의 합으로 가정하며 실제 환급액은 계산하지 않습니다. '
+        '현금영수증 계산에 쓸 가정 세율을 직접 선택하세요(위 비교표의 9천만원 사례는 24% 가정). '
+        '<strong>아래 요건을 확인하고 체크하면 계산 결과가 표시됩니다.</strong></p>'
+        '<div class="bloguito-rent-basic-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px">'
         '<label>월 총급여(세전·만원)'
         f'<input data-role="income" type="number" min="1" max="10000" step="1" value="{salary}" '
         'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
@@ -253,16 +268,16 @@ def _render_rent_comparison(tool: dict) -> str:
         '<label>월세 납부 개월 수'
         f'<input data-role="months" type="number" min="1" max="12" step="1" value="{months}" '
         'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
+        '<label>현금영수증 계산용 가정 한계세율'
+        '<select data-role="rate" style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px">'
+        + rates + '</select></label>'
         '</div>'
         '<details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">'
         '계산 조건 설정 (정확도를 위해 확인)</summary>'
-        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:12px">'
+        '<div class="bloguito-rent-advanced-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;margin-top:12px">'
         '<label>연간 상여금 등 추가 총급여(만원)'
         f'<input data-role="bonus" type="number" min="0" max="100000" step="1" value="{bonus}" '
         'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'
-        '<label>과세표준상 가정 세율'
-        '<select data-role="rate" style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px">'
-        + rates + '</select></label>'
         '<label>이미 사용한 카드 소득공제 한도(만원)'
         f'<input data-role="used" type="number" min="0" max="400" step="1" value="{used}" '
         'style="display:block;width:100%;padding:9px;border:1px solid #94a3b8;border-radius:6px"></label>'

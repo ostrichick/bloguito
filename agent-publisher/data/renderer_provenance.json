@@ -14,6 +14,13 @@
       "historical_sha256": "fef21692163f8b281723173536eda55e2b4bba1f22ea97bd8b7403d787b5cc8a",
       "renderer_revision": "91f2da5",
       "variant": "event-renderer-91f2da5"
+    },
+    {
+      "post_id": 891,
+      "current_sha256": "98954b8e36bc7ac1e008751b116b892297cb7cb4568b90060832304fb2aaa214",
+      "historical_sha256": "e715843284e6c9cf576477ff353150ccf35cf82b6567801985e5139fb0ef88c1",
+      "renderer_revision": "ebcd778",
+      "variant": "pre-rent-calculator-wordpress-filter-fix-ebcd778"
     }
   ]
 }
