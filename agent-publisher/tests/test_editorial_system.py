@@ -353,7 +353,8 @@ class EditorialTests(unittest.TestCase):
                     'post_content': article['content'], 'post_excerpt': expected_excerpt,
                 }))
             return Mock(stdout='')
-        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record:
+        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record, patch('agents.draft_create_journal.DraftCreateJournal') as journal:
+            journal.return_value.read.return_value = None
             clock.now.return_value=NOW
             clock.fromisoformat=datetime.fromisoformat
             self.assertEqual(PublisherAgent().publish(article),999)

@@ -510,6 +510,21 @@ def _main():
 
         from agents.publisher import PublisherAgent
         post_id = PublisherAgent().publish(article_from_bundle(data))
+        # The WordPress draft is already committed. Preserve its ID before the
+        # separate, non-idempotent featured-image upload starts.
+        draft_saved_receipt = {
+            'action': 'prepare-draft',
+            'post_id': int(post_id),
+            'status': 'draft',
+            'completion': 'draft_saved_pending_image' if image_path is not None else 'draft_saved',
+            'title': data['plan']['title'],
+            'featured_image_attached': False,
+        }
+        if args.output:
+            args.output.write_text(
+                json.dumps(draft_saved_receipt, ensure_ascii=False, indent=2),
+                encoding='utf-8')
+        print('Draft ID:', post_id)
         image_result = None
         if image_path is not None:
             from agents.featured_image import replace_featured_image_from_live_baseline
@@ -523,14 +538,27 @@ def _main():
                 'selection_mode': image_lineage['selection_mode'],
                 'source_sha256': image_lineage['source_sha256'],
             })
-            image_result = replace_featured_image_from_live_baseline(
-                int(post_id),
-                image_path,
-                alt_text=args.alt_text,
-                confirmed=True,
-                approval_kind='manual_user_selected',
-                approval_evidence_sha256=evidence_sha,
-            )
+            try:
+                image_result = replace_featured_image_from_live_baseline(
+                    int(post_id),
+                    image_path,
+                    alt_text=args.alt_text,
+                    confirmed=True,
+                    approval_kind='manual_user_selected',
+                    approval_evidence_sha256=evidence_sha,
+                )
+            except Exception as exc:
+                # SSH callers surface failure_receipt separately. Never let
+                # the image failure erase the already committed draft's ID.
+                prior = getattr(exc, 'failure_receipt', None)
+                evidence = dict(prior) if isinstance(prior, dict) else {}
+                evidence.update({
+                    'draft_post_id': int(post_id),
+                    'draft_status': 'draft_saved_pending_image',
+                })
+                exc.failure_receipt = evidence
+                exc.failure_stage = getattr(exc, 'failure_stage', 'draft_image_upload')
+                raise
         seo = data.get('brief', {}).get('seo') or {}
         receipt = {
             'action': 'prepare-draft',
@@ -546,7 +574,6 @@ def _main():
             'publish_attestation': (image_result or {}).get('publish_attestation'),
             'live_inventory_validation': 'passed',
         }
-        print('Draft ID:', post_id)
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')

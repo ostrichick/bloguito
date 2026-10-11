@@ -46,6 +46,15 @@ class WorkflowMetricsTests(unittest.TestCase):
             self.assertEqual('error', row['status'])
             self.assertEqual('ValueError', row['error_type'])
 
+    def test_metrics_io_failure_does_not_mask_success_or_original_error(self):
+        with patch('agents.workflow_metrics.WorkflowMetrics.finish',
+                   side_effect=OSError('no space')):
+            with workflow_run('prepare-draft'):
+                pass
+            with self.assertRaisesRegex(ValueError, 'original source failure'):
+                with workflow_run('prepare-draft'):
+                    raise ValueError('original source failure')
+
     def test_nested_workflow_contributes_to_single_outer_receipt(self):
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / 'metrics.jsonl'

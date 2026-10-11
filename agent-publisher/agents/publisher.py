@@ -92,6 +92,9 @@ class PublisherAgent:
 
     def _publish_editorial(self, article):
         from agents.editorial import validate_bundle, render, excerpt_from_lead
+        from agents.draft_create_journal import (
+            DraftCreateBlocked, DraftCreateJournal, workflow_key,
+        )
         from agents.editorial_writer import load_inventory
         from agents.source_validation_cache import verify_explicit_live_sources
         from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
@@ -105,28 +108,85 @@ class PublisherAgent:
         # Never accept a caller-supplied inventory or a cached quality status here.
         sync_inventory()
         bundle = article['editorial_bundle']
-        report = validate_bundle(bundle, load_inventory())
-        if report['status'] != 'ready':
-            raise ValueError(f"편집 검사 보류: {report['reasons']}")
-        verify_explicit_live_sources(bundle)
         content = render(bundle['plan'], bundle['sources'])
         title = bundle['plan']['title']
         excerpt = excerpt_from_lead(bundle['plan']['lead'])
+        journal = DraftCreateJournal(workflow_key(
+            bundle, content=content, title=title, excerpt=excerpt))
+        previous = journal.read()
+        resume_post_id = None
+        inventory = load_inventory()
+        if previous is not None:
+            if previous['state'] == 'creating':
+                raise DraftCreateBlocked(
+                    'draft_create_outcome_ambiguous_operator_reconciliation_required',
+                    journal.key)
+            resume_post_id = previous['post_id']
+            # Do not adopt a different post with merely a matching title.
+            current = run_wordpress([
+                'sudo', 'docker', 'exec', self.container_name, 'wp', 'post',
+                'get', str(resume_post_id),
+                '--fields=post_status,post_title,post_name,post_content,post_excerpt',
+                '--format=json', '--allow-root',
+            ], check=True, capture_output=True, text=True,
+                encoding='utf-8', errors='strict')
+            saved = json.loads(current.stdout)
+            if (saved.get('post_status') != 'draft'
+                    or saved.get('post_title') != title
+                    or saved.get('post_content') != content
+                    or saved.get('post_excerpt', '') != excerpt):
+                raise DraftCreateBlocked(
+                    'draft_create_saved_post_changed', journal.key,
+                    post_id=resume_post_id)
+            # Only this exact recorded post can be excluded from duplicate checks.
+            inventory = dict(inventory, posts=[
+                post for post in inventory.get('posts', [])
+                if str(post.get('ID')) != str(resume_post_id)
+            ])
+        report = validate_bundle(bundle, inventory)
+        if report['status'] != 'ready':
+            raise ValueError(f"편집 검사 보류: {report['reasons']}")
+        verify_explicit_live_sources(bundle)
         if article.get('content') != content or article.get('title') != title:
             raise ValueError('editorial_content_changed_after_review')
         category = resolve_category(bundle['brief'].get('category_key', ''), allow_legacy=False)
-        with tempfile.NamedTemporaryFile('w', encoding='utf-8', delete=False, suffix='.html') as f:
-            f.write(content)
-            local = Path(f.name)
-        remote = f'/tmp/editorial_{local.stem}.html'
+        local = None
+        remote = None
         try:
-            run_wordpress(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'], check=True, capture_output=True)
-            result = run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'create', remote,
-                '--post_type=post', '--post_status=draft', f'--post_title={title}',
-                f'--post_category={category["id"]}', '--post_excerpt=' + excerpt,
-                '--comment_status=closed', '--allow-root', '--porcelain'],
-                check=True, capture_output=True, text=True, encoding='utf-8', errors='strict')
-            post_id = int(result.stdout.strip())
+            if resume_post_id is None:
+                with tempfile.NamedTemporaryFile(
+                        'w', encoding='utf-8', delete=False, suffix='.html') as f:
+                    f.write(content)
+                    local = Path(f.name)
+                remote = f'/tmp/editorial_{local.stem}.html'
+                run_wordpress(['sudo', 'docker', 'cp', str(local), f'{self.container_name}:{remote}'],
+                              check=True, capture_output=True)
+                # Persist before WordPress's non-idempotent write. An uncertain
+                # outcome must never cause another automatic post create.
+                journal.begin()
+                try:
+                    result = run_wordpress([
+                        'sudo', 'docker', 'exec', self.container_name,
+                        'wp', 'post', 'create', remote,
+                        '--post_type=post', '--post_status=draft',
+                        f'--post_title={title}', f'--post_category={category["id"]}',
+                        '--post_excerpt=' + excerpt,
+                        '--comment_status=closed', '--allow-root', '--porcelain',
+                    ], check=True, capture_output=True, text=True,
+                        encoding='utf-8', errors='strict')
+                    post_id = int(result.stdout.strip())
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                    raise DraftCreateBlocked(
+                        'draft_create_outcome_ambiguous_operator_reconciliation_required',
+                        journal.key) from exc
+                try:
+                    journal.created(post_id)
+                except OSError as exc:
+                    raise DraftCreateBlocked(
+                        'draft_create_post_id_receipt_write_failed',
+                        journal.key, post_id=post_id) from exc
+            else:
+                post_id = resume_post_id
             run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
                 str(post_id), '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'],
                 check=True, capture_output=True)
@@ -148,20 +208,23 @@ class PublisherAgent:
             meta_desc = (reviewed_seo.get('description') or bundle['plan']['lead']['text'][:160]).strip()
             if focus_keyword:
                 run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                    str(post_id), 'rank_math_focus_keyword', focus_keyword, '--allow-root'], check=False, capture_output=True)
+                    str(post_id), 'rank_math_focus_keyword', focus_keyword, '--allow-root'], check=True, capture_output=True)
             if seo_title:
                 run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                    str(post_id), 'rank_math_title', seo_title, '--allow-root'], check=False, capture_output=True)
+                    str(post_id), 'rank_math_title', seo_title, '--allow-root'], check=True, capture_output=True)
             if meta_desc:
                 run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                    str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=False, capture_output=True)
+                    str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=True, capture_output=True)
             # The saved draft was reread above. Mark the full-site snapshot stale
             # instead of downloading every post again at the end of this command.
             invalidate_inventory()
+            journal.complete(post_id)
             return post_id
         finally:
-            local.unlink(missing_ok=True)
-            run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote], capture_output=True)
+            if local is not None:
+                local.unlink(missing_ok=True)
+            if remote is not None:
+                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'rm', '-f', remote], capture_output=True)
 
     def reformat_draft(self, post_id):
         """Only migrate a stored reviewed draft whose body still equals our renderer."""

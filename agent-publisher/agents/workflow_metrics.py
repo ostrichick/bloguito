@@ -112,10 +112,24 @@ def workflow_run(action: str):
     try:
         yield metrics
     except BaseException as error:
-        metrics.finish(status="error", error_type=type(error).__name__)
+        try:
+            metrics.finish(status="error", error_type=type(error).__name__)
+        except (OSError, ValueError) as metrics_error:
+            # Telemetry must never hide the original WordPress/validation
+            # failure, especially after an external mutation was attempted.
+            import sys
+            print(f"[Workflow Metrics] error receipt unavailable: {type(metrics_error).__name__}",
+                  file=sys.stderr)
         raise
     else:
-        metrics.finish()
+        try:
+            metrics.finish()
+        except (OSError, ValueError) as metrics_error:
+            # Metrics are best-effort; a successfully saved post stays saved
+            # even if the local JSONL destination is full or read-only.
+            import sys
+            print(f"[Workflow Metrics] success receipt unavailable: {type(metrics_error).__name__}",
+                  file=sys.stderr)
     finally:
         _current.reset(token)
 
