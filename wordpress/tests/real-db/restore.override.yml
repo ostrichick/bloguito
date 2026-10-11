@@ -1,0 +1,15 @@
+# CI-only compose overlay. The production backup scripts use docker exec with
+# container IDs and a DB named wordpress. Explicit CI names avoid all production
+# defaults. Never load this overlay on an operational Docker host.
+services:
+  db:
+    container_name: ${CI_RESTORE_DB_CONTAINER:?isolated_ci_db_name_required}
+    environment:
+      MARIADB_DATABASE: wordpress
+  wordpress:
+    container_name: ${CI_RESTORE_WP_CONTAINER:?isolated_ci_wp_name_required}
+    environment:
+      WORDPRESS_DB_NAME: wordpress
+  cli:
+    environment:
+      WORDPRESS_DB_NAME: wordpress
