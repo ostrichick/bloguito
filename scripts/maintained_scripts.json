@@ -25,6 +25,7 @@
     "patch_post_component.py": "Local declarative HTML component patch helper",
     "prepare_post_approval.py": "Pre-approval comparison package builder",
     "record_growth_work.py": "Record completed existing-page growth work and recheck window",
+    "report_growth_queue.py": "Read-only provenance-checked daily growth candidate and editorial hold report",
     "run_validation.py": "Scope-aware regression validation planner and runner",
     "score_topic_candidates.py": "Private topic demand scoring and scheduler gate report builder",
     "seal_featured_image_candidates.py": "Seal original ChatGPT image candidates with SHA-256",
