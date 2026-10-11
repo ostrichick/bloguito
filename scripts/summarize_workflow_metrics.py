@@ -122,6 +122,58 @@ def summarize_cohorts(rows: list[dict], *, run_context: str = "live",
     }
 
 
+def compare_code_versions(rows: list[dict], before: str, after: str,
+                          *, run_context: str = 'live') -> dict:
+    """Pair only like-for-like successful live action/route/transport cohorts.
+
+    A missing sample or counter is unknown, not zero. Percentage changes are
+    descriptive, not proof of a causal speedup after rollout.
+    """
+    if not before or not after or before == after:
+        raise ValueError('two_distinct_code_versions_required')
+    cohorts = summarize_cohorts(rows, run_context=run_context, status='ok')['cohorts']
+    keyed = {(c['action'], c['route'], c['transport'], c['code_version']): c
+             for c in cohorts}
+    dimensions = sorted({(a, route, transport) for a, route, transport, version in keyed
+                         if version in {before, after}})
+    comparisons = []
+    for action, route, transport in dimensions:
+        left = keyed.get((action, route, transport, before))
+        right = keyed.get((action, route, transport, after))
+        ready = bool(left and right and left['comparison_ready'] and right['comparison_ready']
+                     and left['total_ms_median'] is not None and right['total_ms_median'] is not None)
+        def percent(metric):
+            if not ready:
+                return None
+            old = left.get(metric)
+            new = right.get(metric)
+            if old is None or new is None or old <= 0:
+                return None
+            return round(100 * (new - old) / old, 2)
+        comparisons.append({
+            'action': action, 'route': route, 'transport': transport,
+            'before_count': left['count'] if left else 0,
+            'after_count': right['count'] if right else 0,
+            'comparison_ready': ready,
+            'before_median_ms': left['total_ms_median'] if left else None,
+            'after_median_ms': right['total_ms_median'] if right else None,
+            'median_change_percent': percent('total_ms_median'),
+            'before_p90_ms': left['total_ms_p90'] if left else None,
+            'after_p90_ms': right['total_ms_p90'] if right else None,
+            'p90_change_percent': percent('total_ms_p90'),
+            'before_ssh_mean': left['ssh_roundtrips_mean'] if left else None,
+            'after_ssh_mean': right['ssh_roundtrips_mean'] if right else None,
+            'ssh_change_percent': percent('ssh_roundtrips_mean'),
+            'before_wp_mean': left['wp_roundtrips_mean'] if left else None,
+            'after_wp_mean': right['wp_roundtrips_mean'] if right else None,
+            'wp_change_percent': percent('wp_roundtrips_mean'),
+        })
+    return {'before_code_version': before, 'after_code_version': after,
+            'run_context': run_context, 'comparisons': comparisons,
+            'coverage_excludes': ['human_review', 'host_imagegen', 'candidate_selection', 'browser_qa'],
+            'interpretation': 'descriptive_observation_not_causal_speedup'}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", type=Path, default=DEFAULT_METRICS)
@@ -132,6 +184,8 @@ def main(argv=None) -> int:
     parser.add_argument('--since', help='Include runs starting on or after YYYY-MM-DD')
     parser.add_argument('--cohorts', action='store_true',
                         help='Group matched runs by code version, route, transport and action')
+    parser.add_argument('--compare-versions', nargs=2, metavar=('BEFORE', 'AFTER'),
+                        help='Compare only matched successful action/route/transport cohorts with >=5 observations each')
     args = parser.parse_args(argv)
 
     rows = load_metrics(args.file)
@@ -144,8 +198,13 @@ def main(argv=None) -> int:
     if args.action:
         wanted = set(args.action)
         rows = [row for row in rows if row.get("action") in wanted]
-    result = (summarize_cohorts(rows, run_context=args.context, status=args.status)
-              if args.cohorts else summarize(rows, run_context=args.context, status=args.status))
+    if args.compare_versions:
+        if args.code_version or args.status != 'ok':
+            parser.error('--compare-versions requires default --status ok and no --code-version')
+        result = compare_code_versions(rows, *args.compare_versions, run_context=args.context)
+    else:
+        result = (summarize_cohorts(rows, run_context=args.context, status=args.status)
+                  if args.cohorts else summarize(rows, run_context=args.context, status=args.status))
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

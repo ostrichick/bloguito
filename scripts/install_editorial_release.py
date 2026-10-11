@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = 'a514ba9c899c3e459d91158bf6f411eecad280dc439fb5163fb036fc7a74d153'
+CANONICAL_INVENTORY_DIGEST = 'ceba1feb51b3feb3db1d489b909aedf6e0748b29a596e8c7ea529c0136f0d0be'
 WP_MU_RELATIVE = 'wordpress/mu-plugins/bloguito-post-row-actions.php'
 WP_MU_CONTAINER_PATH = '/var/www/html/wp-content/mu-plugins/bloguito-post-row-actions.php'
 ALLOWED_RETIRED_FILES = {

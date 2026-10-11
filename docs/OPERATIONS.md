@@ -14,11 +14,15 @@
 
 **Q3 작업 인계 읽기 전용 조회:** `python agent-publisher/editorial_cli.py task-status --post-id <ID>`는 기존 `current.json`을 **읽기만** 하여 `saved_pending_qa`, `draft_saved_pending_metadata`, `image_import_outcome_ambiguous`, `complete_recorded_readback_unverified` 등과 다음 검증 행동을 출력한다. 결과 자체는 현재 WordPress DB 검증이 아니며, 특히 업로드 응답 모호함이나 state 누락을 `blocked_before_write`로 추정하거나 자동 재업로드·재초안 생성의 근거로 사용할 수 없다. `completed_verified`도 이미 기록된 명시적 readback 표시를 분류한 것이므로 별도 운영 readback의 출처가 없으면 현재 상태를 다시 확인한다.
 
+`--verify-live`를 **실제 WordPress 컨테이너와 해당 task-state가 있는 서버에서만** 추가하면 하나의 fresh read-only WordPress 실행으로 현재 본문 SHA, 저장 상태 및 저장된 attachment ID 기준 `_thumbnail_id`를 비교한다. 결과 `matched_post_snapshot`은 일치한 필드에만 한정되며 메타데이터·첨부 파일 원본·출처 최신성·semantic review·원격 이미지 생성 증빙을 검증하지 않는다. 상태 누락/불일치·WP 읽기 실패 시 중단하며 실제 쓰기나 자동 재시도는 하지 않는다. `task_reconciliation.py`는 상태 비교를 단일 부작용 없는 계약으로 분리한 R1 내부 모듈이다.
+
 비공개 Google 보고서는 GitHub Workload Identity로 읽기 전용 수집한 뒤 `https://lifeinfo24.org/_bloguito/analytics-ingest`에 전달한다. GitHub secret `BLOGUITO_ANALYTICS_TOKEN`과 서버의 root-only `/etc/bloguito-analytics.env`를 같은 token으로 설정한다. `wordpress/analytics/`의 systemd unit과 nginx snippets가 실행/HTTPS proxy의 정본이다. 수신기는 localhost에만 bind하고 POST 인증·4MiB 상한·기존 snapshot schema/freshness 검증 뒤 private analytics directory에만 저장한다. 보고서·인증 header는 응답과 access log에 노출하지 않는다. 공개 SSH allowlist는 이 전달 경로와 별개로 유지한다.
 
 통계 전달 검증은 workflow success만으로 끝내지 않는다. 서버의 해당 날짜 JSON 생성 시각·SHA·schema validation을 확인한다. 다음 예약 실행의 실제 성공 여부는 별도로 기록한다. 기존 restricted SSH receiver는 rollback용이며 신규 workflow는 사용하지 않는다.
 
 워크플로 metrics는 runtime code fingerprint·release revision·route·transport를 기록한다. `summarize_workflow_metrics.py --since YYYY-MM-DD --code-version <fingerprint>`로 같은 code version의 측정을 비교한다. `wp_roundtrips`는 논리적인 WP 호출, `ssh_roundtrips`는 adapter가 실제 수행한 SSH 호출이다. 없는 counter는 0으로 해석하지 않는다. image-only adapter는 바로 이어지는 post/thumbnail 조회만 한 snapshot으로 합치고, 다른 호출이 끼거나 값을 한 번 소비하면 snapshot을 재사용하지 않는다. import 전 확인과 저장 뒤 readback, media import 무재시도는 유지한다.
+
+F1 동일 차원 전후 비교는 `python scripts/summarize_workflow_metrics.py --compare-versions <이전 코드 지문> <신규 코드 지문>`을 사용한다. 성공한 `live` 관측만 action/route/transport가 같은 코호트로 결합하고 **양쪽 최소 5건**이 있을 때만 median·P90·SSH/WP 왕복의 비교 수치를 보여준다. 누락된 버전/카운터는 0이나 개선으로 계산하지 않는다. 결과는 descriptive 비교이며 host 이미지 생성·사람 검수·브라우저 QA를 포함하거나 인과적 개선을 입증하지 않는다.
 
 WordPress 호출은 `agents/wordpress_transport.py`의 실행 context로 adapter를 주입한다. 일반 subprocess 호출은 가로채지 않는다. 병렬 작업이 필요하면 기존 호출자의 `copy_context()`를 통해 해당 실행 권한을 명시적으로 전달한다.
 

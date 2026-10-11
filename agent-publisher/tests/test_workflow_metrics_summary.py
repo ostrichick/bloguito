@@ -6,10 +6,38 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.summarize_workflow_metrics import summarize, summarize_cohorts
+from scripts.summarize_workflow_metrics import summarize, summarize_cohorts, compare_code_versions
 
 
 class WorkflowMetricsSummaryTests(unittest.TestCase):
+    def test_comparison_pairs_only_matching_successful_versioned_cohorts(self):
+        def make(version, total, route='fast', counters=None):
+            return {'action': 'edit-post', 'run_context': 'live', 'status': 'ok',
+                    'code_version': version, 'route': route, 'transport': 'direct',
+                    'total_ms': total, 'counters': counters or {}}
+        rows = [make('old', 200, counters={'ssh_roundtrips': 4}) for _ in range(5)]
+        rows += [make('new', 100, counters={'ssh_roundtrips': 2}) for _ in range(5)]
+        rows += [make('old', 900, route='standard')]
+        rows += [make('new', 1, route='standard')]
+        result = compare_code_versions(rows, 'old', 'new')
+        by_route = {r['route']: r for r in result['comparisons']}
+        self.assertTrue(by_route['fast']['comparison_ready'])
+        self.assertEqual(-50.0, by_route['fast']['median_change_percent'])
+        self.assertEqual(-50.0, by_route['fast']['ssh_change_percent'])
+        self.assertIsNone(by_route['fast']['wp_change_percent'])
+        self.assertFalse(by_route['standard']['comparison_ready'])
+        self.assertIsNone(by_route['standard']['median_change_percent'])
+        self.assertIn('not_causal', result['interpretation'])
+
+    def test_comparison_never_infers_missing_samples_or_counters_are_zero(self):
+        rows = [{'action':'x', 'run_context':'live', 'status':'ok', 'code_version':'old',
+                 'route':'fast', 'transport':'ssh', 'total_ms':100} for _ in range(6)]
+        result = compare_code_versions(rows, 'old', 'new')['comparisons'][0]
+        self.assertEqual(0, result['after_count'])
+        self.assertFalse(result['comparison_ready'])
+        self.assertIsNone(result['median_change_percent'])
+        with self.assertRaisesRegex(ValueError, 'two_distinct'):
+            compare_code_versions(rows, 'old', 'old')
     def test_versioned_cohorts_never_pool_routes_or_releases(self):
         rows = [
             {"action": "ssh-edit-post", "run_context": "live", "status": "ok",

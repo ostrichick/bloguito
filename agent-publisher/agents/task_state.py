@@ -326,45 +326,8 @@ def task_operational_summary(post_id: int, root: Path | None = None) -> dict[str
     A missing checkpoint is NOT proof no WordPress write occurred. No status in
     this projection authorizes a fresh create/import or bypasses live readback.
     """
-    state = load_task_state(post_id, root)
-    if state is None:
-        return {'post_id': post_id, 'record_status': 'missing',
-                'operational_status': 'unverified',
-                'next_action': 'locate_original_receipt_before_any_write'}
-    completed = state.get('completed') or {}
-    checkpoints = state.get('checkpoints') or {}
-    result = state.get('result') or {}
-    record_status = state.get('status')
-    image_attempt = checkpoints.get('image_import_attempt') or {}
-    image_outcome = checkpoints.get('image_outcome') or {}
-    if image_attempt.get('started') and not image_outcome.get('attachment_id'):
-        phase = 'image_import_outcome_ambiguous'
-        action = 'reconcile_attachment_by_original_import_receipt_never_blind_retry'
-    elif result.get('draft_status') == 'draft_saved_pending_metadata' or result.get('completion') == 'draft_saved_pending_metadata':
-        phase = 'draft_saved_pending_metadata'
-        action = 'verify_exact_post_id_and_metadata_with_live_cas_before_resume'
-    elif record_status == 'saved_pending_qa':
-        phase = 'saved_pending_qa'
-        action = 'collect_real_browser_evidence_bound_to_saved_content_sha'
-    elif record_status == 'complete' and completed.get('wordpress_saved'):
-        # Historical records may say complete without an independent readback.
-        verified = result.get('readback_verified') is True or (
-            (result.get('image_phase') or {}).get('readback_verified') is True)
-        phase = 'completed_verified' if verified else 'complete_recorded_readback_unverified'
-        action = 'none' if verified else 'independent_live_readback_before_claiming_verified'
-    elif record_status in {'failed', 'blocked'}:
-        phase = 'write_outcome_requires_readback'
-        action = 'inspect_post_and_receipts_before_resume_or_retry'
-    else:
-        phase = 'in_progress_unverified'
-        action = 'resume_only_after_content_source_review_and_live_cas_check'
-    return {'post_id': post_id, 'record_status': record_status,
-            'operational_status': phase, 'next_action': action,
-            'wordpress_saved_recorded': completed.get('wordpress_saved') is True,
-            'pending_phases': list(state.get('pending') or []),
-            'post_content_sha256': (result.get('desired_content_sha256')
-                                    or (state.get('baseline') or {}).get('expected_content_sha256')),
-            'task_id': state.get('task_id')}
+    from agents.task_reconciliation import summarize_state
+    return summarize_state(post_id, load_task_state(post_id, root))
 
 
 def _archive_state(post_id: int, payload: dict[str, Any], root: Path | None = None) -> Path:

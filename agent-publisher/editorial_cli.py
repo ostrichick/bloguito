@@ -84,6 +84,8 @@ def _main():
     parser.add_argument('--edit-intent', help='edit-post: the user-requested scope of this edit')
     parser.add_argument('--resume', action='store_true',
                         help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')
+    parser.add_argument('--verify-live', action='store_true',
+                        help='task-status: read-only, fresh WordPress content/thumbnail SHA comparison')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
     parser.add_argument('--alt-only', action='store_true',
                         help='replace-featured-image: keep current image and update only its reviewed ALT text')
@@ -126,6 +128,8 @@ def _main():
     parser.add_argument('--selection-mode', choices=['user', 'agent-delegated'],
                         help='explicit user selection or delegated choice')
     args = parser.parse_args()
+    if args.verify_live and args.action != 'task-status':
+        parser.error('--verify-live is exclusively read-only task-status')
     if args.expect_no_thumbnail and (
             args.action != 'edit-post' or not args.image_path
             or args.expected_thumbnail_id is not None):
@@ -197,7 +201,13 @@ def _main():
         if args.file or args.post_id is None or args.post_id <= 0:
             parser.error('task-status requires --post-id only, without a positional file')
         from agents.task_state import task_operational_summary
-        print(json.dumps(task_operational_summary(args.post_id), ensure_ascii=False, indent=2))
+        summary = task_operational_summary(args.post_id)
+        if args.verify_live:
+            from agents.task_state import load_task_state
+            from agents.task_reconciliation import read_live_task_reconciliation
+            summary['live_reconciliation'] = read_live_task_reconciliation(
+                args.post_id, load_task_state(args.post_id))
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
 
     if args.action == 'promote-draft':
