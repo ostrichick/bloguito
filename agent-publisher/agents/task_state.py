@@ -463,6 +463,7 @@ def mark_browser_qa_complete(
     *,
     completed_scopes: list[str] | tuple[str, ...] | None = None,
     observed_thumbnail_id: int | None = None,
+    qa_evidence_path: str | Path | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Close a saved task only after the caller has completed browser QA."""
@@ -484,6 +485,23 @@ def mark_browser_qa_complete(
     required = set(state.get("qa_requirements", []))
     if required - set(completed_scopes):
         raise ValueError("browser_qa_scope_incomplete:" + ",".join(sorted(required - set(completed_scopes))))
+    evidence_binding = None
+    browser_required = required & {
+        'content-mobile-desktop', 'layout-accessibility', 'cta-destination', 'public-page'
+    }
+    if browser_required:
+        if qa_evidence_path is None:
+            raise ValueError('browser_qa_execution_evidence_required')
+        from agents.browser_qa import verify_qa_completion_receipt
+        checked = verify_qa_completion_receipt(
+            Path(qa_evidence_path), post_id=post_id,
+            content_sha256=expected_content_sha256, required_scopes=browser_required)
+        evidence_binding = {
+            'path': str(Path(qa_evidence_path).resolve()),
+            'sha256': _file_sha256(Path(qa_evidence_path)),
+            'render_source': checked['render_source'],
+            'status': checked['status'],
+        }
     if "featured-image" in required:
         expected_thumbnail = (
             state.get("result", {}).get("attachment_id")
@@ -505,6 +523,7 @@ def mark_browser_qa_complete(
         result={
             "qa_completed_scopes": completed_scopes,
             "qa_observed_thumbnail_id": observed_thumbnail_id,
+            "browser_qa_evidence": evidence_binding,
         },
         root=root,
     )

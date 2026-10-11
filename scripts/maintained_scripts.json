@@ -34,6 +34,7 @@
     "task_workspace.py": "Managed scratch task workspace lifecycle",
     "sync_backups.py": "Verified backup synchronization with direct/Tailscale transports",
     "sync_backups_encrypted.py": "Authenticated encrypted off-host backup synchronization",
-    "sync_post_catalog.py": "POST_CATALOG synchronization"
+    "sync_post_catalog.py": "POST_CATALOG synchronization",
+    "verify_browser_qa.py": "Independent validation of reusable existing-session browser QA observations"
   }
 }

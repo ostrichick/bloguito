@@ -21,6 +21,7 @@
 - 콘텐츠 클러스터/고아 글 점검: `build_content_cluster_report.py` (canonical `wordpress_inventory.json`이 없으면 최신 catalog sync의 URL-complete `catalog_inventory.json`을 사용하며, URL state가 불완전하면 fail closed)
 - 운영 editorial release 생성: `build_editorial_release.py` (항상 새 출력 폴더에 current HEAD runtime 전체 패키징)
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
+- 기존 연결 브라우저 CDP QA: `browser_qa_harness.mjs` + 관측 증거 독립 검증 `verify_browser_qa.py` (`docs/BROWSER_QA_HARNESS.md`)
 - Git 추적 파일 비밀정보 검사: `check_repo_secrets.py`
 
 직접 WP-CLI나 임시 PHP로 편집 검증을 우회하지 않는다.

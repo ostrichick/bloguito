@@ -94,6 +94,8 @@ def _main():
                         choices=['content-mobile-desktop', 'cta-destination', 'layout-accessibility',
                                  'featured-image', 'public-page'],
                         help='complete-task-qa: QA scope actually completed; repeat for multiple scopes')
+    parser.add_argument('--qa-evidence', type=Path,
+                        help='complete-task-qa: executed browser QA JSON receipt with screenshots')
     parser.add_argument('--observed-thumbnail-id', type=int,
                         help='complete-task-qa: thumbnail ID observed during featured-image browser QA')
     parser.add_argument('--remaining-step', action='append',
@@ -228,7 +230,8 @@ def _main():
         from agents.task_state import mark_browser_qa_complete
         state = mark_browser_qa_complete(
             args.post_id, args.expected_content_sha256, completed_scopes=args.qa_scope,
-            observed_thumbnail_id=args.observed_thumbnail_id)
+            observed_thumbnail_id=args.observed_thumbnail_id,
+            qa_evidence_path=args.qa_evidence)
         print(json.dumps(state, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')

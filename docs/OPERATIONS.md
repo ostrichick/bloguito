@@ -199,8 +199,11 @@ python agent-publisher/editorial_cli.py checkpoint-after-image `
 # 실제 브라우저 QA가 끝난 뒤 로컬 task-state 종료
 python agent-publisher/editorial_cli.py complete-task-qa `
   --post-id 641 --expected-content-sha256 <저장후본문SHA> `
-  --qa-scope content-mobile-desktop
+  --qa-scope content-mobile-desktop `
+  --qa-evidence 'scratch/tasks/qa-641/evidence/<run_id>-evidence.json'
 ```
+
+**Q1 기존 브라우저 세션 QA:** [`docs/BROWSER_QA_HARNESS.md`](BROWSER_QA_HARNESS.md)의 390px·1280px CDP 관측/스크린샷/독립 검증 절차를 사용한다. `local_static`은 실제 WP 테마·인증 미리보기를 대신하지 못하며, reader QA 완료는 동일 post ID/본문 SHA에 묶인 실제 browser evidence가 있어야 한다. 새 Edge 프로필·창·포트를 반복 생성하지 않는다. 이미지 전용 readback은 기존의 별도 계약을 유지한다.
 
 `replace-featured-image`의 media import는 응답 유실 시 중복 attachment를 만들 수 있어 SSH 255 자동 재시도를 하지 않는다. import 시작 직후 결과가 불명확해 attachment ID를 확보하지 못한 상태는 `featured_image_import_outcome_ambiguous`로 차단하고 자동 재import하지 않는다. attachment ID가 checkpoint에 남아 있으면 다음 실행은 새 import 대신 해당 attachment를 reconcile한다. 동일 이미지+ALT의 안전한 실패는 최대 2회까지만 허용한다. `edit-post --resume`은 live 본문 SHA가 작업 시작 SHA 또는 저장 예정 SHA 중 하나일 때만 이어가며 제3의 SHA가 관측되면 동시 변경으로 차단한다.
 

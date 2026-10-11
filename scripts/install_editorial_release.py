@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = '2fb5e8496fc0e47572539f7ae4585ab14d169d31f86bd213902150a8e338b47f'
+CANONICAL_INVENTORY_DIGEST = '6382091bb1f992f07baf6611351efc912e4eb2980b24f11339719f615b01a292'
 ALLOWED_RETIRED_FILES = {
     'agents/copywriter.py',
     'agents/editorial_draft_updater.py',
