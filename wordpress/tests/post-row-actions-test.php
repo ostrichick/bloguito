@@ -180,6 +180,15 @@ function set_valid_publish_gate() {
 }
 set_valid_publish_gate();
 
+// A user-delegated agent selection is a distinct manual approval authority.
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = str_replace(
+    '"manual_user_selected"', '"manual_agent_delegated"',
+    $test_meta[BLOGUITO_PUBLISH_GATE_META_KEY]
+);
+check(!is_wp_error(bloguito_validate_publishability($test_post->ID, null, null, true)),
+    'Delegated agent approval is valid when all original image and review bindings match');
+set_valid_publish_gate();
+
 check(isset($registered_filters['post_row_actions']), 'Row action filter registered');
 check($registered_filters['post_row_actions'][2] === 2, 'Row action filter receives post object');
 check(isset($registered_actions['admin_post_bloguito_set_post_status']), 'Guarded admin-post handler registered');
