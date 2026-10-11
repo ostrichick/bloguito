@@ -59,6 +59,7 @@ agent-publisher/data/growth/
 agent-publisher/data/editorial_runs/
 agent-publisher/data/post_manifests/
 agent-publisher/data/analytics/
+agent-publisher/data/clarity/
 agent-publisher/data/.editorial-publish.lock/
 
 # Node & WhatsApp Bridge
