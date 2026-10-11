@@ -244,7 +244,10 @@ async function waitReady(cdp) {
 async function run() {
   const args=argumentsMap(process.argv.slice(2));
   const endpoint=validateArgs(args);
-  const config=args['--config'] ? JSON.parse(await readFile(args['--config'],'utf8')) : {};
+  // Windows PowerShell 5.1 frequently writes UTF-8 JSON with BOM. The BOM is
+  // not evidence of a malformed QA plan; preserve all subsequent JSON checks.
+  const config=args['--config'] ?
+    JSON.parse((await readFile(args['--config'],'utf8')).replace(/^\uFEFF/,'')) : {};
   const scopes=config.required_scopes || [];
   if (!Array.isArray(scopes) || scopes.some(scope=>!SCOPES.has(scope))) throw Error('unknown_classifier_qa_scope');
   const targets=await (await fetch(endpoint+'/json/list')).json();

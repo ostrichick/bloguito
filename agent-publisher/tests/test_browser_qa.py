@@ -253,6 +253,24 @@ class BrowserQaEvidenceTests(unittest.TestCase):
         self.assertNotEqual(0,invocation.returncode)
         self.assertIn('required_browser_qa_options_missing',invocation.stderr)
 
+    def test_powershell_utf8_bom_qa_config_passes_json_parsing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'qa.json'
+            config.write_bytes(b'\xef\xbb\xbf'+b'{"required_scopes":["content-mobile-desktop"]}')
+            invocation = subprocess.run([
+                'node', str(REPO/'scripts/browser_qa_harness.mjs'),
+                '--endpoint', 'http://127.0.0.1:1',
+                '--post-id', '641', '--content-sha', 'a'*64,
+                '--render-source', 'wordpress_theme',
+                '--target-id', 'existing-tab-id-1234',
+                '--output-dir', str(root), '--url', 'https://lifeinfo24.org/?p=641',
+                '--config', str(config),
+            ], capture_output=True, text=True)
+            self.assertNotEqual(0, invocation.returncode)
+            self.assertIn('BROWSER_QA_BLOCKED:', invocation.stderr)
+            self.assertNotIn('Unexpected token', invocation.stderr)
+
 
 if __name__=='__main__':
     unittest.main()
