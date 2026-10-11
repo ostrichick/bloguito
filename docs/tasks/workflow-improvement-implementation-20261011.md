@@ -38,3 +38,13 @@
 2. `build_editorial_release.py`로 clean HEAD에서 immutable manifest/archive를 만든 뒤 `install_editorial_release.py`를 disposable app에 적용·rollback 실험한다. WordPress MU plugin은 이 Python release에 포함되지 않으므로 독립 업데이트/기존 해시 복원 검증이 필요하다.
 3. **운영 WordPress의 기존 본문/메타·공개 상태를 임의로 수정해 smoke test하지 않는다.** 별도 disposable WordPress/DB 검증과 백업·운영 비밀값/cron 보존 검사 후 배포한다. 실패 시 기존 release/hash를 되돌리고 이미 생성된 post ID는 중복 생성하지 않는다.
 4. 배포 후 실제 cron 한 번의 결과, WordPress 저장·메타/이미지 readback, 통계 코호트의 충분한 관측치를 분리해 기록한다. 단순 코드 unit 통과를 운영 성공으로 승격하지 않는다.
+
+## Q1·F2 최종 통합 검증 (2026-10-11, 운영 미배포)
+
+- F2 안전한 중복 읽기 최소화: 통합 `1e596b3`, `test_f2_read_snapshots.py` 6건 단독 PASS. 직접 Python 호출의 동일 snapshot WP roundtrip 2→1은 mock 계측값이며 SSH 왕복/지연 절감의 실측 근거는 아니다.
+- Q1 실제 CDP 세션용 하네스: 통합 `aa250c5`, `test_browser_qa.py` 13건 synthetic/offline PASS. 운영 WordPress의 인증 preview에 접속해 PASS를 기록한 것은 아니다.
+- 릴리스 inventory 불일치와 독립 테스트 import 경로는 통합 후 `501c7d2`에서 보정했다. 정규 `run_validation.py --route repository --run` 결과: **Python 1,296건, failures 0, errors 0, skipped 2, exit 0**. Windows 환경의 `cron shell requires Linux` 및 `symlinks unavailable`이 건너뜀 원인이다.
+- 독립 PHP 테스트: 운영 컨테이너 **`/tmp` 임시 격리 디렉터리**에 현재 로컬 PHP fixture 19개만 전송하고 `wordpress/tests/run.php`를 실행했다. 전체 파일 문법 검사 및 독립 contract runner **exit 0**; 임시 디렉터리 정리 확인. 실제 WP DB나 게시물 쓰기 테스트는 하지 않았다.
+- clean HEAD의 `build_editorial_release.py --archive` 산출물은 87개 런타임·정책 파일의 digest와 installer manifest 검증에 통과했다. 이 빌더는 `run_daily.sh`, `scripts/`, `wordpress/mu-plugins/`를 패키징하지 않는다. 공유 lock의 실행 코드는 포함되는 `main.py`에 있지만 cron 셸 로깅 개선은 별도 배포 대상이다. MU의 `manual_agent_delegated` 허용은 반드시 분리된 검증·백업·롤백 절차로 적용해야 한다.
+- 현재 운영 `editorial-release.json`의 revision은 `9b8145c0680e1d27d9e252d7f0cfaf2c3191a8d5`, inventory digest는 `3104dbc8c9ea1e9c3d3da173826b7e10772b064220a410f491bd489b40ca8cdb`로 확인했다. 운영 `run_daily.sh` SHA-256 `850c5c510eef74db72dcacf05f91ed2f406be0d1222d403f0512b0449c760e42`, 운영 MU SHA-256 `a77b668fd1c12c137a54ed0a14e63c3056e060f0bb43848ed5e2823b602f867f`. 로컬 MU SHA-256은 `d10d4b3bff10378f965b7e9db8d6d912c3ee99fdeb833136e0774939639794fa`로 **서로 다르다**.
+- 운영 `backups/editorial-20261010T031614Z/manifest.json`과 백업 파일의 존재는 읽기 전용으로 확인했다. **복구 시뮬레이션·실제 WordPress DB 통합·cron 동작·인증 미리보기·성능 개선률 검증은 아직 하지 않았다.** 현재 단계에서 운영 릴리스, WordPress draft 수정 또는 공개 발행을 실행하지 않는다.
