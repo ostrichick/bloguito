@@ -6,10 +6,31 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.summarize_workflow_metrics import summarize
+from scripts.summarize_workflow_metrics import summarize, summarize_cohorts
 
 
 class WorkflowMetricsSummaryTests(unittest.TestCase):
+    def test_versioned_cohorts_never_pool_routes_or_releases(self):
+        rows = [
+            {"action": "ssh-edit-post", "run_context": "live", "status": "ok",
+             "code_version": "a", "route": "fast", "transport": "direct",
+             "total_ms": 100, "counters": {"ssh_roundtrips": 2}},
+            {"action": "ssh-edit-post", "run_context": "live", "status": "ok",
+             "code_version": "b", "route": "fast", "transport": "direct",
+             "total_ms": 300, "counters": {"ssh_roundtrips": 6}},
+            {"action": "ssh-edit-post", "run_context": "live", "status": "ok",
+             "code_version": "a", "route": "standard", "transport": "direct",
+             "total_ms": 400, "counters": {"ssh_roundtrips": 8}},
+        ]
+        result = summarize_cohorts(rows)
+        self.assertEqual(3, result["rows"])
+        self.assertEqual(3, len(result["cohorts"]))
+        self.assertTrue(all(not x["comparison_ready"] for x in result["cohorts"]))
+        self.assertEqual(
+            [100.0, 400.0, 300.0],
+            [x["total_ms_median"] for x in result["cohorts"]])
+        self.assertIn("host_imagegen", result["coverage_excludes"])
+
     def test_missing_counters_are_unknown_and_versions_are_visible(self):
         result = summarize([{'action': 'image', 'run_context': 'live', 'status': 'ok',
                              'code_version': 'version-a', 'total_ms': 100, 'counters': {}}])

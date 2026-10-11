@@ -86,6 +86,42 @@ def summarize(rows: list[dict], *, run_context: str = "live", status: str = "ok"
     }
 
 
+def summarize_cohorts(rows: list[dict], *, run_context: str = "live",
+                      status: str = "ok") -> dict:
+    """Do not average multiple releases, routes, and transports together.
+
+    A cohort with fewer than five observations is descriptive only. Human
+    review, imagegen and browser QA remain outside these runtime metrics.
+    """
+    selected = [row for row in rows
+                if row.get("run_context") == run_context
+                and (status == "any" or row.get("status") == status)]
+    grouped = defaultdict(list)
+    for row in selected:
+        key = (
+            str(row.get("action") or "unknown"),
+            str(row.get("code_version") or "unversioned"),
+            str(row.get("route") or "unclassified"),
+            str(row.get("transport") or "unclassified"),
+        )
+        grouped[key].append(row)
+    cohorts = []
+    for (action, version, route, transport), sample in sorted(grouped.items()):
+        info = summarize(sample, run_context=run_context, status=status)
+        cohorts.append({
+            "action": action, "code_version": version,
+            "route": route, "transport": transport,
+            **info["actions"][action],
+            "comparison_ready": len(sample) >= 5,
+        })
+    return {
+        "run_context": run_context, "status": status,
+        "rows": len(selected), "cohorts": cohorts,
+        "coverage_excludes": ["human_review", "host_imagegen", "candidate_selection",
+                              "browser_qa"],
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", type=Path, default=DEFAULT_METRICS)
@@ -94,6 +130,8 @@ def main(argv=None) -> int:
     parser.add_argument("--action", action="append", help="Limit output to one or more action names")
     parser.add_argument('--code-version', help='Compare only one measured runtime code version')
     parser.add_argument('--since', help='Include runs starting on or after YYYY-MM-DD')
+    parser.add_argument('--cohorts', action='store_true',
+                        help='Group matched runs by code version, route, transport and action')
     args = parser.parse_args(argv)
 
     rows = load_metrics(args.file)
@@ -106,7 +144,9 @@ def main(argv=None) -> int:
     if args.action:
         wanted = set(args.action)
         rows = [row for row in rows if row.get("action") in wanted]
-    print(json.dumps(summarize(rows, run_context=args.context, status=args.status), ensure_ascii=False, indent=2))
+    result = (summarize_cohorts(rows, run_context=args.context, status=args.status)
+              if args.cohorts else summarize(rows, run_context=args.context, status=args.status))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
