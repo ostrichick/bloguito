@@ -13,7 +13,7 @@ from agents.post_manifest_store import (
     remove_record,
     upsert_record,
 )
-from agents.temporal_validation import validate_availability
+from agents.temporal_validation import KST, validate_availability
 from agents.fact_validation import verify_article, render_content, verify_temporal_binding
 from agents.wordpress_mutation import (
     content_sha256, guarded_update_post, guarded_set_new_draft_metadata,
@@ -100,6 +100,7 @@ class PublisherAgent:
         from agents.editorial_writer import load_inventory
         from agents.source_validation_cache import verify_explicit_live_sources
         from sync_wordpress_inventory import hydrate_post, invalidate_inventory, sync_inventory
+        from agents.search_intent import _validated_intent_receipt
         from config import CATEGORIES, resolve_category
         # Legacy WordPress data contains hundreds of mostly one-off tags. The
         # current editorial workflow intentionally preserves those historical
@@ -145,7 +146,31 @@ class PublisherAgent:
                 post for post in inventory.get('posts', [])
                 if str(post.get('ID')) != str(resume_post_id)
             ])
-        report = validate_bundle(bundle, inventory)
+        # Manual differentiations are outside the reviewed article bundle and
+        # cannot change its semantic-review hash. Confirm EVERY compared post
+        # against the live SHA-bearing inventory and hydrate its exact body;
+        # an absent, changed or unreviewed source overlap cannot be exempted.
+        intent_receipt = article.get('topic_intent_receipt')
+        if intent_receipt is not None:
+            if (not isinstance(intent_receipt, dict)
+                    or not isinstance(intent_receipt.get('comparisons'), list)
+                    or not intent_receipt['comparisons']):
+                raise ValueError('topic_intent_receipt_invalid')
+            compared_ids = [entry.get('post_id') for entry in intent_receipt['comparisons']
+                            if isinstance(entry, dict)]
+            if (len(compared_ids) != len(intent_receipt['comparisons'])
+                    or any(type(post_id) is not int or post_id <= 0 for post_id in compared_ids)
+                    or len(compared_ids) != len(set(compared_ids))):
+                raise ValueError('topic_intent_receipt_invalid')
+            for compared_id in compared_ids:
+                if not any(row.get('ID') == compared_id for row in inventory.get('posts', [])):
+                    raise ValueError('topic_intent_compared_post_missing')
+                inventory = hydrate_post(inventory, compared_id)
+                post = next(row for row in inventory['posts'] if row.get('ID') == compared_id)
+                if not _validated_intent_receipt(bundle['brief'], post, intent_receipt,
+                                                 today=datetime.now(KST).date()):
+                    raise ValueError('topic_intent_receipt_stale_or_post_changed')
+        report = validate_bundle(bundle, inventory, intent_receipt=intent_receipt)
         if report['status'] != 'ready':
             raise ValueError(f"편집 검사 보류: {report['reasons']}")
         verify_explicit_live_sources(bundle)

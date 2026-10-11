@@ -109,6 +109,10 @@ def _main():
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
+    parser.add_argument('--topic-intent-receipt', type=Path,
+                        help='prepare-draft only: explicitly user-approved, SHA-bound intent differentiation JSON')
+    parser.add_argument('--confirm-intent-differentiation', action='store_true',
+                        help='prepare-draft only: confirm user personally reviewed all compared questions and answers')
     parser.add_argument('--image-path', type=Path,
                         help='selected staged ChatGPT image_gen cover with sealed candidate provenance')
     parser.add_argument('--candidate-manifest', type=Path,
@@ -118,6 +122,10 @@ def _main():
     parser.add_argument('--selection-mode', choices=['user', 'agent-delegated'],
                         help='explicit user selection or delegated choice')
     args = parser.parse_args()
+    if args.topic_intent_receipt or args.confirm_intent_differentiation:
+        if (args.action != 'prepare-draft' or not args.topic_intent_receipt
+                or not args.confirm_intent_differentiation):
+            parser.error('intent differentiation requires prepare-draft, receipt and explicit user confirmation')
 
     image_lineage = None
     if args.action in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
@@ -510,7 +518,16 @@ def _main():
         args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
 
         from agents.publisher import PublisherAgent
-        post_id = PublisherAgent().publish(article_from_bundle(data))
+        article = article_from_bundle(data)
+        if args.topic_intent_receipt:
+            if args.topic_intent_receipt.is_symlink():
+                raise ValueError('topic_intent_receipt_symlink_not_allowed')
+            try:
+                receipt = json.loads(args.topic_intent_receipt.read_text(encoding='utf-8'))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError('topic_intent_receipt_unreadable') from exc
+            article['topic_intent_receipt'] = receipt
+        post_id = PublisherAgent().publish(article)
         # The WordPress draft is already committed. Preserve its ID before the
         # separate, non-idempotent featured-image upload starts.
         draft_saved_receipt = {

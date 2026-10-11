@@ -790,7 +790,8 @@ def official_navigation_links(plan, sources):
 VALIDATION_SCOPES = frozenset({'content', 'source', 'site', 'review'})
 
 
-def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=None):
+def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=None,
+                    *, intent_receipt=None):
     now = now or datetime.now(KST)
     rules = policy()
     scopes = set(VALIDATION_SCOPES if scopes is None else scopes)
@@ -824,7 +825,9 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
         if 'site' in scopes:
             if inventory.get('checked_on') != now.date().isoformat() or not isinstance(inventory.get('posts'), list):
                 reasons.append('fresh_inventory_required')
-            elif duplicate_posts(brief, inventory['posts'], related_post_ids=related_post_ids):
+            elif duplicate_posts(
+                    brief, inventory['posts'], related_post_ids=related_post_ids,
+                    intent_receipt=intent_receipt, today=now.date()):
                 reasons.append('duplicate_topic')
         if 'source' in scopes and (not sources or len({s['id'] for s in sources}) != len(sources)):
             reasons.append('sources_missing_or_duplicate_ids')
