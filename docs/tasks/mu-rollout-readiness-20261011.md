@@ -1,5 +1,7 @@
 # R2 WordPress MU 플러그인 호환성·격리 복원 점검 (2026-10-11)
 
+**같은 날짜 후속 실제 설치 상태 (2026-10-11, 통합 `2cde4f74` 기반 read-only):** 이전 시점 아래의 MU 불일치/설치 보류 기록은 **과거 상태**이며 최신 관측으로 대체하면 안 된다. 현재 운영 컨테이너의 `/var/www/html/wp-content/mu-plugins/bloguito-post-row-actions.php` SHA-256은 `d10d4b3bff10378f965b7e9db8d6d912c3ee99fdeb833136e0774939639794fa`로, 통합 소스 `wordpress/mu-plugins/bloguito-post-row-actions.php`와 정확히 일치한다. 릴리스 호환성의 **MU 바이트 불일치 한 항목은 해소**된 상태다. 그러나 이 SHA 일치는 실제 관리자/자동화의 모든 승인·게시 실행 경로와 호스트 `image_gen` 호출 여부를 증명하지 않는다. 이미지 staging의 `selection_actor`/selection_mode와 실제 host tool provenance는 원래 조건대로 별도 검증해야 한다. 이번 후속은 운영 파일·DB·릴리스나 이미지 자료를 수정하지 않았다.
+
 ## 관측 상태와 즉시 판정
 
 **운영 배포는 보류**한다. 운영 WordPress 컨테이너의 MU 플러그인
