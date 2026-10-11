@@ -101,12 +101,32 @@ class DraftCreateJournal:
     def created(self, post_id: int) -> None:
         if type(post_id) is not int or post_id <= 0:
             raise ValueError("draft_create_invalid_post_id")
+        previous = self.read()
+        if previous is None:
+            raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
+        if previous["state"] in {"created", "complete"}:
+            if previous["post_id"] == post_id:
+                return  # Already durably recorded: preserve its original identity.
+            raise DraftCreateBlocked("draft_create_id_receipt_conflict", self.key,
+                                     post_id=previous["post_id"])
+        if previous["state"] != "creating":
+            raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
         self._write({
             "version": self.VERSION, "key": self.key,
             "state": "created", "post_id": post_id,
         })
 
     def complete(self, post_id: int) -> None:
+        if type(post_id) is not int or post_id <= 0:
+            raise ValueError("draft_create_invalid_post_id")
+        previous = self.read()
+        if previous is None or previous["state"] == "creating":
+            raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
+        if previous["post_id"] != post_id:
+            raise DraftCreateBlocked("draft_create_id_receipt_conflict", self.key,
+                                     post_id=previous["post_id"])
+        if previous["state"] == "complete":
+            return  # A verified exact replay must not change the saved receipt.
         self._write({
             "version": self.VERSION, "key": self.key,
             "state": "complete", "post_id": post_id,

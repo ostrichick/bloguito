@@ -127,18 +127,21 @@ def inspect_uncertain_image_import(post_id: int, state: dict | None,
     if not attempt.get('started') or outcome.get('attachment_id'):
         return {'status': 'not_an_uncertain_image_import',
                 'automatic_retry': False, 'write_authorized': False}
+    if attempt.get('image_sha256') != staged_image_sha256:
+        return {'status': 'unverified', 'reason': 'original_attempt_sha_mismatch',
+                'automatic_retry': False, 'write_authorized': False,
+                'next_action': 'locate_original_staged_image_receipt_no_sha_adoption'}
     from agents.wordpress_mutation import find_attachment_ids_by_sha
     ids = find_attachment_ids_by_sha(
         ['sudo', 'docker', 'exec', 'wordpress_app', 'wp'],
         post_id, staged_image_sha256)
-    if len(ids) == 1:
-        classification = 'single_sha_matching_attachment_unconfirmed'
-    elif not ids:
-        classification = 'no_sha_matching_attachment_outcome_unknown'
-    else:
-        classification = 'multiple_sha_matching_attachments_ambiguous'
-    return {'status': classification, 'post_id': post_id,
+    from agents.media_recovery_contract import classify_sha_candidates
+    evidence = classify_sha_candidates(
+        ids, preexisting_ids=attempt.get('preexisting_attachment_ids'))
+    return {'status': evidence['status'], 'post_id': post_id,
             'observed_attachment_ids': ids, 'staged_image_sha256': staged_image_sha256,
+            'candidate_attachment_ids': evidence['candidate_attachment_ids'],
+            'ownership_verified': False, 'import_termination_verified': False,
             'automatic_retry': False, 'write_authorized': False,
             'next_action': ('verify_original_staging_receipt_attachment_readback_and_live_cas_'
                             'then_use_existing_regular_resume_path')}

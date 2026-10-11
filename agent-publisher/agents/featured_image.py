@@ -48,6 +48,7 @@ from agents.image_baseline import (
     image_baseline_sha256,
     post_image_baseline_sha256 as _post_image_baseline_sha256,
 )
+from agents.media_recovery_contract import hold_pending_import
 from agents.workflow_metrics import increment, timed
 
 
@@ -683,46 +684,17 @@ def recover_imported_featured_image_outcome(
     preexisting_attachment_ids: list[int] | tuple[int, ...] | None = None,
     lock_token: str | None = None,
 ) -> dict | None:
-    """Recover a previously committed media import without issuing another import."""
-    budget = _FeaturedImageBudget(90)
-    attachment_id = (
-        _find_new_imported_attachment_by_sha(
-            post_id,
-            image_sha256=image_sha256,
-            preexisting_attachment_ids=preexisting_attachment_ids,
-            timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, "resume_import_sha_reconcile"),
-        )
-        if preexisting_attachment_ids is not None
-        else _find_unique_imported_attachment_by_sha(
-            post_id,
-            image_sha256=image_sha256,
-            timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, "resume_import_sha_reconcile"),
-        )
-    )
-    if attachment_id is None:
-        return None
-    base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
-    fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
-    live = get_post(
-        base, post_id, fields=fields,
-        timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, "resume_import_post_read"))
-    if not verify_cas(live, content_sha=expected_content_sha256):
-        raise ValueError("featured_image_resume_post_conflict")
-    checkpoint = {
-        "attachment_id": attachment_id,
-        "expected_thumbnail_id": expected_thumbnail_id,
-        "content_sha256": expected_content_sha256,
-        "image_sha256": image_sha256,
-        "preserved_post": {
-            key: live.get(key, "")
-            for key in ("post_status", "post_title", "post_name", "post_excerpt")
-        },
-        "backup": None,
-        "lock_token": lock_token,
-        "import_fence_started": bool(lock_token),
-        "import_termination_confirmed": False,
-    }
-    return reconcile_featured_image_outcome(post_id, checkpoint, alt_text, budget=budget)
+    """Block unknown imports; SHA lookup belongs to read-only operator diagnostics.
+
+    A candidate discovered after this attempt might belong to another process.
+    An actual successful media-import response writes a durable `image_outcome`
+    checkpoint and resumes through `reconcile_featured_image_outcome` instead.
+    """
+    hold_pending_import(
+        {"started": True, "image_sha256": image_sha256,
+         "expected_thumbnail_id": expected_thumbnail_id,
+         "lock_token": lock_token, "import_fence_started": bool(lock_token)},
+        image_sha256=image_sha256, expected_thumbnail_id=expected_thumbnail_id)
 
 
 def _failure_receipt_file(post_id: int) -> Path:
@@ -1130,6 +1102,14 @@ def hardened_attach_featured_image(
         if outcome_callback is not None:
             outcome_callback(outcome)
 
+        if not import_termination_confirmed:
+            # A unique SHA match is a read-only candidate, not proof that the
+            # original importer stopped or that this task owns the attachment.
+            # Never perform even a guarded thumbnail mutation before liveness
+            # and a durable import-result receipt have been verified.
+            stage = "media_import_process_unknown"
+            raise ValueError("featured_image_import_process_termination_unknown")
+
         stage = "thumbnail_cas"
         thumbnail = guarded_set_post_thumbnail(
             base,
@@ -1179,10 +1159,6 @@ def hardened_attach_featured_image(
         outcome = {**outcome, "verified": True, "attachment_url": guid}
         if outcome_callback is not None:
             outcome_callback(outcome)
-
-        if not import_termination_confirmed:
-            stage = "media_import_process_unknown"
-            raise ValueError("featured_image_import_process_termination_unknown")
 
         stage = "remote_import_fence_complete"
         set_featured_image_import_pending(
@@ -1845,56 +1821,14 @@ def replace_featured_image_from_live_baseline(
             import_attempt = (previous.get("checkpoints") or {}).get("image_import_attempt") or {}
             if import_attempt.get("started"):
                 image_sha256 = import_attempt.get("image_sha256")
-                if image_sha256 == _sha256_file(image_path):
-                    preexisting_attachment_ids = import_attempt.get("preexisting_attachment_ids")
-                    recovered_attachment_id = (
-                        _find_new_imported_attachment_by_sha(
-                            post_id,
-                            image_sha256=image_sha256,
-                            preexisting_attachment_ids=preexisting_attachment_ids,
-                        )
-                        if preexisting_attachment_ids is not None
-                        else _find_unique_imported_attachment_by_sha(
-                            post_id,
-                            image_sha256=image_sha256,
-                        )
-                    )
-                    if recovered_attachment_id is not None:
-                        previous_expected_thumbnail_id = (
-                            int(previous_thumbnail_id)
-                            if isinstance(previous_thumbnail_id, str) and previous_thumbnail_id.isdigit()
-                            else None
-                        )
-                        checkpoint = {
-                            "attachment_id": recovered_attachment_id,
-                            "expected_thumbnail_id": previous_expected_thumbnail_id,
-                            "content_sha256": expected_content_sha256,
-                            "image_sha256": image_sha256,
-                            "preserved_post": {
-                                key: live.get(key, "")
-                                for key in ("post_status", "post_title", "post_name", "post_excerpt")
-                            },
-                            "backup": None,
-                            "lock_token": import_attempt.get("lock_token"),
-                            "import_fence_started": bool(import_attempt.get("lock_token")),
-                        }
-                        recovered = reconcile_featured_image_outcome(post_id, checkpoint, alt_text)
-                        update_task_state(
-                            post_id,
-                            completed=["image_saved", "wordpress_saved"],
-                            status="saved_pending_qa",
-                            result={**recovered, "attempt_number": previous_baseline.get("attempt_number", 1)},
-                        )
-                        _advance_matching_after_image_checkpoint(
-                            post_id,
-                            expected_content_sha256=expected_content_sha256,
-                            expected_thumbnail_id=previous_expected_thumbnail_id,
-                            image_path=image_path,
-                            result=recovered,
-                        )
-                        return attest_existing({
-                            **recovered, "attempt_number": previous_baseline.get("attempt_number", 1)})
-                raise ValueError("featured_image_import_outcome_ambiguous")
+                previous_expected_thumbnail_id = (
+                    int(previous_thumbnail_id)
+                    if type(previous_thumbnail_id) is str and previous_thumbnail_id.isdigit()
+                    else None
+                )
+                hold_pending_import(
+                    import_attempt, image_sha256=_sha256_file(image_path),
+                    expected_thumbnail_id=previous_expected_thumbnail_id)
             if previous_thumbnail_id is None:
                 previous_expected_thumbnail_id = None
             elif type(previous_thumbnail_id) is str and previous_thumbnail_id.isdigit():

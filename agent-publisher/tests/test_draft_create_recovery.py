@@ -39,6 +39,24 @@ class JournalTests(unittest.TestCase):
             with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_journal_invalid"):
                 journal.read()
 
+    def test_durable_created_post_id_cannot_be_rebound_or_completed_with_a_new_id(self):
+        """A known ID receipt is immutable across interrupted resume attempts."""
+        with tempfile.TemporaryDirectory() as folder:
+            journal = DraftCreateJournal("b" * 64, directory=Path(folder))
+            journal.begin()
+            with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_id_receipt_required"):
+                journal.complete(777)
+            journal.created(777)
+            with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_id_receipt_conflict"):
+                journal.created(778)
+            with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_id_receipt_conflict"):
+                journal.complete(778)
+            self.assertEqual(777, journal.read()["post_id"])
+            journal.complete(777)
+            with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_id_receipt_conflict"):
+                journal.created(778)
+            self.assertEqual(777, journal.read()["post_id"])
+
 
 class PublisherRecoveryTests(unittest.TestCase):
     def setUp(self):

@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = '51249534178eedbabf7fc9adf665848ee12a876a5aa0d6e3b2e7a73c44e259c6'
+CANONICAL_INVENTORY_DIGEST = 'e2b6b13723b8fca851977c656eda41c1c3b906534d264cb2831619db60252213'
 WP_MU_RELATIVE = 'wordpress/mu-plugins/bloguito-post-row-actions.php'
 WP_MU_CONTAINER_PATH = '/var/www/html/wp-content/mu-plugins/bloguito-post-row-actions.php'
 

@@ -63,7 +63,8 @@ class TaskReconciliationTests(unittest.TestCase):
 
     def test_ambiguous_image_import_sha_candidates_never_authorize_retry(self):
         interrupted = {'post_id': 641,
-                       'checkpoints': {'image_import_attempt': {'started': True}}}
+                       'checkpoints': {'image_import_attempt': {
+                           'started': True, 'image_sha256': 'b' * 64}}}
         for found, phase in [([], 'no_sha_matching_attachment_outcome_unknown'),
                              ([303], 'single_sha_matching_attachment_unconfirmed'),
                              ([303, 404], 'multiple_sha_matching_attachments_ambiguous')]:
@@ -89,8 +90,31 @@ class TaskReconciliationTests(unittest.TestCase):
 
     def test_uncertain_import_lookup_read_failure_propagates(self):
         interrupted = {'post_id': 641,
-                       'checkpoints': {'image_import_attempt': {'started': True}}}
+                       'checkpoints': {'image_import_attempt': {
+                           'started': True, 'image_sha256': 'b' * 64}}}
         with patch('agents.wordpress_mutation.find_attachment_ids_by_sha',
                    side_effect=RuntimeError('remote WP unavailable')):
             with self.assertRaisesRegex(RuntimeError, 'remote WP unavailable'):
                 inspect_uncertain_image_import(641, interrupted, 'b' * 64)
+
+    def test_operator_sha_probe_must_match_original_import_attempt(self):
+        attempt = {'post_id': 641, 'checkpoints': {'image_import_attempt': {
+            'started': True, 'image_sha256': 'a' * 64,
+            'preexisting_attachment_ids': [303],
+        }}}
+        with patch('agents.wordpress_mutation.find_attachment_ids_by_sha',
+                   return_value=[303, 404]) as lookup:
+            mismatch = inspect_uncertain_image_import(641, attempt, 'b' * 64)
+        self.assertEqual('unverified', mismatch['status'])
+        self.assertEqual('original_attempt_sha_mismatch', mismatch['reason'])
+        self.assertFalse(mismatch['write_authorized'])
+        lookup.assert_not_called()
+
+        with patch('agents.wordpress_mutation.find_attachment_ids_by_sha',
+                   return_value=[303, 404]) as lookup:
+            result = inspect_uncertain_image_import(641, attempt, 'a' * 64)
+        self.assertEqual('single_sha_matching_attachment_unconfirmed', result['status'])
+        self.assertEqual([404], result['candidate_attachment_ids'])
+        self.assertFalse(result['ownership_verified'])
+        self.assertFalse(result['import_termination_verified'])
+        lookup.assert_called_once()

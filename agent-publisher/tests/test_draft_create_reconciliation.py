@@ -48,6 +48,7 @@ class DraftReconciliationTests(unittest.TestCase):
         self.assertEqual(original, self.journal.path.read_bytes())
 
     def test_known_id_live_match_allows_only_canonical_resume(self):
+        self.journal.begin()
         self.journal.created(509)
         report = self.check()
         self.assertEqual(509, report['inspected_post_id'])
@@ -56,6 +57,7 @@ class DraftReconciliationTests(unittest.TestCase):
         self.assertFalse(report['write_authorized'])
 
     def test_conflicting_id_and_body_drift_fail_closed(self):
+        self.journal.begin()
         self.journal.created(509)
         report = self.check(508)
         self.assertIn('conflicts', report['next_action'])

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from agents.task_state import intent_sha256
+from agents.media_recovery_contract import hold_pending_import
 
 
 def image_fingerprints(
@@ -119,26 +120,13 @@ def run_combined_image_phase(
                 or import_attempt.get("expected_thumbnail_id") != expected_thumbnail_id
             ):
                 raise ValueError("resume_image_import_artifact_conflict")
-            image_result = recover_imported_image(
-                post_id,
-                image_sha256=import_attempt.get("image_sha256"),
-                expected_content_sha256=desired_content_sha256,
-                expected_thumbnail_id=expected_thumbnail_id,
-                alt_text=alt_text,
-                preexisting_attachment_ids=import_attempt.get("preexisting_attachment_ids"),
-                lock_token=import_attempt.get("lock_token"),
-            )
-            if image_result is None:
-                raise ValueError("featured_image_import_outcome_ambiguous")
-            if approval_kind is not None and not image_result.get("publish_attestation"):
-                raise ValueError("recovered_image_requires_separate_publish_attestation")
-            update_state(post_id, checkpoints={"image_outcome": image_result})
-            update_state(
-                post_id,
-                completed=["image_saved"],
-                result={"image_phase": image_result},
-            )
-            return image_result
+            # An import-attempt checkpoint is only an intent; it has no durable
+            # attachment ID receipt. SHA candidate searches are diagnostic only.
+            # Resume writes require a confirmed `image_outcome` checkpoint above.
+            hold_pending_import(
+                import_attempt,
+                image_sha256=import_attempt["image_sha256"],
+                expected_thumbnail_id=expected_thumbnail_id)
 
         def image_checkpoint(payload):
             update_state(post_id, checkpoints={"image_outcome": payload})

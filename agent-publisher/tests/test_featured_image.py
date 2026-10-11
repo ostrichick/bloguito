@@ -422,10 +422,10 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             self.assertFalse(receipt["import_termination_confirmed"])
             self.assertEqual([777], receipt["reconcile_observed_ids"])
             self.assertFalse(receipt["automatic_media_reimport_allowed"])
-            self.assertTrue(any(
+            self.assertFalse(any(
                 call.kwargs.get("checkpoints", {}).get("image_outcome", {}).get("verified") is True
                 for call in update_state.call_args_list
-            ))
+            ))  # A SHA-only candidate is never an attested saved thumbnail.
 
     def test_import_sha_recovery_returns_none_for_zero_matches_and_blocks_multiple(self):
         from agents.featured_image import _find_unique_imported_attachment_by_sha
@@ -704,7 +704,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                  patch("agents.featured_image.find_attachment_ids_by_sha", side_effect=[[], [777]]) as sha_lookup, \
                  patch("agents.featured_image.guarded_set_post_thumbnail", return_value={
                      "post": live, "thumbnail_id": "777",
-                 }), \
+                 }) as thumbnail_write, \
                  patch("agents.featured_image.subprocess.run", side_effect=run):
                 with self.assertRaisesRegex(ValueError, "featured_image_import_process_termination_unknown") as raised:
                     hardened_attach_featured_image(
@@ -721,6 +721,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             self.assertTrue(receipt["sha_reconcile_attempted"])
             self.assertFalse(receipt["import_termination_confirmed"])
             self.assertFalse(receipt["automatic_media_reimport_allowed"])
+            thumbnail_write.assert_not_called()  # SHA-only candidate cannot mutate the post.
 
     def test_timeout_sha_recovered_attachment_remains_fenced_on_resume_without_reimport(self):
         """An attachment SHA match does not prove a timed-out import has terminated."""
@@ -746,8 +747,8 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                     preexisting_attachment_ids=[],
                     lock_token="a" * 32,
                 )
-        sha_lookup.assert_called_once()
-        post_read.assert_called_once()
+        sha_lookup.assert_not_called()  # Refuse before SHA matching could imply ownership.
+        post_read.assert_not_called()
         acquire.assert_not_called()
         import_fence.assert_not_called()  # Existing import_pending must not be cleared.
         thumbnail.assert_not_called()
@@ -1163,12 +1164,12 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                  patch("agents.featured_image._read_post_meta", return_value="70"), \
                  patch("agents.featured_image.load_task_state", return_value=failed), \
                  patch("agents.featured_image.replace_featured_image") as replace:
-                with self.assertRaisesRegex(ValueError, "featured_image_import_outcome_ambiguous"):
+                with self.assertRaisesRegex(ValueError, "resume_image_import_artifact_conflict"):
                     quick_replace_featured_image(
                         641, image_path, alt_text="대체텍스트", confirmed=True)
         replace.assert_not_called()
 
-    def test_quick_replace_recovers_ambiguous_import_by_exact_sha_without_reimport(self):
+    def test_quick_replace_refuses_sha_only_ambiguous_import_without_reimport(self):
         with tempfile.TemporaryDirectory() as folder:
             image_path = self._image(folder)
             live = {
@@ -1201,17 +1202,35 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             with patch("agents.featured_image.get_post", return_value=live), \
                  patch("agents.featured_image._read_post_meta", return_value="70"), \
                  patch("agents.featured_image.load_task_state", return_value=failed), \
-                 patch("agents.featured_image._find_unique_imported_attachment_by_sha", return_value=777), \
-                 patch("agents.featured_image.reconcile_featured_image_outcome", return_value=recovered), \
+                 patch("agents.featured_image._find_unique_imported_attachment_by_sha", return_value=777) as scan, \
+                 patch("agents.featured_image.reconcile_featured_image_outcome", return_value=recovered) as reconcile, \
                  patch("agents.featured_image.update_task_state") as update_state, \
                  patch("agents.featured_image.load_after_image_checkpoint", return_value=None), \
                  patch("agents.featured_image.replace_featured_image") as replace:
-                result = quick_replace_featured_image(
-                    641, image_path, alt_text="대체텍스트", confirmed=True)
+                with self.assertRaisesRegex(ValueError, "featured_image_import_ownership_unverified"):
+                    quick_replace_featured_image(
+                        641, image_path, alt_text="대체텍스트", confirmed=True)
         replace.assert_not_called()
-        update_state.assert_called_once()
-        self.assertEqual(777, result["attachment_id"])
-        self.assertEqual(1, result["attempt_number"])
+        scan.assert_not_called()
+        reconcile.assert_not_called()
+        update_state.assert_not_called()
+
+    def test_sha_only_ambiguous_import_cannot_adopt_unowned_attachment(self):
+        """One matching SHA is not a durable ID receipt or import ownership."""
+        live = {"post_status": "draft", "post_title": "CI title",
+                "post_name": "ci", "post_content": "body", "post_excerpt": ""}
+        with patch("agents.featured_image._find_unique_imported_attachment_by_sha",
+                   return_value=777) as matching_sha, \
+             patch("agents.featured_image.get_post", return_value=live), \
+             patch("agents.featured_image.reconcile_featured_image_outcome",
+                   return_value={"attachment_id": 777, "reconciled": True}) as reconcile:
+            with self.assertRaisesRegex(ValueError, "featured_image_import_ownership_unverified"):
+                recover_imported_featured_image_outcome(
+                    641, image_sha256="a" * 64,
+                    expected_content_sha256=hashlib.sha256(b"body").hexdigest(),
+                    expected_thumbnail_id=70, alt_text="alt")
+        matching_sha.assert_not_called()
+        reconcile.assert_not_called()
 
 
 if __name__ == "__main__":
