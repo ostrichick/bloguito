@@ -99,7 +99,8 @@ def verify_installed_mu_compatibility(manifest, *, installed_digest=None):
     if installed_digest is None:
         result = subprocess.run(
             ['sudo', 'docker', 'exec', 'wordpress_app', 'sha256sum', WP_MU_CONTAINER_PATH],
-            capture_output=True, text=True, check=True, timeout=15)
+            capture_output=True, text=True, encoding='utf-8', errors='strict',
+            check=True, timeout=15)
         parts = result.stdout.strip().split()
         if len(parts) != 2 or parts[1] != WP_MU_CONTAINER_PATH:
             raise ValueError('wp_mu_preflight_invalid_response')
