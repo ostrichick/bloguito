@@ -223,6 +223,7 @@ def verify_manual_image_upload_lineage(
         "candidate_manifest": str(manifest_path),
         "candidate_number": selected_candidate,
         "selection_mode": selection_mode,
+        "selection_actor": selection_mode,
         "sealed_source_sha256": original_sha,
         "origin_claim": expected_origin,
     }
@@ -234,6 +235,7 @@ def verify_manual_image_upload_lineage(
     return {
         "candidate_number": selected_candidate,
         "selection_mode": selection_mode,
+        "selection_actor": selection_mode,
         "source_sha256": original_sha,
         "staged_sha256": staged_sha,
         "staged_path": str(staged),

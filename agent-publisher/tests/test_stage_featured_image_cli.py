@@ -156,6 +156,42 @@ class StageFeaturedImageCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "candidate_sha_conflict"):
                 verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
 
+    def test_stage_selection_actor_cannot_override_sealed_selection_mode(self):
+        """A receipt must not describe an agent selection as a user decision."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source, staged, manifest = (
+                root / "candidate-1.png", root / "candidate-1-upload.webp", root / "manifest.json")
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "selection_actor_sealer", SCRIPT.parent / "seal_featured_image_candidates.py")
+            sealer = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sealer)
+            sealer.seal_candidates([source], manifest)
+            with patch("sys.argv", [
+                "stage_featured_image.py", str(source), str(staged),
+                "--candidate-manifest", str(manifest), "--selected-candidate", "1",
+                "--selection-mode", "agent-delegated", "--selection-actor", "agent-delegated",
+            ]):
+                self.assertEqual(0, MODULE.main())
+            from agents.publish_gate import manual_selection_approval_kind
+            lineage = verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
+            self.assertEqual("manual_agent_delegated", manual_selection_approval_kind(lineage))
+            receipt_path = staged.with_suffix(staged.suffix + ".stage.json")
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["selection_actor"] = "user"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "manual_cover_lineage_receipt_mismatch"):
+                verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
+            with self.assertRaisesRegex(ValueError, "image_selection_actor_mode_conflict"):
+                manual_selection_approval_kind({"selection_mode": "agent-delegated",
+                                                "selection_actor": "user"})
+            receipt.pop("selection_actor")
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "manual_cover_lineage_receipt_mismatch"):
+                verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
+
     def test_local_unsealed_image_cannot_be_uploaded(self):
         with tempfile.TemporaryDirectory() as folder:
             original = Path(folder) / "locally-painted.webp"

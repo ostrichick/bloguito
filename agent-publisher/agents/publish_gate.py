@@ -127,6 +127,9 @@ def manual_selection_approval_kind(lineage: dict) -> str:
     if not isinstance(lineage, dict):
         raise ValueError("image_selection_lineage_required")
     mode = lineage.get("selection_mode")
+    actor = lineage.get("selection_actor")
+    if actor is not None and actor != mode:
+        raise ValueError("image_selection_actor_mode_conflict")
     if mode == "user":
         return "manual_user_selected"
     if mode == "agent-delegated":

@@ -90,13 +90,19 @@ class UserSharedImageTests(unittest.TestCase):
             "source_path": str(self.source.resolve()), "source_sha256": source_sha,
             "output_path": str(output.resolve()), "output_sha256": staged_sha,
             "candidate_manifest": str(self.path.resolve()), "candidate_number": 1,
-            "selection_mode": "user", "sealed_source_sha256": source_sha,
+            "selection_mode": "user", "selection_actor": "user",
+            "sealed_source_sha256": source_sha,
             "origin_claim": SHARED_CHATGPT_ORIGIN,
         }
         receipt = output.with_suffix(output.suffix + ".stage.json")
         receipt.write_text(json.dumps(stage))
         self.assertEqual(source_sha, verify_manual_image_upload_lineage(
             output, self.path, 1, "user")["source_sha256"])
+        without_actor = dict(stage)
+        without_actor.pop("selection_actor")
+        receipt.write_text(json.dumps(without_actor))
+        with self.assertRaisesRegex(ValueError, "lineage_receipt_mismatch"):
+            verify_manual_image_upload_lineage(output, self.path, 1, "user")
         stage["origin_claim"] = {"generator_tool": "image_gen.text2im",
                                  "save_tool": "cos_core.save_image"}
         receipt.write_text(json.dumps(stage))
