@@ -58,3 +58,10 @@
 5. 추후 정상적으로 승인된 실제 글 작업의 충분한 동질 샘플이 누적되어야 F1/F2 전체 성능 비교가 가능하다. 샘플 수를 채우기 위해 신규 글이나 이미지를 인위적으로 생성하지 않는다.
 
 원본 `main`의 기존 미커밋 문서와 다른 세션의 worktree를 그대로 보존했다. 이 후속 작업은 코드/릴리스 설치 외에는 기존 글·이미지/카탈로그/운영 cron 일정을 변경하지 않았다.
+
+## 2026-10-11 19:02 KST 이후 읽기 전용 후속 확인
+
+- 통합 HEAD `cbfa50b203b6ab575b81a903bde140df5632a238` clean, 운영 `editorial-release.json` revision `b6e0f51904a6e322bc82c4e496d2609b7ad974cf`, inventory digest `e2b6b13723b8fca851977c656eda41c1c3b906534d264cb2831619db60252213`, MU 기록 SHA `d10d4b3bff10378f965b7e9db8d6d912c3ee99fdeb833136e0774939639794fa` 및 매일 08:00 cron 등록 유지. 편집 잠금 디렉터리 없음. 이 확인은 설치 영수증 및 일부 운영 상태 read-only 검사이며 **93개 바이너리 SHA 재검증은 아님**.
+- 기존 보고에서 원본 위치가 불명확했던 성공 80건/34코호트는 원본 `main`의 ignored 로컬 `agent-publisher/data/editorial_runs/workflow-metrics.jsonl`에서 재현됐다. 160행 중 성공 80행, SHA `92DC6BCC852D6830EE2475C9091E0DECA0AB0DAC38D3150643C70B29022730DC`. 그러나 34개 코호트 전부 검증된 릴리스·workload가 없어 비교 부적합. 운영 서버의 8행 별도 로그와 합산 금지. 세부 근거는 `docs/tasks/workflow-performance-live-20261011.md` 추가 조사 참조.
+- 현재 설치 릴리스 observer는 운영 8행/성공 5행/신규 성공 1행/전 릴리스 성공 0행, 비교 가능한 코호트 0, `performance_claim=unmeasured`. 2026-10-12 08:00 KST 실행은 여전히 미래이므로 확인되지 않았다.
+- 새 공개 발행·본문 수정·미디어 upload·cron 수동 실행·재배포 없음. 원본 `main`의 미커밋 자료와 Q1 ignored PNG 증거를 보존한다. Q1 native browser menu 200%, 인증 Preview, R2 실제 image_gen 호스트 증빙 및 Q3 미확정 미디어 ID/종료 증거는 새 증빙이 없어 이전 판정을 유지한다.

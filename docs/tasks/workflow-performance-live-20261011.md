@@ -30,3 +30,10 @@
 
 - 현지 2026-10-11 18시 이후의 확인 시점에는 2026-10-12 08:00 KST cron이 **아직 도래하지 않았다**. 당시 `crontab`에는 `0 8 * * * .../run_daily.sh`가 있었고 잠금 디렉터리 점유는 별도로 확인해야 한다.
 - **다음 예약 실행 이후에만** `cron.log`의 시작·종료·exit 코드, 동일 job 중복 실행 여부, `data/growth/.scheduler-run.lock` 커널 점유/해제, 실제 `PIPELINE_RESULT`, 신규 draft 개수와 기록된 정확한 post ID 및 readback, 수정 없는 결과라면 `no_action` 근거, workflow-metrics의 릴리스 revision을 조회한다. 수동 `run_daily.sh` 실행이나 이미지 업로드를 계측 목적으로 강행하지 않는다.
+
+## 19:02 KST 이후 추가 조사 — 로컬 80건의 원본 확인
+
+- 위 7건/원본 미확인 서술은 **당시 운영 서버 조회 결과**다. 이후 읽기 전용으로 원본 `main` 작업 폴더의 `C:/Projects/Bloguito/agent-publisher/data/editorial_runs/workflow-metrics.jsonl`를 발견했다. 이 파일은 `.gitignore`의 `agent-publisher/data/editorial_runs/` 규칙에 의해 Git 비추적 자료이고, **운영 서버 JSONL과는 별개의 로컬 기록**이다. 원본 파일은 수정하지 않았다.
+- 로컬 원본 SHA256: `92DC6BCC852D6830EE2475C9091E0DECA0AB0DAC38D3150643C70B29022730DC`; 160행, 성공 80행. 첫/마지막 레코드 시작시각: `2026-10-06T18:17:30.273835+09:00` / `2026-10-11T16:28:51.904693+09:00`.
+- 통합 브랜치의 `scripts/summarize_workflow_metrics.py --file C:/Projects/Bloguito/agent-publisher/data/editorial_runs/workflow-metrics.jsonl --context live --status ok --cohorts`에서 **80건/34코호트**가 재현됐다. 34개 코호트 모두 `release_revision=release_unverified`, `workload_signature=unclassified`, `comparison_ready=false`였다. 원본 출처 문제는 해결됐지만 **이 80건으로 신규 릴리스의 효과를 비교할 수 없다는 판정은 그대로**다.
+- 같은 시각 운영 `workflow_release_observer.py` 재조회는 별개 원본 SHA `95ace25d0b5c0d2cd621d746f01146d70c851f9dd008c7646ddd709f5be3a465`, 8행/성공 5행, `b6e0f5` 성공 1행/이전 `e10a20f` 성공 0행, 비교 가능한 코호트 0, `performance_claim=unmeasured`였다. 로컬 160행과 운영 8행을 합산하지 않는다.
