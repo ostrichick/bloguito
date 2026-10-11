@@ -358,7 +358,7 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                 _record_notification(stats, notify_error, f"{cat_info['name']} 발행 단계", str(e))
 
     print("\n" + "=" * 60)
-    print(f"🎉 총 {stats['published']}건의 포스팅 작업 완료 (탐색: {stats['candidates']}건, 보류: {stats['held']}건, 에러: {stats['errors']}건)")
+    print(f"총 {stats['published']}건의 WordPress 임시글 생성 완료 (탐색: {stats['candidates']}건, 보류: {stats['held']}건, 에러: {stats['errors']}건)")
     print("=" * 60)
 
     if (stats['growth_outcome'] == 'new_draft_selected' and stats['held']
@@ -433,7 +433,7 @@ def main(argv=None):
             'growth_log_errors', 'notification_channel_failures', 'notification_unconfigured')}
         result.update(growth_action='no_action', growth_reason='already_running',
                       growth_details=[], growth_outcome='already_running',
-                      status='already_running')
+                      status='already_running', drafts_created=0)
         emit_run('already_running')
         print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False), flush=True)
         return 0  # A cron overlap is not a processing failure; it did no work.
@@ -450,7 +450,7 @@ def main(argv=None):
         result.update(errors=1, growth_action='no_action',
                       growth_reason='growth_run_lock_unavailable',
                       growth_details=[type(error).__name__],
-                      growth_outcome='input_failure', status='failed')
+                      growth_outcome='input_failure', status='failed', drafts_created=0)
         print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False), flush=True)
         return 1
     except BaseException:
