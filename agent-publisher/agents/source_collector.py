@@ -166,8 +166,17 @@ def _fetch_sources_sequential(brief):
             # and layout so row-specific quotations remain reproducible.
             from pypdf import PdfReader
             pages = PdfReader(BytesIO(response.content)).pages
-            extracted_pages = [page.extract_text(extraction_mode='layout') or '' for page in pages]
-            text = '\n\n'.join(extracted_pages).strip()
+            literal_pages = bool(scope and scope.get('extraction_format') == 'raw-pypdf-page-labeled')
+            if literal_pages:
+                extracted_pages = [''] * len(pages)
+                for selected_index in scope['pages']:
+                    if selected_index > len(pages):
+                        raise ValueError('official_scope_pdf_page_missing')
+                    extracted_pages[selected_index-1] = pages[selected_index-1].extract_text() or ''
+                text = '\n\n'.join(extracted_pages[p-1] for p in scope['pages'])
+            else:
+                extracted_pages = [page.extract_text(extraction_mode='layout') or '' for page in pages]
+                text = '\n\n'.join(extracted_pages).strip()
             provenance = {}
             if scope is not None:
                 if scope['kind'] != 'pdf-pages':

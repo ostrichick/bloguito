@@ -15,6 +15,39 @@ class SourceLimitTests(unittest.TestCase):
     LAW = 'https://www.law.go.kr/법령/테스트법'
     PDF = 'https://www.moleg.go.kr/files/test.pdf'
 
+    @patch('agents.source_collector._official_get')
+    def test_reviewed_2026_pdf_literal_pages_preserve_exact_quotes_and_full_raw_hash(self, get):
+        url = 'https://www.1661-2129.or.kr/download/2026-service.pdf'
+        raw = b'%PDF-1.7' + b'a' * 1500
+        get.return_value = SimpleNamespace(status_code=200, content=raw)
+        content = ['2026 policy notice\n', '2026년 노인맞춤돌봄서비스 사업안내\n월 848,000원\n',
+                   'Unrelated policy text\n', '예외신청 접수처리\n']
+        mock_pages = [MagicMock() for _ in content]
+        for page, body in zip(mock_pages,content):
+            page.extract_text.return_value = body
+        pdf = MagicMock(pages=mock_pages)
+        brief = {'official_urls':[url], 'entity':'노인맞춤돌봄서비스',
+                 'official_source_scopes':{url:{'kind':'pdf-pages','pages':[2,4],
+                   'version_marker':'2026년 노인맞춤돌봄서비스 사업안내',
+                   'extraction_format':'raw-pypdf-page-labeled'}}}
+        with patch('pypdf.PdfReader',return_value=pdf):
+            source = fetch_sources(brief)[0]
+            self.assertEqual(source['text'],
+                '[원본 PDF 0-based page 1; printed page omitted]\n'+content[1]+
+                '\n\n[원본 PDF 0-based page 3; printed page omitted]\n'+content[3])
+            self.assertEqual(hashlib.sha256(source['text'].encode()).hexdigest(), source['sha256'])
+            self.assertEqual(hashlib.sha256(raw).hexdigest(),source['raw_sha256'])
+            self.assertTrue(scoped_source_provenance_valid(source,brief))
+            mock_pages[0].extract_text.assert_not_called()
+            mock_pages[2].extract_text.assert_not_called()
+            changed = raw+b'unselected-source-change'
+            get.return_value = SimpleNamespace(status_code=200, content=changed)
+            updated = fetch_sources_subset(brief,[source],['s0'])[0]
+            self.assertEqual(source['sha256'],updated['sha256'])
+            self.assertNotEqual(source['raw_sha256'],updated['raw_sha256'])
+            brief['official_source_scopes'][url]['pages'] = [2,3]
+            self.assertFalse(scoped_source_provenance_valid(source,brief))
+
     @staticmethod
     def law_html(*, extra='원문 뒤 문구', duplicate=False, absent=False):
         target = ('제2조(정의)\n' + ('주민이 이용할 수 있는 서비스의 법적 요건과 적용 대상입니다.\n' * 4)

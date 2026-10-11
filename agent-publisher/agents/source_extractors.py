@@ -10,11 +10,11 @@ from agents.temporal_validation import KST
 
 # Explicit excerpts never relax the ordinary 60k canonical source-text limit.
 # Changing these rules must invalidate both source-recheck and semantic-review receipts.
-OFFICIAL_SCOPE_EXTRACTOR_VERSION = 1
+OFFICIAL_SCOPE_EXTRACTOR_VERSION = 2
 _OFFICIAL_LAW_HOSTS = {'law.go.kr', 'www.law.go.kr', 'www.nhis.or.kr',
                        'www.moleg.go.kr'}
 _OTHER_OFFICIAL_PDF_HOSTS = {'www.nhis.or.kr', 'www.hira.or.kr',
-                             'www.korea.kr'}
+                             'www.korea.kr', 'www.1661-2129.or.kr'}
 _ARTICLE_HEADING = re.compile(r'제\d+조(?:의\d+)?\s*\([^\n]{1,100}\)')
 
 
@@ -47,9 +47,13 @@ def official_scope_for_url(brief, url, source_type):
             raise ValueError('official_law_section_selector_invalid')
     elif kind == 'pdf-pages':
         pages = selector.get('pages')
+        selected_format = selector.get('extraction_format', 'layout')
         if ((parsed.hostname != 'go.kr' and not parsed.hostname.endswith('.go.kr')
              and parsed.hostname not in _OTHER_OFFICIAL_PDF_HOSTS)
-                or set(selector) != {'kind', 'pages', 'version_marker'}
+                or set(selector) not in ({'kind', 'pages', 'version_marker'},
+                                         {'kind', 'pages', 'version_marker', 'extraction_format'})
+                or selected_format not in ('layout', 'raw-pypdf-page-labeled')
+                or ('extraction_format' in selector and selected_format == 'layout')
                 or not isinstance(pages, list) or not 1 <= len(pages) <= 12
                 or any(type(p) is not int or p <= 0 for p in pages)
                 or pages != sorted(set(pages))):
@@ -91,10 +95,14 @@ def scoped_official_excerpt(raw_text, *, url, selector, raw_sha256, pdf_pages=No
     elif selector['kind'] == 'pdf-pages':
         if pdf_pages is None or any(p > len(pdf_pages) for p in selector['pages']):
             raise ValueError('official_scope_pdf_page_missing')
-        parts = [pdf_pages[p - 1].strip() for p in selector['pages']]
-        if any(not part for part in parts):
+        parts = [pdf_pages[p - 1] for p in selector['pages']]
+        if any(not part.strip() for part in parts):
             raise ValueError('official_scope_pdf_page_empty')
-        text = '\n\n'.join(parts)
+        if selector.get('extraction_format') == 'raw-pypdf-page-labeled':
+            text = '\n\n'.join('[원본 PDF 0-based page %d; printed page omitted]\n%s' % (p-1, body)
+                               for p, body in zip(selector['pages'], parts))
+        else:
+            text = '\n\n'.join(part.strip() for part in parts)
     else:
         raise ValueError('official_scope_kind_not_supported')
     if not 80 <= len(text) <= 60000:
