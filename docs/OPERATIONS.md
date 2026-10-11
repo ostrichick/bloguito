@@ -20,6 +20,8 @@
 
 `draft-create-status <기존에 완성된 reviewed bundle JSON> [--post-id <확인된 ID>]`는 같은 bundle의 정확한 workflow_key를 다시 계산해 로컬 `creating/created/complete` 저널을 읽으며, `created`와 `complete`의 **기록된 ID만** WordPress에서 원고/제목/발췌문/상태를 대조한다. `creating`에서 명확한 ID가 없다면 새로운 `wp post create` 호출은 계속 금지한다. 운영자가 이전 create 명령의 원본 응답 등으로 ID를 별도 입증한 경우에만 `--post-id`로 **후보를 조회**할 수 있으며, 본문이 같아도 저널을 자동 `created`로 승격하지 않는다. 이미 `created`로 기록된 동일 ID의 일치만 현재 공식 출처/semantic review와 통상 CAS를 다시 통과하는 정규 `prepare-draft` 재개 대상으로 표시한다. 이 조회 자체는 source·review 승인이나 WordPress 수정 권한을 발급하지 않는다.
 
+**R1 보수적 CLI 분리:** `agents/ssh_cli_request.py`는 SSH 편집 요청의 인자 파싱만 담당한다. `scripts/editorial_cli_via_ssh.py`는 기존 `_parse_cli_request` 래퍼·action allowlist·`_CliRequest` 스키마·SSH 실행기와 보안 검증을 유지한다. 정규 외부 명령 3개 또는 내부 payload 계약을 변경하지 않으며, parser와 remote transport를 한꺼번에 재작성하지 않는다.
+
 비공개 Google 보고서는 GitHub Workload Identity로 읽기 전용 수집한 뒤 `https://lifeinfo24.org/_bloguito/analytics-ingest`에 전달한다. GitHub secret `BLOGUITO_ANALYTICS_TOKEN`과 서버의 root-only `/etc/bloguito-analytics.env`를 같은 token으로 설정한다. `wordpress/analytics/`의 systemd unit과 nginx snippets가 실행/HTTPS proxy의 정본이다. 수신기는 localhost에만 bind하고 POST 인증·4MiB 상한·기존 snapshot schema/freshness 검증 뒤 private analytics directory에만 저장한다. 보고서·인증 header는 응답과 access log에 노출하지 않는다. 공개 SSH allowlist는 이 전달 경로와 별개로 유지한다.
 
 통계 전달 검증은 workflow success만으로 끝내지 않는다. 서버의 해당 날짜 JSON 생성 시각·SHA·schema validation을 확인한다. 다음 예약 실행의 실제 성공 여부는 별도로 기록한다. 기존 restricted SSH receiver는 rollback용이며 신규 workflow는 사용하지 않는다.
