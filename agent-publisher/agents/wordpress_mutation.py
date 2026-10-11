@@ -473,6 +473,40 @@ def get_post(base, post_id, *, fields=None, timeout=None):
     return json.loads((result.stdout or "").lstrip("\ufeff"))
 
 
+def read_post_thumbnail_snapshot(base, post_id: int, *, timeout=None) -> tuple[dict, str | None]:
+    """Fresh read-only post+thumbnail pair from ONE WordPress process.
+
+    It replaces only adjacent, same-state preflight reads. No returned value
+    may serve as a write CAS or substitute for guarded mutation readback.
+    """
+    if type(post_id) is not int or post_id <= 0:
+        raise ValueError("invalid_post_thumbnail_snapshot_target")
+    command = list(base) + ["eval", POST_THUMBNAIL_SNAPSHOT_SCRIPT, "--allow-root"]
+    kwargs = dict(input=json.dumps({"post_id": post_id}), capture_output=True,
+                  text=True, encoding="utf-8", errors="strict", check=True)
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    with timed("wp_target_read"):
+        increment("wp_roundtrips")
+        result = run_wordpress(command, **kwargs)
+    try:
+        value = json.loads((result.stdout or "").lstrip("\ufeff"))
+        if not isinstance(value, dict) or set(value) != {"post", "thumbnail_id"}:
+            raise ValueError
+        fields = {"post_status", "post_title", "post_name", "post_content", "post_excerpt"}
+        post = value["post"]
+        thumb = value["thumbnail_id"]
+        if (not isinstance(post, dict) or set(post) != fields
+                or any(not isinstance(field, str) for field in post.values())
+                or thumb is not None and (
+                    type(thumb) is not str or not thumb.isdecimal()
+                    or int(thumb) <= 0)):
+            raise ValueError
+        return post, thumb
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_post_thumbnail_snapshot_readback") from exc
+
+
 def find_attachment_ids_by_sha(base, post_id: int, image_sha256: str, *, timeout=None) -> list[int]:
     if (not isinstance(post_id, int) or post_id <= 0
             or not isinstance(image_sha256, str)

@@ -36,6 +36,7 @@ from agents.wordpress_mutation import (
     content_sha256,
     find_attachment_ids_by_sha,
     get_post,
+    read_post_thumbnail_snapshot,
     guarded_set_post_thumbnail,
     guarded_update_featured_image_alt,
     release_featured_image_lock,
@@ -1009,13 +1010,8 @@ def hardened_attach_featured_image(
             # to change the post. Check again before the non-idempotent import
             # fence. A later race is still caught by guarded thumbnail CAS.
             stage = "pre_import_baseline_recheck"
-            latest = get_post(
+            latest, latest_thumb = read_post_thumbnail_snapshot(
                 base, post_id,
-                fields=["post_status", "post_title", "post_name", "post_content", "post_excerpt"],
-                timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, stage),
-            )
-            latest_thumb = _read_post_meta(
-                base, post_id, "_thumbnail_id",
                 timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, stage),
             )
             if (latest_thumb != expected_thumb_text

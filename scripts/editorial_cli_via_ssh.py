@@ -754,6 +754,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (action == 'replace-featured-image'
                 and wp == ['eval', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_attachment_alt_mutation'
+        if (action == 'replace-featured-image'
+                and wp == ['eval', POST_THUMBNAIL_SNAPSHOT_SCRIPT, '--allow-root']):
+            return 'post_thumbnail_snapshot'
         if (action in _FEATURED_IMAGE_ACTIONS
                 and wp == ['eval', ATTACHMENT_SHA_LOOKUP_SCRIPT, '--allow-root']):
             return 'attachment_sha_lookup'
@@ -837,6 +840,21 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if command[:5] == _WP_PREFIX:
             wp = command[5:]
             kind = validate_wp(wp)
+            if kind == 'post_thumbnail_snapshot':
+                raw = kwargs.get('input')
+                if isinstance(raw, bytes):
+                    raw = raw.decode('utf-8')
+                try:
+                    payload = json.loads(raw) if isinstance(raw, str) else None
+                except ValueError as exc:
+                    raise ValueError('invalid_image_snapshot_request') from exc
+                if (not isinstance(payload, dict) or set(payload) != {'post_id'}
+                        or type(payload['post_id']) is not int
+                        or payload['post_id'] not in allowed_ids):
+                    raise ValueError('invalid_image_snapshot_request')
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(POST_THUMBNAIL_SNAPSHOT_SCRIPT) + ' --allow-root')
+                return remote_run(remote, retry_255=True, **kwargs)
             if previous_thumbnail is not None and wp == previous_thumbnail[0]:
                 increment('wp_snapshot_reuses')
                 value = previous_thumbnail[1]

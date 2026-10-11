@@ -124,7 +124,9 @@ class FeaturedImageReplacementTests(unittest.TestCase):
             with patch("agents.featured_image.ROOT", Path(folder)), \
                  patch("agents.featured_image.acquire_featured_image_lock", return_value={"token": "a" * 32}), \
                  patch("agents.featured_image.release_featured_image_lock"), \
-                 patch("agents.featured_image.get_post", side_effect=[initial, changed]), \
+                 patch("agents.featured_image.get_post", return_value=initial), \
+                 patch("agents.featured_image.read_post_thumbnail_snapshot",
+                       return_value=(changed, "70")) as combined, \
                  patch("agents.featured_image._read_post_meta", return_value="70"), \
                  patch("agents.featured_image.find_attachment_ids_by_sha", return_value=[]), \
                  patch("agents.featured_image.set_featured_image_import_pending") as fence, \
@@ -135,6 +137,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                         expected_thumbnail_id=70, alt_text="alt", image_info=info,
                         expected_initial_baseline_sha256=self._baseline_digest(initial, 70))
             self.assertFalse(any("import" in argv for argv in commands))
+            combined.assert_called_once()
             fence.assert_not_called()
             receipt = json.loads(Path(caught.exception.failure_receipt).read_text(encoding="utf-8"))
             self.assertFalse(receipt["import_attempted"])
@@ -176,6 +179,8 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                  patch("agents.featured_image.acquire_featured_image_lock", return_value={"token": "a" * 32}), \
                  patch("agents.featured_image.release_featured_image_lock"), \
                  patch("agents.featured_image.get_post", return_value=original), \
+                 patch("agents.featured_image.read_post_thumbnail_snapshot",
+                       return_value=(original, "70")) as combined, \
                  patch("agents.featured_image._read_post_meta", return_value="70"), \
                  patch("agents.featured_image.find_attachment_ids_by_sha", side_effect=[[], [777]]), \
                  patch("agents.featured_image.set_featured_image_import_pending") as fence, \
@@ -188,6 +193,7 @@ class FeaturedImageReplacementTests(unittest.TestCase):
                         outcome_callback=outcome.append,
                         expected_initial_baseline_sha256=self._baseline_digest(original, 70))
             self.assertEqual(1, world["imports"])
+            combined.assert_called_once()
             self.assertEqual(999, world["thumbnail"])
             cas.assert_called_once()
             self.assertEqual([True], [v.kwargs["pending"] for v in fence.call_args_list])
