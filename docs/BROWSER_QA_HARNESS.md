@@ -1,5 +1,9 @@
 # Q1: 기존 브라우저 세션 기반 QA 하네스
 
+**2026-10-11 잔여 무결성 보완 (`f4e3ce8` 기준 독립 감사):** 이 작업 시점에서 CoS Desktop 브라우저 탭·네비게이션 API가 노출되지 않았고, 기존 `127.0.0.1:9222` CDP는 Lenovo Vantage WebView 한 탭뿐이며 `9223/9333/9334/9444`는 접속 불가였다. Bloguito 관리자로 로그인된 기존 브라우저나 승인된 Draft Preview를 확인할 수 없어 새 브라우저/프로필을 띄우거나 인증 관리자 화면을 열지 않았다. 따라서 **브라우저 메뉴 네이티브 200% 확대와 인증 Draft Preview는 계속 미검증**이다. 앞서 기록한 `stable/` 390·1280 전체 페이지/2x CDP visual scale/CTA HTTP 200 증거를 중복 캡처하지 않았다.
+
+추가 독립 검증기 `scripts/verify_full_page_browser_qa.py`는 이제 모바일·데스크톱 `initial.url`이 정확히 동일하지 않으면 `full_qa_cross_viewport_url_mismatch`로 차단한다. CTA 보조 증거는 같은 게시글 URL의 `source_article` 및 기존 CDP `old_targets`에 결합해야 하고, 새 탭의 ID가 기존 타깃에 포함되면 거부하며, 대응하는 `Target.targetCreated` 생성 이벤트까지 있어야 성공으로 평가한다. 이전에는 동일 post ID라고 자가 신고한 **다른 URL의 화면 두 개**, 다른 글의 **CTA 기록 합성**, **이미 존재하던 탭을 새 팝업으로 취급**한 자료도 PASS 가능했다. 변경 전에 음성 테스트로 이를 재현했고, 변경 후 기존 #641 `stable/full-page-evidence.json`(SHA `a296246f229d5a2bae302f4157351d8b6575538543cacd272de19096b1bca811`) 및 `cta-new-tab-evidence-final.json`(SHA `15a36a64332505976feaf112b5dbc583f453abdfa1743114e5b779ec20d4a881`)을 재검사해 통과했다. 이는 제출된 기록 **사이의 계약 검사**이지 CDP 데이터의 서명·외부 WordPress 상태의 독립 증명이나 호스트 `image_gen` 출처 인증이 아니다.
+
 ## 2026-10-11 최종 전체 페이지 실측 (#641, 통합 `2cde4f74` 기반)
 
 **실제 공개 WordPress 전체 페이지 Q1 보조 검증 PASS, 단 네이티브 브라우저 200% 확대·인증 Preview는 미검증.** 기존 CoS Desktop의 브라우저 조작 기능은 노출되지 않았고, 이미 열려 있던 9222 CDP는 Lenovo Vantage 위젯뿐이었다. 사용자 지시 범위에 따라 Edge 155 단일 격리 `headless=new` 인스턴스 한 개만 `scratch/tasks/q1-full-641-20261011/isolated-edge-profile/`에 시작해 localhost CDP 9333의 게시글 페이지 탭을 재사용했다. 운영 WP-CLI에서 `ID=641`, `post_status=publish`, UTF-8 `post_content` SHA-256 `78aa3ebed10a8eac20ae5e927f69e7a5b468b14e20b690a277e138a61aec3c17`을 별도 read-only 재조회했고, 공개 `?p=641` GET도 canonical 게시글로 200과 `postid-641` 마커를 돌려줬다.

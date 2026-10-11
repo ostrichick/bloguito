@@ -46,6 +46,7 @@ def verify_full_page(receipt: dict, root: Path, *, post_id: int, content_sha: st
     if not isinstance(screens, list) or len(screens) != 2:
         raise ValueError("full_qa_requires_both_viewports")
     accepted = {}
+    article_url = None
     for screen, (width, height) in zip(screens, _SIZES.items()):
         if not isinstance(screen, dict) or screen.get("viewport") != {"width": width, "height": height}:
             raise ValueError("full_qa_viewport_missing")
@@ -60,6 +61,11 @@ def verify_full_page(receipt: dict, root: Path, *, post_id: int, content_sha: st
                 raise ValueError("full_qa_horizontal_overflow")
         if start["url"] != finish["url"]:
             raise ValueError("full_qa_url_changed")
+        if article_url is None:
+            article_url = start["url"]
+        elif start["url"] != article_url:
+            # Two individually valid site pages are not one two-viewport QA.
+            raise ValueError("full_qa_cross_viewport_url_mismatch")
         if start.get("innerWidth") != width or finish.get("innerWidth") != width:
             raise ValueError("full_qa_actual_viewport_not_applied")
         total = screen.get("total_height")
@@ -103,12 +109,15 @@ def verify_full_page(receipt: dict, root: Path, *, post_id: int, content_sha: st
             "task_state_updated": False}
 
 
-def verify_blank_cta(receipt: dict, *, post_id: int) -> dict:
-    """Check observed, not merely asserted, CDP new target and document response."""
+def verify_blank_cta(receipt: dict, *, post_id: int, source_url: str) -> dict:
+    """Bind new-tab evidence to the same article/initial browser target."""
     if (not isinstance(receipt, dict) or receipt.get("source_post_id") != post_id
             or receipt.get("main_page_preserved") is not True
             or receipt.get("new_tab_observed") is not True):
         raise ValueError("full_qa_cta_post_or_popup_missing")
+    if (not isinstance(source_url, str) or not source_url
+            or receipt.get("source_article") != source_url):
+        raise ValueError("full_qa_cta_source_article_mismatch")
     cta = receipt.get("cta")
     if (not isinstance(cta, dict) or cta.get("tag") != "A" or cta.get("target") != "_blank"
             or cta.get("method") is not None or cta.get("centerAnchorHref") != cta.get("href")
@@ -117,14 +126,27 @@ def verify_blank_cta(receipt: dict, *, post_id: int) -> dict:
         raise ValueError("full_qa_cta_safe_click_not_recorded")
     targets = receipt.get("targets")
     responses = receipt.get("document_responses")
-    if not isinstance(targets, list) or not isinstance(responses, list):
+    previous = receipt.get("old_targets")
+    events = receipt.get("events")
+    if (not isinstance(targets, list) or not isinstance(responses, list)
+            or not isinstance(previous, list) or not isinstance(events, list)):
         raise ValueError("full_qa_cta_browser_proof_missing")
+    if not any(isinstance(row, dict) and row.get("url") == source_url
+               and isinstance(row.get("id"), str) and row["id"]
+               for row in previous):
+        raise ValueError("full_qa_cta_original_target_unverified")
+    old_ids = {row.get("id") for row in previous if isinstance(row, dict)}
     found = [row for row in targets if isinstance(row, dict)
              and row.get("type") == "page" and row.get("url") == cta["href"]
-             and isinstance(row.get("id"), str)]
+             and isinstance(row.get("id"), str) and row["id"]]
     if not found:
         raise ValueError("full_qa_cta_new_tab_destination_unverified")
     valid_target_ids = {row["id"] for row in found}
+    if valid_target_ids & old_ids:
+        raise ValueError("full_qa_cta_new_tab_target_reused")
+    if not any(isinstance(event, dict) and event.get("event") == "created"
+               and event.get("targetId") in valid_target_ids for event in events):
+        raise ValueError("full_qa_cta_new_target_creation_unverified")
     passing = [row for row in responses if isinstance(row, dict)
                and row.get("targetId") in valid_target_ids and row.get("url") == cta["href"]
                and row.get("status") == 200 and row.get("mimeType") == "text/html"]
@@ -143,9 +165,11 @@ def main() -> int:
     args = parser.parse_args()
     full = json.loads(args.full_page_json.read_text(encoding="utf-8-sig"))
     cta = json.loads(args.cta_json.read_text(encoding="utf-8-sig"))
-    result = {"full_page": verify_full_page(
-        full, args.full_page_json.parent, post_id=args.post_id, content_sha=args.content_sha),
-        "cta": verify_blank_cta(cta, post_id=args.post_id)}
+    full_report = verify_full_page(
+        full, args.full_page_json.parent, post_id=args.post_id, content_sha=args.content_sha)
+    result = {"full_page": full_report,
+              "cta": verify_blank_cta(
+                  cta, post_id=args.post_id, source_url=full["screens"][0]["initial"]["url"])}
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 

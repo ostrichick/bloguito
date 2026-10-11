@@ -48,11 +48,14 @@ def fixture(root: Path):
                     "isNativeChromeMenuZoom":False,"isCssHalfWidthTrick":False}})
     evidence={"postId":641,"site":"https://lifeinfo24.org/",
               "originalContentSha256":SHA,"screens":screens}
-    cta={"source_post_id":641,"main_page_preserved":True,"new_tab_observed":True,
+    cta={"source_post_id":641,"source_article":URL,
+         "main_page_preserved":True,"new_tab_observed":True,
          "click":"CDP Input.dispatchMouseEvent mousePressed+mouseReleased",
+         "old_targets":[{"id":"source-page","url":URL}],
          "cta":{"href":CTA,"target":"_blank","tag":"A","method":None,
                 "centerAnchorHref":CTA},
          "targets":[{"id":"new-page","type":"page","url":CTA}],
+         "events":[{"event":"created","targetId":"new-page","url":""}],
          "document_responses":[{"targetId":"new-page","url":CTA,"status":200,"mimeType":"text/html"}]}
     return evidence,cta
 
@@ -66,7 +69,37 @@ class FullPageVerifierTests(unittest.TestCase):
             self.assertEqual("supplemental_full_page_verified",report["status"])
             self.assertEqual("not_verified",report["native_browser_menu_zoom"])
             self.assertEqual("observed_new_tab_document_200",
-                             module.verify_blank_cta(cta,post_id=641)["status"])
+                             module.verify_blank_cta(cta,post_id=641,source_url=URL)["status"])
+
+    def test_cross_viewport_different_article_url_must_not_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            data,_=fixture(root)
+            data["screens"][1]["initial"]["url"]="https://lifeinfo24.org/another-post/"
+            data["screens"][1]["final"]["url"]="https://lifeinfo24.org/another-post/"
+            with self.assertRaisesRegex(ValueError,"full_qa_cross_viewport_url_mismatch"):
+                module.verify_full_page(data,root,post_id=641,content_sha=SHA)
+
+    def test_cta_from_another_article_must_not_complete_original_article(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _,cta=fixture(Path(directory))
+            cta["source_article"]="https://lifeinfo24.org/another-post/"
+            with self.assertRaisesRegex(ValueError,"full_qa_cta_source_article_mismatch"):
+                module.verify_blank_cta(cta,post_id=641,source_url=URL)
+
+    def test_preexisting_browser_tab_cannot_be_mislabeled_new_popup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _,cta=fixture(Path(directory))
+            cta["old_targets"].append({"id":"new-page","url":CTA})
+            with self.assertRaisesRegex(ValueError,"full_qa_cta_new_tab_target_reused"):
+                module.verify_blank_cta(cta,post_id=641,source_url=URL)
+
+    def test_new_tab_requires_matching_target_creation_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _,cta=fixture(Path(directory))
+            cta["events"]=[{"event":"created","targetId":"unrelated-page","url":""}]
+            with self.assertRaisesRegex(ValueError,"full_qa_cta_new_target_creation_unverified"):
+                module.verify_blank_cta(cta,post_id=641,source_url=URL)
 
     def test_missing_scroll_middle_section_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -98,11 +131,11 @@ class FullPageVerifierTests(unittest.TestCase):
             _,cta=fixture(Path(directory))
             cta["document_responses"][0]["status"]=403
             with self.assertRaisesRegex(ValueError,"http_200_unverified"):
-                module.verify_blank_cta(cta,post_id=641)
+                module.verify_blank_cta(cta,post_id=641,source_url=URL)
             cta["document_responses"][0]["status"]=200
             cta["targets"][0]["url"]="about:blank"
             with self.assertRaisesRegex(ValueError,"destination_unverified"):
-                module.verify_blank_cta(cta,post_id=641)
+                module.verify_blank_cta(cta,post_id=641,source_url=URL)
 
 
 if __name__=="__main__":
