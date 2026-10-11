@@ -853,6 +853,9 @@ def validate_bundle(bundle, inventory, now=None, require_review=True, scopes=Non
                         reasons.append('invalid_source_citation_url')
                 if s['sha256'] != hashlib.sha256(s['text'].encode()).hexdigest():
                     reasons.append('source_hash_mismatch')
+                from agents.source_extractors import scoped_source_provenance_valid
+                if not scoped_source_provenance_valid(s, brief):
+                    reasons.append('official_scoped_source_provenance_invalid')
                 if not fresh(s['fetched_at'], now, rules['source_max_age_hours']):
                     reasons.append('source_stale')
             try:

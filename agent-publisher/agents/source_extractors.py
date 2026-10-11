@@ -1,10 +1,135 @@
 """Precisely scoped source text adapters; preserve reviewed facts and conditions."""
 import hashlib
+import json
 import re
 from datetime import datetime
 from urllib.parse import parse_qs, urlsplit
 import requests
 from agents.temporal_validation import KST
+
+
+# Explicit excerpts never relax the ordinary 60k canonical source-text limit.
+# Changing these rules must invalidate both source-recheck and semantic-review receipts.
+OFFICIAL_SCOPE_EXTRACTOR_VERSION = 1
+_OFFICIAL_LAW_HOSTS = {'law.go.kr', 'www.law.go.kr', 'www.nhis.or.kr',
+                       'www.moleg.go.kr'}
+_OTHER_OFFICIAL_PDF_HOSTS = {'www.nhis.or.kr', 'www.hira.or.kr',
+                             'www.korea.kr'}
+_ARTICLE_HEADING = re.compile(r'제\d+조(?:의\d+)?\s*\([^\n]{1,100}\)')
+
+
+def official_scope_for_url(brief, url, source_type):
+    """Accept only exact HTTPS official URL mappings; never fuzzy-select a span."""
+    scopes = brief.get('official_source_scopes', {})
+    if not isinstance(scopes, dict) or any(not isinstance(k, str) for k in scopes):
+        raise ValueError('invalid_official_source_scopes')
+    if set(scopes) - set(brief.get('official_urls', [])):
+        raise ValueError('official_scope_url_not_declared')
+    selector = scopes.get(url)
+    if selector is None:
+        return None
+    parsed = urlsplit(url)
+    if (source_type != 'official' or parsed.scheme != 'https'
+            or parsed.username or parsed.password or not parsed.hostname
+            or not isinstance(selector, dict)):
+        raise ValueError('official_scope_not_authorized')
+    kind = selector.get('kind')
+    version = selector.get('version_marker')
+    if (not isinstance(version, str) or not 4 <= len(version) <= 80
+            or '\n' in version or '\r' in version):
+        raise ValueError('official_scope_version_required')
+    if kind == 'law-section':
+        if (parsed.hostname not in _OFFICIAL_LAW_HOSTS
+                or set(selector) != {'kind', 'start_marker', 'end_marker', 'version_marker'}
+                or any(not isinstance(selector.get(k), str) for k in ('start_marker', 'end_marker'))
+                or not all(_ARTICLE_HEADING.fullmatch(selector[k]) for k in ('start_marker', 'end_marker'))
+                or selector['start_marker'] == selector['end_marker']):
+            raise ValueError('official_law_section_selector_invalid')
+    elif kind == 'pdf-pages':
+        pages = selector.get('pages')
+        if ((parsed.hostname != 'go.kr' and not parsed.hostname.endswith('.go.kr')
+             and parsed.hostname not in _OTHER_OFFICIAL_PDF_HOSTS)
+                or set(selector) != {'kind', 'pages', 'version_marker'}
+                or not isinstance(pages, list) or not 1 <= len(pages) <= 12
+                or any(type(p) is not int or p <= 0 for p in pages)
+                or pages != sorted(set(pages))):
+            raise ValueError('official_pdf_page_selector_invalid')
+    else:
+        raise ValueError('official_scope_kind_not_supported')
+    return selector
+
+
+def scoped_official_excerpt(raw_text, *, url, selector, raw_sha256, pdf_pages=None):
+    """Return literal, contiguous official evidence; never synthesize wording."""
+    if selector['version_marker'] not in raw_text and selector['version_marker'] not in url:
+        raise ValueError('official_scope_source_version_missing')
+    if selector['kind'] == 'law-section':
+        if pdf_pages is not None:
+            raise ValueError('official_scope_document_type_mismatch')
+        # Exact, unique *line-boundary* headings. An in-body mention is not a
+        # section boundary and repeated headings are ambiguous, never guessed.
+        lines = raw_text.splitlines(keepends=True)
+        locations = {}
+        offset = 0
+        for line in lines:
+            stripped = line.strip()
+            for boundary in ('start_marker', 'end_marker'):
+                if stripped == selector[boundary]:
+                    locations.setdefault(boundary, []).append(offset + len(line) - len(line.lstrip()))
+            offset += len(line)
+        if any(len(locations.get(boundary, [])) != 1
+               for boundary in ('start_marker', 'end_marker')):
+            raise ValueError('official_scope_span_missing_or_ambiguous')
+        start, end = (locations[k][0] for k in ('start_marker', 'end_marker'))
+        if end <= start:
+            raise ValueError('official_scope_span_reversed')
+        text = raw_text[start:end].strip()
+        # Never let a narrower span silently cross another Article heading.
+        middle = text.splitlines()[1:]
+        if any(_ARTICLE_HEADING.fullmatch(line.strip()) for line in middle):
+            raise ValueError('official_scope_unselected_article_in_span')
+    elif selector['kind'] == 'pdf-pages':
+        if pdf_pages is None or any(p > len(pdf_pages) for p in selector['pages']):
+            raise ValueError('official_scope_pdf_page_missing')
+        parts = [pdf_pages[p - 1].strip() for p in selector['pages']]
+        if any(not part for part in parts):
+            raise ValueError('official_scope_pdf_page_empty')
+        text = '\n\n'.join(parts)
+    else:
+        raise ValueError('official_scope_kind_not_supported')
+    if not 80 <= len(text) <= 60000:
+        raise ValueError('official_scope_text_missing_or_too_large')
+    return text, {
+        'raw_sha256': raw_sha256,
+        'raw_source_version': selector['version_marker'],
+        'section_selector': json.loads(json.dumps(selector, sort_keys=True, ensure_ascii=False)),
+        'section_extractor_version': OFFICIAL_SCOPE_EXTRACTOR_VERSION,
+        'raw_url': url,
+    }
+
+
+def scoped_source_provenance_valid(source, brief=None):
+    """Require the complete scope attestation and unchanged reviewed selector."""
+    keys = {'raw_sha256', 'raw_source_version', 'section_selector',
+            'section_extractor_version', 'raw_url'}
+    if not isinstance(source, dict):
+        return False
+    scope = (brief or {}).get('official_source_scopes', {})
+    if not isinstance(scope, dict):
+        return False
+    declared = scope.get(source.get('url'))
+    present = keys & source.keys()
+    if declared is None:
+        return not present
+    try:
+        checked = official_scope_for_url(brief, source['url'], source['source_type'])
+        return (present == keys and source['section_selector'] == checked
+                and source['raw_source_version'] == checked['version_marker']
+                and source['section_extractor_version'] == OFFICIAL_SCOPE_EXTRACTOR_VERSION
+                and source['raw_url'] == source['url']
+                and re.fullmatch(r'[0-9a-f]{64}', source['raw_sha256']) is not None)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _koreakr_article_text(soup, url):
@@ -562,5 +687,3 @@ def _newdaily_beartree_reference_text(soup, url):
     if any(phrase not in text for phrase in required):
         raise ValueError('newdaily_beartree_article_body_required_facts_missing')
     return text
-
-
