@@ -69,6 +69,8 @@ def _main():
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
     parser.add_argument('--expected-thumbnail-id', type=int,
                         help='replace-featured-image: current _thumbnail_id CAS value')
+    parser.add_argument('--expect-no-thumbnail', action='store_true',
+                        help='edit-post with --image-path: explicitly CAS-match a post without an existing thumbnail')
     parser.add_argument('--expected-initial-image-baseline-sha256',
                         help='replace-featured-image handoff: immutable original post+thumbnail snapshot fingerprint')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
@@ -122,6 +124,10 @@ def _main():
     parser.add_argument('--selection-mode', choices=['user', 'agent-delegated'],
                         help='explicit user selection or delegated choice')
     args = parser.parse_args()
+    if args.expect_no_thumbnail and (
+            args.action != 'edit-post' or not args.image_path
+            or args.expected_thumbnail_id is not None):
+        parser.error('--expect-no-thumbnail requires edit-post --image-path and forbids --expected-thumbnail-id')
     if args.topic_intent_receipt or args.confirm_intent_differentiation:
         if (args.action != 'prepare-draft' or not args.topic_intent_receipt
                 or not args.confirm_intent_differentiation):
@@ -384,8 +390,10 @@ def _main():
             bundle = json.loads(candidate.read_text(encoding='utf-8'))
             if not args.edit_intent:
                 parser.error('edit-post with a bundle requires --edit-intent')
-        if args.image_path and (not args.expected_thumbnail_id or not args.alt_text):
-            parser.error('edit-post with --image-path requires --expected-thumbnail-id and --alt-text')
+        if args.image_path and (
+                (args.expected_thumbnail_id is None and not args.expect_no_thumbnail)
+                or not args.alt_text):
+            parser.error('edit-post with --image-path requires --alt-text and either --expected-thumbnail-id or --expect-no-thumbnail')
         if bundle is None and not args.image_path:
             parser.error('edit-post requires either a bundle file or --image-path')
         image_approval_kind = None

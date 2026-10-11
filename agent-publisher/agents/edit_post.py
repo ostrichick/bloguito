@@ -459,7 +459,8 @@ def _edit_reviewed_public_post(
         raise ValueError("edit_intent_required")
     image_path = Path(image_path).resolve() if image_path else None
     if image_path is not None:
-        if not isinstance(expected_thumbnail_id, int) or expected_thumbnail_id <= 0:
+        if expected_thumbnail_id is not None and (
+                type(expected_thumbnail_id) is not int or expected_thumbnail_id <= 0):
             raise ValueError("combined_edit_expected_thumbnail_id_required")
         alt_text = (alt_text or "").strip()
         if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:

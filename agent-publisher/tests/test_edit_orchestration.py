@@ -12,6 +12,28 @@ from agents.task_state import (
 
 
 class CombinedImagePhaseTests(unittest.TestCase):
+    def test_new_cover_on_thumbnailless_post_is_bound_to_null_thumbnail_cas(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = Path(folder) / "selected.webp"
+            image_path.write_bytes(b"verified-candidate")
+            imported = []
+
+            def replace(post_id, path, sha, **kwargs):
+                imported.append(kwargs)
+                return {"attachment_id": 906, "publish_attestation": {"version": 1}}
+
+            result = run_combined_image_phase(
+                887, image_path=image_path, desired_content_sha256="a" * 64,
+                expected_thumbnail_id=None, alt_text="Approved image", resume=False,
+                state=None, update_state=lambda *args, **kwargs: None,
+                reconcile_image=lambda *args, **kwargs: self.fail("unexpected reconcile"),
+                recover_imported_image=lambda *args, **kwargs: self.fail("unexpected recovery"),
+                replace_image=replace, approval_kind="manual_agent_delegated",
+                approval_evidence_sha256="b" * 64)
+            self.assertEqual(906, result["attachment_id"])
+            self.assertEqual(1, len(imported))
+            self.assertIsNone(imported[0]["expected_thumbnail_id"])
+
     def test_approved_combined_image_passes_exact_evidence_to_wordpress_mutator(self):
         with tempfile.TemporaryDirectory() as folder:
             image_path = Path(folder) / "selected.webp"

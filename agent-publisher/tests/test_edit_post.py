@@ -289,6 +289,22 @@ class UnifiedEditPostTests(unittest.TestCase):
         self.assertEqual('manual_user_selected', draft_edit.call_args.kwargs['approval_kind'])
         self.assertEqual('b' * 64, draft_edit.call_args.kwargs['approval_evidence_sha256'])
 
+    def test_reviewed_draft_combined_edit_accepts_explicit_no_thumbnail_baseline(self):
+        bundle = current_bundle()
+        bundle['brief']['existing_post_id'] = 243
+        with patch('agents.edit_post.reviewed_target_kind', return_value='draft'), \
+             patch('agents.edit_post._stale_draft_public_recovery_decision', return_value=None), \
+             patch('agents.edit_post._validated_prepared_decision', return_value=None), \
+             patch('agents.edit_post.edit_reviewed_draft', return_value={'post_id': 243}) as edit:
+            edit_reviewed_post(
+                243, bundle, 'a' * 64, confirmed=True,
+                edit_intent='new verified cover', image_path='cover.webp',
+                expected_thumbnail_id=None, alt_text='Approved cover',
+                approval_kind='manual_agent_delegated', approval_evidence_sha256='b' * 64,
+            )
+        self.assertIsNone(edit.call_args.kwargs['expected_thumbnail_id'])
+        self.assertEqual('manual_agent_delegated', edit.call_args.kwargs['approval_kind'])
+
 
 if __name__ == '__main__':
     unittest.main()
