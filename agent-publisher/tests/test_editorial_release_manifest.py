@@ -181,6 +181,28 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertFalse((app / 'data/editorial-release.json').exists())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
 
+    def test_external_writer_during_smoke_fails_installed_readback_and_rolls_back(self):
+        app = self.entrypoint_release()
+        def mutate_installed_file(*args, **kwargs):
+            (app / 'main.py').write_bytes(b'external drift')
+        with patch.object(installer.subprocess, 'run', side_effect=mutate_installed_file):
+            with self.assertRaisesRegex(ValueError, 'release_readback_mismatch:agent-publisher/main.py'):
+                installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertEqual(b'old main', (app / 'main.py').read_bytes())
+        self.assertFalse((app / 'data/editorial-release.json').exists())
+
+    def test_mu_drift_during_install_rolls_back_runtime_files(self):
+        app = self.entrypoint_release()
+        digest = self.files[installer.WP_MU_RELATIVE]
+        with patch.object(installer.subprocess, 'run'), patch.object(
+                installer, 'verify_installed_mu_compatibility',
+                side_effect=[digest, ValueError('wp_mu_release_incompatible')]) as checker:
+            with self.assertRaisesRegex(ValueError, 'wp_mu_release_incompatible'):
+                installer.install(self.root, app, installed_mu_digest=digest)
+        self.assertEqual(2, checker.call_count)
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'data/editorial-release.json').exists())
+
     def test_install_rejects_unknown_agent_module_but_ignores_root_one_off_script(self):
         app = self.entrypoint_release()
         (app / 'agents').mkdir(exist_ok=True)

@@ -222,6 +222,23 @@ def install(release, app, *, installed_mu_digest=None):
                 target.unlink()
         python=app/'venv'/'bin'/'python'
         subprocess.run([str(python),'-B','-c','import main, editorial_cli; import agents.edit_post; import agents.publish_gate; import agents.section_image; from agents.editorial_writer import Plan; from agents.editorial import policy, validate_renderer_provenance_registry, validate_reviewed_content_provenance_registry; from agents.critical_facts import validate_critical_fact_registry; validate_critical_fact_registry(); validate_renderer_provenance_registry(); validate_reviewed_content_provenance_registry(); print("Editorial entrypoints, publish gate and provenance registries ready; minimum days:",policy()["min_remaining_days"])'],cwd=app,check=True)
+        # Confirm actual installed bytes rather than only trusting successful
+        # os.replace() calls or a smoke import. This also detects mid-install
+        # external writers before the installed release receipt is committed.
+        for name, expected_sha in release_manifest['files'].items():
+            if name == WP_MU_RELATIVE:
+                continue  # Independently probed inside the WordPress container.
+            if name.startswith('agent-publisher/'):
+                target = app / name[len('agent-publisher/'):]
+            elif name.startswith('docs/'):
+                target = app.parent / name
+            else:
+                raise ValueError('release_readback_unrecognized_asset:' + name)
+            if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected_sha:
+                raise ValueError('release_readback_mismatch:' + name)
+        # The MU gate could have changed after preflight while app files were
+        # being copied. A drift is an installation failure, triggering rollback.
+        verify_installed_mu_compatibility(release_manifest, installed_digest=installed_mu_digest)
         installed_hashes = {str(Path(change['target']).relative_to(app.parent)): hashlib.sha256(Path(change['target']).read_bytes()).hexdigest() for change in changes if Path(change['target']).exists()}
         manifest_sha256 = hashlib.sha256((release/'release-manifest.json').read_bytes()).hexdigest()
         put(app/'data'/'editorial-release.json', json.dumps({
