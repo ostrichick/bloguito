@@ -85,6 +85,15 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertFalse((app / 'backups').exists())
         self.assertFalse((app / 'run_daily.sh').exists())
 
+    def test_preflight_only_does_not_create_a_backup_or_mutate_app(self):
+        app = self.entrypoint_release()
+        manifest, mu_digest = installer.preflight_release(
+            self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertEqual(self.manifest, manifest)
+        self.assertEqual(self.files[installer.WP_MU_RELATIVE], mu_digest)
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'backups').exists())
+
     def test_shell_is_packaged_as_executable_and_restored_on_failed_smoke(self):
         app = self.entrypoint_release()
         shell = app / 'run_daily.sh'

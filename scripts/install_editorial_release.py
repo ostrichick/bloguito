@@ -123,7 +123,8 @@ def environment_config_is_external(text):
         for value in expressions.values()))
 
 
-def install(release, app, *, installed_mu_digest=None):
+def preflight_release(release, app, *, installed_mu_digest=None):
+    """Prove the release and server-side plugin ABI before any file mutation."""
     release, app = release.resolve(), app.resolve()
     if not (app/'main.py').is_file() or not (app/'config.py').is_file():
         raise ValueError('existing_publisher_required')
@@ -161,6 +162,14 @@ def install(release, app, *, installed_mu_digest=None):
              and relative != 'run_daily.sh')
                 or '.env' in p.parts or '__pycache__' in p.parts):
             raise ValueError('unexpected_release_file')
+    return release_manifest, verified_mu
+
+
+def install(release, app, *, installed_mu_digest=None):
+    release, app = release.resolve(), app.resolve()
+    release_manifest, verified_mu = preflight_release(
+        release, app, installed_mu_digest=installed_mu_digest)
+    files = [p for p in (release/'agent-publisher').rglob('*') if p.is_file()]
     backup = app/'backups'/('editorial-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:12])
     backup.mkdir(parents=True, mode=0o700, exist_ok=False)
     changes = []
@@ -240,4 +249,14 @@ def install(release, app, *, installed_mu_digest=None):
 if __name__=='__main__':
     p=argparse.ArgumentParser()
     p.add_argument('release',type=Path);p.add_argument('app',type=Path)
-    a=p.parse_args();install(a.release,a.app)
+    p.add_argument('--preflight-only', action='store_true',
+                   help='read-only manifest/config/MU compatibility check; do not install')
+    a=p.parse_args()
+    if a.preflight_only:
+        manifest, mu_digest = preflight_release(a.release, a.app)
+        print(json.dumps({'status': 'ready_for_separate_approval',
+                          'revision': manifest['revision'],
+                          'inventory_digest': manifest['inventory_digest'],
+                          'mu_plugin_sha256': mu_digest}, indent=2))
+    else:
+        install(a.release, a.app)

@@ -4,6 +4,8 @@
 
 ## 코드 릴리스와 비공개 통계 전달
 
+운영 설치 전에는 `python scripts/install_editorial_release.py <release> <app> --preflight-only`를 **운영 호스트에서 읽기 전용으로 먼저 실행**한다. Manifest와 환경설정, 설치된 MU 플러그인의 정확한 SHA를 확인하고 백업 디렉터리·런타임 파일을 생성하지 않는다. 상태가 `ready_for_separate_approval`이어도 별도 승인·백업/복원 검증·독립 DB 테스트가 완료됐다는 뜻은 아니다.
+
 편집 코드 배포는 `scripts/install_editorial_release.py`에 검토한 release directory와 기존 app directory를 전달한다. release root의 `release-manifest.json`은 `schema_version=2`, Git commit SHA인 `revision`, inventory digest, 상대 경로별 SHA256인 `files`, 명시적 `retired_files`를 포함해야 한다. `files`는 release의 `agent-publisher/`·`docs/`·`wordpress/` 파일 목록과 정확히 일치해야 한다. 신규 renderer/schema/source modules 누락이나 파일 hash 불일치는 쓰기 전에 차단한다. `.env`, runtime manifest/index, source receipt는 코드 release에 넣지 않는다.
 
 환경 설정을 `os.getenv()`로 읽는 현행 config일 때만 `main.py`·`config.py`를 함께 갱신할 수 있다. inline credentials가 있는 구 config는 먼저 별도 이관해야 하며 installer가 자동 변환하지 않는다. 기존 `data/search_briefs.json`은 덮어쓰지 않는다. 변경 파일 backup과 rollback manifest를 유지하고, 설치 뒤 editorial CLI·edit orchestration·critical-fact registry와 reviewed-content provenance registry의 전체 schema/digest 검증을 통과한 후 `data/editorial-release.json`에 실제 설치 hash와 revision을 기록한다. registry 검증 실패도 설치 실패로 처리해 같은 rollback 경로를 사용한다. obsolete 파일은 참조가 없고 retirement allowlist에 포함된 것만 명시적으로 제거한다.
