@@ -19,6 +19,24 @@ SPEC.loader.exec_module(MODULE)
 
 
 class StageFeaturedImageCliTests(unittest.TestCase):
+    def test_noncanonical_stage_receipt_path_rejected_before_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-1.png"
+            output = root / "candidate-1-upload.webp"
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            with patch("sys.argv", [
+                "stage_featured_image.py", str(source), str(output),
+                "--candidate-manifest", str(root / "manifest.json"),
+                "--selected-candidate", "1", "--selection-mode", "user",
+                "--receipt", str(root / "custom.json"),
+            ]):
+                with self.assertRaises(SystemExit) as blocked:
+                    MODULE.main()
+            self.assertEqual(2, blocked.exception.code)
+            self.assertFalse(output.exists())
+            self.assertFalse((root / "custom.json").exists())
+
     def test_explicit_lossless_png_staging_preserves_sealed_image_lineage(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

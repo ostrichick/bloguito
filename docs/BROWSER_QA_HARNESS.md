@@ -2,6 +2,8 @@
 
 **2026-10-11 후속 실제 세션 조사:** 기존 브라우저/CoS Desktop 연결에서 사용할 수 있는 browser tab 조작 API는 노출되지 않았다. 로컬 CDP read-only 조회 결과 `127.0.0.1:9222/json/list`는 Lenovo Vantage 위젯 탭 하나만 반환했고 `9237`, `9241`, `9223`은 접속할 수 없었다. Bloguito의 인증 미리보기나 공개 WordPress 탭은 확인되지 않아 본 하네스의 **실제 운영 페이지 390/1280 실행은 미검증**이며 로컬 정적 검증 또는 코드 테스트를 라이브 브라우저 QA 통과로 기록하지 않는다. 새 프로필·브라우저·포트는 실행하지 않았고 운영 WordPress도 수정하지 않았다. 이후 탭 연결을 확인한 때에만 대상 post ID와 WordPress 읽기 전용 content SHA를 별도 확인해 재실행한다.
 
+**추가 독립 점검 (같은 날, 격리 worktree):** `9222`의 유일한 CDP target `02D9962E3F8BA28738D00076FEEA0F0B`는 `BatteryWidgetHost.exe`의 `msedgewebview2.exe`가 연 Lenovo Vantage 페이지임을 프로세스 명령줄까지 확인했다. `9223/9333`은 접속 불가했고 CoS Desktop browser tab API도 이 세션에 노출되지 않았다. 읽기 전용 WordPress CLI에서 **게시물 #641, publish, 저장 post_content SHA-256 `78aa3ebed10a8eac20ae5e927f69e7a5b468b14e20b690a277e138a61aec3c17`**을 수집했다. 비로그인 HTTP GET은 200 및 동일 글로 canonical redirect되며 body `postid-641`, article `post-641`, shortlink `p=641`의 정적 마커 존재를 확인했다. 이는 실제 브라우저 CDP 렌더·상호작용·390/1280 스크린샷이 아니므로 해당 항목들은 계속 **미검증**이다. 운영 WordPress에는 쓰기를 실행하지 않았다.
+
 이 하네스는 **이미 실행 중인** Edge/Chrome의 CDP 탭 하나에 접속해 읽기 전용 DOM 측정, 제한된 브라우저 내 클릭 및 스크린샷을 수행한다. 브라우저 프로세스·프로필·디버그 포트를 **생성하거나 종료하지 않는다**. WordPress 글과 DB는 수정하지 않는다. `agents/change_classifier.py`가 확정한 `qa_scopes`가 유일한 검사 요구사항이며, 이 도구는 변경 내용을 재분류하지 않는다.
 
 ## 증거 범위와 한계
@@ -17,6 +19,8 @@
 모든 관찰은 **390×844** 및 **1280×900 CSS px**의 같은 기존 탭에서 이루어진다. 문서 전체 overflow, 표 caption/열·행/키보드 수평 스크롤, 모바일 카드 행수·표 가시성, TOC 앵커의 실제 클릭 후 해시, 내부/외부 링크, 설정된 CTA의 실제 같은 탭 이동, 계산기 정상/오류 입력 시나리오와 화면 결과를 기록한다. 200% 확대 관련 `zoom_simulated_half_viewport`는 절반 너비로 재배치한 **근사 검사**이며 **브라우저 네이티브 200% 확대, 스크린리더, 실제 모바일 터치의 검증이 아니다**. 이 세 항목은 필요한 경우 사람의 별도 QA에 남긴다.
 
 실제 브라우저 실행 없이 HTML 파서·정적 스캔 결과만으로 `browser_pass`를 만들 수 없도록 정규 경로에서 CDP 실행 메타데이터, 두 viewport의 PNG 실제 픽셀 치수와 SHA, DOM 계측값을 확인한다. 계측 JSON은 별도 verifier가 전달된 성공 여부를 신뢰하지 않고 **다시 계산**한다. 이 기록도 위조 불가능한 브라우저 서명은 아니며, WordPress의 원본 `post_content`를 재수집하지 않는다. `post_id` 및 `content_sha256`은 기존 **WordPress 저장/readback에 묶인 task-state 값**과 맞춰 최종 검증한다. 증거의 글자만으로 운영 DB의 최신 상태까지 증명하는 것은 아니다.
+
+후속 verifier는 두 viewport의 기록 URL이 요청 URL과 정확히 같아야 하고, WordPress 테마 DOM이 광고하는 글 ID(body `postid-N`, 본문 article `post-N`, shortlink `?p=N`)가 요청 post ID와 일치해야 성공 후보로 인정한다. 마커가 없거나 충돌하면 결과는 차단된다. 이는 다른 글의 CDP 탭을 검증 대상으로 잘못 기록하는 사고를 줄이는 검사이며 **WordPress 내용 SHA의 독립 브라우저 측 증명은 아니다**.
 
 ## 재사용 흐름 (Windows PowerShell)
 

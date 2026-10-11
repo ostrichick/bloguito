@@ -32,8 +32,13 @@ function validateArgs(args) {
   if (source === 'local_static' ?
       !(target.protocol === 'file:' || (target.protocol === 'http:' && ['localhost','127.0.0.1'].includes(target.hostname))) :
       target.protocol !== 'https:') throw Error('render_source_url_conflict');
-  if (source === 'authenticated_preview' && !/preview(?:_id)?=(?:1|true|\d+)/.test(target.search))
+  if (source === 'authenticated_preview' &&
+      !(['1','true'].includes(target.searchParams.get('preview')) ||
+        /^[1-9]\d*$/.test(target.searchParams.get('preview_id') || '')))
     throw Error('authenticated_preview_url_required');
+  const urlIds = ['p','page_id','preview_id'].flatMap(key => target.searchParams.getAll(key));
+  if (urlIds.some(id => !/^[1-9]\d*$/.test(id) || Number(id) !== Number(args['--post-id'])))
+    throw Error('browser_qa_url_post_id_mismatch');
   const endpoint = args['--endpoint'] || 'http://127.0.0.1:9222';
   const parsed = new URL(endpoint);
   if (parsed.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(parsed.hostname))
@@ -96,6 +101,17 @@ function observePage() {
   const visible = (element) => Boolean(element && element.getClientRects().length &&
     getComputedStyle(element).display !== 'none' && getComputedStyle(element).visibility !== 'hidden');
   const main = document.documentElement;
+  // A caller-supplied --post-id and --content-sha are insufficient evidence
+  // that the CDP tab actually rendered that WordPress post. Record the post ID
+  // independently advertised by the theme markup, when present.
+  const bodyMatch = document.body?.className?.match(/(?:^|\s)postid-(\d+)(?:\s|$)/);
+  const articleMatch = document.querySelector('.entry-content')?.closest('article[id^="post-"]')
+    ?.id?.match(/^post-(\d+)$/);
+  const shortlink = document.querySelector('link[rel="shortlink"]')?.href;
+  const shortlinkId = shortlink ? new URL(shortlink).searchParams.get('p') : null;
+  const postIds = [bodyMatch?.[1], articleMatch?.[1], shortlinkId]
+    .filter(id => id && /^[1-9]\d*$/.test(id)).map(Number);
+  const pagePostId = postIds.length && postIds.every(id => id === postIds[0]) ? postIds[0] : null;
   const tableContainers = Array.from(document.querySelectorAll('.bloguito-info-table'));
   const mobileCards = document.querySelectorAll('.bloguito-overview-mobile');
   const cardContainers = Array.from(mobileCards);
@@ -132,7 +148,8 @@ function observePage() {
       target_existing: !(a.getAttribute('href') || '').startsWith('#') ||
         Array.from(document.querySelectorAll('[id]')).some(el=>el.id===decodeURIComponent(a.getAttribute('href').slice(1)))}));
   window.scrollTo(0,0);
-  return {ready_state: document.readyState, inner_width: window.innerWidth,
+  return {ready_state: document.readyState, page_post_id: pagePostId,
+    inner_width: window.innerWidth,
     client_width: main.clientWidth,
     scroll_width: main.scrollWidth, toc:{links:toc}, tables, ctas,
     wp_theme_dom:Boolean(document.querySelector('.wp-site-blocks,.site-main,#primary,.entry-content') ||

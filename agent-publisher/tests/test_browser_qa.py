@@ -40,7 +40,7 @@ def fixture(root, *, render_source='wordpress_theme', scopes=None, cta=False, ca
         image_sha = hashlib.sha256(img.read_bytes()).hexdigest()
         small = width == 390
         observation = {
-            'ready_state': 'complete', 'inner_width': width,
+            'ready_state': 'complete', 'page_post_id': 641, 'inner_width': width,
             'client_width': width, 'scroll_width': width,
             'wp_theme_dom': render_source != 'local_static',
             'authenticated_dom': render_source == 'authenticated_preview',
@@ -201,6 +201,41 @@ class BrowserQaEvidenceTests(unittest.TestCase):
             evidence['render_source']='authenticated_preview'
             with self.assertRaisesRegex(ValueError,'render_source_url_conflict'):
                 evaluate_browser_qa(evidence,evidence_dir=root)
+
+    def test_wordpress_page_id_must_be_observed_in_both_viewports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            evidence = fixture(root)
+            evidence['screens'][1]['observation']['page_post_id'] = 642
+            with self.assertRaisesRegex(ValueError, 'page_post_id_unverified_or_mismatch'):
+                evaluate_browser_qa(evidence, evidence_dir=root)
+            evidence['screens'][1]['observation']['page_post_id'] = None
+            with self.assertRaisesRegex(ValueError, 'page_post_id_unverified_or_mismatch'):
+                evaluate_browser_qa(evidence, evidence_dir=root)
+
+    def test_qa_screen_same_hostname_but_other_post_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            evidence = fixture(root)
+            evidence['screens'][1]['url'] = 'https://lifeinfo24.org/?p=642'
+            with self.assertRaisesRegex(ValueError, 'screen_url_invalid'):
+                evaluate_browser_qa(evidence, evidence_dir=root)
+
+    def test_post_id_query_and_true_preview_parameter_must_be_bound(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            evidence = fixture(root)
+            evidence['url'] = 'https://lifeinfo24.org/?p=642'
+            evidence['screens'][0]['url'] = evidence['url']
+            evidence['screens'][1]['url'] = evidence['url']
+            with self.assertRaisesRegex(ValueError, 'render_source_url_conflict'):
+                evaluate_browser_qa(evidence, evidence_dir=root)
+            evidence['render_source'] = 'authenticated_preview'
+            evidence['url'] = 'https://lifeinfo24.org/?p=641&badpreview=1'
+            for screen in evidence['screens']:
+                screen['url'] = evidence['url']
+            with self.assertRaisesRegex(ValueError, 'render_source_url_conflict'):
+                evaluate_browser_qa(evidence, evidence_dir=root)
 
     def test_unsupported_public_page_or_featured_image_not_auto_approved(self):
         with tempfile.TemporaryDirectory() as folder:

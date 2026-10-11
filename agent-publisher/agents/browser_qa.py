@@ -11,7 +11,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 
@@ -32,7 +32,7 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _valid_url(url: str, render_source: str) -> bool:
+def _valid_url(url: str, render_source: str, post_id: int) -> bool:
     if not isinstance(url, str):
         return False
     parsed = urlsplit(url)
@@ -40,9 +40,15 @@ def _valid_url(url: str, render_source: str) -> bool:
         return parsed.scheme == 'file' or (parsed.scheme == 'http' and parsed.hostname in {'localhost', '127.0.0.1'})
     if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
         return False
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    for name in ('p', 'page_id', 'preview_id'):
+        if name in params and any(not value.isdecimal() or int(value) != post_id
+                                  for value in params[name]):
+            return False
     if render_source == 'authenticated_preview':
-        return ('preview=true' in parsed.query or 'preview=1' in parsed.query
-                or 'preview_id=' in parsed.query)
+        return (bool(set(params.get('preview', [])) & {'1','true'})
+                or any(value.isdecimal() and int(value) == post_id
+                       for value in params.get('preview_id', [])))
     return True
 
 
@@ -169,7 +175,7 @@ def evaluate_browser_qa(evidence: dict, *, evidence_dir: Path) -> dict:
             or not isinstance(content_sha, str) or not _SHA.fullmatch(content_sha)):
         raise ValueError('browser_qa_identity_invalid')
     url = evidence.get('url')
-    if not _valid_url(url, source):
+    if not _valid_url(url, source, post_id):
         raise ValueError('browser_qa_render_source_url_conflict')
     execution = evidence.get('execution')
     if (not isinstance(execution, dict) or execution.get('engine') != 'existing_cdp_session'
@@ -194,10 +200,10 @@ def evaluate_browser_qa(evidence: dict, *, evidence_dir: Path) -> dict:
 
     verified = {}
     for width, screen in zip(QA_VIEWPORTS, screens):
-        if not isinstance(screen, dict) or not _valid_url(screen.get('url'), source):
+        if not isinstance(screen, dict) or not _valid_url(screen.get('url'), source, post_id):
             raise ValueError('browser_qa_screen_url_invalid')
-        if urlsplit(screen['url']).hostname != urlsplit(url).hostname:
-            raise ValueError('browser_qa_site_origin_changed')
+        if screen['url'] != url:
+            raise ValueError('browser_qa_screen_url_changed')
         screenshot = screen.get('screenshot')
         if not isinstance(screenshot, dict):
             raise ValueError('browser_qa_screenshot_missing')
@@ -221,6 +227,9 @@ def evaluate_browser_qa(evidence: dict, *, evidence_dir: Path) -> dict:
     if source in {'wordpress_theme', 'authenticated_preview'}:
         if not all(screen['observation'].get('wp_theme_dom') is True for screen in screens):
             raise ValueError('browser_qa_wordpress_theme_not_observed')
+        if not all(type(screen['observation'].get('page_post_id')) is int
+                   and screen['observation']['page_post_id'] == post_id for screen in screens):
+            raise ValueError('browser_qa_page_post_id_unverified_or_mismatch')
     if source == 'authenticated_preview':
         if not all(screen['observation'].get('authenticated_dom') is True for screen in screens):
             raise ValueError('browser_qa_authenticated_preview_not_observed')

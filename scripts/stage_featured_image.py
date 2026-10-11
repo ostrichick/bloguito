@@ -132,7 +132,12 @@ def main() -> int:
     args = parser.parse_args()
 
     output = args.output or args.source.with_name(args.source.stem + "-upload.webp")
-    receipt_path = args.receipt or output.with_suffix(output.suffix + ".stage.json")
+    canonical_receipt = output.with_suffix(output.suffix + ".stage.json").resolve()
+    receipt_path = args.receipt or canonical_receipt
+    # The downstream import verifier always reads <staged>.stage.json.
+    # A free-form --receipt silently produces an unusable staged file.
+    if receipt_path.resolve() != canonical_receipt:
+        parser.error("stage_receipt_must_use_canonical_path")
     if args.lossless_png:
         if output.suffix.lower() != ".png" or args.output is None:
             parser.error("lossless_png_requires_explicit_png_output")

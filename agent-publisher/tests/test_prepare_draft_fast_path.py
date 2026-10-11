@@ -30,6 +30,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.validate_bundle", return_value=READY), \
                     patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
                         "candidate_number": 1, "selection_mode": "agent-delegated",
+                        "selection_actor": "agent-delegated",
                         "source_sha256": "a" * 64,
                     }), \
                     patch("agents.publisher.PublisherAgent.publish", return_value=903), \
@@ -54,6 +55,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
             with patch("sys.argv", argv), \
                  patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
                      "candidate_number": 1, "selection_mode": "agent-delegated",
+                     "selection_actor": "agent-delegated",
                      "source_sha256": "a" * 64,
                  }), \
                  patch("agents.featured_image.replace_featured_image_from_live_baseline", return_value={
@@ -107,6 +109,7 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("editorial_cli.EditorialWriterAgent.review", return_value=expected_review) as review, \
                     patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
                         "candidate_number": 1, "selection_mode": "user",
+                        "selection_actor": "user",
                         "source_sha256": "a" * 64,
                     }) as lineage, \
                     patch("agents.designer.cleanup_generated_cover") as cleanup, \
@@ -180,7 +183,8 @@ class PrepareDraftFastPathTests(unittest.TestCase):
             with patch("sys.argv", argv), \
                     patch("editorial_cli.validate_bundle", return_value=READY), \
                     patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
-                        "candidate_number": 1, "selection_mode": "user", "source_sha256": "a" * 64,
+                        "candidate_number": 1, "selection_mode": "user",
+                        "selection_actor": "user", "source_sha256": "a" * 64,
                     }), \
                     patch("agents.publisher.PublisherAgent.publish", return_value=903) as publish, \
                     patch("agents.featured_image.replace_featured_image_from_live_baseline",
