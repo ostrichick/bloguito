@@ -36,6 +36,11 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
         self.assertEqual(857, write.call_args.kwargs["expected_thumbnail_id"])
         self.assertEqual(set(follow.REQUIRED), set(write.call_args.kwargs["completion_requirements"]))
         self.assertEqual("draft", update.call_args.kwargs["result"]["initial_status"])
+        self.assertEqual(follow.image_baseline_sha256(
+            content_sha256=self.baseline["content_sha256"],
+            thumbnail_id=857, status="draft", title=self.baseline["title"],
+            slug=self.baseline["slug"], excerpt=self.baseline["excerpt"],
+        ), update.call_args.kwargs["result"]["initial_image_baseline_sha256"])
 
     def test_connection_failure_cannot_create_a_false_preflight(self):
         with (patch.object(follow, "read_wordpress", side_effect=RuntimeError("ssh_failed")),
@@ -151,6 +156,27 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                         selected_candidate=1, selection_mode="agent-delegated")
             run.assert_not_called()
 
+    def test_mutated_checkpoint_metadata_blocks_before_staging_or_import(self):
+        checkpoint = {
+            "status": "in_progress", "expected_content_sha256": "a" * 64,
+            "expected_thumbnail_id": 857, "completed": {},
+            "result": {"initial_status": "draft", "initial_title": "changed title",
+                       "initial_slug": "", "initial_excerpt": "existing",
+                       "initial_image_baseline_sha256": "f" * 64},
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "candidate.png"
+            source.write_bytes(b"original saved bytes")
+            with patch.object(follow, "load_after_image_checkpoint", return_value=checkpoint), \
+                 patch.object(follow, "read_wordpress") as live, \
+                 patch.object(follow, "_run") as run:
+                with self.assertRaisesRegex(ValueError, "after_image_initial_baseline_corrupted"):
+                    follow.continue_upload(
+                        856, source, "ALT", selected_candidate=1,
+                        selection_mode="agent-delegated")
+            run.assert_not_called()
+            live.assert_not_called()
+
     def test_one_call_continues_from_saved_image_through_verified_upload(self):
         checkpoint = {
             "status": "in_progress", "expected_content_sha256": "a" * 64,
@@ -190,6 +216,14 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
             live.assert_called_once_with(856, "bloguito")
             self.assertIn("replace-featured-image", run.call_args.args[0])
             self.assertIn("--confirm-image-selection", run.call_args.args[0])
+            argv = run.call_args.args[0]
+            fingerprint = argv[argv.index("--expected-initial-image-baseline-sha256") + 1]
+            self.assertEqual(follow.image_baseline_sha256(
+                content_sha256=self.baseline["content_sha256"],
+                thumbnail_id=self.baseline["thumbnail_id"],
+                status=self.baseline["status"], title=self.baseline["title"],
+                slug=self.baseline["slug"], excerpt=self.baseline["excerpt"],
+            ), fingerprint)
             self.assertEqual("completed", result["status"])
             self.assertEqual(["image_generated", "image_saved_or_handed_off"],
                              update.call_args_list[0].kwargs["completed_steps"])
@@ -328,6 +362,20 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
         self.assertEqual(1, wp.call_count)
         self.assertEqual(856, json.loads(wp.call_args.kwargs["input_text"])["post_id"])
         self.assertEqual("eval", wp.call_args.args[1][0])
+
+    def test_handoff_null_thumbnail_fingerprint_remains_explicitly_null(self):
+        no_cover = {**self.baseline, "thumbnail_id": None}
+        original = follow.image_baseline_sha256(
+            content_sha256=no_cover["content_sha256"], thumbnail_id=None,
+            status=no_cover["status"], title=no_cover["title"],
+            slug=no_cover["slug"], excerpt=no_cover["excerpt"],
+        )
+        other = follow.image_baseline_sha256(
+            content_sha256=no_cover["content_sha256"], thumbnail_id=857,
+            status=no_cover["status"], title=no_cover["title"],
+            slug=no_cover["slug"], excerpt=no_cover["excerpt"],
+        )
+        self.assertNotEqual(original, other)
 
     def test_read_wordpress_rejects_invalid_snapshot_without_fallback(self):
         with patch.object(follow, "_wp", return_value=json.dumps({

@@ -1391,6 +1391,29 @@ class EditorialCliViaSshTransportTests(unittest.TestCase):
         self.assertEqual('replace-featured-image', make.call_args.args[0])
         self.assertEqual({724}, make.call_args.args[1])
 
+    def test_image_handoff_initial_baseline_is_forwarded_verbatim_by_ssh_adapter(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / 'cover.webp'
+            image.write_bytes(b'candidate')
+            expected = 'a' * 64
+            cli = ['replace-featured-image', '--post-id', '724',
+                   '--image-path', str(image), '--expected-initial-image-baseline-sha256',
+                   expected, '--alt-text', 'ALT', '--confirm-update']
+            argv = ['editorial_cli_via_ssh.py', '--ssh-host', 'bloguito', '--', *cli]
+            observed = []
+
+            def fake_cli():
+                observed.extend(module.sys.argv[1:])
+
+            with patch('sys.argv', argv), \
+                 patch.object(module, 'resolve_transport', return_value=SimpleNamespace(
+                     mode='direct', host='bloguito', user=None, wsl_distro=None)), \
+                 patch.object(module, 'make_transport', return_value=lambda *args, **kwargs: None), \
+                 patch.object(module.editorial_cli, 'main', side_effect=fake_cli):
+                module.main()
+        self.assertEqual(cli, observed)
+
     def test_primary_replace_featured_image_alt_only_uses_restricted_transport_without_image_upload(self):
         module = load_module()
         argv = [

@@ -69,6 +69,8 @@ def _main():
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
     parser.add_argument('--expected-thumbnail-id', type=int,
                         help='replace-featured-image: current _thumbnail_id CAS value')
+    parser.add_argument('--expected-initial-image-baseline-sha256',
+                        help='replace-featured-image handoff: immutable original post+thumbnail snapshot fingerprint')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
     parser.add_argument('--confirm-image-selection', action='store_true',
                         help='manual image path: confirm the user selected this exact reviewed candidate')
@@ -260,6 +262,8 @@ def _main():
         if args.inventory or args.file:
             parser.error(f'{label} uses --post-id/--image-path and no bundle file')
         if args.attest_existing:
+            if args.expected_initial_image_baseline_sha256:
+                parser.error('image handoff baseline applies only to new image uploads')
             if (not args.post_id or not args.image_path or not args.alt_text
                     or not args.confirm_update or not args.expected_thumbnail_id
                     or not args.expected_content_sha256 or args.confirm_image_selection or args.alt_only):
@@ -288,6 +292,8 @@ def _main():
             parser.error(f'{label} requires --post-id, --alt-text and --confirm-update')
         if args.alt_only and args.image_path:
             parser.error(f'{label} --alt-only cannot be combined with --image-path')
+        if args.alt_only and args.expected_initial_image_baseline_sha256:
+            parser.error('image handoff baseline applies only to new image uploads')
         if args.alt_only and args.confirm_image_selection:
             parser.error(f'{label} --alt-only cannot be combined with --confirm-image-selection')
         if not args.alt_only and not args.image_path:
@@ -321,11 +327,15 @@ def _main():
                 confirmed=True,
                 approval_kind='manual_user_selected',
                 approval_evidence_sha256=evidence_sha,
+                expected_initial_baseline_sha256=args.expected_initial_image_baseline_sha256,
             )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         return
+
+    if args.expected_initial_image_baseline_sha256:
+        parser.error('--expected-initial-image-baseline-sha256 is only valid for replace-featured-image uploads')
 
     if args.action == 'import-section-image':
         if args.inventory or args.file:

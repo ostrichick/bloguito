@@ -12,6 +12,39 @@ READY = {"status": "ready", "reasons": [], "details": []}
 
 
 class PrepareDraftFastPathTests(unittest.TestCase):
+    def test_replace_featured_image_cli_passes_pinned_initial_baseline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / "selected.webp"
+            image.write_bytes(b"candidate-bytes")
+            fingerprint = "b" * 64
+            argv = [
+                "editorial_cli.py", "replace-featured-image", "--post-id", "641",
+                "--image-path", str(image), "--candidate-manifest", str(Path(folder) / "manifest.json"),
+                "--selected-candidate", "1", "--selection-mode", "agent-delegated",
+                "--alt-text", "Reviewed ALT", "--confirm-update", "--confirm-image-selection",
+                "--expected-initial-image-baseline-sha256", fingerprint,
+            ]
+            with patch("sys.argv", argv), \
+                 patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
+                     "candidate_number": 1, "selection_mode": "agent-delegated",
+                     "source_sha256": "a" * 64,
+                 }), \
+                 patch("agents.featured_image.replace_featured_image_from_live_baseline", return_value={
+                     "post_id": 641, "attachment_id": 777,
+                 }) as replace:
+                editorial_cli.main()
+        self.assertEqual(fingerprint, replace.call_args.kwargs["expected_initial_baseline_sha256"])
+
+    def test_replace_featured_image_cli_rejects_pinned_baseline_for_alt_only(self):
+        argv = ["editorial_cli.py", "replace-featured-image", "--post-id", "641",
+                "--alt-only", "--alt-text", "Reviewed ALT", "--confirm-update",
+                "--expected-initial-image-baseline-sha256", "b" * 64]
+        with patch("sys.argv", argv), \
+             patch("agents.featured_image.update_featured_image_alt_from_live_baseline") as alt:
+            with self.assertRaises(SystemExit):
+                editorial_cli.main()
+        alt.assert_not_called()
+
     def test_prepare_draft_reviews_once_without_cli_inventory_and_uses_provided_image(self):
         bundle = sample()
         expected_review = bundle.pop("review")

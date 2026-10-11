@@ -29,7 +29,9 @@ from agents.task_state import (  # noqa: E402
     update_after_image_checkpoint,
     write_after_image_checkpoint,
 )
-from agents.featured_image import verify_manual_image_upload_lineage  # noqa: E402
+from agents.featured_image import (  # noqa: E402
+    image_baseline_sha256, verify_manual_image_upload_lineage,
+)
 from agents.wordpress_mutation import POST_THUMBNAIL_SNAPSHOT_SCRIPT  # noqa: E402
 
 REQUIRED = (
@@ -169,6 +171,11 @@ def begin(post_id: int, host: str = "bloguito", *,
         raise ValueError("active_after_image_checkpoint_exists:use_status_or_continue")
     with _phase(observer, "begin_wordpress_snapshot"):
         baseline = read_wordpress(post_id, host)
+    original_fingerprint = image_baseline_sha256(
+        content_sha256=baseline["content_sha256"],
+        thumbnail_id=baseline["thumbnail_id"], status=baseline["status"],
+        title=baseline["title"], slug=baseline["slug"], excerpt=baseline["excerpt"],
+    )
     write_after_image_checkpoint(
         post_id,
         remaining_steps=[
@@ -184,7 +191,8 @@ def begin(post_id: int, host: str = "bloguito", *,
     update_after_image_checkpoint(
         post_id,
         result={"initial_status": baseline["status"], "initial_title": baseline["title"],
-                "initial_slug": baseline["slug"], "initial_excerpt": baseline["excerpt"]},
+                "initial_slug": baseline["slug"], "initial_excerpt": baseline["excerpt"],
+                "initial_image_baseline_sha256": original_fingerprint},
     )
     return {
         "status": "awaiting_image_gen",
@@ -279,6 +287,18 @@ def continue_upload(
         raise ValueError("cos_save_image_original_missing")
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
     result = state.get("result") or {}
+    # Begin fixes these six fields before native image generation. Preserve the
+    # original digest across retries, while accepting pre-S2 checkpoints that
+    # contain the same complete field set but did not yet persist a digest.
+    original_baseline_fingerprint = image_baseline_sha256(
+        content_sha256=state["expected_content_sha256"],
+        thumbnail_id=state["expected_thumbnail_id"],
+        status=result["initial_status"], title=result["initial_title"],
+        slug=result["initial_slug"], excerpt=result["initial_excerpt"],
+    )
+    if (result.get("initial_image_baseline_sha256") is not None
+            and result["initial_image_baseline_sha256"] != original_baseline_fingerprint):
+        raise ValueError("after_image_initial_baseline_corrupted")
     if result.get("staged_source_sha256") and result["staged_source_sha256"] != source_sha:
         raise ValueError("previously_staged_original_changed")
     if result.get("selected_candidate") is not None and (
@@ -345,6 +365,7 @@ def continue_upload(
             "--post-id", str(post_id), "--image-path", str(staged),
             "--candidate-manifest", str(manifest), "--selected-candidate", str(selected_candidate),
             "--selection-mode", selection_mode, "--alt-text", alt_text.strip(),
+            "--expected-initial-image-baseline-sha256", original_baseline_fingerprint,
             "--confirm-update", "--confirm-image-selection",
         ], timeout=240)
     receipt = _parse_upload_receipt(raw, post_id)

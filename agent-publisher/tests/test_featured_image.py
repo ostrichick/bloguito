@@ -13,7 +13,9 @@ from agents.featured_image import (
     _advance_matching_after_image_checkpoint,
     _read_post_meta,
     hardened_attach_featured_image,
+    image_baseline_sha256,
     quick_replace_featured_image,
+    replace_featured_image_from_live_baseline,
     reconcile_featured_image_outcome,
     recover_imported_featured_image_outcome,
     replace_featured_image,
@@ -35,6 +37,164 @@ class FeaturedImageReplacementTests(unittest.TestCase):
         path = Path(folder) / "cover.jpg"
         Image.new("RGB", (1200, 675), color=(245, 245, 245)).save(path, "JPEG")
         return path
+
+    @staticmethod
+    def _baseline_digest(live, thumbnail):
+        return image_baseline_sha256(
+            content_sha256=hashlib.sha256(live["post_content"].encode("utf-8")).hexdigest(),
+            thumbnail_id=thumbnail, status=live["post_status"],
+            title=live["post_title"], slug=live["post_name"],
+            excerpt=live["post_excerpt"],
+        )
+
+    def test_handoff_initial_drift_rejected_before_any_import_or_task_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = self._image(folder)
+            initial = {"post_status": "draft", "post_title": "old", "post_name": "slug",
+                       "post_content": "body", "post_excerpt": "intro"}
+            changed = {**initial, "post_title": "other editor"}
+            pinned = self._baseline_digest(initial, 70)
+            with patch("agents.featured_image.get_post", return_value=changed), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.load_task_state") as state, \
+                 patch("agents.featured_image.replace_featured_image") as replace, \
+                 patch("agents.featured_image.hardened_attach_featured_image") as upload:
+                with self.assertRaisesRegex(ValueError, "initial_baseline_changed_before_import"):
+                    replace_featured_image_from_live_baseline(
+                        641, image, alt_text="alt", confirmed=True,
+                        expected_initial_baseline_sha256=pinned)
+            state.assert_not_called()
+            replace.assert_not_called()
+            upload.assert_not_called()
+
+    def test_handoff_null_thumbnail_changed_to_new_cover_blocks_before_import(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = self._image(folder)
+            live = {"post_status": "draft", "post_title": "old", "post_name": "slug",
+                    "post_content": "body", "post_excerpt": "intro"}
+            pinned = self._baseline_digest(live, None)
+            with patch("agents.featured_image.get_post", return_value=live), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.replace_featured_image") as replace:
+                with self.assertRaisesRegex(ValueError, "initial_baseline_changed_before_import"):
+                    replace_featured_image_from_live_baseline(
+                        641, image, alt_text="alt", confirmed=True,
+                        expected_initial_baseline_sha256=pinned)
+            replace.assert_not_called()
+
+    def test_handoff_drift_between_outer_snapshot_and_editorial_lock_blocks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = self._image(folder)
+            initial = {"post_status": "draft", "post_title": "original", "post_name": "slug",
+                       "post_content": "body", "post_excerpt": "intro"}
+            changed = {**initial, "post_excerpt": "new excerpt"}
+            with patch("agents.featured_image.acquire_editorial_lock", return_value=object()), \
+                 patch("agents.featured_image.release_editorial_lock"), \
+                 patch("agents.featured_image.get_post", return_value=changed), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.start_task_state") as state, \
+                 patch("agents.featured_image.hardened_attach_featured_image") as upload:
+                with self.assertRaisesRegex(ValueError, "initial_baseline_changed_before_import"):
+                    replace_featured_image(
+                        641, image, hashlib.sha256(b"body").hexdigest(),
+                        expected_thumbnail_id=70, alt_text="alt", confirmed=True,
+                        expected_initial_baseline_sha256=self._baseline_digest(initial, 70))
+            state.assert_not_called()
+            upload.assert_not_called()
+
+    def test_handoff_drift_during_remote_copy_rejected_before_import_fence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = self._image(folder)
+            info = validate_featured_image_file(image)
+            initial = {"post_status": "draft", "post_title": "original", "post_name": "slug",
+                       "post_content": "body", "post_excerpt": "intro"}
+            changed = {**initial, "post_title": "another editor"}
+            commands = []
+
+            def remote(argv, **kwargs):
+                commands.append(argv)
+                if argv[:3] == ["sudo", "docker", "cp"]:
+                    return Mock(returncode=0, stdout="", stderr="")
+                if argv[:5] == ["sudo", "docker", "exec", "wordpress_app", "sha256sum"]:
+                    return Mock(returncode=0, stdout=f"{info['sha256']}  image\n", stderr="")
+                if argv[:5] == ["sudo", "docker", "exec", "wordpress_app", "rm"]:
+                    return Mock(returncode=0, stdout="", stderr="")
+                raise AssertionError(argv)
+
+            with patch("agents.featured_image.ROOT", Path(folder)), \
+                 patch("agents.featured_image.acquire_featured_image_lock", return_value={"token": "a" * 32}), \
+                 patch("agents.featured_image.release_featured_image_lock"), \
+                 patch("agents.featured_image.get_post", side_effect=[initial, changed]), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.find_attachment_ids_by_sha", return_value=[]), \
+                 patch("agents.featured_image.set_featured_image_import_pending") as fence, \
+                 patch("agents.featured_image.subprocess.run", side_effect=remote):
+                with self.assertRaisesRegex(ValueError, "initial_baseline_changed_before_import") as caught:
+                    hardened_attach_featured_image(
+                        641, image, hashlib.sha256(b"body").hexdigest(),
+                        expected_thumbnail_id=70, alt_text="alt", image_info=info,
+                        expected_initial_baseline_sha256=self._baseline_digest(initial, 70))
+            self.assertFalse(any("import" in argv for argv in commands))
+            fence.assert_not_called()
+            receipt = json.loads(Path(caught.exception.failure_receipt).read_text(encoding="utf-8"))
+            self.assertFalse(receipt["import_attempted"])
+            self.assertEqual("pre_import_baseline_recheck", receipt["stage"])
+
+    def test_handoff_post_import_other_editor_change_never_overrides_thumbnail(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = self._image(folder)
+            info = validate_featured_image_file(image)
+            original = {"post_status": "draft", "post_title": "original", "post_name": "slug",
+                        "post_content": "body", "post_excerpt": "intro"}
+            world = {"post": dict(original), "thumbnail": 70, "imports": 0}
+            outcome = []
+
+            def remote(argv, **kwargs):
+                wp = _wp_args(argv)
+                if wp and wp[:2] == ["media", "import"]:
+                    world["imports"] += 1
+                    world["post"]["post_title"] = "another editor"
+                    world["thumbnail"] = 999
+                    return Mock(returncode=0, stdout="777\n", stderr="")
+                if argv[:3] == ["sudo", "docker", "cp"]:
+                    return Mock(returncode=0, stdout="", stderr="")
+                if argv[:5] == ["sudo", "docker", "exec", "wordpress_app", "sha256sum"]:
+                    return Mock(returncode=0, stdout=f"{info['sha256']}  image\n", stderr="")
+                if argv[:5] == ["sudo", "docker", "exec", "wordpress_app", "rm"]:
+                    return Mock(returncode=0, stdout="", stderr="")
+                raise AssertionError(argv)
+
+            def guarded(*args, **kwargs):
+                expected = kwargs["expected"]
+                self.assertEqual("original", expected["post_title"])
+                self.assertEqual(70, kwargs["expected_thumbnail_id"])
+                self.assertEqual("another editor", world["post"]["post_title"])
+                self.assertEqual(999, world["thumbnail"])
+                raise ValueError("wordpress_guarded_cas_mismatch")
+
+            with patch("agents.featured_image.ROOT", Path(folder)), \
+                 patch("agents.featured_image.acquire_featured_image_lock", return_value={"token": "a" * 32}), \
+                 patch("agents.featured_image.release_featured_image_lock"), \
+                 patch("agents.featured_image.get_post", return_value=original), \
+                 patch("agents.featured_image._read_post_meta", return_value="70"), \
+                 patch("agents.featured_image.find_attachment_ids_by_sha", side_effect=[[], [777]]), \
+                 patch("agents.featured_image.set_featured_image_import_pending") as fence, \
+                 patch("agents.featured_image.guarded_set_post_thumbnail", side_effect=guarded) as cas, \
+                 patch("agents.featured_image.subprocess.run", side_effect=remote):
+                with self.assertRaisesRegex(ValueError, "wordpress_guarded_cas_mismatch") as caught:
+                    hardened_attach_featured_image(
+                        641, image, hashlib.sha256(b"body").hexdigest(),
+                        expected_thumbnail_id=70, alt_text="alt", image_info=info,
+                        outcome_callback=outcome.append,
+                        expected_initial_baseline_sha256=self._baseline_digest(original, 70))
+            self.assertEqual(1, world["imports"])
+            self.assertEqual(999, world["thumbnail"])
+            cas.assert_called_once()
+            self.assertEqual([True], [v.kwargs["pending"] for v in fence.call_args_list])
+            self.assertEqual(777, outcome[0]["attachment_id"])
+            receipt = json.loads(Path(caught.exception.failure_receipt).read_text(encoding="utf-8"))
+            self.assertTrue(receipt["import_attempted"])
+            self.assertFalse(receipt["automatic_media_reimport_allowed"])
 
     def test_after_image_checkpoint_cannot_be_completed_by_different_image(self):
         with tempfile.TemporaryDirectory() as folder:

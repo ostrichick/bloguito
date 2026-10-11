@@ -49,6 +49,37 @@ from agents.workflow_metrics import increment, timed
 ALLOWED_POST_STATUSES = {"publish", "draft", "pending", "future", "private"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_SOURCE_FORMATS = {"JPEG", "PNG", "WEBP"}
+
+
+def image_baseline_sha256(*, content_sha256: str, thumbnail_id: int | None,
+                          status: str, title: str, slug: str, excerpt: str) -> str:
+    """Fingerprint all image-handoff CAS fields, including an explicit null cover.
+
+    Unlike a newly read baseline, this fingerprint is fixed when AFTER_IMAGE
+    begins. It is not an authorization token or an image provenance claim.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", content_sha256 or ""):
+        raise ValueError("invalid_image_initial_baseline")
+    if thumbnail_id is not None and (type(thumbnail_id) is not int or thumbnail_id <= 0):
+        raise ValueError("invalid_image_initial_baseline")
+    if any(not isinstance(value, str) for value in (status, title, slug, excerpt)):
+        raise ValueError("invalid_image_initial_baseline")
+    payload = {
+        "content_sha256": content_sha256, "thumbnail_id": thumbnail_id,
+        "status": status, "title": title, "slug": slug, "excerpt": excerpt,
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _post_image_baseline_sha256(live: dict, thumbnail_id: int | None) -> str:
+    return image_baseline_sha256(
+        content_sha256=content_sha256(live.get("post_content", "")),
+        thumbnail_id=thumbnail_id,
+        status=live.get("post_status", ""), title=live.get("post_title", ""),
+        slug=live.get("post_name", ""), excerpt=live.get("post_excerpt", ""),
+    )
 SHARED_CHATGPT_ORIGIN = {
     "generator_tool": "image_gen.text2im",
     "save_tool": "chatgpt_user_shared_original_url",
@@ -875,6 +906,7 @@ def hardened_attach_featured_image(
     publish_binding: dict | None = None,
     approval_kind: str | None = None,
     approval_evidence_sha256: str | None = None,
+    expected_initial_baseline_sha256: str | None = None,
 ) -> dict:
     """One fail-fast upload primitive shared by create, edit and image-only flows.
 
@@ -958,6 +990,10 @@ def hardened_attach_featured_image(
         expected_thumb_text = None if expected_thumbnail_id is None else str(expected_thumbnail_id)
         if before_thumb != expected_thumb_text:
             raise ValueError("featured_image_changed_before_replacement")
+        if (expected_initial_baseline_sha256 is not None
+                and _post_image_baseline_sha256(live, expected_thumbnail_id)
+                != expected_initial_baseline_sha256):
+            raise ValueError("featured_image_initial_baseline_changed_before_import")
 
         stage = "local_hash_recheck"
         if _sha256_file(image_path) != image_sha256:
@@ -993,6 +1029,24 @@ def hardened_attach_featured_image(
             image_sha256,
             timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, stage),
         )
+        if expected_initial_baseline_sha256 is not None:
+            # Copy/hash/attachment discovery can take long enough for an editor
+            # to change the post. Check again before the non-idempotent import
+            # fence. A later race is still caught by guarded thumbnail CAS.
+            stage = "pre_import_baseline_recheck"
+            latest = get_post(
+                base, post_id,
+                fields=["post_status", "post_title", "post_name", "post_content", "post_excerpt"],
+                timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, stage),
+            )
+            latest_thumb = _read_post_meta(
+                base, post_id, "_thumbnail_id",
+                timeout=budget.timeout(FEATURED_IMAGE_READ_TIMEOUT_SECONDS, stage),
+            )
+            if (latest_thumb != expected_thumb_text
+                    or _post_image_baseline_sha256(latest, expected_thumbnail_id)
+                    != expected_initial_baseline_sha256):
+                raise ValueError("featured_image_initial_baseline_changed_before_import")
         import_attempt = {
             "image_sha256": image_sha256,
             "expected_thumbnail_id": expected_thumbnail_id,
@@ -1428,6 +1482,7 @@ def replace_featured_image(
     task_baseline_extra: dict | None = None,
     approval_kind: str | None = None,
     approval_evidence_sha256: str | None = None,
+    expected_initial_baseline_sha256: str | None = None,
 ) -> dict:
     """Replace only ``_thumbnail_id`` while preserving post body/SEO/URL/status."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -1437,6 +1492,9 @@ def replace_featured_image(
     if expected_thumbnail_id is not None and (
             not isinstance(expected_thumbnail_id, int) or expected_thumbnail_id <= 0):
         raise ValueError("expected_thumbnail_id_required")
+    if (expected_initial_baseline_sha256 is not None
+            and not re.fullmatch(r"[0-9a-f]{64}", expected_initial_baseline_sha256)):
+        raise ValueError("invalid_image_initial_baseline")
     alt_text = (alt_text or "").strip()
     if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
         raise ValueError("featured_image_alt_text_required")
@@ -1471,6 +1529,10 @@ def replace_featured_image(
         expected_thumb_text = None if expected_thumbnail_id is None else str(expected_thumbnail_id)
         if before_thumb != expected_thumb_text:
             raise ValueError("featured_image_changed_before_replacement")
+        if (expected_initial_baseline_sha256 is not None
+                and _post_image_baseline_sha256(live, expected_thumbnail_id)
+                != expected_initial_baseline_sha256):
+            raise ValueError("featured_image_initial_baseline_changed_before_import")
         qa_requirements = []
         if manage_task_state:
             previous_state = load_task_state(post_id)
@@ -1567,6 +1629,7 @@ def replace_featured_image(
             publish_binding=publish_binding,
             approval_kind=approval_kind,
             approval_evidence_sha256=approval_evidence_sha256,
+            expected_initial_baseline_sha256=expected_initial_baseline_sha256,
         )
 
         if manage_task_state:
@@ -1678,6 +1741,7 @@ def replace_featured_image_from_live_baseline(
     confirmed: bool = False,
     approval_kind: str | None = None,
     approval_evidence_sha256: str | None = None,
+    expected_initial_baseline_sha256: str | None = None,
 ) -> dict:
     """Canonical image-only path: read live CAS baseline and enforce retry budget."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -1685,6 +1749,9 @@ def replace_featured_image_from_live_baseline(
     alt_text = (alt_text or "").strip()
     if not alt_text or len(alt_text) > 180 or "\x00" in alt_text:
         raise ValueError("featured_image_alt_text_required")
+    if (expected_initial_baseline_sha256 is not None
+            and not re.fullmatch(r"[0-9a-f]{64}", expected_initial_baseline_sha256)):
+        raise ValueError("invalid_image_initial_baseline")
     image_info = _validate_featured_image_with_receipt(post_id, image_path)
     image_path = Path(image_info["path"])
 
@@ -1702,6 +1769,10 @@ def replace_featured_image_from_live_baseline(
         expected_thumbnail_id = int(before_thumb)
     else:
         raise ValueError("expected_thumbnail_id_required")
+    if (expected_initial_baseline_sha256 is not None
+            and _post_image_baseline_sha256(live, expected_thumbnail_id)
+            != expected_initial_baseline_sha256):
+        raise ValueError("featured_image_initial_baseline_changed_before_import")
     attempt_key = _quick_attempt_key(
         post_id, image_path, alt_text, expected_content_sha256)
 
@@ -1871,6 +1942,7 @@ def replace_featured_image_from_live_baseline(
         confirmed=True,
         approval_kind=approval_kind,
         approval_evidence_sha256=approval_evidence_sha256,
+        expected_initial_baseline_sha256=expected_initial_baseline_sha256,
         task_action="replace-featured-image",
         task_baseline_extra={
             "attempt_key": attempt_key,
