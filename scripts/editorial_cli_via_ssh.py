@@ -592,7 +592,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 or payload.get('protocol') != 1
                 or type(payload.get('post_id')) is not int or payload['post_id'] not in allowed_ids
                 or type(payload.get('thumbnail_id')) is not int or payload['thumbnail_id'] <= 0
-                or payload.get('approval_kind') not in {'manual_user_selected', 'automated_visual_review'}
+                or payload.get('approval_kind') not in {'manual_user_selected', 'manual_agent_delegated', 'automated_visual_review'}
                 or type(payload.get('requires_live_state')) is not bool
                 or any(not re.fullmatch(r'[0-9a-f]{64}', payload.get(key, '')) for key in sha_keys)
                 or not isinstance(payload.get('expires_at_gmt'), str)

@@ -12,6 +12,33 @@ READY = {"status": "ready", "reasons": [], "details": []}
 
 
 class PrepareDraftFastPathTests(unittest.TestCase):
+    def test_prepare_draft_delegated_choice_is_not_recorded_as_user_selected(self):
+        bundle = sample()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            bundle_path = root / "bundle.json"
+            image_path = root / "cover.webp"
+            bundle_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+            image_path.write_bytes(b"verified-cover")
+            argv = [
+                "editorial_cli.py", "prepare-draft", str(bundle_path),
+                "--image-path", str(image_path), "--alt-text", "복지 이미지",
+                "--confirm-image-selection", "--candidate-manifest", str(root / "manifest.json"),
+                "--selected-candidate", "1", "--selection-mode", "agent-delegated",
+            ]
+            with patch("sys.argv", argv), \
+                    patch("editorial_cli.validate_bundle", return_value=READY), \
+                    patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
+                        "candidate_number": 1, "selection_mode": "agent-delegated",
+                        "source_sha256": "a" * 64,
+                    }), \
+                    patch("agents.publisher.PublisherAgent.publish", return_value=903), \
+                    patch("agents.featured_image.replace_featured_image_from_live_baseline",
+                          return_value={"post_id": 903, "attachment_id": 904}) as replace:
+                editorial_cli.main()
+            self.assertEqual("manual_agent_delegated",
+                             replace.call_args.kwargs["approval_kind"])
+
     def test_replace_featured_image_cli_passes_pinned_initial_baseline(self):
         with tempfile.TemporaryDirectory() as folder:
             image = Path(folder) / "selected.webp"

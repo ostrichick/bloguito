@@ -311,8 +311,9 @@ def _main():
             )
         else:
             from agents.featured_image import replace_featured_image_from_live_baseline
-            from agents.publish_gate import approval_evidence_digest
-            evidence_sha = approval_evidence_digest('manual_user_selected', {
+            from agents.publish_gate import approval_evidence_digest, manual_selection_approval_kind
+            approval_kind = manual_selection_approval_kind(image_lineage)
+            evidence_sha = approval_evidence_digest(approval_kind, {
                 'post_id': args.post_id,
                 'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
                 'selection_confirmed': True,
@@ -325,7 +326,7 @@ def _main():
                 args.image_path,
                 alt_text=args.alt_text,
                 confirmed=True,
-                approval_kind='manual_user_selected',
+                approval_kind=approval_kind,
                 approval_evidence_sha256=evidence_sha,
                 expected_initial_baseline_sha256=args.expected_initial_image_baseline_sha256,
             )
@@ -382,8 +383,8 @@ def _main():
         image_approval_kind = None
         image_approval_evidence = None
         if args.image_path:
-            from agents.publish_gate import approval_evidence_digest
-            image_approval_kind = 'manual_user_selected'
+            from agents.publish_gate import approval_evidence_digest, manual_selection_approval_kind
+            image_approval_kind = manual_selection_approval_kind(image_lineage)
             image_approval_evidence = approval_evidence_digest(image_approval_kind, {
                 'post_id': args.post_id,
                 'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
@@ -528,8 +529,9 @@ def _main():
         image_result = None
         if image_path is not None:
             from agents.featured_image import replace_featured_image_from_live_baseline
-            from agents.publish_gate import approval_evidence_digest
-            evidence_sha = approval_evidence_digest('manual_user_selected', {
+            from agents.publish_gate import approval_evidence_digest, manual_selection_approval_kind
+            approval_kind = manual_selection_approval_kind(image_lineage)
+            evidence_sha = approval_evidence_digest(approval_kind, {
                 'post_id': int(post_id),
                 'image_sha256': hashlib.sha256(image_path.read_bytes()).hexdigest(),
                 'review_digest': data.get('review', {}).get('digest'),
@@ -544,7 +546,7 @@ def _main():
                     image_path,
                     alt_text=args.alt_text,
                     confirmed=True,
-                    approval_kind='manual_user_selected',
+                    approval_kind=approval_kind,
                     approval_evidence_sha256=evidence_sha,
                 )
             except Exception as exc:

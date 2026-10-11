@@ -464,6 +464,9 @@ def _pipeline_result(stats: dict) -> dict:
     result = {key: stats.get(key, 0) for key in (
         'candidates', 'published', 'held', 'errors', 'notification_errors', 'growth_log_errors',
         'notification_channel_failures', 'notification_unconfigured')}
+    # Compatibility: 'published' is a historical internal key even though this
+    # automated path only saves WordPress drafts. Expose its actual meaning.
+    result['drafts_created'] = stats.get('published', 0)
     result['growth_action'] = stats.get('growth_action', 'unknown')
     result['growth_reason'] = stats.get('growth_reason', '')
     result['growth_details'] = stats.get('growth_details', [])

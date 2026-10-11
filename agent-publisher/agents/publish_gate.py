@@ -16,6 +16,7 @@ PUBLISH_GATE_META_KEY = "_bloguito_publish_gate_v1"
 PUBLISH_GATE_PROTOCOL = 1
 ALLOWED_IMAGE_APPROVAL_KINDS = {
     "manual_user_selected",
+    "manual_agent_delegated",
     "automated_visual_review",
 }
 
@@ -33,7 +34,7 @@ PUBLISH_GATE_RECORD_SCRIPT = (
     '$id=(int)$p["post_id"];$thumb=(int)$p["thumbnail_id"];$post=get_post($id);$att=get_post($thumb);'
     'if(!$post||!$att||$att->post_type!=="attachment"||!wp_attachment_is_image($thumb))'
     '{$emit(["status"=>"invalid_attachment"]);return;}'
-    '$allowed=["manual_user_selected"=>1,"automated_visual_review"=>1];'
+    '$allowed=["manual_user_selected"=>1,"manual_agent_delegated"=>1,"automated_visual_review"=>1];'
     'if(!isset($allowed[$p["approval_kind"]])){$emit(["status"=>"invalid_approval_kind"]);return;}'
     '$hex=function($v){return is_string($v)&&preg_match("/^[0-9a-f]{64}$/D",$v)===1;};'
     'foreach(["content_sha256","review_digest","title_sha256","image_sha256","alt_text_sha256","approval_evidence_sha256"] as $k)'
@@ -74,7 +75,7 @@ PUBLISH_GATE_VALIDATE_SCRIPT = (
     '"approval_evidence_sha256","expires_at_gmt","requires_live_state"];'
     'if(!is_array($g)||array_keys($g)!==$required||($g["version"]??null)!==1||(int)($g["post_id"]??0)!==$id)'
     '{$emit(["status"=>"blocked","reason"=>"publish_attestation_missing_or_invalid"]);return;}'
-    '$allowed=["manual_user_selected"=>1,"automated_visual_review"=>1];'
+    '$allowed=["manual_user_selected"=>1,"manual_agent_delegated"=>1,"automated_visual_review"=>1];'
     'if(!isset($allowed[$g["approval_kind"]??""])){$emit(["status"=>"blocked","reason"=>"image_approval_missing"]);return;}'
     'if(!is_bool($g["requires_live_state"]??null)){$emit(["status"=>"blocked","reason"=>"publish_attestation_invalid"]);return;}'
     '$hex=function($v){return is_string($v)&&preg_match("/^[0-9a-f]{64}$/D",$v)===1;};'
@@ -114,6 +115,23 @@ def approval_evidence_digest(kind: str, evidence: dict) -> str:
     return hashlib.sha256(
         json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def manual_selection_approval_kind(lineage: dict) -> str:
+    """Do not claim a delegated agent picked an image *as the user*.
+
+    The upstream sealed-candidate validator binds the asserted selection_mode
+    to the reviewed original/image SHA. This is evidence of recorded selection,
+    not independent proof of a ChatGPT host call or of the conversation grant.
+    """
+    if not isinstance(lineage, dict):
+        raise ValueError("image_selection_lineage_required")
+    mode = lineage.get("selection_mode")
+    if mode == "user":
+        return "manual_user_selected"
+    if mode == "agent-delegated":
+        return "manual_agent_delegated"
+    raise ValueError("image_selection_mode_invalid")
 
 
 def _result(stdout: str) -> dict:
