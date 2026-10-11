@@ -9,7 +9,7 @@ from pathlib import Path
 from agents.editorial import validate_bundle, render
 from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, load_inventory, fetch_sources
 from agents.runtime_stdio import configure_utf8_stdio
-from agents.workflow_metrics import workflow_run
+from agents.workflow_metrics import workflow_run, annotate, workload_signature
 
 
 configure_utf8_stdio()
@@ -316,6 +316,7 @@ def _main():
 
     if args.action == 'replace-featured-image':
         label = args.action
+        annotate(workload_signature=workload_signature(None, image_present=True))
         if args.inventory or args.file:
             parser.error(f'{label} uses --post-id/--image-path and no bundle file')
         if args.attest_existing:
@@ -433,6 +434,7 @@ def _main():
             bundle = json.loads(candidate.read_text(encoding='utf-8'))
             if not args.edit_intent:
                 parser.error('edit-post with a bundle requires --edit-intent')
+        annotate(workload_signature=workload_signature(bundle, image_present=bool(args.image_path)))
         if args.image_path and (
                 (args.expected_thumbnail_id is None and not args.expect_no_thumbnail)
                 or not args.alt_text):
@@ -484,6 +486,8 @@ def _main():
         return
     args.file = Path(args.file)
     data = json.loads(args.file.read_text(encoding='utf-8'))
+    if args.action == 'prepare-draft':
+        annotate(workload_signature=workload_signature(data, image_present=bool(args.image_path)))
     if args.action == 'manual-review' and args.author_model:
         data['authoring'] = {
             'mode': 'interactive_chatgpt',

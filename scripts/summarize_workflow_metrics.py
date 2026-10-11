@@ -104,18 +104,22 @@ def summarize_cohorts(rows: list[dict], *, run_context: str = "live",
             str(row.get("release_revision") or "release_unverified"),
             str(row.get("route") or "unclassified"),
             str(row.get("transport") or "unclassified"),
+            str(row.get('workload_signature') or 'unclassified'),
         )
         grouped[key].append(row)
     cohorts = []
-    for (action, version, revision, route, transport), sample in sorted(grouped.items()):
+    for (action, version, revision, route, transport, workload), sample in sorted(grouped.items()):
         info = summarize(sample, run_context=run_context, status=status)
         cohorts.append({
             "action": action, "code_version": version,
             "release_revision": revision,
-            "route": route, "transport": transport,
+            "route": route, "transport": transport, "workload_signature": workload,
             **info["actions"][action],
             "comparison_ready": (len(sample) >= 5 and version != 'unversioned'
-                                 and revision != 'release_unverified'),
+                                 and revision != 'release_unverified'
+                                 and route != 'unclassified'
+                                 and transport != 'unclassified'
+                                 and workload != 'unclassified'),
         })
     return {
         "run_context": run_context, "status": status,
@@ -127,7 +131,7 @@ def summarize_cohorts(rows: list[dict], *, run_context: str = "live",
 
 def compare_code_versions(rows: list[dict], before: str, after: str,
                           *, run_context: str = 'live') -> dict:
-    """Pair only like-for-like successful live action/route/transport cohorts.
+    """Pair only like-for-like successful live action/route/transport/workload cohorts.
 
     A missing sample or counter is unknown, not zero. Percentage changes are
     descriptive, not proof of a causal speedup after rollout.
@@ -137,14 +141,15 @@ def compare_code_versions(rows: list[dict], before: str, after: str,
     cohorts = summarize_cohorts(rows, run_context=run_context, status='ok')['cohorts']
     keyed = defaultdict(list)
     for cohort in cohorts:
-        key = (cohort['action'], cohort['route'], cohort['transport'], cohort['code_version'])
+        key = (cohort['action'], cohort['route'], cohort['transport'],
+               cohort['workload_signature'], cohort['code_version'])
         keyed[key].append(cohort)
-    dimensions = sorted({(a, route, transport) for a, route, transport, version in keyed
+    dimensions = sorted({(a, route, transport, workload) for a, route, transport, workload, version in keyed
                          if version in {before, after}})
     comparisons = []
-    for action, route, transport in dimensions:
-        before_matches = keyed.get((action, route, transport, before), [])
-        after_matches = keyed.get((action, route, transport, after), [])
+    for action, route, transport, workload in dimensions:
+        before_matches = keyed.get((action, route, transport, workload, before), [])
+        after_matches = keyed.get((action, route, transport, workload, after), [])
         left = before_matches[0] if len(before_matches) == 1 else None
         right = after_matches[0] if len(after_matches) == 1 else None
         ready = bool(left and right and left['comparison_ready'] and right['comparison_ready']
@@ -159,6 +164,7 @@ def compare_code_versions(rows: list[dict], before: str, after: str,
             return round(100 * (new - old) / old, 2)
         comparisons.append({
             'action': action, 'route': route, 'transport': transport,
+            'workload_signature': workload,
             'before_count': sum(x['count'] for x in before_matches),
             'after_count': sum(x['count'] for x in after_matches),
             'before_release_revision': left['release_revision'] if left else None,

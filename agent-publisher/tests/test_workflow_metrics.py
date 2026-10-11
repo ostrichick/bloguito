@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.workflow_metrics import annotate, increment, timed, workflow_run
+from agents.workflow_metrics import annotate, increment, timed, workflow_run, workload_signature
 
 
 class WorkflowMetricsTests(unittest.TestCase):
@@ -34,6 +34,23 @@ class WorkflowMetricsTests(unittest.TestCase):
     def test_article_and_secret_attributes_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'unsupported_workflow_metric_attribute'):
             annotate(bundle={'private': 'article'})
+
+    def test_workload_signature_contains_only_bounded_counts_not_sensitive_sources(self):
+        bundle = {'sources': [{'url': 'sensitive-source', 'text': 'secret'}] * 11}
+        signature = workload_signature(bundle, image_present=True)
+        self.assertEqual('sources-10plus/image-yes', signature)
+        self.assertEqual('sources-na/image-yes', workload_signature(None, image_present=True))
+        with self.assertRaisesRegex(ValueError, 'invalid_workload_signature'):
+            annotate(workload_signature='secret/article-title')
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'metrics.jsonl'
+            with patch.dict(os.environ, {'EDITORIAL_METRICS_FILE': str(target)}):
+                with workflow_run('edit-post'):
+                    annotate(workload_signature=signature)
+            body = target.read_text(encoding='utf-8')
+            self.assertNotIn('sensitive', body)
+            self.assertNotIn('secret', body)
+            self.assertIn(signature, body)
 
     def test_failure_is_recorded_and_reraised(self):
         with tempfile.TemporaryDirectory() as folder:

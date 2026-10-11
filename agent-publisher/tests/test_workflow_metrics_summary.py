@@ -15,6 +15,7 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
             return {'action': 'edit-post', 'run_context': 'live', 'status': 'ok',
                     'code_version': version, 'release_revision': 'release-'+version,
                     'route': route, 'transport': 'direct',
+                    'workload_signature': 'sources-2/image-no',
                     'total_ms': total, 'counters': counters or {}}
         rows = [make('old', 200, counters={'ssh_roundtrips': 4}) for _ in range(5)]
         rows += [make('new', 100, counters={'ssh_roundtrips': 2}) for _ in range(5)]
@@ -38,6 +39,7 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
                     rows.append({'action':'edit-post','run_context':'live','status':'ok',
                                  'code_version':version,'release_revision':release,
                                  'route':'fast','transport':'direct','total_ms':100})
+                    rows[-1]['workload_signature'] = 'sources-2/image-no'
         cohorts = summarize_cohorts(rows)['cohorts']
         self.assertEqual(4, len(cohorts))
         comparison = compare_code_versions(rows, 'old', 'new')['comparisons'][0]
@@ -82,6 +84,17 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
         self.assertIsNone(result['actions']['image']['ssh_roundtrips_mean'])
         self.assertEqual({'version-a': 1}, result['code_versions'])
         self.assertEqual(0, result['unversioned_rows'])
+
+    def test_no_proven_workload_signature_never_compares_even_five_synthetic_runs(self):
+        rows = []
+        for version in ('old', 'new'):
+            rows += [{'action': 'ssh-edit-post', 'run_context': 'live', 'status': 'ok',
+                      'code_version': version, 'release_revision': version+'-release',
+                      'route': 'fast', 'transport': 'direct', 'total_ms': 50}
+                     for _ in range(5)]
+        result = compare_code_versions(rows, 'old', 'new')
+        self.assertFalse(result['comparisons'][0]['comparison_ready'])
+        self.assertIsNone(result['comparisons'][0]['median_change_percent'])
     def test_groups_successful_live_runs_and_ignores_test_rows(self):
         rows = [
             {"action": "edit-post", "run_context": "live", "status": "ok", "total_ms": 100,
