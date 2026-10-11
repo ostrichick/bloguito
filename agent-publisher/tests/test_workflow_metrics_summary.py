@@ -95,6 +95,36 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
         result = compare_code_versions(rows, 'old', 'new')
         self.assertFalse(result['comparisons'][0]['comparison_ready'])
         self.assertIsNone(result['comparisons'][0]['median_change_percent'])
+    def test_partial_or_nonfinite_timing_is_not_a_full_five_sample_cohort(self):
+        def row(version, **changes):
+            base = {'action': 'edit-post', 'run_context': 'live', 'status': 'ok',
+                    'code_version': version, 'release_revision': version+'-release',
+                    'route': 'fast', 'transport': 'direct',
+                    'workload_signature': 'sources-2/image-no',
+                    'total_ms': 100, 'counters': {'ssh_roundtrips': 4, 'wp_roundtrips': 3}}
+            base.update(changes)
+            return base
+        for bad in (None, float('nan'), float('inf'), -1):
+            rows = [row('old') for _ in range(5)] + [row('new') for _ in range(4)]
+            rows.append(row('new', total_ms=bad))
+            comparison, = compare_code_versions(rows, 'old', 'new')['comparisons']
+            self.assertFalse(comparison['comparison_ready'])
+            self.assertIsNone(comparison['p90_change_percent'])
+
+    def test_partial_counter_coverage_never_creates_spurious_ssh_wp_gain(self):
+        def row(version, counters):
+            return {'action': 'edit-post', 'run_context': 'live', 'status': 'ok',
+                    'code_version': version, 'release_revision': version+'-release',
+                    'route': 'fast', 'transport': 'direct',
+                    'workload_signature': 'sources-2/image-no',
+                    'total_ms': 100, 'counters': counters}
+        before = [row('old', {'ssh_roundtrips': 4, 'wp_roundtrips': 3}) for _ in range(5)]
+        after = [row('new', {'ssh_roundtrips': 2, 'wp_roundtrips': 2}) for _ in range(4)]
+        after.append(row('new', {}))
+        comparison, = compare_code_versions(before + after, 'old', 'new')['comparisons']
+        self.assertTrue(comparison['comparison_ready'])
+        self.assertIsNone(comparison['ssh_change_percent'])
+        self.assertIsNone(comparison['wp_change_percent'])
     def test_groups_successful_live_runs_and_ignores_test_rows(self):
         rows = [
             {"action": "edit-post", "run_context": "live", "status": "ok", "total_ms": 100,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import statistics
 import subprocess
@@ -22,8 +23,14 @@ from scripts.summarize_workflow_metrics import percentile
 
 REMOTE_LOG = '/home/ubuntu/agent-publisher/data/editorial_runs/workflow-metrics.jsonl'
 RELEASE = re.compile(r'[0-9a-f]{40}\Z')
+CODE_VERSION = re.compile(r'[0-9a-f]{64}\Z')
+WORKLOAD = re.compile(r'sources-(?:na|[0-9]|10plus)/image-(?:yes|no)\Z')
 HOST = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]*\Z')
 METRICS = ('total_ms', 'ssh_roundtrips', 'wp_roundtrips')
+EDITORIAL_ACTIONS = frozenset({
+    'prepare-draft', 'edit-post', 'replace-featured-image',
+    'ssh-prepare-draft', 'ssh-edit-post', 'ssh-replace-featured-image',
+})
 
 
 def read_rows(raw: bytes) -> list[dict]:
@@ -65,6 +72,10 @@ def _cohort_key(row: dict) -> tuple | None:
     if (any(not isinstance(x, str) or not x or x in ('unclassified', 'unknown')
             for x in values)):
         return None
+    if (values[0] not in EDITORIAL_ACTIONS
+            or not WORKLOAD.fullmatch(values[3])
+            or not CODE_VERSION.fullmatch(str(row.get('code_version') or ''))):
+        return None
     return values
 
 
@@ -72,8 +83,10 @@ def _counter(row: dict, name: str):
     if name == 'total_ms':
         value = row.get('total_ms')
     else:
-        value = (row.get('counters') or {}).get(name)
-    return float(value) if type(value) in (int, float) and value >= 0 else None
+        counters = row.get('counters')
+        value = counters.get(name) if isinstance(counters, dict) else None
+    return (float(value) if type(value) in (int, float)
+            and math.isfinite(value) and value >= 0 else None)
 
 
 def _metrics(group: list[dict]) -> dict:
@@ -89,6 +102,12 @@ def _metrics(group: list[dict]) -> dict:
             result[metric] = {'mean': round(statistics.mean(values), 2),
                               'p90': round(percentile(values, 0.9), 2)}
     return result
+
+
+def _uniform_runtime_code(group: list[dict]) -> str | None:
+    """Avoid pooling distinct code versions under one purported release."""
+    versions = {row['code_version'] for row in group}
+    return next(iter(versions)) if len(versions) == 1 else None
 
 
 def release_report(rows: list[dict], installed_revision: str,
@@ -116,9 +135,14 @@ def release_report(rows: list[dict], installed_revision: str,
     comparisons = []
     for key, groups in sorted(partition.items()):
         a, b = groups['before'], groups['after']
-        ready = len(a) >= min_samples and len(b) >= min_samples
         before_metrics = _metrics(a) if a else None
         after_metrics = _metrics(b) if b else None
+        before_code = _uniform_runtime_code(a) if a else None
+        after_code = _uniform_runtime_code(b) if b else None
+        enough = len(a) >= min_samples and len(b) >= min_samples
+        ready = (enough and before_code is not None and after_code is not None
+                 and before_metrics['total_ms'] is not None
+                 and after_metrics['total_ms'] is not None)
         ratios = {}
         for metric in METRICS:
             old = before_metrics.get(metric) if before_metrics else None
@@ -129,6 +153,12 @@ def release_report(rows: list[dict], installed_revision: str,
         comparisons.append({'action': key[0], 'route': key[1], 'transport': key[2],
                             'workload_signature': key[3], 'before_count': len(a),
                             'after_count': len(b), 'comparison_ready': ready,
+                            'before_code_version': before_code,
+                            'after_code_version': after_code,
+                            'reason': (None if ready else 'insufficient_samples' if not enough
+                                       else 'mixed_code_versions_within_release'
+                                       if before_code is None or after_code is None
+                                       else 'missing_or_nonfinite_timing'),
                             'before_metrics': before_metrics if ready else None,
                             'after_metrics': after_metrics if ready else None,
                             'change_percent': ratios})

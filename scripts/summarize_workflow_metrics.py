@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -12,6 +13,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_METRICS = ROOT / "agent-publisher" / "data" / "editorial_runs" / "workflow-metrics.jsonl"
+
+
+def _valid_metric(value) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
 def percentile(values: list[float], ratio: float) -> float | None:
@@ -50,23 +55,29 @@ def summarize(rows: list[dict], *, run_context: str = "live", status: str = "ok"
 
     action_summary = {}
     for action, action_rows in sorted(actions.items()):
-        totals = [float(row["total_ms"]) for row in action_rows if isinstance(row.get("total_ms"), (int, float))]
+        totals = [float(row["total_ms"]) for row in action_rows if _valid_metric(row.get("total_ms"))]
         wp = [
             float(row["counters"]["wp_roundtrips"])
             for row in action_rows
-            if isinstance((row.get("counters") or {}).get("wp_roundtrips"), (int, float))
+            if isinstance(row.get('counters'), dict)
+            and _valid_metric(row['counters'].get("wp_roundtrips"))
         ]
         ssh = [float(row['counters']['ssh_roundtrips']) for row in action_rows
-               if isinstance((row.get('counters') or {}).get('ssh_roundtrips'), (int, float))]
+               if isinstance(row.get('counters'), dict)
+               and _valid_metric(row['counters'].get('ssh_roundtrips'))]
         timing_totals = defaultdict(float)
         timing_counts = Counter()
         for row in action_rows:
-            for key, value in (row.get("timings_ms") or {}).items():
-                if isinstance(value, (int, float)):
+            timings = row.get('timings_ms')
+            for key, value in (timings if isinstance(timings, dict) else {}).items():
+                if _valid_metric(value):
                     timing_totals[key] += float(value)
                     timing_counts[key] += 1
         action_summary[action] = {
             "count": len(action_rows),
+            "total_ms_observed_count": len(totals),
+            "wp_roundtrips_observed_count": len(wp),
+            "ssh_roundtrips_observed_count": len(ssh),
             "total_ms_median": round(statistics.median(totals), 2) if totals else None,
             "total_ms_p90": round(percentile(totals, 0.90), 2) if totals else None,
             "wp_roundtrips_mean": round(statistics.mean(wp), 2) if wp else None,
@@ -119,7 +130,8 @@ def summarize_cohorts(rows: list[dict], *, run_context: str = "live",
                                  and revision != 'release_unverified'
                                  and route != 'unclassified'
                                  and transport != 'unclassified'
-                                 and workload != 'unclassified'),
+                                 and workload != 'unclassified'
+                                 and info['actions'][action]['total_ms_observed_count'] == len(sample)),
         })
     return {
         "run_context": run_context, "status": status,
@@ -154,8 +166,11 @@ def compare_code_versions(rows: list[dict], before: str, after: str,
         right = after_matches[0] if len(after_matches) == 1 else None
         ready = bool(left and right and left['comparison_ready'] and right['comparison_ready']
                      and left['total_ms_median'] is not None and right['total_ms_median'] is not None)
-        def percent(metric):
+        def percent(metric, coverage=None):
             if not ready:
+                return None
+            if coverage and (left[coverage] != left['count']
+                             or right[coverage] != right['count']):
                 return None
             old = left.get(metric)
             new = right.get(metric)
@@ -180,10 +195,10 @@ def compare_code_versions(rows: list[dict], before: str, after: str,
             'p90_change_percent': percent('total_ms_p90'),
             'before_ssh_mean': left['ssh_roundtrips_mean'] if left else None,
             'after_ssh_mean': right['ssh_roundtrips_mean'] if right else None,
-            'ssh_change_percent': percent('ssh_roundtrips_mean'),
+            'ssh_change_percent': percent('ssh_roundtrips_mean', 'ssh_roundtrips_observed_count'),
             'before_wp_mean': left['wp_roundtrips_mean'] if left else None,
             'after_wp_mean': right['wp_roundtrips_mean'] if right else None,
-            'wp_change_percent': percent('wp_roundtrips_mean'),
+            'wp_change_percent': percent('wp_roundtrips_mean', 'wp_roundtrips_observed_count'),
         })
     return {'before_code_version': before, 'after_code_version': after,
             'run_context': run_context, 'comparisons': comparisons,

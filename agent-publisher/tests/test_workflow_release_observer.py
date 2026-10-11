@@ -1,4 +1,5 @@
 """No synthetic speedup when runtime metrics lack homogeneous samples."""
+import math
 import unittest
 from pathlib import Path
 import sys
@@ -14,6 +15,7 @@ def sample(release, *, time=100, route='fast', workload='sources-2/image-no', st
     return {'run_context': 'live', 'status': status, 'release_revision': release,
             'action': 'edit-post', 'route': route, 'transport': 'direct',
             'workload_signature': workload, 'total_ms': time,
+            'code_version': ('c' if release == OLD else 'd') * 64,
             'counters': {'wp_roundtrips': 3, 'ssh_roundtrips': 1}, **other}
 
 
@@ -56,6 +58,39 @@ class ObserverTests(unittest.TestCase):
         result = release_report(rows, NEW, before_revision=OLD)
         self.assertEqual(1, result['installed_release_success_rows'])
         self.assertEqual(0, result['previous_release_success_rows'])
+
+    def test_mixed_runtime_code_with_same_release_must_not_make_speedup_claim(self):
+        old = [sample(OLD, time=200) for _ in range(5)]
+        new = [sample(NEW, time=100) for _ in range(4)]
+        new.append(sample(NEW, time=100, code_version='e'*64))
+        report = release_report(old + new, NEW, before_revision=OLD)
+        self.assertEqual('unmeasured', report['performance_claim'])
+        self.assertEqual(0, report['comparable_cohort_count'])
+
+    def test_missing_or_nonfinite_timing_cannot_qualify_comparison(self):
+        old = [sample(OLD) for _ in range(5)]
+        for bad_time in (None, float('nan'), float('inf'), -1):
+            new = [sample(NEW) for _ in range(4)] + [sample(NEW, time=bad_time)]
+            report = release_report(old + new, NEW, before_revision=OLD)
+            self.assertEqual('unmeasured', report['performance_claim'])
+            self.assertEqual(0, report['comparable_cohort_count'])
+
+    def test_unrecognized_actions_or_forged_workloads_do_not_create_comparisons(self):
+        for changed in ({'action': 'list-drafts'}, {'workload_signature': 'secret-topic'},
+                        {'code_version': None}):
+            old = [sample(OLD) for _ in range(5)]
+            new = [{**sample(NEW), **changed} for _ in range(5)]
+            report = release_report(old + new, NEW, before_revision=OLD)
+            self.assertEqual('unmeasured', report['performance_claim'])
+
+    def test_missing_some_counters_never_reports_partial_mean_as_complete(self):
+        old = [sample(OLD) for _ in range(5)]
+        new = [sample(NEW) for _ in range(4)] + [sample(NEW, counters={})]
+        report = release_report(old + new, NEW, before_revision=OLD)
+        comparison, = report['comparisons']
+        self.assertEqual(1, report['comparable_cohort_count'])
+        self.assertIsNone(comparison['change_percent']['ssh_roundtrips'])
+        self.assertIsNone(comparison['change_percent']['wp_roundtrips'])
 
 
 if __name__ == '__main__':
