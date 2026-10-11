@@ -64,7 +64,7 @@ GUARDED_NEW_DRAFT_META_SCRIPT = (
     '$fresh=$fresh&&!$exists;}'
     'if($all){$wpdb->query("ROLLBACK");$emit(["status"=>"already_applied","saved_meta"=>$present]);return;}'
     'if(!$fresh){$wpdb->query("ROLLBACK");$emit(["status"=>"meta_conflict"]);return;}'
-    'foreach($m as $key=>$value){if(update_post_meta($id,$key,$value)===false)'
+    'foreach($m as $key=>$value){if(update_post_meta($id,$key,wp_slash($value))===false)'
     '{$wpdb->query("ROLLBACK");$emit(["status"=>"update_failed"]);return;}}'
     'wp_cache_delete($id,"post_meta");$saved=[];$ok=true;'
     'foreach($m as $key=>$value){$saved[$key]=(string)get_post_meta($id,$key,true);'
