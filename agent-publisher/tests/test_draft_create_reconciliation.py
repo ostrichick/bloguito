@@ -67,6 +67,21 @@ class DraftReconciliationTests(unittest.TestCase):
         self.assertFalse(report['live_post_match'])
         self.assertIn('stop_draft_drift', report['next_action'])
 
+    def test_operator_report_exposes_unresolved_journal_transition_fence(self):
+        """A stale lock must not be mistaken for a safely resumable created ID."""
+        self.journal.begin()
+        self.journal.created(509)
+        original = self.journal.path.read_bytes()
+        self.journal.lock_path.write_text('simulated interrupted writer', encoding='utf-8')
+        report = self.check(509)
+        self.assertTrue(report['journal_transition_lock_present'])
+        self.assertFalse(report['write_authorized'])
+        self.assertFalse(report['automatic_create_retry'])
+        self.assertEqual('investigate_original_journal_writer_or_crash_before_resume',
+                         report['next_action'])
+        self.assertEqual(original, self.journal.path.read_bytes())
+        self.wp.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

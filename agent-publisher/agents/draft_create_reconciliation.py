@@ -25,10 +25,17 @@ def reconcile_draft_create(bundle: dict, *, candidate_post_id: int | None = None
     key = workflow_key(bundle, content=content, title=title, excerpt=excerpt)
     journal = DraftCreateJournal(key, directory=journal_directory)
     entry = journal.read()
+    # An exclusive writer may still be active, or may have crashed before
+    # releasing its durable fence. Neither permits a new automatic mutation.
+    transition_lock_present = journal.lock_path.exists() or journal.lock_path.is_symlink()
     result = {'workflow_key': key, 'journal_state': entry.get('state') if entry else 'missing',
               'recorded_post_id': entry.get('post_id') if entry else None,
               'write_authorized': False, 'automatic_create_retry': False,
-              'live_post_match': None}
+              'live_post_match': None,
+              'journal_transition_lock_present': transition_lock_present}
+    if transition_lock_present:
+        result['next_action'] = 'investigate_original_journal_writer_or_crash_before_resume'
+        return result
     if entry is None:
         result['next_action'] = 'missing_journal_requires_independent_operator_investigation'
         return result

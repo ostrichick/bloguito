@@ -1,8 +1,11 @@
 """Fail-closed draft creation under lost replies and metadata failures."""
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -17,6 +20,121 @@ READY = {"status": "ready", "reasons": []}
 
 
 class JournalTests(unittest.TestCase):
+    def test_overlapping_begin_cannot_both_authorize_post_create(self):
+        """An interleaving before the first atomic receipt must not allow 2 writers."""
+        with tempfile.TemporaryDirectory() as folder:
+            first = DraftCreateJournal("c" * 64, directory=Path(folder))
+            second = DraftCreateJournal("c" * 64, directory=Path(folder))
+            entered, release = threading.Event(), threading.Event()
+            errors = []
+            original_write = first._write
+
+            def paused_write(payload):
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError("test_write_not_released")
+                return original_write(payload)
+
+            def launch():
+                try:
+                    first.begin()
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with patch.object(first, "_write", side_effect=paused_write):
+                worker = threading.Thread(target=launch, name="draft-first-begin")
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(2), "first journal reached write boundary")
+                    with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_journal_busy"):
+                        second.begin()
+                finally:
+                    release.set()
+                    worker.join(3)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual([], errors)
+            self.assertEqual("creating", first.read()["state"])
+
+    def test_parallel_created_cannot_replace_first_durable_post_id(self):
+        """Both writers observed `creating`: only one may commit an owner ID."""
+        with tempfile.TemporaryDirectory() as folder:
+            first = DraftCreateJournal("d" * 64, directory=Path(folder))
+            second = DraftCreateJournal("d" * 64, directory=Path(folder))
+            first.begin()
+            entered, release = threading.Event(), threading.Event()
+            errors = []
+            original_write = first._write
+
+            def paused_write(payload):
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError("test_write_not_released")
+                return original_write(payload)
+
+            def launch():
+                try:
+                    first.created(501)
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with patch.object(first, "_write", side_effect=paused_write):
+                worker = threading.Thread(target=launch, name="draft-first-created")
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(2), "first journal reached ID write boundary")
+                    with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_journal_busy"):
+                        second.created(502)
+                finally:
+                    release.set()
+                    worker.join(3)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual([], errors)
+            self.assertEqual({"state": "created", "post_id": 501},
+                             {k: first.read()[k] for k in ("state", "post_id")})
+
+    def test_outstanding_lock_blocks_separate_python_process(self):
+        """Filesystem exclusivity, not a thread-local mutex, protects WordPress create."""
+        with tempfile.TemporaryDirectory() as folder:
+            journal = DraftCreateJournal("e" * 64, directory=Path(folder))
+            snippet = (
+                "from pathlib import Path; "
+                "from agents.draft_create_journal import DraftCreateJournal, DraftCreateBlocked; "
+                f"j=DraftCreateJournal({'e' * 64!r},directory=Path({folder!r})); "
+                "\ntry: j.begin()\n"
+                "except DraftCreateBlocked as exc: "
+                "\n assert str(exc)=='draft_create_journal_busy_or_stale_lock'; print('BLOCKED')\n"
+                "else: raise AssertionError('parallel post create permitted')\n"
+            )
+            with journal._exclusive_transition():
+                result = subprocess.run(
+                    [sys.executable, "-c", snippet], capture_output=True,
+                    text=True, timeout=5,
+                    env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual("BLOCKED", result.stdout.strip())
+                self.assertIsNone(journal.read())
+            self.assertFalse(journal.lock_path.exists())
+
+    def test_stale_transition_lock_blocks_all_writes_without_recovery_guess(self):
+        with tempfile.TemporaryDirectory() as folder:
+            journal = DraftCreateJournal("f" * 64, directory=Path(folder))
+            journal.directory.mkdir(exist_ok=True)
+            journal.lock_path.write_text("interrupted before any durable ID receipt")
+            with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_journal_busy_or_stale_lock"):
+                journal.begin()
+            self.assertIsNone(journal.read())
+            self.assertTrue(journal.lock_path.exists())  # No automatic stale-lock theft.
+            journal.lock_path.unlink()  # Test-only teardown, not a recovery instruction.
+            journal.begin()
+            journal.created(501)
+            with patch.object(journal, "_write", side_effect=OSError("simulated interrupted write")):
+                with self.assertRaisesRegex(OSError, "simulated interrupted write"):
+                    journal.complete(501)
+            self.assertEqual("created", journal.read()["state"])
+            self.assertFalse(journal.lock_path.exists())  # Caught fault releases owned lock.
+            journal.complete(501)
+            self.assertEqual("complete", journal.read()["state"])
+
     def test_journal_persists_atomic_attempt_and_id(self):
         with tempfile.TemporaryDirectory() as folder:
             journal = DraftCreateJournal("a" * 64, directory=Path(folder))

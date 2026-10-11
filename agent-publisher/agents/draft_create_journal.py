@@ -11,6 +11,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from config import DATA_DIR
@@ -47,6 +48,45 @@ class DraftCreateJournal:
         self.key = key
         self.directory = directory or (DATA_DIR / "editorial_runs" / "draft-create")
         self.path = self.directory / f"{key}.json"
+        self.lock_path = self.directory / f".{key}.lock"
+
+    @contextmanager
+    def _exclusive_transition(self):
+        """Serialize per-key receipt transitions across independent processes.
+
+        O_EXCL is deliberate: a crash leaves a sidecar fence, which requires
+        human review of the original WordPress attempt. Never auto-expire or
+        steal that lock merely because the process is no longer running.
+        """
+        if self.directory.is_symlink() or self.path.is_symlink() or self.lock_path.is_symlink():
+            raise DraftCreateBlocked("draft_create_journal_symlink", self.key)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        if self.directory.is_symlink():
+            raise DraftCreateBlocked("draft_create_journal_symlink", self.key)
+        try:
+            fd = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError as exc:
+            raise DraftCreateBlocked("draft_create_journal_busy_or_stale_lock", self.key) from exc
+        except OSError as exc:
+            raise DraftCreateBlocked("draft_create_journal_lock_unavailable", self.key) from exc
+        try:
+            os.write(fd, b"draft-create-journal-lock-v1\n")
+            os.fsync(fd)
+            if os.name == "posix":
+                # The directory entry itself must survive a host crash before
+                # either competing process can record a different owner ID.
+                directory_fd = os.open(self.directory, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            yield
+        finally:
+            os.close(fd)
+            # Only the process that created this lock removes it. A hard kill
+            # leaves it in place and causes future writes to fail closed.
+            self.lock_path.unlink()
 
     def read(self) -> dict | None:
         if self.path.is_symlink() or self.directory.is_symlink():
@@ -94,40 +134,43 @@ class DraftCreateJournal:
                 temp.unlink(missing_ok=True)
 
     def begin(self) -> None:
-        if self.read() is not None:
-            raise DraftCreateBlocked("draft_create_already_started", self.key)
-        self._write({"version": self.VERSION, "key": self.key, "state": "creating"})
+        with self._exclusive_transition():
+            if self.read() is not None:
+                raise DraftCreateBlocked("draft_create_already_started", self.key)
+            self._write({"version": self.VERSION, "key": self.key, "state": "creating"})
 
     def created(self, post_id: int) -> None:
         if type(post_id) is not int or post_id <= 0:
             raise ValueError("draft_create_invalid_post_id")
-        previous = self.read()
-        if previous is None:
-            raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
-        if previous["state"] in {"created", "complete"}:
-            if previous["post_id"] == post_id:
-                return  # Already durably recorded: preserve its original identity.
-            raise DraftCreateBlocked("draft_create_id_receipt_conflict", self.key,
-                                     post_id=previous["post_id"])
-        if previous["state"] != "creating":
-            raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
-        self._write({
-            "version": self.VERSION, "key": self.key,
-            "state": "created", "post_id": post_id,
-        })
+        with self._exclusive_transition():
+            previous = self.read()
+            if previous is None:
+                raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
+            if previous["state"] in {"created", "complete"}:
+                if previous["post_id"] == post_id:
+                    return  # Already durably recorded: preserve its original identity.
+                raise DraftCreateBlocked("draft_create_id_receipt_conflict", self.key,
+                                         post_id=previous["post_id"])
+            if previous["state"] != "creating":
+                raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
+            self._write({
+                "version": self.VERSION, "key": self.key,
+                "state": "created", "post_id": post_id,
+            })
 
     def complete(self, post_id: int) -> None:
         if type(post_id) is not int or post_id <= 0:
             raise ValueError("draft_create_invalid_post_id")
-        previous = self.read()
-        if previous is None or previous["state"] == "creating":
-            raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
-        if previous["post_id"] != post_id:
-            raise DraftCreateBlocked("draft_create_id_receipt_conflict", self.key,
-                                     post_id=previous["post_id"])
-        if previous["state"] == "complete":
-            return  # A verified exact replay must not change the saved receipt.
-        self._write({
-            "version": self.VERSION, "key": self.key,
-            "state": "complete", "post_id": post_id,
-        })
+        with self._exclusive_transition():
+            previous = self.read()
+            if previous is None or previous["state"] == "creating":
+                raise DraftCreateBlocked("draft_create_id_receipt_required", self.key)
+            if previous["post_id"] != post_id:
+                raise DraftCreateBlocked("draft_create_id_receipt_conflict", self.key,
+                                         post_id=previous["post_id"])
+            if previous["state"] == "complete":
+                return  # A verified exact replay must not change the saved receipt.
+            self._write({
+                "version": self.VERSION, "key": self.key,
+                "state": "complete", "post_id": post_id,
+            })
