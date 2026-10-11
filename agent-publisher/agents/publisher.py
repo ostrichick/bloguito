@@ -15,7 +15,9 @@ from agents.post_manifest_store import (
 )
 from agents.temporal_validation import validate_availability
 from agents.fact_validation import verify_article, render_content, verify_temporal_binding
-from agents.wordpress_mutation import content_sha256, guarded_update_post
+from agents.wordpress_mutation import (
+    content_sha256, guarded_update_post, guarded_set_new_draft_metadata,
+)
 
 
 class PublisherAgent:
@@ -187,9 +189,6 @@ class PublisherAgent:
                         journal.key, post_id=post_id) from exc
             else:
                 post_id = resume_post_id
-            run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                str(post_id), '_bloguito_permalink_scheme', 'post-id-v1', '--allow-root'],
-                check=True, capture_output=True)
             actual = run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'get', str(post_id),
                 '--fields=post_status,post_title,post_name,post_content,post_excerpt', '--format=json', '--allow-root'], check=True,
                 capture_output=True, text=True, encoding='utf-8', errors='strict')
@@ -197,8 +196,6 @@ class PublisherAgent:
             if (saved['post_status'] != 'draft' or saved['post_content'] != content
                     or saved.get('post_title') != title or saved.get('post_excerpt', '') != excerpt):
                 raise ValueError(f'editorial_saved_content_mismatch_post_{post_id}')
-            self._record_post(post_id, title, category['id'], category['name'], status='draft',
-                expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})
             # Rank Math SEO metadata: reviewed values win; legacy bundles use
             # the visible title/lead as a conservative fallback.
             focus_keyword = bundle['brief'].get('primary_keyword', '').strip()
@@ -206,15 +203,23 @@ class PublisherAgent:
             reviewed_seo = reviewed_seo if isinstance(reviewed_seo, dict) else {}
             seo_title = (reviewed_seo.get('title') or title).strip()
             meta_desc = (reviewed_seo.get('description') or bundle['plan']['lead']['text'][:160]).strip()
+            meta = {'_bloguito_permalink_scheme': 'post-id-v1'}
             if focus_keyword:
-                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                    str(post_id), 'rank_math_focus_keyword', focus_keyword, '--allow-root'], check=True, capture_output=True)
+                meta['rank_math_focus_keyword'] = focus_keyword
             if seo_title:
-                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                    str(post_id), 'rank_math_title', seo_title, '--allow-root'], check=True, capture_output=True)
+                meta['rank_math_title'] = seo_title
             if meta_desc:
-                run_wordpress(['sudo', 'docker', 'exec', self.container_name, 'wp', 'post', 'meta', 'set',
-                    str(post_id), 'rank_math_description', meta_desc, '--allow-root'], check=True, capture_output=True)
+                meta['rank_math_description'] = meta_desc
+            base = ['sudo', 'docker', 'exec', self.container_name, 'wp']
+            guarded_set_new_draft_metadata(base, post_id, expected={
+                'post_status': 'draft',
+                'post_title': title,
+                'post_name': saved['post_name'],
+                'post_excerpt': excerpt,
+                'content_sha256': content_sha256(content),
+            }, meta=meta)
+            self._record_post(post_id, title, category['id'], category['name'], status='draft',
+                expires_at=bundle['brief'].get('useful_until'), fact_manifest={'editorial_bundle': bundle})
             # The saved draft was reread above. Mark the full-site snapshot stale
             # instead of downloading every post again at the end of this command.
             invalidate_inventory()

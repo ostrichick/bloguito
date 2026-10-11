@@ -52,6 +52,7 @@ from agents.wordpress_mutation import (  # noqa: E402
     FEATURED_IMAGE_LOCK_SCRIPT,
     GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT,
     GUARDED_CATEGORY_MUTATION_SCRIPT,
+    GUARDED_NEW_DRAFT_META_SCRIPT,
     GUARDED_POST_MUTATION_SCRIPT,
     GUARDED_THUMBNAIL_MUTATION_SCRIPT,
     POST_THUMBNAIL_SNAPSHOT_SCRIPT,
@@ -440,6 +441,39 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             raise ValueError('unexpected_wordpress_update_flags')
         return payload
 
+    def validate_new_draft_meta_payload(raw):
+        if action not in _CREATE_ACTIONS:
+            raise ValueError('guarded_draft_metadata_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_guarded_draft_metadata_payload') from exc
+        required = {'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256'}
+        allow_meta = {
+            '_bloguito_permalink_scheme', 'rank_math_focus_keyword',
+            'rank_math_title', 'rank_math_description',
+        }
+        if (not isinstance(payload, dict)
+                or set(payload) != {'protocol', 'post_id', 'expected', 'meta'}
+                or payload.get('protocol') != 1
+                or type(payload.get('post_id')) is not int
+                or payload['post_id'] not in allowed_ids
+                or not isinstance(payload.get('expected'), dict)
+                or set(payload['expected']) != required
+                or payload['expected'].get('post_status') != 'draft'
+                or any(not isinstance(v, str) or '\x00' in v
+                       for v in payload['expected'].values())
+                or not re.fullmatch(r'[0-9a-f]{64}', payload['expected']['content_sha256'])
+                or not isinstance(payload.get('meta'), dict)
+                or not payload['meta'] or set(payload['meta']) - allow_meta
+                or payload['meta'].get('_bloguito_permalink_scheme') != 'post-id-v1'
+                or any(not isinstance(v, str) or not v or '\x00' in v
+                       for v in payload['meta'].values())):
+            raise ValueError('invalid_guarded_draft_metadata_payload')
+        return payload
+
     def validate_category_payload(raw):
         if action != 'repair-draft-category':
             raise ValueError('guarded_category_mutation_not_allowed')
@@ -708,6 +742,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']:
             return 'guarded_mutation'
+        if action in _CREATE_ACTIONS and wp == [
+                'eval', GUARDED_NEW_DRAFT_META_SCRIPT, '--allow-root']:
+            return 'guarded_draft_meta'
         if (action == 'repair-draft-category'
                 and wp == ['eval', GUARDED_CATEGORY_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_category_mutation'
@@ -841,6 +878,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 # The server-side CAS makes one replay safe. If the first write
                 # committed but SSH lost its response, the replay sees the exact
                 # desired state and the local guarded helper reconciles it.
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'guarded_draft_meta':
+                validate_new_draft_meta_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(GUARDED_NEW_DRAFT_META_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
                 return remote_run(remote, retry_255=True, **options)
             if kind == 'guarded_category_mutation':
                 validate_category_payload(kwargs.get('input'))

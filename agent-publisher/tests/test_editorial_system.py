@@ -353,7 +353,7 @@ class EditorialTests(unittest.TestCase):
                     'post_content': article['content'], 'post_excerpt': expected_excerpt,
                 }))
             return Mock(stdout='')
-        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record, patch('agents.draft_create_journal.DraftCreateJournal') as journal:
+        with patch('sync_wordpress_inventory.sync_inventory') as sync, patch('sync_wordpress_inventory.invalidate_inventory') as invalidate, patch('agents.editorial_writer.load_inventory',return_value=self.inventory), patch('agents.publisher.subprocess.run',side_effect=fake), patch('agents.editorial.datetime') as clock, patch.object(PublisherAgent,'_record_post') as record, patch('agents.draft_create_journal.DraftCreateJournal') as journal, patch('agents.publisher.guarded_set_new_draft_metadata') as guarded_meta:
             journal.return_value.read.return_value = None
             clock.now.return_value=NOW
             clock.fromisoformat=datetime.fromisoformat
@@ -363,11 +363,11 @@ class EditorialTests(unittest.TestCase):
             self.assertTrue(any('--post_status=draft' in c for c in commands))
             self.assertFalse(any('--post_status=publish' in c for c in commands))
             self.assertFalse(any('--post_name=' in c for c in commands))
-            self.assertTrue(any('_bloguito_permalink_scheme' in c and 'post-id-v1' in c for c in commands))
+            self.assertEqual('post-id-v1', guarded_meta.call_args.kwargs['meta']['_bloguito_permalink_scheme'])
             self.assertEqual(record.call_args.kwargs['status'],'draft')
-            self.assertTrue(any('rank_math_focus_keyword' in c for c in commands))
-            self.assertTrue(any('rank_math_title' in c for c in commands))
-            self.assertTrue(any('rank_math_description' in c for c in commands))
+            self.assertIn('rank_math_focus_keyword', guarded_meta.call_args.kwargs['meta'])
+            self.assertIn('rank_math_title', guarded_meta.call_args.kwargs['meta'])
+            self.assertIn('rank_math_description', guarded_meta.call_args.kwargs['meta'])
 
     def test_evergreen_does_not_require_news_rss(self):
         from agents.radar import RadarAgent

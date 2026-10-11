@@ -66,6 +66,13 @@ class PublisherRecoveryTests(unittest.TestCase):
 
     def remote(self, cmd, **kwargs):
         self.calls.append(cmd)
+        if "eval" in cmd and "post-id-v1" in " ".join(cmd):
+            if self.fail_permalink_once:
+                self.fail_permalink_once = False
+                return Mock(stdout=json.dumps({"status": "update_failed"}), returncode=0)
+            return Mock(stdout=json.dumps({
+                "status": "ok", "saved_meta": json.loads(kwargs["input"])["meta"],
+            }), returncode=0)
         if "create" in cmd:
             self.create_count += 1
             if self.fail_create:
@@ -90,13 +97,14 @@ class PublisherRecoveryTests(unittest.TestCase):
                 patch("agents.editorial.validate_bundle", return_value=READY) as validated, \
                 patch("agents.source_validation_cache.verify_explicit_live_sources"), \
                 patch("agents.publisher.run_wordpress", side_effect=self.remote), \
+                patch("agents.wordpress_mutation.run_wordpress", side_effect=self.remote), \
                 patch.object(PublisherAgent, "_record_post"):
             result = PublisherAgent().publish(self.article)
             return result, validated.call_args.args[1]
 
     def test_metadata_failure_recovers_same_post_without_second_create(self):
         self.fail_permalink_once = True
-        with self.assertRaisesRegex(RuntimeError, "permalink metadata failed"):
+        with self.assertRaisesRegex(ValueError, "wordpress_draft_meta_update_failed"):
             self.invoke()
         self.assertEqual(1, self.create_count)
         journal_paths = list(Path(self.folder.name).rglob("*.json"))
@@ -121,7 +129,7 @@ class PublisherRecoveryTests(unittest.TestCase):
 
     def test_known_post_changed_externally_is_blocked(self):
         self.fail_permalink_once = True
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(ValueError, "wordpress_draft_meta_update_failed"):
             self.invoke()
         self.change_saved = True
         with self.assertRaisesRegex(DraftCreateBlocked, "draft_create_saved_post_changed"):
