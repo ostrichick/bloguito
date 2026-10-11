@@ -13,7 +13,8 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
     def test_comparison_pairs_only_matching_successful_versioned_cohorts(self):
         def make(version, total, route='fast', counters=None):
             return {'action': 'edit-post', 'run_context': 'live', 'status': 'ok',
-                    'code_version': version, 'route': route, 'transport': 'direct',
+                    'code_version': version, 'release_revision': 'release-'+version,
+                    'route': route, 'transport': 'direct',
                     'total_ms': total, 'counters': counters or {}}
         rows = [make('old', 200, counters={'ssh_roundtrips': 4}) for _ in range(5)]
         rows += [make('new', 100, counters={'ssh_roundtrips': 2}) for _ in range(5)]
@@ -28,6 +29,21 @@ class WorkflowMetricsSummaryTests(unittest.TestCase):
         self.assertFalse(by_route['standard']['comparison_ready'])
         self.assertIsNone(by_route['standard']['median_change_percent'])
         self.assertIn('not_causal', result['interpretation'])
+
+    def test_different_releases_with_same_code_version_are_not_pooled(self):
+        rows = []
+        for version in ('old', 'new'):
+            for release in ('release-1', 'release-2'):
+                for _ in range(5):
+                    rows.append({'action':'edit-post','run_context':'live','status':'ok',
+                                 'code_version':version,'release_revision':release,
+                                 'route':'fast','transport':'direct','total_ms':100})
+        cohorts = summarize_cohorts(rows)['cohorts']
+        self.assertEqual(4, len(cohorts))
+        comparison = compare_code_versions(rows, 'old', 'new')['comparisons'][0]
+        self.assertEqual('release_ambiguous', comparison['reason'])
+        self.assertFalse(comparison['comparison_ready'])
+        self.assertIsNone(comparison['median_change_percent'])
 
     def test_comparison_never_infers_missing_samples_or_counters_are_zero(self):
         rows = [{'action':'x', 'run_context':'live', 'status':'ok', 'code_version':'old',

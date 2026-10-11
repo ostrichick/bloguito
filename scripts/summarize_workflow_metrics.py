@@ -101,18 +101,21 @@ def summarize_cohorts(rows: list[dict], *, run_context: str = "live",
         key = (
             str(row.get("action") or "unknown"),
             str(row.get("code_version") or "unversioned"),
+            str(row.get("release_revision") or "release_unverified"),
             str(row.get("route") or "unclassified"),
             str(row.get("transport") or "unclassified"),
         )
         grouped[key].append(row)
     cohorts = []
-    for (action, version, route, transport), sample in sorted(grouped.items()):
+    for (action, version, revision, route, transport), sample in sorted(grouped.items()):
         info = summarize(sample, run_context=run_context, status=status)
         cohorts.append({
             "action": action, "code_version": version,
+            "release_revision": revision,
             "route": route, "transport": transport,
             **info["actions"][action],
-            "comparison_ready": len(sample) >= 5,
+            "comparison_ready": (len(sample) >= 5 and version != 'unversioned'
+                                 and revision != 'release_unverified'),
         })
     return {
         "run_context": run_context, "status": status,
@@ -132,14 +135,18 @@ def compare_code_versions(rows: list[dict], before: str, after: str,
     if not before or not after or before == after:
         raise ValueError('two_distinct_code_versions_required')
     cohorts = summarize_cohorts(rows, run_context=run_context, status='ok')['cohorts']
-    keyed = {(c['action'], c['route'], c['transport'], c['code_version']): c
-             for c in cohorts}
+    keyed = defaultdict(list)
+    for cohort in cohorts:
+        key = (cohort['action'], cohort['route'], cohort['transport'], cohort['code_version'])
+        keyed[key].append(cohort)
     dimensions = sorted({(a, route, transport) for a, route, transport, version in keyed
                          if version in {before, after}})
     comparisons = []
     for action, route, transport in dimensions:
-        left = keyed.get((action, route, transport, before))
-        right = keyed.get((action, route, transport, after))
+        before_matches = keyed.get((action, route, transport, before), [])
+        after_matches = keyed.get((action, route, transport, after), [])
+        left = before_matches[0] if len(before_matches) == 1 else None
+        right = after_matches[0] if len(after_matches) == 1 else None
         ready = bool(left and right and left['comparison_ready'] and right['comparison_ready']
                      and left['total_ms_median'] is not None and right['total_ms_median'] is not None)
         def percent(metric):
@@ -152,9 +159,13 @@ def compare_code_versions(rows: list[dict], before: str, after: str,
             return round(100 * (new - old) / old, 2)
         comparisons.append({
             'action': action, 'route': route, 'transport': transport,
-            'before_count': left['count'] if left else 0,
-            'after_count': right['count'] if right else 0,
+            'before_count': sum(x['count'] for x in before_matches),
+            'after_count': sum(x['count'] for x in after_matches),
+            'before_release_revision': left['release_revision'] if left else None,
+            'after_release_revision': right['release_revision'] if right else None,
             'comparison_ready': ready,
+            'reason': ('release_ambiguous' if len(before_matches) > 1 or len(after_matches) > 1
+                       else 'insufficient_or_unverified_data' if not ready else None),
             'before_median_ms': left['total_ms_median'] if left else None,
             'after_median_ms': right['total_ms_median'] if right else None,
             'median_change_percent': percent('total_ms_median'),
