@@ -94,6 +94,31 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual('old main', (app / 'main.py').read_text())
         self.assertFalse((app / 'backups').exists())
 
+    def test_editorial_busy_blocks_release_before_any_write(self):
+        app = self.entrypoint_release()
+        active = app / 'data' / '.editorial-publish.lock'
+        active.mkdir(parents=True)
+        with patch.object(installer.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'release_editorial_writer_busy'):
+                installer.install(self.root, app,
+                                  installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        run.assert_not_called()
+        self.assertTrue(active.is_dir())
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'backups').exists())
+
+    def test_release_lock_released_after_smoke_failure(self):
+        app = self.entrypoint_release()
+        with patch.object(installer.subprocess, 'run', side_effect=RuntimeError('smoke failed')):
+            with self.assertRaisesRegex(RuntimeError, 'smoke failed'):
+                installer.install(self.root, app,
+                                  installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertFalse((app / 'data' / '.editorial-publish.lock').exists())
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        # POSIX flock and Windows msvcrt both allow a second acquisition.
+        with installer.exclusive_release_window(app):
+            self.assertTrue((app / 'data' / '.editorial-publish.lock').is_dir())
+
     def test_shell_is_packaged_as_executable_and_restored_on_failed_smoke(self):
         app = self.entrypoint_release()
         shell = app / 'run_daily.sh'

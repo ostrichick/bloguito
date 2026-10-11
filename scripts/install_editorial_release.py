@@ -1,8 +1,10 @@
 """Run on OCI with a reviewed release folder; preserve secrets and the cron schedule."""
 import argparse
 import ast
+from contextlib import contextmanager
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import uuid
@@ -12,6 +14,67 @@ from pathlib import Path
 CANONICAL_INVENTORY_DIGEST = '51249534178eedbabf7fc9adf665848ee12a876a5aa0d6e3b2e7a73c44e259c6'
 WP_MU_RELATIVE = 'wordpress/mu-plugins/bloguito-post-row-actions.php'
 WP_MU_CONTAINER_PATH = '/var/www/html/wp-content/mu-plugins/bloguito-post-row-actions.php'
+
+
+@contextmanager
+def exclusive_release_window(app: Path):
+    """Prevent installer/editorial/scheduler overlap during multi-file replacement.
+
+    The editorial directory lock is shared with content mutation; flock is the
+    same kernel lock used by cron/main and independent growth-state writers.
+    Never unlink the scheduler lock, including after SIGKILL.
+    """
+    app = Path(app)
+    data = app / 'data'
+    editorial = data / '.editorial-publish.lock'
+    growth_dir = data / 'growth'
+    growth = growth_dir / '.scheduler-run.lock'
+    if (data.is_symlink() or editorial.is_symlink() or growth_dir.is_symlink()
+            or growth.is_symlink()):
+        raise ValueError('release_lock_symlink_refused')
+    data.mkdir(parents=True, exist_ok=True)
+    try:
+        editorial.mkdir()
+    except FileExistsError as exc:
+        raise ValueError('release_editorial_writer_busy') from exc
+    descriptor = None
+    acquired = False
+    try:
+        growth_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if growth_dir.is_symlink() or growth.is_symlink():
+            raise ValueError('release_growth_lock_symlink_refused')
+        if os.name == 'posix' and growth_dir.stat().st_mode & 0o077:
+            raise ValueError('release_growth_lock_directory_permissions')
+        descriptor = os.open(growth, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        if os.name == 'posix':
+            import fcntl
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError('release_scheduler_running') from exc
+        elif os.name == 'nt':
+            import msvcrt
+            if os.fstat(descriptor).st_size == 0:
+                os.write(descriptor, b'\0')
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise ValueError('release_scheduler_running') from exc
+        else:
+            raise ValueError('release_lock_unsupported_platform')
+        acquired = True
+        yield
+    finally:
+        if descriptor is not None:
+            if acquired:
+                if os.name == 'posix':
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                else:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            os.close(descriptor)
+        editorial.rmdir()
 ALLOWED_RETIRED_FILES = {
     'agents/copywriter.py',
     'agents/editorial_draft_updater.py',
@@ -165,7 +228,7 @@ def preflight_release(release, app, *, installed_mu_digest=None):
     return release_manifest, verified_mu
 
 
-def install(release, app, *, installed_mu_digest=None):
+def _install_with_window(release, app, *, installed_mu_digest=None):
     release, app = release.resolve(), app.resolve()
     release_manifest, verified_mu = preflight_release(
         release, app, installed_mu_digest=installed_mu_digest)
@@ -261,6 +324,15 @@ def install(release, app, *, installed_mu_digest=None):
                 if change.get('mode') is not None:
                     target.chmod(change['mode'])
         raise
+
+
+def install(release, app, *, installed_mu_digest=None):
+    # Verify immutable package/MU before creating a kernel lock file.
+    preflight_release(Path(release).resolve(), Path(app).resolve(),
+                      installed_mu_digest=installed_mu_digest)
+    with exclusive_release_window(Path(app).resolve()):
+        # Recheck inside the window before the first runtime file write.
+        return _install_with_window(release, app, installed_mu_digest=installed_mu_digest)
 
 
 if __name__=='__main__':
