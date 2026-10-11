@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = 'f6f1e27fab699933096f99f23b4963190c73e14a09df8c85bdc356de4a0a802d'
+CANONICAL_INVENTORY_DIGEST = 'c0eb8e2675a4b3786ef70f6409658ea0e1648b466b71bde535805b20d50e7d62'
 ALLOWED_RETIRED_FILES = {
     'agents/copywriter.py',
     'agents/editorial_draft_updater.py',
@@ -52,6 +52,7 @@ def verify_release_manifest(release):
         'agent-publisher/config.py',
         'agent-publisher/agents/edit_post.py',
         'agent-publisher/agents/edit_orchestration.py',
+        'agent-publisher/agents/growth_run_lock.py',
         'agent-publisher/agents/editorial.py',
         'agent-publisher/agents/editorial_schema.py',
         'agent-publisher/agents/public_fast_edit.py',

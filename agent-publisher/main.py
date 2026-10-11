@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 import time
+import uuid
+from agents.growth_run_lock import GrowthRunAlreadyRunning, growth_run_lock
 from config import CATEGORIES
 from agents.growth_analysis import GrowthAnalysisError, load_policy, refresh_growth_inputs
 from agents.growth_planner import GrowthPlannerError, decide_daily_action, save_daily_plan
@@ -392,7 +394,71 @@ def main(argv=None):
     else:
         targets = [args.category]
 
-    stats = run_pipeline(targets, limit_per_cat=args.limit)
+    run_id = uuid.uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    def emit_run(state: str) -> None:
+        print('SCHEDULER_RUN ' + json.dumps({
+            'run_id': run_id,
+            'started_at_utc': started_at,
+            'finished_at_utc': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'state': state,
+        }, ensure_ascii=False), flush=True)
+
+    entered = False
+    try:
+        # Keep the OS lock through the final result record. Standalone growth
+        # writers also use this lock for their full read/modify/write cycle.
+        with growth_run_lock():
+            entered = True
+            stats = run_pipeline(targets, limit_per_cat=args.limit)
+            result = _pipeline_result(stats)
+            outcome = 'failed' if result['status'] == 'failed' else (
+                'no_action' if stats.get('growth_outcome') == 'no_action' else
+                'held' if stats.get('growth_outcome') == 'editorial_hold'
+                or result['status'] == 'held_image_generation_unavailable' else 'completed')
+            emit_run(outcome)
+            # Keep PIPELINE_RESULT last for existing single-line JSON consumers.
+            print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False), flush=True)
+            return 1 if result['status'] == 'failed' else 0
+    except GrowthRunAlreadyRunning:
+        if entered:
+            # An exception raised *inside* the pipeline is not proof that this
+            # invocation was skipped before work. Never disguise it as busy.
+            emit_run('failed')
+            raise
+        # Busy is a skipped invocation, not a successful no_action plan. Do not
+        # call the planner, notifier, inventory or work-log from this branch.
+        result = {key: 0 for key in (
+            'candidates', 'published', 'held', 'errors', 'notification_errors',
+            'growth_log_errors', 'notification_channel_failures', 'notification_unconfigured')}
+        result.update(growth_action='no_action', growth_reason='already_running',
+                      growth_details=[], growth_outcome='already_running',
+                      status='already_running')
+        emit_run('already_running')
+        print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False), flush=True)
+        return 0  # A cron overlap is not a processing failure; it did no work.
+    except OSError as error:
+        if entered:
+            emit_run('failed')
+            raise
+        # A missing/unwritable/unsafe lock must not let an unprotected growth
+        # writer run. Keep failure distinct from a valid no_action decision.
+        emit_run('failed')
+        result = {key: 0 for key in (
+            'candidates', 'published', 'held', 'notification_errors',
+            'growth_log_errors', 'notification_channel_failures', 'notification_unconfigured')}
+        result.update(errors=1, growth_action='no_action',
+                      growth_reason='growth_run_lock_unavailable',
+                      growth_details=[type(error).__name__],
+                      growth_outcome='input_failure', status='failed')
+        print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False), flush=True)
+        return 1
+    except BaseException:
+        emit_run('failed')
+        raise
+
+
+def _pipeline_result(stats: dict) -> dict:
     # Holds and an empty candidate list are valid editorial outcomes. Actual
     # processing errors must propagate to cron/systemd even after partial success.
     result = {key: stats.get(key, 0) for key in (
@@ -412,8 +478,7 @@ def main(argv=None):
         if stats.get('image_generation_status') and not stats['published']
         else 'completed'
     )
-    print('PIPELINE_RESULT ' + json.dumps(result, ensure_ascii=False))
-    return 1 if result['status'] == 'failed' else 0
+    return result
 
 
 if __name__ == "__main__":
