@@ -2,7 +2,7 @@ name: Test Suite
 
 on:
   push:
-    branches: [ main, feat/bloguito-real-db-20261011 ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
