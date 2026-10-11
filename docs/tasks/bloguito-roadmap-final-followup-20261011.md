@@ -66,6 +66,46 @@
 - 현재 설치 릴리스 observer는 운영 8행/성공 5행/신규 성공 1행/전 릴리스 성공 0행, 비교 가능한 코호트 0, `performance_claim=unmeasured`. 2026-10-12 08:00 KST 실행은 여전히 미래이므로 확인되지 않았다.
 - 새 공개 발행·본문 수정·미디어 upload·cron 수동 실행·재배포 없음. 원본 `main`의 미커밋 자료와 Q1 ignored PNG 증거를 보존한다. Q1 native browser menu 200%, 인증 Preview, R2 실제 image_gen 호스트 증빙 및 Q3 미확정 미디어 ID/종료 증거는 새 증빙이 없어 이전 판정을 유지한다.
 
+## 2026-10-11 19:08~19:28 KST 잔여 수용 조건 구현·운영 릴리스
+
+### 재현된 결함과 새 통합 커밋
+
+| 통합 SHA | 안전/품질 구현 | 실패 재현 및 검증 |
+| --- | --- | --- |
+| `ac96811` | 운영 비교기·로컬 성능 요약기는 혼합 `code_version`, 부분/NaN/Inf/음수 `total_ms`, 임의 action/workload, 누락 SSH/WP counter에서 비교를 제한 | 먼저 FAIL 재현 후 observer 8 + summary 9 PASS |
+| `cbad8f9` | 전체 페이지 390/1280 간 source URL 일치, CTA origin과 원본 URL 동일, 신규 탭 target ID·생성 이벤트 확인 | URL·기존 탭을 바꿔 넣은 부정 테스트 포함 Q1 9 + 기존 Q1 17 PASS; 기존 #641 안정 증거 재사용 PASS |
+| `64d4f3c` | Draft journal `begin/created/complete`를 동일 작업 키별 `O_CREAT|O_EXCL` 경계에서 직렬화하고 POSIX directory fsync, crash/stale lock은 무단 제거 없이 차단; read-only 상태 진단에 잠금 표시 | 이전 동시 `begin`과 ID 501/502 `created`가 모두 성공하던 interleaving 재현, 수정 후 차단. 독립 표적 144회 실행, 실패 0, skip 1 |
+| `906ad0c` | 로컬 SSH 어댑터의 외부 실행 receipt에 source 개수/image 포함 유계 서명·action route 기록; telemetry source 차원이 무효여도 본 업무 흐름을 가로막지 않음 | 신규 2 + SSH 전송 63 PASS |
+
+### 전체 회귀 및 운영 릴리스
+
+- 통합 코드 HEAD 및 운영 설치 revision **`906ad0c415478a72059f8067083521d03821580e`**. 신규 변경 후 `python scripts/run_validation.py --route repository ... --run`: **1,371건, 실패 0, 오류 0, 건너뜀 4**. 이전 1,354건 완료 증거를 불필요하게 재실행하지 않고, 이번 새 코드에 대해 통합 전체 회귀 1회만 수행했다.
+- 빌드 `scratch/tasks/roadmap-residual-20261011/release.tar.gz`, 93개 파일, archive SHA256 **`9516d9eea900ebe91d54365f670feca66bad1a02f1d6fd9874a207ff3ce4ceb0`**. SSH staging SHA 동일, 원격 installer `--preflight-only` PASS, inventory digest `e2b6b13723b8fca851977c656eda41c1c3b906534d264cb2831619db60252213`, MU expected SHA `d10d4b3bff10378f965b7e9db8d6d912c3ee99fdeb833136e0774939639794fa`.
+- 새 운영 v3 전체 백업 **`/home/ubuntu/backups/bloguito_backup_20261011_192408.tar.gz`** (약 114MB), SHA256 **`945b41b0315f0458cab31136ea7b02d9437bacf3e381903787dbdd86f965db34`**. `restore_backup.sh --verify-only` 통과: SHA·gzip·내부 경로 검사, 실제 사이트 DB 복원 수행하지 않음. 이전 격리 WordPress/MariaDB 응답 유실·전체 복원·rollback CI는 새 결함이 없어 반복하지 않음.
+- 정규 installer 증분 운영 설치 성공. 새 파일별 runtime rollback receipt **`/home/ubuntu/agent-publisher/backups/editorial-20261011T102616Z-12899b0df889/manifest.json`**. 독립 installer readback **93/93 SHA 일치, mismatch 0, `run_daily.sh` executable, editorial lock free**. 기존 MU 및 cron 일정 변경 없음.
+- 새 릴리스의 read-only `editorial_cli.py list-drafts` PASS. WordPress 공개 글 #641 `publish`, **본문 SHA `78aa3ebed10a8eac20ae5e927f69e7a5b468b14e20b690a277e138a61aec3c17` 동일**. 신규 post, 발행, 본문 편집, 대표이미지 import/thumbnail mutation 0. 측정/관측은 `docs/tasks/workflow-performance-live-20261011.md` 참조.
+
+### 14항목 판정 (잔여 조건 재평가)
+
+| 항목 | 판정 | 이 후속 턴의 수용 근거/남은 조건 |
+| --- | --- | --- |
+| S1 | 완료 | 운영 scheduler/exclusive lock 계약 유지; 10/12 08:00 신 릴리스 정규 관측은 아직 미래 |
+| S2 | 완료 | 기존 이미지 CAS·경합 테스트 유지, 새 이미지 mutation 없음 |
+| S3 | 완료 | 기존 Draft ID 영수증 계약 및 이번 동일 키 interprocess race fence, 모호한 중복 생성 자동 재시도 금지 |
+| T1 | 완료 | 검색 의도 fixture·주제 중복 계약 기존 검증 유지 |
+| T2 | 완료 | 카탈로그 저장·충돌 복구 기존 검증 유지 |
+| T3 | 완료 | 신규 Draft SEO 메타 CAS/rollback 기존 실제 DB CI 유지 |
+| T4 | 완료 | 공식 source subset·semantic freshness 검증 유지 |
+| F1 | **부분** | 부분/오염된 5회 비교 fail-closed + SSH adapter workload telemetry 신규 구현; 과거 실운영 동질 표본 양측 5건 없음 |
+| F2 | **부분** | WP 프로세스 내부 5쌍에서 분리 2→결합 1호출 실측 기존 PASS; 실제 SSH·전체 editorial 평균/중앙값/P90 개선 미측정 |
+| Q1 | **부분** | #641 전체 페이지/CTA 재검증 및 원본 URL/탭 위조 방지; native browser menu 200%, 인증 Draft Preview 권한 있는 기존 세션 없음 |
+| Q2 | 완료 | 기존 read-only 후보·보류 원인 대시보드 기능 유지 |
+| Q3 | **부분** | 같은 키 저널 race 해결·operator lock 상태 진단, 원격 WordPress create와 로컬 journal 원자성/원본 미디어 소유권 미확정은 계속 차단 |
+| R1 | **부분** | 기존 media 회복 순수 모듈 경계 유지, 새로 입증되지 않은 giant rewrite 보류 |
+| R2 | **부분** | 이미지 선택 주체·manifest/승인/MU 호환 기존 검증 유지; 실제 image_gen/CoS 원본 host 호출 attestation 미확인 |
+
+합계 **완료 8, 부분 6, 미착수 0**. Q3 race 수정을 무단 auto-retry 허용으로 해석해서는 안 된다. `2026-10-12 08:00 KST`는 아직 오지 않았으므로 신 릴리스의 예약 실행 완료는 미관측. 완료 후 `cron.log` start/finish·잠금/`PIPELINE_RESULT`·신규 ID·status/SHA readback을 별도 읽기 전용 관측한다. 사용자가 기존 권한 있는 관리자 WordPress Preview/browser 세션을 제공하면 Q1 native UI 확대/Preview를 검증할 수 있다. 원본 image_gen 호스트 호출 영수증이 실제 제공되기 전까지 R2 독립 생성 인증은 불가. 미디어 import가 불명확하면 원본 receipt·종료 확인 없이는 SHA 일치만으로 재개하지 않는다. 원본 `main` dirty 및 기존 기타 worktree/무시된 QA PNG는 보존했다.
+
 ## Q3 저널 동시성 경합 추가 안전 수정 (격리 코드, 운영 미적용)
 
 - **정확한 기준:** `f4e3ce815cd499417dcd0fa9a3ccbb343c0efa50`에서 별도 worktree `C:/Projects/Bloguito-q3-r1-residual-20261011`를 생성하여 검사했다. main·기존 통합 작업 공간·운영 WP/DB/cron에 접근하거나 쓰지 않았다.
