@@ -4,8 +4,11 @@ import json
 import hashlib
 import os
 import re
+import shlex
 import subprocess
 import sys
+import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -64,25 +67,46 @@ echo wp_json_encode($o);
 """
 
 def run_ssh_inventory() -> list:
-    temp_php = ROOT / "agent-publisher" / "data" / "catalog_inventory.php"
-    temp_php.write_text(CATALOG_PHP, encoding="utf-8")
-
-    # 1. SCP to server
-    scp_cmd = ["scp", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", str(temp_php), f"{SSH_HOST}:/tmp/catalog_inventory.php"]
-    subprocess.run(scp_cmd, check=True)
-
-    # 2. Docker cp and wp eval-file
-    eval_cmd = (
-        "sudo docker cp /tmp/catalog_inventory.php wordpress_app:/tmp/catalog_inventory.php && "
-        "sudo docker exec wordpress_app wp eval-file /tmp/catalog_inventory.php --allow-root && "
-        "sudo docker exec wordpress_app rm -f /tmp/catalog_inventory.php && rm -f /tmp/catalog_inventory.php"
-    )
-    full_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", SSH_HOST, eval_cmd]
-    res = subprocess.run(full_cmd, capture_output=True, text=True, encoding="utf-8", check=True)
-
-    # Clean up local temp file
-    temp_php.unlink(missing_ok=True)
-    return json.loads((res.stdout or "").lstrip("\ufeff"))
+    # Every invocation owns a separate path on all three filesystems. A
+    # concurrent sync must not overwrite another job's PHP script.
+    remote = f"/tmp/catalog_inventory_{uuid.uuid4().hex}.php"
+    EDITORIAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    local = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=EDITORIAL_DATA_DIR,
+                prefix=".catalog-inventory-", suffix=".php", delete=False) as handle:
+            local = Path(handle.name)
+            handle.write(CATALOG_PHP)
+        subprocess.run(
+            ["scp", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+             str(local), f"{SSH_HOST}:{remote}"], check=True)
+        eval_cmd = (
+            f"sudo docker cp {shlex.quote(remote)} wordpress_app:{shlex.quote(remote)} && "
+            f"sudo docker exec wordpress_app wp eval-file {shlex.quote(remote)} --allow-root"
+        )
+        res = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", SSH_HOST, eval_cmd],
+            capture_output=True, text=True, encoding="utf-8", check=True)
+        data = json.loads((res.stdout or "").lstrip("\ufeff"))
+        if not isinstance(data, list):
+            raise ValueError("invalid_catalog_wordpress_inventory")
+        return data
+    finally:
+        if local is not None:
+            local.unlink(missing_ok=True)
+        cleanup = (
+            f"sudo docker exec wordpress_app rm -f {shlex.quote(remote)}; "
+            f"rm -f {shlex.quote(remote)}"
+        )
+        # Cleanup is best effort; a failed post-create read must retain the
+        # primary exception rather than hiding it behind failed cleanup.
+        try:
+            subprocess.run(["ssh", "-o", "BatchMode=yes", "-o",
+                            "ConnectTimeout=15", SSH_HOST, cleanup],
+                           capture_output=True, check=False, timeout=25)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 def determine_type_and_category(title: str, categories=None, category_slugs=None):
     """Classify post into category and Evergreen vs Seasonal."""
@@ -642,6 +666,55 @@ python scripts/sync_post_catalog.py
     return md_content
 
 def sync_catalog():
+    # The reconciliation below can mutate reviewed index files. Hold the same
+    # editorial mutation lock as the publisher, not merely a catalog-file lock.
+    agent_root = ROOT / "agent-publisher"
+    if str(agent_root) not in sys.path:
+        sys.path.insert(0, str(agent_root))
+    from agents.post_manifest_store import editorial_lock
+    with editorial_lock(agent_root):
+        return _sync_catalog_locked()
+
+
+def _atomic_file(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                "wb", dir=path.parent, prefix=".catalog-sync-", suffix=".tmp",
+                delete=False) as handle:
+            temp = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
+def catalog_generation_status() -> dict:
+    """A two-file snapshot is verifiable but NOT an atomic cross-file commit."""
+    receipt_path = CATALOG_INVENTORY_JSON.with_name("catalog_generation.json")
+    if not receipt_path.is_file():
+        return {"status": "legacy_unverified"}
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        md = CATALOG_MD.read_bytes()
+        inventory = CATALOG_INVENTORY_JSON.read_bytes()
+        if (receipt.get("version") != 1
+                or receipt.get("md_sha256") != hashlib.sha256(md).hexdigest()
+                or receipt.get("inventory_sha256") != hashlib.sha256(inventory).hexdigest()):
+            return {"status": "incomplete_generation"}
+        return {"status": "verified", "generation": receipt["generation"]}
+    except (OSError, ValueError, KeyError, AttributeError):
+        return {"status": "incomplete_generation"}
+
+
+def _sync_catalog_locked():
+    # Snapshot before the slow network operation: a concurrent human edit of
+    # the tracked backlog must not be overwritten by a later sync result.
+    original_md = CATALOG_MD.read_bytes() if CATALOG_MD.is_file() else None
     print("[Sync Catalog] Fetching all posts and metadata via Direct SSH eval-file...")
     posts = run_ssh_inventory()
     print(f"[Sync Catalog] Successfully fetched {len(posts)} posts with full metadata.")
@@ -658,19 +731,36 @@ def sync_catalog():
               f"#{row['post_id']}: {row['reason']}")
 
     existing_backlog = None
-    if CATALOG_MD.exists():
-        existing_backlog = extract_backlog_rows(CATALOG_MD.read_text(encoding="utf-8"))
+    if original_md is not None:
+        existing_backlog = extract_backlog_rows(original_md.decode("utf-8"))
     md = generate_catalog_markdown(posts, existing_backlog, load_reviewed_bundles())
 
-    CATALOG_MD.parent.mkdir(parents=True, exist_ok=True)
-    CATALOG_MD.write_text(md, encoding="utf-8")
+    current_md = CATALOG_MD.read_bytes() if CATALOG_MD.is_file() else None
+    if current_md != original_md:
+        raise ValueError("catalog_changed_during_sync:keep_manual_backlog")
+    md_bytes = md.encode("utf-8")
+    inventory_bytes = json.dumps(posts, ensure_ascii=False, indent=2).encode("utf-8")
+    generation = uuid.uuid4().hex
+    # Commit receipt LAST, so a crash between two atomic replacements leaves
+    # an explicit stale/missing receipt detectable on the next inspection.
+    _atomic_file(CATALOG_INVENTORY_JSON, inventory_bytes)
+    current_md = CATALOG_MD.read_bytes() if CATALOG_MD.is_file() else None
+    if current_md != original_md:
+        raise ValueError("catalog_changed_during_sync:keep_manual_backlog")
+    _atomic_file(CATALOG_MD, md_bytes)
+    _atomic_file(
+        CATALOG_INVENTORY_JSON.with_name("catalog_generation.json"),
+        (json.dumps({
+            "version": 1,
+            "generation": generation,
+            "md_sha256": hashlib.sha256(md_bytes).hexdigest(),
+            "inventory_sha256": hashlib.sha256(inventory_bytes).hexdigest(),
+        }, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+    )
     print(f"[Sync Catalog] Successfully generated {CATALOG_MD}")
 
     # Keep the catalog's richer WordPress snapshot separate from the canonical
     # lightweight inventory used by search_intent/scheduled editorial validation.
-    CATALOG_INVENTORY_JSON.parent.mkdir(parents=True, exist_ok=True)
-    CATALOG_INVENTORY_JSON.write_text(
-        json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[Sync Catalog] Successfully saved {CATALOG_INVENTORY_JSON}")
 
 if __name__ == "__main__":
