@@ -1,7 +1,10 @@
 """Strict creation-time SEO metadata CAS protocol (no post-body updates)."""
 
 import hashlib
+import base64
 import json
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -84,6 +87,18 @@ class GuardedDraftMetadataTests(unittest.TestCase):
         self.assertIn("ROLLBACK", GUARDED_NEW_DRAFT_META_SCRIPT)
         self.assertNotIn("wp_update_post", GUARDED_NEW_DRAFT_META_SCRIPT)
         self.assertNotIn("wp_insert_post", GUARDED_NEW_DRAFT_META_SCRIPT)
+
+    @unittest.skipUnless(shutil.which("php"), "PHP CLI unavailable: run in the wordpress-test CI job")
+    def test_actual_php_script_against_transaction_fixture(self):
+        """Execute the production PHP source, with simulated storage and WP APIs."""
+        fixture = PUBLISHER_ROOT.parent / "wordpress" / "tests" / "draft-meta-cas-fixture.php"
+        script = base64.b64encode(GUARDED_NEW_DRAFT_META_SCRIPT.encode()).decode()
+        result = subprocess.run(
+            [shutil.which("php"), str(fixture), script],
+            capture_output=True, text=True, encoding="utf-8", timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("PASS:"), 13, result.stdout)
 
 
 if __name__ == "__main__":

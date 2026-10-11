@@ -188,6 +188,25 @@ $test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = str_replace(
 check(!is_wp_error(bloguito_validate_publishability($test_post->ID, null, null, true)),
     'Delegated agent approval is valid when all original image and review bindings match');
 set_valid_publish_gate();
+check(!is_wp_error(bloguito_validate_publishability($test_post->ID, null, null, true)),
+    'Direct manual user selection remains valid with unchanged reviewed bindings');
+$delegated = json_decode($test_meta[BLOGUITO_PUBLISH_GATE_META_KEY], true);
+$delegated['approval_kind'] = 'manual_agent_delegated';
+$delegated['approval_evidence_sha256'] = 'not-a-sha256';
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = json_encode($delegated);
+check(is_wp_error(bloguito_validate_publishability($test_post->ID, null, null, true)),
+    'Delegated choice with invalid approval evidence is blocked in automation gate');
+$delegated['approval_evidence_sha256'] = str_repeat('2', 64);
+$delegated['content_sha256'] = hash('sha256', 'unreviewed drift');
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = json_encode($delegated);
+check(is_wp_error(bloguito_validate_publishability($test_post->ID, null, null, true)),
+    'Delegated choice cannot bypass reviewed content SHA binding');
+$delegated['content_sha256'] = hash('sha256', $test_post->post_content);
+$delegated['approval_kind'] = 'agent-delegated';
+$test_meta[BLOGUITO_PUBLISH_GATE_META_KEY] = json_encode($delegated);
+check(is_wp_error(bloguito_validate_publishability($test_post->ID, null, null, true)),
+    'Unnormalized selection mode is not a publish approval kind');
+set_valid_publish_gate();
 
 check(isset($registered_filters['post_row_actions']), 'Row action filter registered');
 check($registered_filters['post_row_actions'][2] === 2, 'Row action filter receives post object');

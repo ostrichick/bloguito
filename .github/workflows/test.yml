@@ -58,6 +58,20 @@ jobs:
           sudo apt-get install -y php-cli
       - name: Check WordPress MU plugins and contracts
         run: php wordpress/tests/run.php
+      - name: Execute guarded draft metadata PHP transaction fixture
+        run: |
+          python3 - <<'PY'
+          import base64
+          import subprocess
+          import sys
+          sys.path.insert(0, "agent-publisher")
+          from agents.wordpress_mutation import GUARDED_NEW_DRAFT_META_SCRIPT
+          script = base64.b64encode(GUARDED_NEW_DRAFT_META_SCRIPT.encode()).decode()
+          subprocess.run(
+              ["php", "wordpress/tests/draft-meta-cas-fixture.php", script],
+              check=True,
+          )
+          PY
 
   infrastructure-test:
     runs-on: ubuntu-latest

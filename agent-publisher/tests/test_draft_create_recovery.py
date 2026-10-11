@@ -136,6 +136,18 @@ class PublisherRecoveryTests(unittest.TestCase):
             self.invoke()
         self.assertEqual(1, self.create_count)
 
+    def test_completed_receipt_reuses_exact_post_id_and_never_creates_again(self):
+        first, _ = self.invoke()
+        self.assertEqual(first, 999)
+        second, inspected_inventory = self.invoke()
+        self.assertEqual(second, first)
+        self.assertEqual(1, self.create_count)
+        self.assertEqual([888], [post["ID"] for post in inspected_inventory["posts"]])
+        journal_file, = Path(self.folder.name).rglob("*.json")
+        journal = json.loads(journal_file.read_text(encoding="utf-8"))
+        self.assertEqual({"state": "complete", "post_id": 999},
+                         {key: journal[key] for key in ("state", "post_id")})
+
 
 if __name__ == "__main__":
     unittest.main()

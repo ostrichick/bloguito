@@ -41,9 +41,11 @@ def tar_bytes(files, *, symlink=None):
     return data.getvalue()
 
 
-def snapshot(unsafe_upload=False, symlink=False, outside_component=False):
+def snapshot(unsafe_upload=False, symlink=False, outside_component=False,
+             broken_db_stream=False):
     components = {
-        "db": gzip.compress(b"CREATE TABLE wp_posts (id int);"),
+        "db": (b"bad gzip stream" if broken_db_stream
+               else gzip.compress(b"CREATE TABLE wp_posts (id int);")),
         "uploads": tar_bytes({"../outside.txt" if unsafe_upload else
                               "unrelated/photo.jpg" if outside_component else "uploads/photo.jpg": b"photo"},
                              symlink="uploads/escape" if symlink else None),
@@ -132,6 +134,16 @@ class SnapshotRecoveryTests(unittest.TestCase):
             with self.assertRaises(sync_module.BackupError):
                 sync_module.verify_archive(self.archive)
             self.assertNotEqual(self.restore("--verify-only").returncode, 0)
+
+    def test_resealed_manifest_cannot_hide_invalid_database_gzip(self):
+        # Digest alone is insufficient: a manifest matching malformed inner
+        # bytes must still fail before any DB/WordPress restore.
+        self.archive.write_bytes(snapshot(broken_db_stream=True))
+        with self.assertRaises(sync_module.BackupError):
+            sync_module.verify_archive(self.archive)
+        result = self.restore("--verify-only")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "no-live-wordpress").exists())
 
     def test_no_implicit_restore_of_legacy_or_secrets_export(self):
         result = self.restore("--include-secrets")
