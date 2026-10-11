@@ -2,7 +2,7 @@ name: Test Suite
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feat/bloguito-real-db-20261011 ]
   pull_request:
     branches: [ main ]
 
@@ -39,6 +39,11 @@ jobs:
 
       - name: Check tracked files for secrets
         run: python scripts/check_repo_secrets.py
+
+      - name: Verify Linux cron and direct-main file lock
+        env:
+          PYTHONPATH: agent-publisher
+        run: python -m unittest discover -s agent-publisher/tests -p 'test_scheduler_run_lock.py' -v
 
       - name: Run test suite
         env:
@@ -83,3 +88,26 @@ jobs:
           bash -n agent-publisher/backup_daily.sh agent-publisher/restore_backup.sh
           MYSQL_PASSWORD=ci-placeholder MYSQL_ROOT_PASSWORD=ci-placeholder \
             docker compose -f wordpress/docker-compose.yml config --quiet
+
+      - name: Test isolated backup validation and failure injection on Linux
+        run: python3 -m unittest discover -s agent-publisher/tests -p 'test_backup_recovery_v3.py' -v
+
+  isolated-real-wordpress-db:
+    # This job owns completely disposable DB + WordPress named volumes.
+    # No ports, SSH, production .env, repository secrets, or deployment steps.
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    env:
+      COMPOSE_PROJECT: bloguito-realdb-${{ github.run_id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check isolated composition
+        run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" config --quiet
+      - name: Start disposable MariaDB and WordPress
+        run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" up -d --wait
+      - name: Test actual WP metadata CAS, concurrency, rollback, MU and SQL restore
+        run: python3 wordpress/tests/real-db/run.py --project "$COMPOSE_PROJECT"
+      - name: Remove disposable database and volumes
+        if: always()
+        run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" down --volumes --remove-orphans
