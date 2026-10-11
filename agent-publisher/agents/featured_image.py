@@ -410,12 +410,12 @@ def attest_current_featured_image(
     base = ["sudo", "docker", "exec", "wordpress_app", "wp"]
     lock = acquire_editorial_lock(ROOT)
     try:
-        fields = ["post_status", "post_title", "post_name", "post_content", "post_excerpt"]
-        current = get_post(base, post_id, fields=fields)
+        # F2: adjacent same-state post+thumbnail reads can share one WP process.
+        # This is NOT reused across the attestation write boundary.
+        current, thumb = read_post_thumbnail_snapshot(base, post_id)
         if (current.get("post_status") != "draft"
                 or content_sha256(current.get("post_content", "")) != expected_content_sha256):
             raise ValueError("existing_image_post_baseline_mismatch")
-        thumb = _read_post_meta(base, post_id, "_thumbnail_id")
         if thumb != str(expected_thumbnail_id):
             raise ValueError("existing_image_thumbnail_changed")
         attachment = get_post(
@@ -449,8 +449,9 @@ def attest_current_featured_image(
         )
         validate_publish_attestation(
             base, post_id, expected_review_digest=binding["review_digest"])
-        after = get_post(base, post_id, fields=fields)
-        if after != current or _read_post_meta(base, post_id, "_thumbnail_id") != thumb:
+        # Post-write readback remains an independently fresh WP read.
+        after, after_thumb = read_post_thumbnail_snapshot(base, post_id)
+        if after != current or after_thumb != thumb:
             raise ValueError("existing_image_post_changed_during_attestation")
         return {
             "post_id": post_id,

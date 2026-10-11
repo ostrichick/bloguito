@@ -10,6 +10,7 @@ from agents.task_state import (
     load_task_state,
     mark_browser_qa_complete,
     start_task_state,
+    task_operational_summary,
     task_state_path,
     update_after_image_checkpoint,
     update_task_state,
@@ -18,6 +19,36 @@ from agents.task_state import (
 
 
 class TaskStateTests(unittest.TestCase):
+    def test_operational_status_fail_closed_for_missing_and_ambiguous_import(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.assertEqual('unverified', task_operational_summary(641, root)['operational_status'])
+            start_task_state(641, action='edit-post', edit_intent='이미지 추가', root=root)
+            update_task_state(641, checkpoints={'image_import_attempt': {'started': True}},
+                              status='failed', root=root)
+            report = task_operational_summary(641, root)
+            self.assertEqual('image_import_outcome_ambiguous', report['operational_status'])
+            self.assertIn('never_blind_retry', report['next_action'])
+
+    def test_operational_status_requires_recorded_positive_readback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            start_task_state(641, action='edit-post', edit_intent='문구 수정', root=root)
+            update_task_state(641, status='complete', completed=['wordpress_saved'], root=root)
+            self.assertEqual('complete_recorded_readback_unverified',
+                             task_operational_summary(641, root)['operational_status'])
+            update_task_state(641, result={'readback_verified': True}, root=root)
+            self.assertEqual('completed_verified', task_operational_summary(641, root)['operational_status'])
+
+    def test_operational_status_pending_metadata_and_browser_qa(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            start_task_state(641, action='edit-post', edit_intent='문구', root=root)
+            update_task_state(641, status='saved_pending_qa', completed=['wordpress_saved'], root=root)
+            self.assertEqual('saved_pending_qa', task_operational_summary(641, root)['operational_status'])
+            update_task_state(641, result={'draft_status': 'draft_saved_pending_metadata'}, root=root)
+            self.assertEqual('draft_saved_pending_metadata',
+                             task_operational_summary(641, root)['operational_status'])
     def test_state_is_resumable_and_tracks_pending_phases(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -45,6 +45,8 @@ class ExistingFeaturedAttestationTests(unittest.TestCase):
                          return_value={"version":1, "thumbnail_id":608}),
             patch("agents.publish_gate.validate_publish_attestation",
                   return_value={"version":1, "thumbnail_id":608}),
+            patch.object(featured_image, "read_post_thumbnail_snapshot",
+                         side_effect=lambda base, post_id: (self.original.copy(), "608")),
         ]
         self.mocks = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
@@ -65,6 +67,8 @@ class ExistingFeaturedAttestationTests(unittest.TestCase):
         self.assertEqual("automated_visual_review", record.call_args.kwargs["approval_kind"])
         self.assertEqual(self.sha, record.call_args.kwargs["content_sha256"])
         self.assertFalse((self.root / "data" / ".editorial-publish.lock").exists())
+        self.assertEqual(2, self.mocks[8].call_count,
+                         'one fresh preflight snapshot and one separate postwrite readback')
 
     def test_stale_body_refuses_gate(self):
         with patch.object(featured_image, "record_publish_attestation") as record:
@@ -89,6 +93,17 @@ class ExistingFeaturedAttestationTests(unittest.TestCase):
                           side_effect=ValueError("publish_attestation_write_failed:binding_mismatch")):
             with self.assertRaisesRegex(ValueError, "binding_mismatch"):
                 self.run_attestation()
+
+    def test_attestation_readback_detects_concurrent_post_and_thumbnail_drift(self):
+        for changed in [({**self.original, 'post_title': 'changed'}, '608'),
+                        (self.original, '999')]:
+            with self.subTest(changed=changed):
+                observed = iter([(self.original.copy(), '608'), changed])
+                with patch.object(featured_image, 'read_post_thumbnail_snapshot',
+                                  side_effect=lambda *a: next(observed)) as snapshot:
+                    with self.assertRaisesRegex(ValueError, 'post_changed_during_attestation'):
+                        self.run_attestation()
+                self.assertEqual(2, snapshot.call_count)
 
 
 if __name__ == "__main__":

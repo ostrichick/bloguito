@@ -35,6 +35,10 @@ RETIRED_FILES = (
     "agents/editorial_draft_updater.py",
     "agents/editorial_legacy_draft.py",
 )
+COMPATIBILITY_ASSETS = (
+    'agent-publisher/run_daily.sh',
+    'wordpress/mu-plugins/bloguito-post-row-actions.php',
+)
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -73,6 +77,10 @@ def release_inventory(root: Path = ROOT) -> list[str]:
         relative = "docs/" + name
         if not (root / relative).is_file():
             raise ValueError("required_release_file_missing:" + relative)
+        files.add(relative)
+    for relative in COMPATIBILITY_ASSETS:
+        if not (root / relative).is_file():
+            raise ValueError('required_compatibility_asset_missing:' + relative)
         files.add(relative)
     return sorted(files)
 

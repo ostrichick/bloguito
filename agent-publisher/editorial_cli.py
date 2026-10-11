@@ -52,7 +52,7 @@ MAINTENANCE_ACTIONS = {
     'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
     'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
     'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
-    'volatility-report',
+    'volatility-report', 'task-status',
 }
 ALL_ACTIONS = sorted(
     PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | MAINTENANCE_ACTIONS
@@ -191,6 +191,13 @@ def _main():
         for d in drafts:
             print(f"{str(d.get('ID', '')):<6} | {str(d.get('category_name', '')):<14} | {str(d.get('post_date', '')):<19} | {d.get('post_title', '')}")
         print("-" * 75)
+        return
+
+    if args.action == 'task-status':
+        if args.file or args.post_id is None or args.post_id <= 0:
+            parser.error('task-status requires --post-id only, without a positional file')
+        from agents.task_state import task_operational_summary
+        print(json.dumps(task_operational_summary(args.post_id), ensure_ascii=False, indent=2))
         return
 
     if args.action == 'promote-draft':

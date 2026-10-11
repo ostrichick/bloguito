@@ -5,10 +5,13 @@ import hashlib
 import json
 import shutil
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-CANONICAL_INVENTORY_DIGEST = '5e4ab4318e326d7b01fa9315f101043797dda1af7102b66e140045f41b4f6cd0'
+CANONICAL_INVENTORY_DIGEST = 'a514ba9c899c3e459d91158bf6f411eecad280dc439fb5163fb036fc7a74d153'
+WP_MU_RELATIVE = 'wordpress/mu-plugins/bloguito-post-row-actions.php'
+WP_MU_CONTAINER_PATH = '/var/www/html/wp-content/mu-plugins/bloguito-post-row-actions.php'
 ALLOWED_RETIRED_FILES = {
     'agents/copywriter.py',
     'agents/editorial_draft_updater.py',
@@ -39,7 +42,7 @@ def verify_release_manifest(release):
     if (manifest['inventory_digest'] != computed_inventory_digest
             or computed_inventory_digest != CANONICAL_INVENTORY_DIGEST):
         raise ValueError('release_inventory_contract_mismatch')
-    actual = {p.relative_to(release).as_posix() for folder in ('agent-publisher', 'docs')
+    actual = {p.relative_to(release).as_posix() for folder in ('agent-publisher', 'docs', 'wordpress')
               for p in (release / folder).rglob('*') if p.is_file()}
     if set(expected) != actual:
         raise ValueError('release_inventory_mismatch')
@@ -65,6 +68,8 @@ def verify_release_manifest(release):
         'agent-publisher/data/reviewed_content_provenance.json',
         'agent-publisher/editorial_cli.py',
         'agent-publisher/editorial_policy.json',
+        'agent-publisher/run_daily.sh',
+        WP_MU_RELATIVE,
     }
     if not required.issubset(expected):
         raise ValueError('required_release_module_missing')
@@ -84,6 +89,26 @@ def verify_release_manifest(release):
     return manifest
 
 
+def verify_installed_mu_compatibility(manifest, *, installed_digest=None):
+    """Read-only preflight before ANY app file write; never silently skip MU gate.
+
+    `installed_digest` is a dependency-injection seam used only by disposable
+    tests; the production CLI always reads the Docker container's actual file.
+    """
+    expected = manifest['files'][WP_MU_RELATIVE]
+    if installed_digest is None:
+        result = subprocess.run(
+            ['sudo', 'docker', 'exec', 'wordpress_app', 'sha256sum', WP_MU_CONTAINER_PATH],
+            capture_output=True, text=True, check=True, timeout=15)
+        parts = result.stdout.strip().split()
+        if len(parts) != 2 or parts[1] != WP_MU_CONTAINER_PATH:
+            raise ValueError('wp_mu_preflight_invalid_response')
+        installed_digest = parts[0]
+    if installed_digest != expected:
+        raise ValueError('wp_mu_release_incompatible:install_matching_mu_separately_first')
+    return expected
+
+
 def environment_config_is_external(text):
     """Refuse replacement of a legacy config containing inline credentials."""
     expected = {'GEMINI_API_KEY', 'KAKAO_MAP_JAVASCRIPT_KEY', 'SITE_URL'}
@@ -97,11 +122,13 @@ def environment_config_is_external(text):
         for value in expressions.values()))
 
 
-def install(release, app):
+def install(release, app, *, installed_mu_digest=None):
     release, app = release.resolve(), app.resolve()
     if not (app/'main.py').is_file() or not (app/'config.py').is_file():
         raise ValueError('existing_publisher_required')
     release_manifest = verify_release_manifest(release)
+    verified_mu = verify_installed_mu_compatibility(
+        release_manifest, installed_digest=installed_mu_digest)
     if (not environment_config_is_external((app / 'config.py').read_text(encoding='utf-8'))
             or not environment_config_is_external((release / 'agent-publisher/config.py').read_text(encoding='utf-8'))):
         raise ValueError('entrypoint_release_requires_external_environment_config')
@@ -129,11 +156,12 @@ def install(release, app):
         attestation = (
             relative.startswith('data/provenance_attestations/') and p.suffix == '.html'
         )
-        if ((p.suffix not in {'.py', '.json'} and not attestation)
+        if ((p.suffix not in {'.py', '.json'} and not attestation
+             and relative != 'run_daily.sh')
                 or '.env' in p.parts or '__pycache__' in p.parts):
             raise ValueError('unexpected_release_file')
-    backup = app/'backups'/('editorial-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
-    backup.mkdir(parents=True, mode=0o700)
+    backup = app/'backups'/('editorial-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:12])
+    backup.mkdir(parents=True, mode=0o700, exist_ok=False)
     changes = []
     policy_documents = (
         'EDITORIAL_SYSTEM.md',
@@ -146,17 +174,28 @@ def install(release, app):
         allowed_docs = {app.parent/'docs'/name for name in policy_documents}
         if not target.is_relative_to(app) and target not in allowed_docs:
             raise ValueError('target_outside_release_scope')
+        # Lexical path containment alone is not safe when an existing runtime
+        # directory or leaf file is a symlink into another OS path.
+        allowed_boundary = app if target.is_relative_to(app) else app.parent/'docs'
+        if (allowed_boundary.is_symlink() or any(part.is_symlink() for part in (target, *(
+                parent for parent in target.parents if parent != allowed_boundary
+                and parent.is_relative_to(allowed_boundary))))):
+            raise ValueError('release_target_symlink_refused')
         existed = target.exists()
         original = target.read_bytes() if existed else None
         token = str(len(changes))
         if existed:
             (backup/token).write_bytes(original)
             (backup/token).chmod(0o600)
-        changes.append({'target':str(target),'backup':token if existed else None})
+        mode = (target.stat().st_mode & 0o777) if existed else None
+        changes.append({'target':str(target),'backup':token if existed else None,
+                        'mode':mode})
         (backup/'manifest.json').write_text(json.dumps(changes,indent=2),encoding='utf-8')
         target.parent.mkdir(parents=True,exist_ok=True)
         tmp=target.with_name(target.name+'.editorial-new')
         tmp.write_bytes(data);tmp.replace(target)
+        if target.name == 'run_daily.sh':
+            target.chmod(mode if mode is not None and mode & 0o111 else 0o750)
     try:
         for file in files:
             relative=file.relative_to(release/'agent-publisher')
@@ -179,6 +218,7 @@ def install(release, app):
             'schema_version': 2, 'revision': release_manifest['revision'],
             'release_manifest_sha256': manifest_sha256,
             'inventory_digest': release_manifest['inventory_digest'],
+            'verified_mu_plugin_sha256': verified_mu,
             'installed_at_utc': datetime.now(timezone.utc).isoformat(),
             'files': installed_hashes,
             'retired_files': release_manifest['retired_files'],
@@ -191,6 +231,8 @@ def install(release, app):
                 target.unlink(missing_ok=True)
             else:
                 shutil.copy2(backup/change['backup'],target)
+                if change.get('mode') is not None:
+                    target.chmod(change['mode'])
         raise
 
 
