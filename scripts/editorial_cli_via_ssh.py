@@ -47,7 +47,7 @@ from agents.remote_transport_config import resolve_transport  # noqa: E402
 from agents.ssh_cli_request import parse_cli_request as _parse_cli_request_pure  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
-from agents.workflow_metrics import annotate, increment, timed, workflow_run  # noqa: E402
+from agents.workflow_metrics import annotate, increment, timed, workflow_run, workload_signature  # noqa: E402
 from agents.wordpress_mutation import (  # noqa: E402
     ATTACHMENT_SHA_LOOKUP_SCRIPT,
     FEATURED_IMAGE_LOCK_SCRIPT,
@@ -1041,6 +1041,26 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     return run
 
 
+def _annotate_primary_workload(action, bundle, *, image_present):
+    """Mirror the remote CLI's privacy-bounded dimensions on the SSH receipt.
+
+    The SSH adapter owns network counters; the separate remote Python process
+    cannot annotate this outer metrics record. No article data is persisted.
+    """
+    if action not in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
+        return
+    try:
+        signature = workload_signature(bundle, image_present=image_present)
+    except (ValueError, TypeError):
+        return  # Telemetry must not reject canonical editorial input before CLI validation.
+    metadata = {'workload_signature': signature}
+    if action == 'prepare-draft':
+        metadata['route'] = 'create'
+    elif action == 'replace-featured-image':
+        metadata['route'] = 'image-only'
+    annotate(**metadata)
+
+
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-mode', choices=['direct', 'wsl', 'tailscale'])
@@ -1072,6 +1092,16 @@ def _main():
     annotate(transport=config.mode, transport_adapter_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     transport_action = action
     expected_rank_math_meta = None
+    if action == 'replace-featured-image':
+        _annotate_primary_workload(action, None, image_present=bool(image_path))
+    elif action == 'prepare-draft' and request.bundle_path is not None and request.bundle_path.is_file():
+        # This is a metrics-only read. Canonical validation/loading still runs
+        # within editorial_cli and may reject or re-evaluate changed inputs.
+        try:
+            metric_bundle = json.loads(request.bundle_path.read_text(encoding='utf-8'))
+            _annotate_primary_workload(action, metric_bundle, image_present=bool(image_path))
+        except (OSError, ValueError, TypeError):
+            pass  # Missing/invalid measurements are incomparable, never zero.
     if action == 'edit-post':
         if request.bundle_path is None and not request.image_path_supplied:
             parser.error('edit-post requires a bundle file or --image-path')
@@ -1081,6 +1111,7 @@ def _main():
             if not bundle_path.is_file():
                 parser.error(f'{action} bundle file not found')
             bundle = json.loads(bundle_path.read_text(encoding='utf-8'))
+        _annotate_primary_workload(action, bundle, image_present=bool(image_path))
         post_ids = sorted(targets)
         if len(post_ids) != 1:
             parser.error(f'{action} requires exactly one --post-id')
