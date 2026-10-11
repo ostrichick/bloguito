@@ -19,6 +19,36 @@ SPEC.loader.exec_module(MODULE)
 
 
 class StageFeaturedImageCliTests(unittest.TestCase):
+    def test_explicit_lossless_png_staging_preserves_sealed_image_lineage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-1.png"
+            staged = root / "candidate-1-upload.png"
+            manifest = root / "manifest.json"
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            seal_spec = importlib.util.spec_from_file_location(
+                "png_sealer", SCRIPT.parent / "seal_featured_image_candidates.py")
+            sealer = importlib.util.module_from_spec(seal_spec)
+            seal_spec.loader.exec_module(sealer)
+            sealer.seal_candidates([source], manifest)
+            arguments = ["stage_featured_image.py", str(source), str(staged),
+                         "--candidate-manifest", str(manifest),
+                         "--selected-candidate", "1", "--selection-mode", "user"]
+            with patch("sys.argv", arguments):
+                with self.assertRaises(SystemExit) as blocked:
+                    MODULE.main()
+            self.assertEqual(2, blocked.exception.code)
+            self.assertFalse(staged.exists())
+            with patch("sys.argv", arguments + ["--lossless-png"]):
+                self.assertEqual(0, MODULE.main())
+            with Image.open(staged) as decoded:
+                self.assertEqual("PNG", decoded.format)
+                self.assertEqual((1200, 675), decoded.size)
+            lineage = verify_manual_image_upload_lineage(
+                staged, manifest, 1, "user")
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),
+                             lineage["source_sha256"])
+
     def test_codex_native_original_stages_and_rejects_changed_host_output(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

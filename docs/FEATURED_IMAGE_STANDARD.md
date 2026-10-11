@@ -17,7 +17,7 @@
 - 선택 주체는 `user` 또는 `agent-delegated` 중 하나로 명시한다. `agent-delegated`는 사용자의 명시적 선택 위임·1개 즉시 업로드 지시에만 사용한다. 위임이 없으면 사용자 선택을 받아야 한다.
 - 선택이 확정되기 전에는 어느 후보도 WordPress 대표 이미지로 지정하지 않는다. 선택한 candidate 번호를 해당 파일/SHA에 결합하며, 선택 이후에는 브라우저 히스토리에서 다시 이미지를 찾아 저장하지 않는다. 브라우저 캐시·스크린샷·클립보드·Base64 재조립·별도 대화 파일 bridge는 일반 후보 이미지 전달 경로에 사용하지 않는다.
 - 선택된 원본 후보를 그대로 후속 업로드의 source로 사용하며 후보 번호를 바꾸거나 다른 후보로 대체하지 않는다. WordPress 규격에 맞추기 위한 결정론적 1200×675 staging은 허용하되 비율이 다른 경우 피사체를 잘라내지 않고 전체 전경을 보존한다.
-- 생성 대표이미지의 staging 기본 출력은 WebP다. `stage_featured_image.py --candidate-manifest <manifest> --selected-candidate N --selection-mode user|agent-delegated <candidate-file>`에서 manifest와 선택 주체/번호는 필수이며 선택 source의 sealed path/SHA와 정확히 같아야 한다. 글자 품질 등 이유로 무손실이 필요한 특수 경우에만 PNG를 명시적으로 선택한다. 로컬 staging은 전경을 유지한 크기·형식 변환만 허용하며 장면 재제작·그리기는 금지한다.
+- 생성 대표이미지의 staging 기본 출력은 WebP다. `stage_featured_image.py --candidate-manifest <manifest> --selected-candidate N --selection-mode user|agent-delegated <candidate-file>`에서 manifest와 선택 주체/번호는 필수이며 선택 source의 sealed path/SHA와 정확히 같아야 한다. 글자·테두리 손실이 문제인 **특수 경우에만** `--lossless-png <candidate-file> <explicit-output.png>`로 무손실 PNG를 선택한다. 확장자만 PNG로 바꾸는 것은 거부하며 원본 후보의 provenance/SHA, staging receipt, WordPress 업로드·readback은 WebP와 동일하게 요구한다. 로컬 staging은 전경을 유지한 크기·형식 변환만 허용하며 장면 재제작·그리기는 금지한다.
 - 선택 후에는 정규 `replace-featured-image` 또는 신규 draft의 `--image-path` 경로로 업로드하고 thumbnail readback을 확인한다.
 - 이미지 생성 호출 때문에 작업 turn이 끊기는 환경에서는 `AFTER_IMAGE` 체크포인트를 남겨 다음 turn에서 후보 선택·업로드 작업을 이어간다.
 
