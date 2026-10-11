@@ -17,15 +17,24 @@ from pathlib import Path
 from typing import Callable
 
 from agents.editorial import ROOT, fresh, policy
+from agents.source_extractors import scoped_source_provenance_valid
 from agents.temporal_validation import KST
 from agents.volatility import requires_live_refresh
 from agents.workflow_metrics import increment, timed
 
 
-SOURCE_RECEIPT_SCHEMA = 1
+SOURCE_RECEIPT_SCHEMA = 2
 DEFAULT_RECEIPT_TTL_MINUTES = 15
 MAX_RECEIPT_TTL_MINUTES = 30
-SOURCE_IDENTITY_FIELDS = ("url", "source_type", "sha256", "title")
+SOURCE_IDENTITY_FIELDS = ("url", "source_type", "sha256", "title",
+                          "raw_sha256", "raw_source_version", "section_selector",
+                          "section_extractor_version", "raw_url")
+
+
+def _identity_digest(source: dict) -> str:
+    encoded = json.dumps({k: source.get(k) for k in SOURCE_IDENTITY_FIELDS},
+                         ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _receipt_ttl_minutes() -> int:
@@ -157,6 +166,13 @@ def verify_explicit_live_sources(bundle: dict, *, root: Path | None = None,
 
 def _load_reusable_receipt(source: dict, *, brief: dict | None = None, root: Path | None = None,
                            now: datetime | None = None) -> dict | None:
+    if not scoped_source_provenance_valid(source, brief):
+        return None
+    if source.get('section_selector') is not None:
+        # A digest of a selected excerpt cannot reveal edits elsewhere in the
+        # original law/PDF. Verify the *whole raw document* at each validation
+        # boundary rather than hiding remote drift behind the short TTL.
+        return None
     if source_requires_live_refresh(source, brief):
         return None
     path = _receipt_path(source.get("url", ""), root)
@@ -174,6 +190,7 @@ def _load_reusable_receipt(source: dict, *, brief: dict | None = None, root: Pat
         and payload.get("url") == source.get("url")
         and payload.get("source_id") == source.get("id")
         and payload.get("observed_sha256") == source.get("sha256")
+        and payload.get("identity_digest") == _identity_digest(source)
         and payload.get("fetcher_digest") == _fetcher_fingerprint(root)
         and timedelta(0) <= age <= timedelta(minutes=_receipt_ttl_minutes())
     ) else None
@@ -188,6 +205,7 @@ def _store_receipt(source: dict, *, root: Path | None = None,
         "url": source["url"],
         "source_id": source.get("id"),
         "observed_sha256": source["sha256"],
+        "identity_digest": _identity_digest(source),
         "fetcher_digest": _fetcher_fingerprint(root),
         "checked_at": (now or datetime.now(KST)).astimezone(KST).isoformat(),
     }
@@ -221,6 +239,8 @@ def verify_sources_unchanged(
             or None in expected or any(not source.get("url") or not source.get("sha256")
                                        for source in expected_sources)):
         raise ValueError("source_validation_receipt_requires_reviewed_sources")
+    if any(not scoped_source_provenance_valid(source, brief) for source in expected_sources):
+        raise ValueError("official_scoped_source_provenance_missing_or_changed")
 
     reusable = []
     refresh = []
@@ -243,7 +263,8 @@ def verify_sources_unchanged(
             raise ValueError("source_subset_recheck_incomplete")
         for source_id in refresh:
             fresh = observed[source_id]
-            if fresh.get("url") != expected[source_id].get("url") or fresh.get("sha256") != expected[source_id].get("sha256"):
+            if (not scoped_source_provenance_valid(fresh, brief)
+                    or _identity_digest(fresh) != _identity_digest(expected[source_id])):
                 raise ValueError("official_sources_changed_since_review")
             _store_receipt(fresh, root=root, now=now)
         increment("source_receipt_refetch", len(refresh))

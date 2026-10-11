@@ -1,6 +1,7 @@
 """Bounded HTTP/PDF source collection with stable reviewed source identity."""
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+import hashlib
 import re
 from urllib.parse import parse_qs, urlsplit
 import requests
@@ -22,6 +23,8 @@ from agents.source_extractors import (
     _naver_post233_price_reference_text,
     _yna_post233_distribution_reference_text,
     _newdaily_beartree_reference_text,
+    official_scope_for_url,
+    scoped_official_excerpt,
 )
 
 
@@ -55,6 +58,12 @@ def fetch_sources(brief):
     with timed('source_fetch'):
         official_urls = brief['official_urls']
         reference_urls = brief.get('reference_urls', [])
+        # Validate the *entire* approved selection map before the concurrent
+        # single-URL tasks narrow it to their own URL.
+        for url in official_urls:
+            official_scope_for_url(brief, url, 'official')
+        if not official_urls:
+            official_scope_for_url(brief, '', 'reference')
         if len(official_urls) > 7:
             raise ValueError('too_many_editorial_sources')
         requested = ([('official', url) for url in official_urls]
@@ -80,6 +89,8 @@ def _fetch_single_source(brief, source_type, url):
     single = dict(brief)
     single['official_urls'] = [url] if source_type == 'official' else []
     single['reference_urls'] = [url] if source_type == 'reference' else []
+    scopes = brief.get('official_source_scopes') or {}
+    single['official_source_scopes'] = {url: scopes[url]} if url in scopes else {}
     rows = _fetch_sources_sequential(single)
     if len(rows) != 1:
         raise ValueError('single_source_fetch_failed')
@@ -99,6 +110,8 @@ def fetch_sources_subset(brief, existing_sources, source_ids):
         raise ValueError('source_ids_required')
     if len(set(source_ids)) != len(source_ids) or any(source_id not in by_id for source_id in source_ids):
         raise ValueError('unknown_or_duplicate_source_id')
+    for url in brief.get('official_urls', []):
+        official_scope_for_url(brief, url, 'official')
     with timed('source_subset_fetch'):
         increment('source_fetch_requests', len(source_ids))
         workers = min(4, len(source_ids))
@@ -114,7 +127,9 @@ def fetch_sources_subset(brief, existing_sources, source_ids):
             ]
             fresh_rows = [future.result() for future in futures]
     refreshed = []
-    snapshot_keys = {'id', 'url', 'title', 'text', 'source_type', 'fetched_at', 'sha256'}
+    snapshot_keys = {'id', 'url', 'title', 'text', 'source_type', 'fetched_at', 'sha256',
+                     'raw_sha256', 'raw_source_version', 'section_selector',
+                     'section_extractor_version', 'raw_url'}
     for source_id, fresh in zip(source_ids, fresh_rows):
         prior = by_id[source_id]
         merged = {key: value for key, value in prior.items() if key not in snapshot_keys}
@@ -138,28 +153,43 @@ def _fetch_sources_sequential(brief):
     if len(requested) > 8:
         raise ValueError('too_many_editorial_sources')
     for i, (source_type, url) in enumerate(requested):
+        scope = official_scope_for_url(brief, url, source_type)
         # Redirects require updating the reviewed URL rather than silently trusting another host.
         response = _official_get(url)
         if response.status_code != 200:
             raise ValueError(f'official_source_http_{response.status_code}')
+        if scope is not None and len(response.content) > 16 * 1024 * 1024:
+            raise ValueError('official_scope_raw_document_too_large')
         if response.content.startswith(b'%PDF-'):
             # Some agencies serve PDFs as application/octet-stream from a
             # download endpoint with no .pdf suffix. Preserve page boundaries
             # and layout so row-specific quotations remain reproducible.
             from pypdf import PdfReader
             pages = PdfReader(BytesIO(response.content)).pages
-            text = '\n\n'.join(page.extract_text(extraction_mode='layout') or ''
-                             for page in pages).strip()
+            extracted_pages = [page.extract_text(extraction_mode='layout') or '' for page in pages]
+            text = '\n\n'.join(extracted_pages).strip()
+            provenance = {}
+            if scope is not None:
+                if scope['kind'] != 'pdf-pages':
+                    raise ValueError('official_scope_document_type_mismatch')
+                text, provenance = scoped_official_excerpt(
+                    text, url=url, selector=scope,
+                    raw_sha256=hashlib.sha256(response.content).hexdigest(),
+                    pdf_pages=extracted_pages)
             if not 80 <= len(text) <= 60000:
                 raise ValueError('official_pdf_text_missing_or_too_large')
             title = brief['entity'] + ' 공식 첨부 PDF'
-            sources.append({'id': f's{i}', **snapshot(url, title, text, source_type)})
+            sources.append({'id': f's{i}', **snapshot(url, title, text, source_type), **provenance})
             continue
+        if scope is not None and scope['kind'] != 'law-section':
+            raise ValueError('official_scope_document_type_mismatch')
         nol_booking_metadata = _nol_product_booking_metadata(response.content, url)
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.get_text(' ', strip=True) if soup.title else brief['entity']
         visual_text = _official_visual_transcript(brief, url, soup)
         if visual_text is not None:
+            if scope is not None:
+                raise ValueError('official_scope_visual_transcript_not_supported')
             if not 80 <= len(visual_text) <= 60000:
                 raise ValueError('official_source_text_missing_or_too_large')
             sources.append({'id': f's{i}', **snapshot(url, title, visual_text, source_type)})
@@ -295,8 +325,15 @@ def _fetch_sources_sequential(brief):
         text = _normalize_busan_junggu_weather(text, url)
         text = _normalize_movein_service_text(text, url)
         text = _normalize_post239_chuseok_sources(text, url)
+        provenance = {}
+        if scope is not None:
+            text, provenance = scoped_official_excerpt(
+                text, url=url, selector=scope,
+                # Hash the *entire downloaded document*, not the selected
+                # section or normalized HTML text, so even outside-section
+                # source changes invalidate the approved raw provenance.
+                raw_sha256=hashlib.sha256(response.content).hexdigest())
         if not 80 <= len(text) <= 60000:
             raise ValueError('official_source_text_missing_or_too_large')
-        sources.append({'id': f's{i}', **snapshot(url, title, text, source_type)})
+        sources.append({'id': f's{i}', **snapshot(url, title, text, source_type), **provenance})
     return sources
-

@@ -41,6 +41,16 @@ def reviewer_contract_digest(bundle: dict | None = None) -> str:
         "editorial_writer_sha256": code_digest,
         "editorial_schema_sha256": hashlib.sha256((ROOT / 'agents' / 'editorial_schema.py').read_bytes()).hexdigest(),
     }
+    # Scoped official sources bind the *extractor implementation* as well as
+    # the selected text and raw-source digest. An adapter edit cannot silently
+    # reuse a semantic approval issued for a different extraction contract.
+    if isinstance(bundle, dict) and any(
+            isinstance(source, dict) and 'section_selector' in source
+            for source in bundle.get('sources', [])):
+        contract['scoped_source_collector_sha256'] = hashlib.sha256(
+            (ROOT / 'agents' / 'source_collector.py').read_bytes()).hexdigest()
+        contract['scoped_source_extractors_sha256'] = hashlib.sha256(
+            (ROOT / 'agents' / 'source_extractors.py').read_bytes()).hexdigest()
     # Event semantic review adds prompt instructions from event_post_standard.py.
     # Bind that source only for event bundles so an event-review contract change
     # cannot reuse a stale event result while unrelated general-review caches stay valid.
