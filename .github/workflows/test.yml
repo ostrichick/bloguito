@@ -2,7 +2,7 @@ name: Test Suite
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feat/bloguito-full-restore-20261011 ]
   pull_request:
     branches: [ main ]
 
@@ -111,3 +111,24 @@ jobs:
       - name: Remove disposable database and volumes
         if: always()
         run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" down --volumes --remove-orphans
+
+  isolated-v3-full-restore:
+    # CI-only detached environment. No host ports, production SSH, or secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      COMPOSE_PROJECT: bloguito-fullrestore-${{ github.run_id }}
+      CI_RESTORE_DB_CONTAINER: bloguito-ci-db-${{ github.run_id }}
+      CI_RESTORE_WP_CONTAINER: bloguito-ci-wp-${{ github.run_id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check detached stack
+        run: docker compose -f wordpress/tests/real-db/compose.yml -f wordpress/tests/real-db/restore.override.yml -p "$COMPOSE_PROJECT" config --quiet
+      - name: Boot fresh MariaDB and WordPress
+        run: docker compose -f wordpress/tests/real-db/compose.yml -f wordpress/tests/real-db/restore.override.yml -p "$COMPOSE_PROJECT" up -d --wait
+      - name: Run real lost-response replay, v3 backup restore and release rollback
+        run: python3 wordpress/tests/real-db/full_restore.py
+      - name: Delete synthetic database and all CI-only volumes
+        if: always()
+        run: docker compose -f wordpress/tests/real-db/compose.yml -f wordpress/tests/real-db/restore.override.yml -p "$COMPOSE_PROJECT" down --volumes --remove-orphans
