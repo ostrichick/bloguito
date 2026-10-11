@@ -18,8 +18,8 @@
 | Q3 | 결과에 `drafts_created` 병기, 역사적 `published` 키 유지, 사용자 로그 draft 명칭 | 기존 파서 호환, 상태 검사 | 미배포 |
 | R2 | 위임 이미지 선택 approval kind 분리 및 WP MU 검사 동기화; null-thumbnail combined edit; 명시적 lossless PNG staging | 브라우저·이미지 생성 호출의 자체 증명은 하지 않음 | 미배포 |
 | R1 | 이미지 시작 상태 지문 계산을 부작용 없는 별도 내부 모듈로 이동, 기존 공개 import 유지 | 기존 image/followthrough 테스트 | 미배포 |
-| F2 | 개발 중—반복 WordPress 조회 최적화의 CAS 보존 증거 확인 전 적용 보류 | 미완료 | 미배포 |
-| Q1 | 개발 중—실제 브라우저 실행 로그와 정적 검사 분리 필요 | 미완료 | 미배포 |
+| F2 | **부분 구현:** 이미지 업로드 직전 동일 상태의 글/썸네일 조회를 2 WP reads → 1로 병합. 기존 SSH 경로는 이미 1회라 SSH 감소 없음; edit-post의 별개 CAS 경계는 유지 | 읽기 실패/응답 유실/동시 편집 실패 주입, 호출 횟수 fixture. 운영 속도 개선 실측 없음 | 미배포 |
+| Q1 | **하네스 구현:** 기존 CDP 탭에서 390/1280 렌더·TOC·표/카드·CTA·계산기 관측 및 PNG/SHA 증거, 독립 검증 후 task-state 결합. 정적 렌더는 WordPress QA로 인정하지 않음 | 13개 synthetic fixture, 실제 인증 미리보기 브라우저 실행/네이티브 200% 확대는 미검증 | 미배포 |
 
 **독립 원본 보존:** 작업 전 `main`의 `docs/POST_CATALOG.md`, `docs/clarity-integration-2026-09-29.md`, `docs/INDEX.md` 미커밋 변경과 계획서 untracked 파일을 덮어쓰지 않고 별도 Git worktree에서 구현했다. 신규 공개 포스트·임시글·대표이미지·예약 cron에 대한 WordPress mutation은 이 구현 검증 단계에서 수행하지 않았다.
 
@@ -29,6 +29,8 @@
 - Rank Math 메타의 guarded 원격 WordPress PHP는 syntax-only 검증을 수행했다. 실제 isolated WordPress DB의 transaction rollback, WP hook/object-cache 동작을 추가 검증하기 전 운영에 적용됐다고 주장하지 않는다.
 - `image_gen`·CoS `save_image` 실제 호스트 호출의 독립된 서명 영수증은 현재 로컬 manifest의 문자열로 대체할 수 없다. 원본 파일 SHA·선택 주체·후속 업로드 기록을 검증하되 호스트 도구 호출 그 자체의 암호학적 확인을 주장하지 않는다.
 - 기존 실행 성공 중앙값(신규 약 46.6초, 수정 45.7초, 이미지 60.8초)은 서로 다른 코드 버전과 작업 난도 표본이어서 이 릴리스의 절감률로 전용하지 않는다. 실제 운영 적용 후 동일 코드 버전·유형의 추가 표본에서 비교한다.
+- 범용 브라우저 QA는 실제 접속된 CDP 세션·URL·post ID·저장된 content SHA가 필요한 도구이며, synthetic 테스트 스크린샷만으로 운영 WordPress 테마나 인증 미리보기의 레이아웃을 확인했다고 볼 수 없다. 기존 200% 접근성 확대는 절반 viewport 근사 검증일 뿐이다.
+- F2는 실제 SSH latency 개선이 아니라 동일 Python 프로세스 내 WordPress 읽기 횟수만 2→1로 줄인 좁은 최적화다. 쓰기 직전 CAS와 쓰기 직후 readback을 유지한다.
 
 ## 운영 릴리스 승인 전 게이트
 

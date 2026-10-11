@@ -4,10 +4,15 @@ import importlib.util
 import hashlib
 import json
 import subprocess
+import sys
 import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+PUBLISHER_ROOT = Path(__file__).resolve().parents[1]
+if str(PUBLISHER_ROOT) not in sys.path:
+    sys.path.insert(0, str(PUBLISHER_ROOT))
 
 from agents.wordpress_mutation import (
     POST_THUMBNAIL_SNAPSHOT_SCRIPT, guarded_set_post_thumbnail,

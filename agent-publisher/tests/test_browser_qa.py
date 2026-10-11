@@ -6,12 +6,17 @@ import copy
 import hashlib
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
+
+PUBLISHER_ROOT = Path(__file__).resolve().parents[1]
+if str(PUBLISHER_ROOT) not in sys.path:
+    sys.path.insert(0, str(PUBLISHER_ROOT))
 
 from agents.browser_qa import evaluate_browser_qa, verify_qa_completion_receipt
 
