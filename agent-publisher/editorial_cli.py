@@ -52,7 +52,7 @@ MAINTENANCE_ACTIONS = {
     'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
     'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
     'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
-    'volatility-report', 'task-status',
+    'volatility-report', 'task-status', 'draft-create-status',
 }
 ALL_ACTIONS = sorted(
     PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | MAINTENANCE_ACTIONS
@@ -86,6 +86,8 @@ def _main():
                         help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')
     parser.add_argument('--verify-live', action='store_true',
                         help='task-status: read-only, fresh WordPress content/thumbnail SHA comparison')
+    parser.add_argument('--reconcile-image-sha256',
+                        help='task-status only: read-only SHA-bound attachment lookup for ambiguous media import')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
     parser.add_argument('--alt-only', action='store_true',
                         help='replace-featured-image: keep current image and update only its reviewed ALT text')
@@ -130,6 +132,9 @@ def _main():
     args = parser.parse_args()
     if args.verify_live and args.action != 'task-status':
         parser.error('--verify-live is exclusively read-only task-status')
+    if args.reconcile_image_sha256 and (
+            args.action != 'task-status' or not args.verify_live):
+        parser.error('--reconcile-image-sha256 requires task-status --verify-live')
     if args.expect_no_thumbnail and (
             args.action != 'edit-post' or not args.image_path
             or args.expected_thumbnail_id is not None):
@@ -205,9 +210,27 @@ def _main():
         if args.verify_live:
             from agents.task_state import load_task_state
             from agents.task_reconciliation import read_live_task_reconciliation
-            summary['live_reconciliation'] = read_live_task_reconciliation(
-                args.post_id, load_task_state(args.post_id))
+            state = load_task_state(args.post_id)
+            summary['live_reconciliation'] = read_live_task_reconciliation(args.post_id, state)
+            if args.reconcile_image_sha256:
+                from agents.task_reconciliation import inspect_uncertain_image_import
+                summary['image_import_reconciliation'] = inspect_uncertain_image_import(
+                    args.post_id, state, args.reconcile_image_sha256)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
+    if args.action == 'draft-create-status':
+        if not args.file or args.verify_live or args.reconcile_image_sha256:
+            parser.error('draft-create-status requires a reviewed bundle file; do not pass image task flags')
+        from agents.draft_create_reconciliation import reconcile_draft_create
+        path = Path(args.file)
+        bundle = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(bundle, dict):
+            parser.error('draft-create-status requires an editorial bundle object')
+        # Diagnostic is read-only. A proposed post ID is never promoted into
+        # the durable journal by this action, even if its body matches.
+        report = reconcile_draft_create(bundle, candidate_post_id=args.post_id)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return
 
     if args.action == 'promote-draft':

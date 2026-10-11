@@ -8,7 +8,9 @@ PUBLISHER = Path(__file__).resolve().parents[1]
 if str(PUBLISHER) not in sys.path:
     sys.path.insert(0, str(PUBLISHER))
 
-from agents.task_reconciliation import compare_live_snapshot, read_live_task_reconciliation
+from agents.task_reconciliation import (
+    compare_live_snapshot, read_live_task_reconciliation, inspect_uncertain_image_import,
+)
 
 
 class TaskReconciliationTests(unittest.TestCase):
@@ -58,3 +60,37 @@ class TaskReconciliationTests(unittest.TestCase):
                    side_effect=RuntimeError('WordPress read failed')):
             with self.assertRaisesRegex(RuntimeError, 'WordPress read failed'):
                 read_live_task_reconciliation(641, self.state)
+
+    def test_ambiguous_image_import_sha_candidates_never_authorize_retry(self):
+        interrupted = {'post_id': 641,
+                       'checkpoints': {'image_import_attempt': {'started': True}}}
+        for found, phase in [([], 'no_sha_matching_attachment_outcome_unknown'),
+                             ([303], 'single_sha_matching_attachment_unconfirmed'),
+                             ([303, 404], 'multiple_sha_matching_attachments_ambiguous')]:
+            with self.subTest(found=found), patch(
+                    'agents.wordpress_mutation.find_attachment_ids_by_sha', return_value=found) as lookup:
+                result = inspect_uncertain_image_import(641, interrupted, 'b' * 64)
+                self.assertEqual(phase, result['status'])
+                self.assertFalse(result['automatic_retry'])
+                self.assertFalse(result['write_authorized'])
+                lookup.assert_called_once()
+
+    def test_image_reconciliation_refuses_unbound_or_completed_journal(self):
+        with patch('agents.wordpress_mutation.find_attachment_ids_by_sha') as lookup:
+            for state in [None, {'post_id': 642},
+                          {'post_id': 641, 'checkpoints': {}},
+                          {'post_id': 641, 'checkpoints': {'image_import_attempt': {'started': True},
+                                                           'image_outcome': {'attachment_id': 90}}}]:
+                result = inspect_uncertain_image_import(641, state, 'b' * 64)
+                self.assertFalse(result['write_authorized'])
+            lookup.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'valid_staged'):
+            inspect_uncertain_image_import(641, {'post_id': 641}, 'invalid')
+
+    def test_uncertain_import_lookup_read_failure_propagates(self):
+        interrupted = {'post_id': 641,
+                       'checkpoints': {'image_import_attempt': {'started': True}}}
+        with patch('agents.wordpress_mutation.find_attachment_ids_by_sha',
+                   side_effect=RuntimeError('remote WP unavailable')):
+            with self.assertRaisesRegex(RuntimeError, 'remote WP unavailable'):
+                inspect_uncertain_image_import(641, interrupted, 'b' * 64)

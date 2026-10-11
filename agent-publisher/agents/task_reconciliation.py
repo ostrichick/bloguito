@@ -104,3 +104,41 @@ def read_live_task_reconciliation(post_id: int, state: dict | None) -> dict:
     post, thumb = read_post_thumbnail_snapshot(
         ['sudo', 'docker', 'exec', 'wordpress_app', 'wp'], post_id)
     return compare_live_snapshot(post_id, state, post, thumb)
+
+
+def inspect_uncertain_image_import(post_id: int, state: dict | None,
+                                   staged_image_sha256: str) -> dict:
+    """Read-only candidate search; even one SHA match is NOT proof of import ownership.
+
+    No call here may import media or assign featured image, and media SHA is
+    never treated as an image_gen host-attestation signature.
+    """
+    if type(post_id) is not int or post_id <= 0:
+        raise ValueError('valid_post_id_required')
+    if not isinstance(staged_image_sha256, str) or not re.fullmatch(
+            r'[0-9a-f]{64}', staged_image_sha256):
+        raise ValueError('valid_staged_image_sha256_required')
+    if not isinstance(state, dict) or state.get('post_id') != post_id:
+        return {'status': 'unverified', 'reason': 'matching_task_state_required',
+                'automatic_retry': False, 'write_authorized': False}
+    checkpoints = state.get('checkpoints') or {}
+    attempt = checkpoints.get('image_import_attempt') or {}
+    outcome = checkpoints.get('image_outcome') or {}
+    if not attempt.get('started') or outcome.get('attachment_id'):
+        return {'status': 'not_an_uncertain_image_import',
+                'automatic_retry': False, 'write_authorized': False}
+    from agents.wordpress_mutation import find_attachment_ids_by_sha
+    ids = find_attachment_ids_by_sha(
+        ['sudo', 'docker', 'exec', 'wordpress_app', 'wp'],
+        post_id, staged_image_sha256)
+    if len(ids) == 1:
+        classification = 'single_sha_matching_attachment_unconfirmed'
+    elif not ids:
+        classification = 'no_sha_matching_attachment_outcome_unknown'
+    else:
+        classification = 'multiple_sha_matching_attachments_ambiguous'
+    return {'status': classification, 'post_id': post_id,
+            'observed_attachment_ids': ids, 'staged_image_sha256': staged_image_sha256,
+            'automatic_retry': False, 'write_authorized': False,
+            'next_action': ('verify_original_staging_receipt_attachment_readback_and_live_cas_'
+                            'then_use_existing_regular_resume_path')}

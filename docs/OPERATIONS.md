@@ -16,6 +16,10 @@
 
 `--verify-live`를 **실제 WordPress 컨테이너와 해당 task-state가 있는 서버에서만** 추가하면 하나의 fresh read-only WordPress 실행으로 현재 본문 SHA, 저장 상태 및 저장된 attachment ID 기준 `_thumbnail_id`를 비교한다. 결과 `matched_post_snapshot`은 일치한 필드에만 한정되며 메타데이터·첨부 파일 원본·출처 최신성·semantic review·원격 이미지 생성 증빙을 검증하지 않는다. 상태 누락/불일치·WP 읽기 실패 시 중단하며 실제 쓰기나 자동 재시도는 하지 않는다. `task_reconciliation.py`는 상태 비교를 단일 부작용 없는 계약으로 분리한 R1 내부 모듈이다.
 
+**불명확한 작업의 Q3 재조정:** `task-status --post-id <ID> --verify-live --reconcile-image-sha256 <staging의 SHA256>`은 기존 이미지 import journal이 `started`이고 attachment ID가 불명확할 때에만 정확한 post ID에 종속된 WordPress 이미지 attachment 파일을 SHA로 조회한다. 0개는 여전히 결과 불명확, 1개는 미확인 후보, 2개 이상은 충돌이다. 원본 candidate seal/staging receipt/attachment 파일·ALT/본문·썸네일 CAS/현재 source review의 독립 검증 없이 어느 결과도 attachment 채택이나 두 번째 import를 허용하지 않는다. 조회 시 쓰기·재시도는 0건이다.
+
+`draft-create-status <기존에 완성된 reviewed bundle JSON> [--post-id <확인된 ID>]`는 같은 bundle의 정확한 workflow_key를 다시 계산해 로컬 `creating/created/complete` 저널을 읽으며, `created`와 `complete`의 **기록된 ID만** WordPress에서 원고/제목/발췌문/상태를 대조한다. `creating`에서 명확한 ID가 없다면 새로운 `wp post create` 호출은 계속 금지한다. 운영자가 이전 create 명령의 원본 응답 등으로 ID를 별도 입증한 경우에만 `--post-id`로 **후보를 조회**할 수 있으며, 본문이 같아도 저널을 자동 `created`로 승격하지 않는다. 이미 `created`로 기록된 동일 ID의 일치만 현재 공식 출처/semantic review와 통상 CAS를 다시 통과하는 정규 `prepare-draft` 재개 대상으로 표시한다. 이 조회 자체는 source·review 승인이나 WordPress 수정 권한을 발급하지 않는다.
+
 비공개 Google 보고서는 GitHub Workload Identity로 읽기 전용 수집한 뒤 `https://lifeinfo24.org/_bloguito/analytics-ingest`에 전달한다. GitHub secret `BLOGUITO_ANALYTICS_TOKEN`과 서버의 root-only `/etc/bloguito-analytics.env`를 같은 token으로 설정한다. `wordpress/analytics/`의 systemd unit과 nginx snippets가 실행/HTTPS proxy의 정본이다. 수신기는 localhost에만 bind하고 POST 인증·4MiB 상한·기존 snapshot schema/freshness 검증 뒤 private analytics directory에만 저장한다. 보고서·인증 header는 응답과 access log에 노출하지 않는다. 공개 SSH allowlist는 이 전달 경로와 별개로 유지한다.
 
 통계 전달 검증은 workflow success만으로 끝내지 않는다. 서버의 해당 날짜 JSON 생성 시각·SHA·schema validation을 확인한다. 다음 예약 실행의 실제 성공 여부는 별도로 기록한다. 기존 restricted SSH receiver는 rollback용이며 신규 workflow는 사용하지 않는다.
