@@ -22,6 +22,9 @@ from agents.publisher import PublisherAgent
 from sync_wordpress_inventory import ensure_inventory, sync_inventory
 from notifier import AlertDelivery, notify_published, notify_error, notify_pipeline_summary
 from agents.temporal_validation import KST
+from agents.image_generation_policy import (
+    load_image_generator_policy, unavailable_diagnosis,
+)
 
 
 GROWTH_DIR = Path(__file__).resolve().parent / 'data' / 'growth'
@@ -210,8 +213,14 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
         # The server cannot call ChatGPT image_gen. This is a policy hold, not
         # a provider outage to retry or a successful new-draft completion.
         reason = 'held_image_generation_unavailable'
+        generator_policy = load_image_generator_policy()
+        diagnosis = unavailable_diagnosis('unattended_scheduler')
         stats['held'] += 1
         stats['image_generation_status'] = reason
+        stats['image_pending'] = True
+        stats['image_generation_diagnosis'] = diagnosis
+        stats['generator_policy_version'] = generator_policy['version']
+        stats['generator_policy_sha256'] = generator_policy['sha256']
         stats['held_reasons'].append(f"[{category_name}] {reason}")
         print(f"[Pipeline] {reason}: ChatGPT image_gen unavailable to unattended scheduler; "
               "no draft created, no generator fallback or retry")
@@ -406,6 +415,10 @@ def main(argv=None):
         result['growth_plan_persisted'] = stats['growth_plan_persisted']
     if stats.get('image_generation_status'):
         result['image_generation_status'] = stats['image_generation_status']
+        result['image_pending'] = stats.get('image_pending', True)
+        result['image_generation_diagnosis'] = stats.get('image_generation_diagnosis')
+        result['generator_policy_version'] = stats.get('generator_policy_version')
+        result['generator_policy_sha256'] = stats.get('generator_policy_sha256')
     result['status'] = (
         'failed' if stats['errors'] or result['growth_outcome'] == 'input_failure' else
         'held_image_generation_unavailable'

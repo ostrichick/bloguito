@@ -8,11 +8,13 @@ from agents.task_state import (
     intent_sha256,
     load_after_image_checkpoint,
     load_task_state,
+    hold_after_image_generation,
     mark_browser_qa_complete,
     start_task_state,
     task_state_path,
     update_after_image_checkpoint,
     update_task_state,
+    validate_current_image_task,
     write_after_image_checkpoint,
 )
 
@@ -167,6 +169,9 @@ class TaskStateTests(unittest.TestCase):
                 root=root,
             )
             self.assertEqual("in_progress", checkpoint["status"])
+            self.assertEqual(5, checkpoint["image_task"]["candidate_count"])
+            self.assertEqual(checkpoint["image_task"]["task_id"], checkpoint["image_task_id"])
+            self.assertTrue(checkpoint["image_pending"])
             state = update_after_image_checkpoint(
                 641,
                 completed_steps=[
@@ -186,6 +191,51 @@ class TaskStateTests(unittest.TestCase):
             reread = load_after_image_checkpoint(641, root)
         self.assertEqual("complete", final["status"])
         self.assertEqual(final, reread)
+        self.assertFalse(final["image_pending"])
+
+    def test_held_imagegen_is_fenced_and_cannot_be_restarted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            kwargs = dict(
+                remaining_steps=["ChatGPT image_gen"],
+                expected_content_sha256="a" * 64, expected_thumbnail_id=None,
+                target_image_handle="chatgpt-native:pending",
+                completion_requirements=["image_generated", "uploaded", "readback_verified"],
+                root=root,
+            )
+            state = write_after_image_checkpoint(922, **kwargs)
+            scope_only = hold_after_image_generation(922, scope="cos_catalog_only", root=root)
+            self.assertEqual("in_progress", scope_only["status"])
+            self.assertEqual("awaiting_image_gen", scope_only["image_task"]["status"])
+            held = hold_after_image_generation(
+                922, scope="chatgpt_host_current_turn", host_call_result_observed=True, root=root)
+            self.assertEqual("held_image_generation_unavailable", held["status"])
+            self.assertEqual(state["image_task_id"], held["image_task_id"])
+            self.assertEqual("caller_report_only", held["image_task"]["diagnosis"]["evidence_level"])
+            with self.assertRaisesRegex(ValueError, "image_generation_held"):
+                validate_current_image_task(922, root)
+            with self.assertRaisesRegex(ValueError, "active_after_image_checkpoint_exists"):
+                write_after_image_checkpoint(922, **kwargs)
+            with self.assertRaisesRegex(ValueError, "after_image_steps_incomplete"):
+                from agents.task_state import assert_after_image_complete
+                assert_after_image_complete(922, root)
+
+    def test_image_task_binding_drift_blocks_before_import(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            original = write_after_image_checkpoint(
+                922, remaining_steps=["Generate"], expected_content_sha256="b" * 64,
+                expected_thumbnail_id=None, target_image_handle="chatgpt-native:pending",
+                completion_requirements=["uploaded"], root=root)
+            self.assertEqual(original["image_task_id"],
+                             validate_current_image_task(922, root)["task_id"])
+            path = root / "data" / "editorial_runs" / "task-state" / "post-922" / "after-image.json"
+            import json
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["image_task_id"] = "older-task-replayed"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "binding_missing_or_mismatched"):
+                validate_current_image_task(922, root)
 
     def test_terminal_state_is_archived_before_next_task(self):
         with tempfile.TemporaryDirectory() as folder:

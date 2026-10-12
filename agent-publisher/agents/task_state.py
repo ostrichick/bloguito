@@ -18,6 +18,9 @@ from typing import Any
 
 from agents.editorial import ROOT
 from agents.temporal_validation import KST
+from agents.image_generation_policy import (
+    new_image_generation_task, unavailable_diagnosis, validate_image_task_policy,
+)
 
 
 STATE_VERSION = 4
@@ -206,6 +209,7 @@ def write_after_image_checkpoint(
     expected_thumbnail_id: int | None,
     target_image_handle: str,
     completion_requirements: list[str] | tuple[str, ...],
+    image_task: dict[str, Any] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{64}", expected_content_sha256 or ""):
@@ -224,8 +228,17 @@ def write_after_image_checkpoint(
     if not completion_requirements:
         raise ValueError("after_image_completion_requirements_required")
     existing = load_after_image_checkpoint(post_id, root)
-    if existing and existing.get("status") == "in_progress":
+    if existing and existing.get("status") in {
+        "in_progress", "awaiting_image_gen", "held_image_generation_unavailable",
+    }:
         raise ValueError("active_after_image_checkpoint_exists")
+    if image_task is None:
+        image_task = new_image_generation_task(post_id=post_id)
+    if not isinstance(image_task, dict) or image_task.get("target") != {"post_id": post_id}:
+        raise ValueError("after_image_task_target_mismatch")
+    validate_image_task_policy(image_task)
+    if not isinstance(image_task.get("task_id"), str) or not image_task["task_id"]:
+        raise ValueError("after_image_task_id_required")
     now = _now()
     payload = {
         "version": 1,
@@ -237,6 +250,11 @@ def write_after_image_checkpoint(
         "expected_thumbnail_id": expected_thumbnail_id,
         "target_image_handle": target_image_handle,
         "target_image_sha256": _handle_file_sha256(target_image_handle),
+        "image_task_id": image_task["task_id"],
+        "generator_policy_version": image_task["generator_policy_version"],
+        "generator_policy_sha256": image_task["generator_policy_sha256"],
+        "image_task": deepcopy(image_task),
+        "image_pending": True,
         "remaining_steps": remaining_steps,
         "completion_requirements": completion_requirements,
         "completed": {step: False for step in _AFTER_IMAGE_STEPS},
@@ -272,8 +290,54 @@ def update_after_image_checkpoint(
         if not payload.get("completed", {}).get(step)
     ]
     payload["status"] = "complete" if not missing else "in_progress"
+    payload["image_pending"] = bool(missing)
+    if isinstance(payload.get("image_task"), dict):
+        payload["image_task"]["status"] = (
+            "completed" if not missing else "awaiting_completion")
+        payload["image_task"]["image_pending"] = bool(missing)
     payload["updated_at"] = _now()
     return _write(path, payload)
+
+
+def validate_current_image_task(post_id: int, root: Path | None = None) -> dict[str, Any]:
+    """P0 preflight callable before P1 visual review and any media import."""
+    state = load_after_image_checkpoint(post_id, root)
+    if not isinstance(state, dict):
+        raise ValueError("after_image_checkpoint_missing")
+    task = state.get("image_task")
+    if (not isinstance(task, dict) or task.get("task_id") != state.get("image_task_id")
+            or task.get("target") != {"post_id": post_id}
+            or task.get("generator_policy_version") != state.get("generator_policy_version")
+            or task.get("generator_policy_sha256") != state.get("generator_policy_sha256")):
+        raise ValueError("after_image_task_binding_missing_or_mismatched")
+    validate_image_task_policy(task)
+    if state.get("status") == "held_image_generation_unavailable":
+        raise ValueError("image_generation_held:manual_resolution_required")
+    return deepcopy(task)
+
+
+def hold_after_image_generation(post_id: int, *, scope: str,
+                                host_call_result_observed: bool = False,
+                                root: Path | None = None) -> dict[str, Any]:
+    """Persist a scoped diagnosis without treating tool metadata as host proof."""
+    path = after_image_checkpoint_path(post_id, root)
+    state = load_after_image_checkpoint(post_id, root)
+    if state is None:
+        raise ValueError("after_image_checkpoint_missing")
+    if (state.get("status") == "complete"
+            or any(state.get("completed", {}).values())
+            or (state.get("result") or {}).get("upload_attempt_started")):
+        raise ValueError("image_generation_diagnosis_after_work_started")
+    validate_current_image_task(post_id, root)
+    diagnosis = unavailable_diagnosis(scope,
+                                      host_call_result_observed=host_call_result_observed)
+    state["status"] = diagnosis["status"] if diagnosis["status"].startswith("held_") else "in_progress"
+    state["image_pending"] = True
+    state["image_task"]["status"] = diagnosis["status"]
+    state["image_task"]["image_pending"] = True
+    state["image_task"]["diagnosis"] = diagnosis
+    state["updated_at"] = _now()
+    return _write(path, state)
 
 
 def assert_after_image_complete(

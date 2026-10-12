@@ -12,6 +12,12 @@
 
 ## 2. 선택 전후의 규칙
 
+### P0: 생성 작업별 정책/권한 기록
+
+새 이미지 작업은 `agent-publisher/editorial_policy.json`의 `featured_image_policy` 버전과 SHA-256 digest를 실행 시 읽어 하나의 생성 정책으로 결합한다. `agents.image_generation_policy.new_image_generation_task()`는 매 작업에 새 `task_id`, 대상 `post_id` 또는 `brief_id`, 후보 수(일반 기본 5개, 해당 작업에서 지정하면 그 수), 선택 주체/명시 위임 상태, `image_pending=true`를 만든다. 과거 작업의 사용자 예외, Pillow 스크립트 주석이나 이전 채팅의 허용 기록은 새 작업의 생성 권한이 아니다. 해당 작업의 새로운 예외 지시가 있을 때만 **그 task_id·대상·승인 시각·만료 시각·승인 참조 해시**를 검증해 범위를 기록하며, 이 자체가 로컬 생성이나 `image_gen` 호출 사실의 증거가 되지 않는다. 정규 업로드에서 허용하는 생성 공급자는 계속 `image_gen`이다.
+
+`AFTER_IMAGE`에는 `image_task_id`, `generator_policy_version`, `generator_policy_sha256`, `image_task`를 기록한다. 후속 단계는 `validate_current_image_task(post_id)`로 정책 버전/digest 및 작업 식별·예외 만료를 확인한다. 호스트 도구 호출 여부는 **실제 호출 결과와 기록된 신고**를 구분해야 한다. CoS 함수 목록에 `image_gen`이 없다는 관찰만 있으면 `awaiting_image_gen`이고, 현재 턴 ChatGPT 호스트 접근 불가 결과가 직접 관찰됐다고 신고하거나 무인 서버인 경우 `held_image_generation_unavailable`로 보류한다. CLI의 `evidence_level=caller_report_only`는 호스트 호출 증명이 아니다. 보류된 작업은 `image_pending=true`이며 이미지 저장·readback 완료를 주장하지 않는다. 이미지 없이 콘텐츠 초안을 저장해야 하면 별도 `prepare-draft`의 이미지 없는 경로를 사용한다.
+
 - **실제로 생성한 후보 N개 전부**를 생성 직후 CoS Core `save_image`로 각 원본을 로컬 `candidate-1`~`candidate-N` 안정 경로에 저장한다. 저장 도구는 반드시 현재 대화에서 ChatGPT가 생성한 **원본**만 저장해야 한다. 실패하면 브라우저 스크롤·nth 재시도·Base64 변환·별도 bridge·로컬 재그리기로 우회하지 않고 해당 후보를 차단하여 원인을 보고한다. 이어 `seal_featured_image_candidates.py`로 후보 번호·경로·SHA-256·format/dimensions를 manifest에 고정한다. 원본 저장·decode·seal 실패 후보는 선택지로 제시하지 않는다.
 - 로컬에 고정한 N개 후보는 사용자가 비교·선택하려는 경우 모두 보여준다. 사용자가 에이전트에 선택을 위임한 경우에는 직접 품질을 비교해 선정 이유를 남기며, 사용자가 비교 화면을 요구하지 않았다면 별도의 선택 응답을 기다릴 필요가 없다.
 - 선택 주체는 `user` 또는 `agent-delegated` 중 하나로 명시한다. `agent-delegated`는 사용자의 명시적 선택 위임·1개 즉시 업로드 지시에만 사용한다. 위임이 없으면 사용자 선택을 받아야 한다.
@@ -29,7 +35,7 @@
 
 ### ChatGPT + CoS 즉시 업로드 경로 (기존 포스트, 1개 후보 즉시 업로드)
 
-1. 먼저 CoS Core 연결을 실제 호출로 확인한다. `python scripts/featured_image_followthrough.py begin --post-id 856`가 SSH/WordPress 조회와 기준 본문 SHA·기존 이미지 ID·`AFTER_IMAGE` 기록까지 수행한다. 별도의 `probe`는 접속 장애 진단이 필요할 때만 호출한다. 기존 active 체크포인트가 있으면 `status`부터 확인하고 중복 `begin`을 하지 않는다.
+1. 먼저 CoS Core 연결을 실제 호출로 확인한다. `python scripts/featured_image_followthrough.py begin --post-id 856`가 SSH/WordPress 조회와 기준 본문 SHA·기존 이미지 ID·`AFTER_IMAGE` 기록, 한 후보 작업의 새 `image_task_id`와 현재 정책 digest 결합까지 수행한다. 별도의 `probe`는 접속 장애 진단이 필요할 때만 호출한다. 기존 active/held 체크포인트가 있으면 `status`부터 확인하고 중복 `begin`을 하지 않는다.
 2. ChatGPT 네이티브 `image_gen`에서 해당 포스트 주제에 맞는 후보를 생성한다. 한글 이미지라면 글자가 정확히 보이는지 확인한다. 생성에 성공하면 **같은 채팅의 CoS Core `save_image`로 원본을 로컬 `scratch/tasks/<작업명>/candidate-1.png`에 저장**한다. 이미지 생성 직후 턴이 종료된 경우 이 작업을 재개할 수 있도록 사전 체크포인트를 유지한다.
 3. `python scripts/featured_image_followthrough.py continue --post-id 856 --source scratch/tasks/<작업명>/candidate-1.png --selected-candidate 1 --selection-mode agent-delegated --alt-text "해당 이미지 설명"`을 실행한다. 이 명령은 기존 SHA 봉인·WebP staging과 정규 `replace-featured-image`를 잇고 이미지 변경 CAS·readback을 수행한다. 업로드가 이미 시작된 뒤 결과가 불명확하면 **동일 명령을 무작정 재실행하지 않는다.** 먼저 failure receipt/WordPress 상태와 import fence를 검사한다.
 4. `continue` 성공 응답의 `verification.missing_requirements=[]`, `verification.wordpress_verified=true`를 확인하면 완료로 보고한다. 응답 유실·모호한 결과 등에서는 `python scripts/featured_image_followthrough.py status --post-id 856`를 통해 읽기 전용 상태 확인을 수행하며 무작정 재업로드하지 않는다.

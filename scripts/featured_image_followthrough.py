@@ -25,10 +25,13 @@ sys.path.insert(0, str(ROOT / "agent-publisher"))
 
 from agents.task_state import (  # noqa: E402
     assert_after_image_complete,
+    hold_after_image_generation,
     load_after_image_checkpoint,
     update_after_image_checkpoint,
+    validate_current_image_task,
     write_after_image_checkpoint,
 )
+from agents.image_generation_policy import new_image_generation_task  # noqa: E402
 from agents.featured_image import verify_manual_image_upload_lineage  # noqa: E402
 from agents.wordpress_mutation import POST_THUMBNAIL_SNAPSHOT_SCRIPT  # noqa: E402
 
@@ -165,8 +168,11 @@ def read_wordpress(post_id: int, host: str = "bloguito") -> dict:
 def begin(post_id: int, host: str = "bloguito", *,
           observer: TaskObservation | None = None) -> dict:
     existing = load_after_image_checkpoint(post_id)
-    if existing and existing.get("status") == "in_progress":
+    if existing and existing.get("status") in {"in_progress", "held_image_generation_unavailable"}:
         raise ValueError("active_after_image_checkpoint_exists:use_status_or_continue")
+    # This dedicated followthrough begins a single-candidate request. Selection
+    # authority remains pending until the user's choice/delegation is supplied.
+    image_task = new_image_generation_task(post_id=post_id, candidate_count=1)
     with _phase(observer, "begin_wordpress_snapshot"):
         baseline = read_wordpress(post_id, host)
     write_after_image_checkpoint(
@@ -180,6 +186,7 @@ def begin(post_id: int, host: str = "bloguito", *,
         expected_thumbnail_id=baseline["thumbnail_id"],
         target_image_handle="chatgpt-native:pending",
         completion_requirements=REQUIRED,
+        image_task=image_task,
     )
     update_after_image_checkpoint(
         post_id,
@@ -189,6 +196,11 @@ def begin(post_id: int, host: str = "bloguito", *,
     return {
         "status": "awaiting_image_gen",
         "post_id": post_id,
+        "image_task_id": image_task["task_id"],
+        "generator_policy_version": image_task["generator_policy_version"],
+        "generator_policy_sha256": image_task["generator_policy_sha256"],
+        "candidate_count": image_task["candidate_count"],
+        "image_pending": True,
         "wordpress_baseline": baseline,
         "next": "Call native image_gen, then CoS Core save_image, then continue.",
         "host_tool_note": "image_gen/CoS availability must be checked by actual host tool calls.",
@@ -204,6 +216,10 @@ def inspect(post_id: int, host: str = "bloguito", *,
     outcome = {
         "post_id": post_id,
         "checkpoint_status": state["status"],
+        "image_pending": bool(missing),
+        "image_task_id": state.get("image_task_id"),
+        "generator_policy_version": state.get("generator_policy_version"),
+        "image_generation_diagnosis": (state.get("image_task") or {}).get("diagnosis"),
         "missing_requirements": missing,
         "attachment_id": (state.get("result") or {}).get("attachment_id"),
         "attachment_url": (state.get("result") or {}).get("attachment_url"),
@@ -265,6 +281,10 @@ def continue_upload(
     state = load_after_image_checkpoint(post_id)
     if not state or state.get("status") != "in_progress":
         raise ValueError("active_after_image_checkpoint_required")
+    if state.get("image_task") is not None:
+        # Existing in-flight checkpoints can still be inspected/reconciled;
+        # newly started tasks always bind current generation policy here.
+        validate_current_image_task(post_id)
     if state["completed"].get("uploaded"):
         raise ValueError("upload_already_recorded:inspect_wordpress_before_retry")
     if (state.get("result") or {}).get("upload_attempt_started"):
@@ -382,10 +402,16 @@ def continue_upload(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    for action in ("probe", "begin", "status", "continue"):
+    for action in ("probe", "begin", "status", "continue", "diagnose-unavailable"):
         command = sub.add_parser(action)
         command.add_argument("--post-id", type=int, required=True)
         command.add_argument("--ssh-host", default="bloguito")
+        if action == "diagnose-unavailable":
+            command.add_argument("--observation-scope", required=True,
+                                 choices=["cos_catalog_only", "chatgpt_host_current_turn",
+                                          "unattended_scheduler"])
+            command.add_argument("--host-call-result-observed", action="store_true",
+                                 help="Caller-reported current-turn host call result; not a host attestation.")
         if action == "continue":
             command.add_argument("--source", type=Path, required=True,
                                  help="Unmodified ChatGPT original saved by CoS save_image.")
@@ -413,6 +439,13 @@ def main() -> int:
                 result = begin(args.post_id, args.ssh_host, observer=observer)
             elif args.action == "status":
                 result = inspect(args.post_id, args.ssh_host, observer=observer)
+            elif args.action == "diagnose-unavailable":
+                held = hold_after_image_generation(
+                    args.post_id, scope=args.observation_scope,
+                    host_call_result_observed=args.host_call_result_observed)
+                result = {"post_id": args.post_id, "status": held["image_task"]["status"],
+                          "image_pending": True, "image_task_id": held["image_task_id"],
+                          "diagnosis": held["image_task"]["diagnosis"]}
             else:
                 result = continue_upload(
                     args.post_id, args.source, args.alt_text, args.ssh_host,
