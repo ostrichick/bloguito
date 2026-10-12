@@ -36,7 +36,12 @@ class ImageGenerationPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "agent_delegation_not_authorized"):
             validate_image_task_selection(pending, selected_candidate=1,
                                           selection_mode="agent-delegated")
-        validate_image_task_selection(pending, selected_candidate=1,
+        with self.assertRaisesRegex(ValueError, "user_selection_not_registered"):
+            validate_image_task_selection(pending, selected_candidate=1,
+                                          selection_mode="user")
+        explicit_user = new_image_generation_task(
+            post_id=922, candidate_count=1, selection_mode="user")
+        validate_image_task_selection(explicit_user, selected_candidate=1,
                                       selection_mode="user")
         validate_image_task_selection(delegated, selected_candidate=1,
                                       selection_mode="agent-delegated")

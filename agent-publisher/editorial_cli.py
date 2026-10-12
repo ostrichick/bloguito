@@ -33,50 +33,45 @@ def _load_media_metadata_file(path: Path) -> tuple[str, str]:
 
 
 def _require_current_image_task(args, image_lineage: dict) -> dict:
-    """Validate actual task scope independently of CLI's claimed task ID.
+    """Trust a current registered checkpoint, not caller-supplied authority.
 
-    Existing-post continuations prefer their persisted AFTER_IMAGE policy state.
-    A new draft (no WordPress ID yet) uses a separately supplied task record
-    bound to the reviewed bundle's brief ID. No historic exception is inherited.
+    Initial image-bearing drafts must wait for a separately trusted task
+    registration channel; a self-authored JSON cannot authorize an import.
+    Image-free draft creation is unaffected.
     """
     from agents.image_generation_policy import (
         validate_image_task_policy, validate_image_task_selection)
-    from agents.task_state import load_after_image_checkpoint
+    from agents.task_state import load_after_image_checkpoint, validate_current_image_task
 
-    task = None
-    if args.action != 'prepare-draft' and args.post_id:
-        state = load_after_image_checkpoint(args.post_id)
-        if state and state.get('image_task') is not None:
-            task = state['image_task']
-            if state.get('image_task_id') != task.get('task_id'):
-                raise ValueError('image_task_checkpoint_identity_mismatch')
+    if args.action == 'prepare-draft':
+        raise ValueError('prepare_draft_image_trusted_task_registration_unavailable')
+    if type(args.post_id) is not int or args.post_id <= 0:
+        raise ValueError('image_task_post_id_required')
+    state = load_after_image_checkpoint(args.post_id)
+    if not state or state.get('image_task') is None:
+        raise ValueError('current_image_task_checkpoint_required_before_media_import')
+    task = validate_current_image_task(args.post_id)
+    if state.get('image_task_id') != task.get('task_id'):
+        raise ValueError('image_task_checkpoint_identity_mismatch')
+    if state.get('status') != 'in_progress':
+        raise ValueError('image_task_checkpoint_not_active')
     if args.image_task_record:
         try:
             supplied = json.loads(args.image_task_record.read_text(encoding='utf-8'))
         except (OSError, UnicodeError, ValueError) as exc:
             raise ValueError('current_image_task_record_missing_or_invalid') from exc
-        if task is not None and task != supplied:
+        if task != supplied:
             raise ValueError('image_task_record_conflicts_with_checkpoint')
-        task = supplied
-    if task is None:
-        raise ValueError('current_image_task_record_required_before_media_import')
     validate_image_task_policy(task)
     if task.get('task_id') != args.image_task_id:
         raise ValueError('image_task_id_must_match_current_task_record')
-    if args.action == 'prepare-draft':
-        try:
-            bundle = json.loads(Path(args.file).read_text(encoding='utf-8'))
-            expected_target = {'brief_id': bundle['brief']['id']}
-        except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
-            raise ValueError('image_task_prepare_draft_brief_unavailable') from exc
-    else:
-        expected_target = {'post_id': args.post_id}
+    expected_target = {'post_id': args.post_id}
     if task.get('target') != expected_target:
         raise ValueError('image_task_target_mismatch')
     validate_image_task_selection(
         task, selected_candidate=image_lineage['candidate_number'],
         selection_mode=image_lineage['selection_mode'])
-    return task
+    return {**task, '_checkpoint_created_at': state.get('created_at')}
 
 
 @contextmanager

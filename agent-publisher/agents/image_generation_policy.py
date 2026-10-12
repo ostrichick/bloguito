@@ -163,9 +163,8 @@ def validate_image_task_selection(task: dict, *, selected_candidate: int,
                                   selection_mode: str) -> None:
     """Require the authority and candidate count recorded for this one task.
 
-    A user's direct selection can supersede an earlier pending/delegated state,
-    but an agent cannot turn a pending task into delegated selection by writing
-    that string into a manifest or visual review receipt.
+    A user selection is recorded *at task registration*, not asserted later by
+    an arbitrary CLI argument. R2 will additionally authenticate the event.
     """
     if not isinstance(task, dict):
         raise ValueError("image_task_selection_record_required")
@@ -176,7 +175,10 @@ def validate_image_task_selection(task: dict, *, selected_candidate: int,
     if selection_mode == "agent-delegated":
         if task.get("selection_mode") != "agent-delegated" or task.get("explicit_delegation") is not True:
             raise ValueError("image_task_agent_delegation_not_authorized")
-    elif selection_mode != "user":
+    elif selection_mode == "user":
+        if task.get("selection_mode") != "user":
+            raise ValueError("image_task_user_selection_not_registered")
+    else:
         raise ValueError("image_task_selection_mode_invalid")
 
 

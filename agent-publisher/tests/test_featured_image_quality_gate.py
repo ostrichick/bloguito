@@ -156,7 +156,7 @@ class QualityGateTests(unittest.TestCase):
                   patch("agents.task_state.load_after_image_checkpoint", return_value=None),
                   patch("agents.featured_image_quality_gate.require_accepted_quality_review") as review,
                   patch("agents.featured_image.replace_featured_image_from_live_baseline") as upload):
-                with self.assertRaisesRegex(ValueError, "current_image_task_record_required"):
+                with self.assertRaisesRegex(ValueError, "current_image_task_checkpoint_required"):
                     editorial_cli._main()
                 review.assert_not_called()
                 upload.assert_not_called()

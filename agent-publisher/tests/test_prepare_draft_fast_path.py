@@ -13,7 +13,7 @@ READY = {"status": "ready", "reasons": [], "details": []}
 
 
 class PrepareDraftFastPathTests(unittest.TestCase):
-    def test_prepare_draft_reviews_once_without_cli_inventory_and_uses_provided_image(self):
+    def test_prepare_draft_rejects_self_issued_image_task_without_trusted_registration(self):
         bundle = sample()
         expected_review = bundle.pop("review")
 
@@ -74,40 +74,17 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                         "attachment_id": 777,
                         "publish_attestation": {"version": 1},
                     }) as replace:
-                editorial_cli.main()
-
-            saved = json.loads(bundle_path.read_text(encoding="utf-8"))
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-            self.assertTrue(image_path.exists())
+                with self.assertRaisesRegex(ValueError, "prepare_draft_image_trusted_task_registration_unavailable"):
+                    editorial_cli.main()
 
         load_inventory.assert_not_called()
-        review.assert_called_once()
-        publish.assert_called_once()
-        self.assertNotIn("image_path", publish.call_args.kwargs)
-        replace.assert_called_once()
+        review.assert_not_called()
+        publish.assert_not_called()
+        replace.assert_not_called()
         lineage.assert_called_once()
-        quality_review.assert_called_once_with(
-            visual_review_path,
-            source_sha256="a" * 64,
-            staged_sha256="b" * 64,
-            selected_candidate=1,
-            selection_mode="user",
-            expected_task_id=image_task_id,
-            manifest_path=root / "candidate-manifest.json",
-            staged_path=image_path,
-        )
-        self.assertEqual(901, replace.call_args.args[0])
-        self.assertEqual(image_path, replace.call_args.args[1])
-        self.assertEqual("manual_user_selected", replace.call_args.kwargs["approval_kind"])
-        self.assertEqual("GPT-5.6 Sol", saved["authoring"]["model"])
-        self.assertEqual(expected_review, saved["review"])
-        self.assertEqual(901, receipt["post_id"])
-        self.assertEqual("draft", receipt["status"])
-        self.assertEqual("created", receipt["semantic_review"])
-        self.assertTrue(receipt["featured_image_attached"])
-        self.assertEqual({"version": 1}, receipt["publish_attestation"])
+        quality_review.assert_not_called()
         cleanup.assert_not_called()
-        self.assertGreaterEqual(validate.call_count, 2)
+        validate.assert_not_called()
 
     def test_prepare_draft_reuses_current_review_and_allows_image_to_be_deferred(self):
         bundle = sample()

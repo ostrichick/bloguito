@@ -304,15 +304,27 @@ def validate_current_image_task(post_id: int, root: Path | None = None) -> dict[
     state = load_after_image_checkpoint(post_id, root)
     if not isinstance(state, dict):
         raise ValueError("after_image_checkpoint_missing")
+    # This state is an authorization boundary for an *unstarted* image import.
+    # A held/completed/cancelled checkpoint can still be inspected or
+    # reconciled, but must never authorize a fresh mutation.
+    if state.get("status") != "in_progress":
+        if state.get("status") == "held_image_generation_unavailable":
+            raise ValueError("image_generation_held:manual_resolution_required")
+        raise ValueError("image_task_checkpoint_not_active")
+    if ((state.get("result") or {}).get("upload_attempt_started")
+            or (state.get("completed") or {}).get("uploaded")):
+        raise ValueError("image_task_import_started_or_completed:reconcile_before_retry")
     task = state.get("image_task")
+    if (not isinstance(task, dict)
+            or task.get("status") not in {"awaiting_image_gen", "awaiting_completion"}
+            or task.get("image_pending") is not True):
+        raise ValueError("image_task_status_not_current")
     if (not isinstance(task, dict) or task.get("task_id") != state.get("image_task_id")
             or task.get("target") != {"post_id": post_id}
             or task.get("generator_policy_version") != state.get("generator_policy_version")
             or task.get("generator_policy_sha256") != state.get("generator_policy_sha256")):
         raise ValueError("after_image_task_binding_missing_or_mismatched")
     validate_image_task_policy(task)
-    if state.get("status") == "held_image_generation_unavailable":
-        raise ValueError("image_generation_held:manual_resolution_required")
     return deepcopy(task)
 
 
