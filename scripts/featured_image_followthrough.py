@@ -355,7 +355,9 @@ def continue_upload(
         visual_review_receipt,
         source_sha256=binding["source_sha256"], staged_sha256=binding["staged_sha256"],
         selected_candidate=selected_candidate, selection_mode=selection_mode,
-        expected_task_id=expected_task_id, manifest_path=manifest, staged_path=staged)
+        expected_task_id=expected_task_id, manifest_path=manifest, staged_path=staged,
+        expected_candidate_count=state["image_task"]["candidate_count"] if state.get("image_task") else None,
+        task_created_at=state.get("created_at"))
     # Bind the exact original, selected candidate and stage before any upload.
     update_after_image_checkpoint(
         post_id,

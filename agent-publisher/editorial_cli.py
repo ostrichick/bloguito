@@ -181,7 +181,7 @@ def _main():
                 parser.error('visual_review_receipt_required_before_media_import')
             if not args.image_task_id:
                 parser.error('current_image_task_id_required_before_media_import')
-            _require_current_image_task(args, image_lineage)
+            image_task = _require_current_image_task(args, image_lineage)
             from agents.featured_image_quality_gate import require_accepted_quality_review
             image_lineage['visual_review'] = require_accepted_quality_review(
                 args.visual_review_receipt,
@@ -192,6 +192,8 @@ def _main():
                 expected_task_id=args.image_task_id,
                 manifest_path=args.candidate_manifest,
                 staged_path=args.image_path,
+                expected_candidate_count=image_task['candidate_count'],
+                task_created_at=image_task['_checkpoint_created_at'],
             )
         elif (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
               or args.visual_review_receipt or args.image_task_id or args.image_task_record):
