@@ -34,6 +34,7 @@
     "task_workspace.py": "Managed scratch task workspace lifecycle",
     "sync_backups.py": "Verified backup synchronization with direct/Tailscale transports",
     "sync_backups_encrypted.py": "Authenticated encrypted off-host backup synchronization",
-    "sync_post_catalog.py": "POST_CATALOG synchronization"
+    "sync_post_catalog.py": "POST_CATALOG synchronization",
+    "verify_featured_image_pilots.py": "Fail-closed three-pilot source and WordPress acceptance readiness check"
   }
 }

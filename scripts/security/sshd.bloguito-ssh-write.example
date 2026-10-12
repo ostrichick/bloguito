@@ -1,0 +1,17 @@
+# OFFLINE CONFIG EXAMPLE, NOT INSTALLED. Validate position/order with sshd -t,
+# sshd -T -C user=bloguito-ssh-write,host=...,addr=... on disposable Ubuntu.
+# Separate SSH key/account; no sudo/docker/lxd/site-file-write group membership.
+Match User bloguito-ssh-write
+    ForceCommand /usr/local/libexec/bloguito/bloguito_ssh_write_gate.py
+    AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PubkeyAuthentication yes
+    AuthenticationMethods publickey
+    PermitUserEnvironment no
+    PermitTTY no
+    AllowTcpForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTunnel no
+    PermitUserRC no

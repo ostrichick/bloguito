@@ -46,6 +46,10 @@
 
 **R0 임시 fail-closed 운영 제한(2026-10-12):** `--image-task-record`는 호출자가 직접 만들 수 있어 이미지 업로드의 독립적인 승인 원천이 아니다. 별도 신뢰 가능한 작업 등록 기능(R1/R2)이 마련되기 전까지 `prepare-draft --image-path`의 즉시 이미지 업로드는 **거부**하고, 신규 글은 이미지 없이 임시글로 저장한 후 별도 승인된 이미지 작업으로 이어간다. 기존 글 변경 시에도 현재 `AFTER_IMAGE`가 `in_progress`이고 import 미시작·작업/선택/검수 증빙이 일치해야 한다. `held`, `complete`, 취소 상태 및 과거 검수 승인, 기본 5개 후보 중 1개만 제출한 기록을 거부한다. 작업 파일/검수 JSON은 여전히 생성 호스트·사람의 실제 관찰을 인증하지 못하므로 **R1~R3가 끝날 때까지 자동 업로드를 재발 방지 완료로 보고하지 않는다**.
 
+**R1/R2 검증기와 적용 전제(2026-10-12):** 정규 이미지 업로드 사전검사는 서명된 두 사건을 추가 요구한다. 후보 manifest 옆의 `<manifest>.host-proof.json`에는 신뢰할 수 있는 ChatGPT 호스트 증거 발급자가 확인한 **전체 후보 원본 SHA·작업 ID·정책 SHA**가, 검수 receipt 옆의 `<receipt>.review-proof.json`에는 별도의 실제 검수·선택 승인자가 확인한 **receipt·manifest SHA·선택 후보·작업 ID**가 결합되어야 한다. 서명은 각각 `/etc/bloguito/image-trust/host.pub.pem`, `review.pub.pem`의 별도 Ed25519 신뢰 앵커로 검사한다. 두 공개키는 운영 측이 독립적으로 provision해야 하며 private signing key는 AI 실행 자격에 노출하면 안 된다. **이 저장소에는 발급용 도구/비밀키/신뢰할 수 있는 호스트 증명 공급자가 포함되지 않는다.** 단순 `origin_claim`, 검수 JSON 또는 테스트용 임시 서명을 운영 인증으로 간주하지 않는다. 발급 채널·검증 가능한 운영 서버 writer·격리 DB 테스트 전까지 자동 업로드는 `held_provenance_unverifiable`로 보류하고, 운영 판정은 `NO-GO`다. 정상 관리자 WordPress UI의 직접 발행 기능은 이 자동화 제약의 대상이 아니다.
+
+**Windows 신뢰경계:** 현재 CoS 노트북(Windows)은 Linux root 소유권·쓰기 권한 검사를 수행할 수 없으므로 자동 업로드 검증기를 항상 `held_provenance_unverifiable:protected_server_verifier_required`로 보류한다. `/etc/bloguito`와 비슷한 Windows 로컬 경로에 공개키를 복사해도 허용하지 않는다. 서명 인증은 별도 보호된 Linux 서버 측 writer가 최종 판단해야 하며, 해당 실제 writer 설치는 아직 완료되지 않았다.
+
 ## 3. 품질 기준
 
 자유로운 구성을 허용하되 대표 이미지로서 다음 기준은 유지한다.

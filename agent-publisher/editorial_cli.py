@@ -211,6 +211,7 @@ def _main():
                 staged_path=args.image_path,
                 expected_candidate_count=image_task['candidate_count'],
                 task_created_at=image_task['_checkpoint_created_at'],
+                trusted_image_task=image_task,
             )
         elif (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
               or args.visual_review_receipt or args.image_task_id or args.image_task_record):

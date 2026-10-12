@@ -28,6 +28,7 @@ def require_accepted_quality_review(
     staged_path: Path | str | None = None,
     expected_candidate_count: int | None = None,
     task_created_at: str | None = None,
+    trusted_image_task: dict | None = None,
 ) -> dict:
     """Reject absent, malformed, non-current or unreviewed image decisions.
 
@@ -148,9 +149,23 @@ def require_accepted_quality_review(
             task_created_at=task_created_at)
         if validated["status"] != "pass":
             raise ValueError("visual_review_not_accepted")
+    # A reviewer-authored checklist is never its own trusted approval. The
+    # actual import entrypoints supply the registered task; local quality-only
+    # verification may omit it but cannot authorize a media write.
+    trust = None
+    if trusted_image_task is not None:
+        if manifest_path is None or staged_path is None or task_created_at is None:
+            raise ValueError('held_provenance_unverifiable:upload_binding_missing')
+        from agents.featured_image_trust import verify_image_upload_trust
+        trust = verify_image_upload_trust(
+            task=trusted_image_task, manifest_path=manifest_path,
+            review_path=receipt_path, source_sha256=source_sha256,
+            staged_sha256=staged_sha256, selected_candidate=selected_candidate,
+            selection_mode=selection_mode, task_created_at=task_created_at)
     return {
         "review_result": "pass", "review_actor": review["review_actor"],
         "review_method": review["review_method"],
         "receipt_sha256": hashlib.sha256(raw).hexdigest(),
         "task_id": task_id,
+        "independent_trust": trust,
     }

@@ -215,6 +215,40 @@ class ImageTaskAuthorizationR0Tests(unittest.TestCase):
                                              "post_name": "old-post", "post_excerpt": "이전 설명"})
                 writer.assert_not_called()
 
+    def test_unverifiable_host_or_reviewer_never_starts_canonical_media_import(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "candidate.webp"
+            path.write_bytes(b"fixture")
+            task = new_image_generation_task(post_id=922, candidate_count=1,
+                                             selection_mode="user")
+            state = {"status": "in_progress", "image_task": task,
+                     "image_task_id": task["task_id"], "created_at": "2026-10-12T15:00:00+09:00",
+                     "expected_content_sha256": "a" * 64, "expected_thumbnail_id": 924,
+                     "result": {"initial_status": "draft", "initial_title": "기존 글",
+                                "initial_slug": "old-post", "initial_excerpt": "이전 설명"}}
+            argv = ["editorial_cli.py", "replace-featured-image", "--post-id", "922",
+                    "--image-path", str(path), "--alt-text", "검증 불가 이미지",
+                    "--confirm-update", "--confirm-image-selection",
+                    "--candidate-manifest", str(Path(folder) / "manifest.json"),
+                    "--selected-candidate", "1", "--selection-mode", "user",
+                    "--visual-review-receipt", str(Path(folder) / "quality.json"),
+                    "--image-task-id", task["task_id"]]
+            with (patch("sys.argv", argv),
+                  patch("agents.task_state.load_after_image_checkpoint", return_value=state),
+                  patch("agents.task_state.validate_current_image_task", return_value=task),
+                  patch("agents.task_state.claim_image_import_attempt") as claim,
+                  patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
+                      "source_sha256": "a" * 64, "staged_sha256": "b" * 64,
+                      "candidate_number": 1, "selection_mode": "user"}),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        side_effect=ValueError("held_provenance_unverifiable")) as gate,
+                  patch("agents.featured_image.replace_featured_image_from_live_baseline") as writer):
+                with self.assertRaisesRegex(ValueError, "held_provenance_unverifiable"):
+                    editorial_cli._main()
+                self.assertEqual(task["task_id"], gate.call_args.kwargs["trusted_image_task"]["task_id"])
+                claim.assert_not_called()
+                writer.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

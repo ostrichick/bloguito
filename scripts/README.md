@@ -22,6 +22,7 @@
 - 운영 editorial release 생성: `build_editorial_release.py` (항상 새 출력 폴더에 current HEAD runtime 전체 패키징)
 - 변경 범위별 regression plan/실행: `run_validation.py` (기본 plan-only, 실제 실행은 `--run`)
 - Git 추적 파일 비밀정보 검사: `check_repo_secrets.py`
+- 대표이미지 새 이미지 3건의 서명 증거·현물 QA 준비상태 점검: `verify_featured_image_pilots.py` (실 WordPress readback 없는 경우 항상 NO-GO)
 
 직접 WP-CLI나 임시 PHP로 편집 검증을 우회하지 않는다.
 

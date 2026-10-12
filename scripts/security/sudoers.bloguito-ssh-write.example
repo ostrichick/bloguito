@@ -1,0 +1,6 @@
+# OFFLINE CONFIG EXAMPLE. visudo -cf before any attempted installation.
+# Only this root-owned entrypoint with EXACTLY ZERO argv; it independently
+# validates stdin, signed proofs, locked runtime, and a one-shot request fence.
+Defaults:bloguito-ssh-write env_reset
+Defaults:bloguito-ssh-write !setenv
+bloguito-ssh-write ALL=(root) NOPASSWD: /usr/local/libexec/bloguito/bloguito_wp_image_writer.py ""
