@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
 from agents.image_generation_policy import new_image_generation_task
+from agents import task_state
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "featured_image_followthrough.py"
@@ -236,7 +237,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
             self.assertEqual("completed", result["status"])
             self.assertEqual(["image_generated", "image_saved_or_handed_off"],
                              update.call_args_list[0].kwargs["completed_steps"])
-            self.assertTrue(update.call_args.kwargs["result"]["upload_attempt_started"])
+            self.assertFalse(any((call.kwargs.get("result") or {}).get("upload_attempt_started")
+                                 for call in update.call_args_list))
             self.assertTrue(source.with_name("candidate-1-upload.webp").is_file())
             guard.assert_called_once()
 
@@ -258,6 +260,74 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                         selection_mode="agent-delegated", resume=True)
             live.assert_not_called()
             run.assert_not_called()
+
+    def test_nested_canonical_first_import_claim_is_not_poisoned_by_followthrough(self):
+        """Actual local seal/stage then modeled CLI claim; no WordPress write.
+
+        The first canonical invocation must see an unclaimed checkpoint, claim
+        it once, and leave subsequent continuations fenced after any ambiguous
+        result. Mock only the WP transport and actual human review, not local
+        seal/stage or checkpoint persistence.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-1.png"
+            Image.new("RGB", (1600, 900), "white").save(source)
+            review = root / "visual-review.json"
+            review.write_text("mock-review-not-an-approval", encoding="utf-8")
+            task = new_image_generation_task(post_id=856, candidate_count=1,
+                                             selection_mode="agent-delegated",
+                                             explicitly_delegated=True)
+            task_state.write_after_image_checkpoint(
+                856, remaining_steps=["upload", "readback"],
+                expected_content_sha256=self.baseline["content_sha256"],
+                expected_thumbnail_id=self.baseline["thumbnail_id"],
+                target_image_handle="native:pending",
+                completion_requirements=list(follow.REQUIRED), image_task=task,
+                root=root)
+            task_state.update_after_image_checkpoint(856, root=root, result={
+                "initial_status": self.baseline["status"],
+                "initial_title": self.baseline["title"],
+                "initial_slug": self.baseline["slug"],
+                "initial_excerpt": self.baseline["excerpt"],
+            })
+            original_run = follow._run
+            remote_calls = []
+
+            def staged_then_canonical(argv, **kwargs):
+                if "editorial_cli_via_ssh.py" not in " ".join(str(x) for x in argv):
+                    return original_run(argv, **kwargs)
+                self.assertEqual("in_progress", task_state.load_after_image_checkpoint(856, root)["status"])
+                task_state.validate_current_image_task(856, root)
+                self.assertFalse(task_state.load_after_image_checkpoint(856, root)["result"].get("upload_attempt_started"))
+                task_state.claim_image_import_attempt(856, task["task_id"], root)
+                remote_calls.append("first-wordpress-mutation")
+                return json.dumps({"post_id": 856, "attachment_id": 904})
+
+            with (patch.object(follow, "load_after_image_checkpoint",
+                               side_effect=lambda pid: task_state.load_after_image_checkpoint(pid, root)),
+                  patch.object(follow, "validate_current_image_task",
+                               side_effect=lambda pid: task_state.validate_current_image_task(pid, root)),
+                  patch.object(follow, "update_after_image_checkpoint",
+                               side_effect=lambda pid, **kwargs: task_state.update_after_image_checkpoint(pid, root=root, **kwargs)),
+                  patch.object(follow, "read_wordpress", return_value=self.baseline),
+                  patch.object(follow, "_run", side_effect=staged_then_canonical),
+                  patch.object(follow, "assert_after_image_complete"),
+                  patch.object(follow, "inspect", return_value={"wordpress_verified": True, "missing_requirements": []}),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        return_value={"review_result": "pass"})):
+                done = follow.continue_upload(856, source, "노인장기요양보험 신청 안내",
+                                              selected_candidate=1,
+                                              selection_mode="agent-delegated",
+                                              visual_review_receipt=review)
+                self.assertEqual("completed", done["status"])
+                self.assertEqual(["first-wordpress-mutation"], remote_calls)
+                self.assertTrue(task_state.load_after_image_checkpoint(856, root)["result"]["upload_attempt_started"])
+                with self.assertRaisesRegex(ValueError, "import_started_or_completed"):
+                    follow.continue_upload(856, source, "노인장기요양보험 신청 안내",
+                                           selected_candidate=1, selection_mode="agent-delegated",
+                                           visual_review_receipt=review, resume=True)
+                self.assertEqual(1, len(remote_calls))
 
     def test_missing_explicit_selection_cannot_start_import(self):
         with (patch.object(follow, "load_after_image_checkpoint", return_value={

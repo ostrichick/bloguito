@@ -328,6 +328,27 @@ def validate_current_image_task(post_id: int, root: Path | None = None) -> dict[
     return deepcopy(task)
 
 
+def claim_image_import_attempt(post_id: int, task_id: str, root: Path | None = None) -> dict[str, Any]:
+    """Claim the sole media-import attempt at the canonical CLI entry point.
+
+    Followthrough must NOT mark the attempt before invoking this entry point:
+    doing so makes its own nested CLI preflight fail. The editorial lock makes
+    two concurrent local CLI claims mutually exclusive. On a transport error
+    keep this marker so a blind retry never creates a second attachment.
+    """
+    from agents.post_manifest_store import editorial_lock
+
+    root = Path(root or ROOT)
+    with editorial_lock(root):
+        task = validate_current_image_task(post_id, root)
+        if task.get("task_id") != task_id:
+            raise ValueError("image_task_import_claim_identity_mismatch")
+        state = load_after_image_checkpoint(post_id, root)
+        state.setdefault("result", {})["upload_attempt_started"] = True
+        state["updated_at"] = _now()
+        return _write(after_image_checkpoint_path(post_id, root), state)
+
+
 def hold_after_image_generation(post_id: int, *, scope: str,
                                 host_call_result_observed: bool = False,
                                 root: Path | None = None) -> dict[str, Any]:

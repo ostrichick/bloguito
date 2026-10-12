@@ -384,7 +384,10 @@ def continue_upload(
             or any(baseline[key] != result.get("initial_" + key)
                    for key in ("status", "title", "slug", "excerpt"))):
         raise ValueError("wordpress_changed_before_media_import")
-    update_after_image_checkpoint(post_id, result={"upload_attempt_started": True})
+    # The canonical CLI claims the import immediately before its mutation.
+    # Claiming here poisons the nested CLI's first preflight as if this were
+    # an already attempted retry. If that canonical process fails after it
+    # starts, its persisted marker blocks blind retries of this continuation.
     with _phase(observer, "canonical_wordpress_upload"):
         raw = _run([
             sys.executable, str(ROOT / "scripts/editorial_cli_via_ssh.py"),

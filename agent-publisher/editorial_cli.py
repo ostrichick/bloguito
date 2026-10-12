@@ -382,6 +382,8 @@ def _main():
                 'selection_mode': image_lineage['selection_mode'],
                 'source_sha256': image_lineage['source_sha256'],
             })
+            from agents.task_state import claim_image_import_attempt
+            claim_image_import_attempt(args.post_id, args.image_task_id)
             result = replace_featured_image_from_live_baseline(
                 args.post_id,
                 args.image_path,
@@ -451,6 +453,9 @@ def _main():
                 'source_sha256': image_lineage['source_sha256'],
             })
         from agents.edit_post import edit_reviewed_post
+        if args.image_path:
+            from agents.task_state import claim_image_import_attempt
+            claim_image_import_attempt(args.post_id, args.image_task_id)
         result = edit_reviewed_post(
             args.post_id,
             bundle,

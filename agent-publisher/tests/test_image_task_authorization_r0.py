@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 import editorial_cli
 from agents.image_generation_policy import new_image_generation_task
-from agents.task_state import validate_current_image_task, write_after_image_checkpoint, load_after_image_checkpoint
+from agents.task_state import (
+    validate_current_image_task, write_after_image_checkpoint,
+    load_after_image_checkpoint, claim_image_import_attempt)
 
 
 class ImageTaskAuthorizationR0Tests(unittest.TestCase):
@@ -108,6 +110,61 @@ class ImageTaskAuthorizationR0Tests(unittest.TestCase):
                 path.write_text(json.dumps(state), encoding="utf-8")
                 with self.assertRaises(ValueError):
                     validate_current_image_task(922, root)
+
+    def test_canonical_first_claim_succeeds_once_and_recovery_does_not_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            task = new_image_generation_task(post_id=922, candidate_count=1,
+                                             selection_mode="user")
+            write_after_image_checkpoint(
+                922, remaining_steps=["image upload"],
+                expected_content_sha256="a" * 64,
+                expected_thumbnail_id=924, target_image_handle="native:pending",
+                completion_requirements=["uploaded"], image_task=task, root=root)
+            self.assertEqual(task["task_id"], validate_current_image_task(922, root)["task_id"])
+            with self.assertRaisesRegex(ValueError, "identity_mismatch"):
+                claim_image_import_attempt(922, "wrong-task", root)
+            self.assertFalse(load_after_image_checkpoint(922, root)["result"].get("upload_attempt_started"))
+            claim = claim_image_import_attempt(922, task["task_id"], root)
+            self.assertTrue(claim["result"]["upload_attempt_started"])
+            with self.assertRaisesRegex(ValueError, "import_started_or_completed"):
+                claim_image_import_attempt(922, task["task_id"], root)
+            self.assertFalse((root / "data/.editorial-publish.lock").exists())
+
+    def test_canonical_cli_claim_precedes_image_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "staged.webp"
+            path.write_bytes(b"stub")
+            task = new_image_generation_task(post_id=922, candidate_count=1,
+                                             selection_mode="user")
+            state = {"status": "in_progress", "image_task": task,
+                     "image_task_id": task["task_id"], "created_at": "2026-10-12T15:00:00+09:00"}
+            argv = ["editorial_cli.py", "replace-featured-image", "--post-id", "922",
+                    "--image-path", str(path), "--alt-text", "실제 원본 이미지 설명",
+                    "--confirm-update", "--confirm-image-selection",
+                    "--candidate-manifest", str(Path(folder) / "manifest.json"),
+                    "--selected-candidate", "1", "--selection-mode", "user",
+                    "--visual-review-receipt", str(Path(folder) / "quality.json"),
+                    "--image-task-id", task["task_id"]]
+            calls = []
+            def claim(*args):
+                calls.append("claim")
+            def upload(*args, **kwargs):
+                calls.append("upload")
+                return {"status": "draft", "post_id": 922}
+            with (patch("sys.argv", argv),
+                  patch("agents.task_state.load_after_image_checkpoint", return_value=state),
+                  patch("agents.task_state.validate_current_image_task", return_value=task),
+                  patch("agents.task_state.claim_image_import_attempt", side_effect=claim),
+                  patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
+                      "source_sha256": "a" * 64, "staged_sha256": "b" * 64,
+                      "candidate_number": 1, "selection_mode": "user"}),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        return_value={"review_result": "pass"}),
+                  patch("agents.featured_image.replace_featured_image_from_live_baseline",
+                        side_effect=upload)):
+                editorial_cli._main()
+            self.assertEqual(["claim", "upload"], calls)
 
 
 if __name__ == "__main__":
