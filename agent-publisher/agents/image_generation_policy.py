@@ -159,6 +159,27 @@ def validate_image_task_policy(task: dict, *, policy_path: Path | None = None,
                                 target=task.get("target"), now=now)
 
 
+def validate_image_task_selection(task: dict, *, selected_candidate: int,
+                                  selection_mode: str) -> None:
+    """Require the authority and candidate count recorded for this one task.
+
+    A user's direct selection can supersede an earlier pending/delegated state,
+    but an agent cannot turn a pending task into delegated selection by writing
+    that string into a manifest or visual review receipt.
+    """
+    if not isinstance(task, dict):
+        raise ValueError("image_task_selection_record_required")
+    if (type(selected_candidate) is not int or selected_candidate < 1
+            or type(task.get("candidate_count")) is not int
+            or selected_candidate > task["candidate_count"]):
+        raise ValueError("image_task_candidate_outside_authorized_count")
+    if selection_mode == "agent-delegated":
+        if task.get("selection_mode") != "agent-delegated" or task.get("explicit_delegation") is not True:
+            raise ValueError("image_task_agent_delegation_not_authorized")
+    elif selection_mode != "user":
+        raise ValueError("image_task_selection_mode_invalid")
+
+
 def unavailable_diagnosis(scope: str, *, host_call_result_observed: bool = False) -> dict:
     """Record only what the caller reports observing; no fake host attestation."""
     if scope not in {"cos_catalog_only", "chatgpt_host_current_turn", "unattended_scheduler"}:

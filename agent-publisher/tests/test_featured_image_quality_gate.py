@@ -140,6 +140,27 @@ class QualityGateTests(unittest.TestCase):
                         editorial_cli._main()
                     publish.assert_not_called()
 
+    def test_direct_cli_fake_task_id_cannot_authorize_image_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cover = Path(temp) / "stage.webp"
+            cover.write_bytes(b"stub")
+            with (patch("sys.argv", ["editorial_cli.py", "replace-featured-image",
+                                     "--post-id", "932", "--image-path", str(cover),
+                                     "--candidate-manifest", str(Path(temp) / "manifest.json"),
+                                     "--selected-candidate", "1", "--selection-mode", "agent-delegated",
+                                     "--image-task-id", "caller-chosen-task-932",
+                                     "--visual-review-receipt", str(Path(temp) / "review.json")]),
+                  patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
+                      "source_sha256": SOURCE, "staged_sha256": STAGED,
+                      "candidate_number": 1, "selection_mode": "agent-delegated"}),
+                  patch("agents.task_state.load_after_image_checkpoint", return_value=None),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review") as review,
+                  patch("agents.featured_image.replace_featured_image_from_live_baseline") as upload):
+                with self.assertRaisesRegex(ValueError, "current_image_task_record_required"):
+                    editorial_cli._main()
+                review.assert_not_called()
+                upload.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

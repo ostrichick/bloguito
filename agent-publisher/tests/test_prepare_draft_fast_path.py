@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import editorial_cli
+from agents.image_generation_policy import new_image_generation_task
 from test_editorial_system import sample
 
 
@@ -21,8 +22,17 @@ class PrepareDraftFastPathTests(unittest.TestCase):
             bundle_path = root / "bundle.json"
             image_path = root / "cover.jpg"
             receipt_path = root / "receipt.json"
+            visual_review_path = root / "visual-review.json"
+            image_task_record_path = root / "image-task-record.json"
+            image_task_id = "prepare-draft-fast-path-fixture"
             bundle_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
             image_path.write_bytes(b"reviewed-image")
+            image_task = new_image_generation_task(
+                brief_id=bundle["brief"]["id"], task_id=image_task_id,
+                candidate_count=1, selection_mode="user",
+            )
+            image_task_record_path.write_text(
+                json.dumps(image_task, ensure_ascii=False), encoding="utf-8")
 
             argv = [
                 "editorial_cli.py",
@@ -38,6 +48,9 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                 "--candidate-manifest", str(root / "candidate-manifest.json"),
                 "--selected-candidate", "1",
                 "--selection-mode", "user",
+                "--visual-review-receipt", str(visual_review_path),
+                "--image-task-id", image_task_id,
+                "--image-task-record", str(image_task_record_path),
                 "--output",
                 str(receipt_path),
             ]
@@ -48,7 +61,12 @@ class PrepareDraftFastPathTests(unittest.TestCase):
                     patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
                         "candidate_number": 1, "selection_mode": "user",
                         "source_sha256": "a" * 64,
+                        "staged_sha256": "b" * 64,
                     }) as lineage, \
+                    patch("agents.featured_image_quality_gate.require_accepted_quality_review", return_value={
+                        "review_result": "pass", "task_id": image_task_id,
+                        "review_actor": "user", "review_method": "human_visual",
+                    }) as quality_review, \
                     patch("agents.designer.cleanup_generated_cover") as cleanup, \
                     patch("agents.publisher.PublisherAgent.publish", return_value=901) as publish, \
                     patch("agents.featured_image.replace_featured_image_from_live_baseline", return_value={
@@ -68,6 +86,16 @@ class PrepareDraftFastPathTests(unittest.TestCase):
         self.assertNotIn("image_path", publish.call_args.kwargs)
         replace.assert_called_once()
         lineage.assert_called_once()
+        quality_review.assert_called_once_with(
+            visual_review_path,
+            source_sha256="a" * 64,
+            staged_sha256="b" * 64,
+            selected_candidate=1,
+            selection_mode="user",
+            expected_task_id=image_task_id,
+            manifest_path=root / "candidate-manifest.json",
+            staged_path=image_path,
+        )
         self.assertEqual(901, replace.call_args.args[0])
         self.assertEqual(image_path, replace.call_args.args[1])
         self.assertEqual("manual_user_selected", replace.call_args.kwargs["approval_kind"])

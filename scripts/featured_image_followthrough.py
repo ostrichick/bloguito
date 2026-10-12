@@ -166,13 +166,16 @@ def read_wordpress(post_id: int, host: str = "bloguito") -> dict:
 
 
 def begin(post_id: int, host: str = "bloguito", *,
+          selection_mode: str = "pending", explicitly_delegated: bool = False,
           observer: TaskObservation | None = None) -> dict:
     existing = load_after_image_checkpoint(post_id)
     if existing and existing.get("status") in {"in_progress", "held_image_generation_unavailable"}:
         raise ValueError("active_after_image_checkpoint_exists:use_status_or_continue")
     # This dedicated followthrough begins a single-candidate request. Selection
     # authority remains pending until the user's choice/delegation is supplied.
-    image_task = new_image_generation_task(post_id=post_id, candidate_count=1)
+    image_task = new_image_generation_task(
+        post_id=post_id, candidate_count=1,
+        selection_mode=selection_mode, explicitly_delegated=explicitly_delegated)
     with _phase(observer, "begin_wordpress_snapshot"):
         baseline = read_wordpress(post_id, host)
     write_after_image_checkpoint(
@@ -293,6 +296,11 @@ def continue_upload(
         raise ValueError("explicit_selected_candidate_required")
     if selection_mode not in {"user", "agent-delegated"}:
         raise ValueError("explicit_user_or_delegated_selection_required")
+    if state.get("image_task") is not None:
+        from agents.image_generation_policy import validate_image_task_selection
+        validate_image_task_selection(
+            state["image_task"], selected_candidate=selected_candidate,
+            selection_mode=selection_mode)
     if not alt_text or not alt_text.strip() or len(alt_text.strip()) > 180 or "\x00" in alt_text:
         raise ValueError("valid_alt_text_required")
     source = source.resolve()
@@ -347,7 +355,7 @@ def continue_upload(
         visual_review_receipt,
         source_sha256=binding["source_sha256"], staged_sha256=binding["staged_sha256"],
         selected_candidate=selected_candidate, selection_mode=selection_mode,
-        expected_task_id=expected_task_id)
+        expected_task_id=expected_task_id, manifest_path=manifest, staged_path=staged)
     # Bind the exact original, selected candidate and stage before any upload.
     update_after_image_checkpoint(
         post_id,
@@ -425,6 +433,11 @@ def main() -> int:
                                  help="Receipt from an actual visual review of the selected candidate")
             command.add_argument("--resume", action="store_true",
                                  help="Reuse a verified local WebP stage only if upload has not started.")
+        if action == "begin":
+            command.add_argument("--selection-mode", choices=["pending", "user", "agent-delegated"],
+                                 default="pending")
+            command.add_argument("--explicit-delegation", action="store_true",
+                                 help="User explicitly delegated the single-candidate image choice")
     args = parser.parse_args()
     if args.post_id <= 0 or not re.fullmatch(r"[A-Za-z0-9_.-]+", args.ssh_host):
         parser.error("valid_post_id_and_ssh_host_required")
@@ -436,7 +449,8 @@ def main() -> int:
                     result = {"status": "ssh_wordpress_connected",
                               "wordpress": read_wordpress(args.post_id, args.ssh_host)}
             elif args.action == "begin":
-                result = begin(args.post_id, args.ssh_host, observer=observer)
+                result = begin(args.post_id, args.ssh_host, selection_mode=args.selection_mode,
+                               explicitly_delegated=args.explicit_delegation, observer=observer)
             elif args.action == "status":
                 result = inspect(args.post_id, args.ssh_host, observer=observer)
             elif args.action == "diagnose-unavailable":

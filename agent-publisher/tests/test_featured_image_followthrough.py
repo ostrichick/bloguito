@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
+from agents.image_generation_policy import new_image_generation_task
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "featured_image_followthrough.py"
@@ -130,6 +131,38 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                         selected_candidate=1, selection_mode="agent-delegated",
                         visual_review_receipt=quality_receipt)
             self.assertEqual(2, run.call_count)  # local seal and stage only
+
+    def test_pending_task_cannot_claim_delegated_selection_even_before_staging(self):
+        """Reproduces 2026-10-12 reviewer's reported authorization loophole."""
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "candidate-1.png"
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            pending = new_image_generation_task(post_id=856, candidate_count=1)
+            checkpoint = {"status": "in_progress", "completed": {},
+                          "expected_content_sha256": "a" * 64,
+                          "image_task": pending, "image_task_id": pending["task_id"],
+                          "result": {}}
+            with (patch.object(follow, "load_after_image_checkpoint", return_value=checkpoint),
+                  patch.object(follow, "validate_current_image_task"),
+                  patch.object(follow, "_run") as run):
+                with self.assertRaisesRegex(ValueError, "agent_delegation_not_authorized"):
+                    follow.continue_upload(
+                        856, source, "Valid alt", selected_candidate=1,
+                        selection_mode="agent-delegated")
+                run.assert_not_called()
+            delegated = new_image_generation_task(
+                post_id=856, candidate_count=1, selection_mode="agent-delegated",
+                explicitly_delegated=True)
+            checkpoint["image_task"] = delegated
+            checkpoint["image_task_id"] = delegated["task_id"]
+            with (patch.object(follow, "load_after_image_checkpoint", return_value=checkpoint),
+                  patch.object(follow, "validate_current_image_task"),
+                  patch.object(follow, "_run", side_effect=RuntimeError("SEAL_CALLED")) as run):
+                with self.assertRaisesRegex(RuntimeError, "SEAL_CALLED"):
+                    follow.continue_upload(
+                        856, source, "Valid alt", selected_candidate=1,
+                        selection_mode="agent-delegated")
+                run.assert_called_once()
 
     def test_existing_staging_prevents_blind_second_import(self):
         checkpoint = {

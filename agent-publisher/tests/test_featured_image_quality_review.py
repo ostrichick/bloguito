@@ -17,6 +17,7 @@ from agents.featured_image_quality_review import (
     CHECKS, analyze_candidate_diversity, finalize_visual_review,
     prepare_review_template, save_mobile_previews, verify_visual_review_evidence,
 )
+from agents.featured_image_quality_gate import require_accepted_quality_review
 
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -124,6 +125,23 @@ class QualityReviewTests(unittest.TestCase):
         self.assertEqual(5, receipt["generator_policy_version"])
         self.assertEqual("pass", verify_visual_review_evidence(
             receipt, manifest_path=self.manifest, staged_path=self.stage)["status"])
+        reviewed_path = self.root / "visual-review-receipt.json"
+        reviewed_path.write_text(json.dumps(receipt), encoding="utf-8")
+        result = require_accepted_quality_review(
+            reviewed_path, source_sha256=sha(self.source), staged_sha256=sha(self.stage),
+            selected_candidate=1, selection_mode="user", expected_task_id="task-20261012-p2",
+            manifest_path=self.manifest, staged_path=self.stage)
+        self.assertEqual("pass", result["review_result"])
+        # Claiming an altered similarity measurement cannot bypass a fresh
+        # comparison against the actual pixels. Freeform review notes are
+        # reviewer claims, not cryptographically authenticated signatures.
+        receipt["review_evidence"]["similarity_analysis"]["not_a_quality_verdict"] = False
+        reviewed_path.write_text(json.dumps(receipt), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "evidence_binding_invalid"):
+            require_accepted_quality_review(
+                reviewed_path, source_sha256=sha(self.source), staged_sha256=sha(self.stage),
+                selected_candidate=1, selection_mode="user", expected_task_id="task-20261012-p2",
+                manifest_path=self.manifest, staged_path=self.stage)
 
     def test_rejected_selected_visual_check_never_passes(self):
         template = fill_test_observations(prepare_review_template(self.manifest), reject="editorial_quality")

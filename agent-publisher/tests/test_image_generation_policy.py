@@ -9,6 +9,7 @@ from agents.image_generation_policy import (
     new_image_generation_task,
     unavailable_diagnosis,
     validate_image_task_policy,
+    validate_image_task_selection,
 )
 
 
@@ -31,6 +32,17 @@ class ImageGenerationPolicyTests(unittest.TestCase):
         delegated = new_image_generation_task(
             post_id=922, selection_mode="agent-delegated", explicitly_delegated=True)
         self.assertTrue(delegated["explicit_delegation"])
+        pending = new_image_generation_task(post_id=922, candidate_count=1)
+        with self.assertRaisesRegex(ValueError, "agent_delegation_not_authorized"):
+            validate_image_task_selection(pending, selected_candidate=1,
+                                          selection_mode="agent-delegated")
+        validate_image_task_selection(pending, selected_candidate=1,
+                                      selection_mode="user")
+        validate_image_task_selection(delegated, selected_candidate=1,
+                                      selection_mode="agent-delegated")
+        with self.assertRaisesRegex(ValueError, "candidate_outside_authorized_count"):
+            validate_image_task_selection(delegated, selected_candidate=6,
+                                          selection_mode="agent-delegated")
 
     def test_old_grant_cannot_be_used_for_new_post_task_or_after_expiry(self):
         now = datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc)

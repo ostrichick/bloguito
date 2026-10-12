@@ -24,6 +24,8 @@ def require_accepted_quality_review(
     *, source_sha256: str, staged_sha256: str,
     selected_candidate: int, selection_mode: str,
     expected_task_id: str | None = None,
+    manifest_path: Path | str | None = None,
+    staged_path: Path | str | None = None,
 ) -> dict:
     """Reject absent, malformed, non-current or unreviewed image decisions.
 
@@ -113,6 +115,17 @@ def require_accepted_quality_review(
                    or len(checks[name]["evidence"].strip()) < 12
                    for name in REQUIRED_VISUAL_CHECKS)):
         raise ValueError("visual_review_selected_evidence_incomplete")
+    if (manifest_path is None) != (staged_path is None):
+        raise ValueError("visual_review_revalidation_paths_incomplete")
+    if manifest_path is not None:
+        # Recompute the full candidate/near-duplicate evidence and verify the
+        # sealed manifest, staged original and each observed comparison. A
+        # caller-supplied JSON PASS never bypasses this independent readback.
+        from agents.featured_image_quality_review import verify_visual_review_evidence
+        validated = verify_visual_review_evidence(
+            review, manifest_path=manifest_path, staged_path=staged_path)
+        if validated["status"] != "pass":
+            raise ValueError("visual_review_not_accepted")
     return {
         "review_result": "pass", "review_actor": review["review_actor"],
         "review_method": review["review_method"],

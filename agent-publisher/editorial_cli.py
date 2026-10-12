@@ -32,6 +32,53 @@ def _load_media_metadata_file(path: Path) -> tuple[str, str]:
     return media_title, alt_text
 
 
+def _require_current_image_task(args, image_lineage: dict) -> dict:
+    """Validate actual task scope independently of CLI's claimed task ID.
+
+    Existing-post continuations prefer their persisted AFTER_IMAGE policy state.
+    A new draft (no WordPress ID yet) uses a separately supplied task record
+    bound to the reviewed bundle's brief ID. No historic exception is inherited.
+    """
+    from agents.image_generation_policy import (
+        validate_image_task_policy, validate_image_task_selection)
+    from agents.task_state import load_after_image_checkpoint
+
+    task = None
+    if args.action != 'prepare-draft' and args.post_id:
+        state = load_after_image_checkpoint(args.post_id)
+        if state and state.get('image_task') is not None:
+            task = state['image_task']
+            if state.get('image_task_id') != task.get('task_id'):
+                raise ValueError('image_task_checkpoint_identity_mismatch')
+    if args.image_task_record:
+        try:
+            supplied = json.loads(args.image_task_record.read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise ValueError('current_image_task_record_missing_or_invalid') from exc
+        if task is not None and task != supplied:
+            raise ValueError('image_task_record_conflicts_with_checkpoint')
+        task = supplied
+    if task is None:
+        raise ValueError('current_image_task_record_required_before_media_import')
+    validate_image_task_policy(task)
+    if task.get('task_id') != args.image_task_id:
+        raise ValueError('image_task_id_must_match_current_task_record')
+    if args.action == 'prepare-draft':
+        try:
+            bundle = json.loads(Path(args.file).read_text(encoding='utf-8'))
+            expected_target = {'brief_id': bundle['brief']['id']}
+        except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
+            raise ValueError('image_task_prepare_draft_brief_unavailable') from exc
+    else:
+        expected_target = {'post_id': args.post_id}
+    if task.get('target') != expected_target:
+        raise ValueError('image_task_target_mismatch')
+    validate_image_task_selection(
+        task, selected_candidate=image_lineage['candidate_number'],
+        selection_mode=image_lineage['selection_mode'])
+    return task
+
+
 @contextmanager
 def prepared_edit_decision(decision):
     """Bind one preclassified edit decision across the SSH adapter boundary."""
@@ -119,6 +166,8 @@ def _main():
                         help='reviewed original/staged image and candidate selection evidence')
     parser.add_argument('--image-task-id',
                         help='current image-generation task identifier bound to reviewed candidate')
+    parser.add_argument('--image-task-record', type=Path,
+                        help='task-bound generator policy record for new drafts or direct existing-post workflows')
     args = parser.parse_args()
 
     image_lineage = None
@@ -137,6 +186,7 @@ def _main():
                 parser.error('visual_review_receipt_required_before_media_import')
             if not args.image_task_id:
                 parser.error('current_image_task_id_required_before_media_import')
+            _require_current_image_task(args, image_lineage)
             from agents.featured_image_quality_gate import require_accepted_quality_review
             image_lineage['visual_review'] = require_accepted_quality_review(
                 args.visual_review_receipt,
@@ -145,9 +195,11 @@ def _main():
                 selected_candidate=image_lineage['candidate_number'],
                 selection_mode=image_lineage['selection_mode'],
                 expected_task_id=args.image_task_id,
+                manifest_path=args.candidate_manifest,
+                staged_path=args.image_path,
             )
         elif (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
-              or args.visual_review_receipt or args.image_task_id):
+              or args.visual_review_receipt or args.image_task_id or args.image_task_record):
             parser.error('candidate selection and visual review flags require --image-path')
 
     if args.media_metadata_file and args.action != 'import-section-image':
