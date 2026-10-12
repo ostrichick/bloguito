@@ -23,6 +23,8 @@
 
 **미완료:** 사용자의 실제 후보 선택 및 독립 심사 이벤트를 발행하는 신뢰 가능한 UI/서비스와 운영 검수자 인증. 발급키를 AI 실행자에게 주거나 검수 JSON의 자기 신고를 인증으로 오인하지 않는다.
 
+독립 감사에서 기존 이미지의 파일 무결성 `--attest-existing` 경로가 실제 육안 승인 없이 `automated_visual_review` digest를 만들어 공개 승인까지 생성할 수 있는 HIGH 우회를 추가 발견했다. 정규 CLI와 `attest_current_featured_image` 하위 함수 모두 fail-closed로 차단하고 부정 테스트를 추가했다. 새 독립 심사 증거를 발급할 수 있게 되기 전에는 해당 레거시 자동 게시 승인 경로를 사용할 수 없다. WordPress 관리자 UI의 수동 발행 권한은 그대로 유지한다.
+
 ## R3: 서버 측 최소 권한 writer 시제품
 
 `scripts/security/bloguito_ssh_write_gate.py`, `bloguito_wp_image_writer.py`, `sshd.bloguito-ssh-write.example`, `sudoers.bloguito-ssh-write.example`가 격리 제안이다. SSH 요청은 고정된 `wp-write featured-image-set <32hex>` 형식만 허용한다. 서버 writer는 root 소유의 승인 request spool·서명 발급자·버전 고정 PHP 해시·원문/썸네일 CAS·중복 시도 fence·최소 권한 WordPress 사용자를 요구한다. 발급되지 않은 서명·임의 WP CLI/PHP 경로·관리자 인수·셸 인수는 거부한다.

@@ -50,6 +50,8 @@
 
 **Windows 신뢰경계:** 현재 CoS 노트북(Windows)은 Linux root 소유권·쓰기 권한 검사를 수행할 수 없으므로 자동 업로드 검증기를 항상 `held_provenance_unverifiable:protected_server_verifier_required`로 보류한다. `/etc/bloguito`와 비슷한 Windows 로컬 경로에 공개키를 복사해도 허용하지 않는다. 서명 인증은 별도 보호된 Linux 서버 측 writer가 최종 판단해야 하며, 해당 실제 writer 설치는 아직 완료되지 않았다.
 
+**기존 이미지의 별도 승인 경계:** `replace-featured-image --attest-existing`은 파일/ALT/본문이 그대로라는 무결성 확인만으로 별도의 육안 검수 승인을 발급할 수 없으므로 자동 발행 attestation 경로를 보류한다(`existing_image_independent_visual_approval_required`). 등록되지 않은 `visual_reviewed=True` 자체 신고나 모델이 만든 SHA digest는 사용자·독립 검수자가 이미지를 실제 승인했다는 증거가 아니다. 독립 승인 발급자가 마련되기 전까지 기존 표지의 자동 승인 완료를 주장하지 않는다. 관리자 WordPress UI의 본래 수동 발행 권한은 영향을 받지 않는다.
+
 ## 3. 품질 기준
 
 자유로운 구성을 허용하되 대표 이미지로서 다음 기준은 유지한다.
