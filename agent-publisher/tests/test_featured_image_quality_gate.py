@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +26,7 @@ def valid_receipt():
         "selection_mode": "agent-delegated",
         "review_actor": "agent-delegated",
         "review_method": "direct_agent_visual",
-        "reviewed_at": "2026-10-12T10:00:00+09:00",
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
         "review_result": "pass",
         "issues": [],
         "checks": {
@@ -54,13 +55,56 @@ def valid_receipt():
 
 class QualityGateTests(unittest.TestCase):
     def evaluate(self, receipt, *, source=SOURCE, staged=STAGED, candidate=1,
-                 mode="agent-delegated"):
+                 mode="agent-delegated", **kwargs):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "quality.json"
             path.write_text(json.dumps(receipt), encoding="utf-8")
             return require_accepted_quality_review(
                 path, source_sha256=source, staged_sha256=staged,
-                selected_candidate=candidate, selection_mode=mode)
+                selected_candidate=candidate, selection_mode=mode, **kwargs)
+
+    def test_quality_review_age_uses_strict_timezone_and_24h_ttl(self):
+        now = datetime.now(timezone.utc)
+        expired = ["2020-10-12T10:00:00+09:00",
+                   (now - timedelta(hours=25)).isoformat(),
+                   (now + timedelta(days=1)).isoformat(),
+                   "2026-10-12T15:00:00", "2026-10-12", "2026/10/12T15:00:00Z",
+                   "2026-10-12 15:00:00+09:00"]
+        for stamp in expired:
+            record = valid_receipt()
+            record["reviewed_at"] = stamp
+            with self.subTest(stamp=stamp), self.assertRaisesRegex(ValueError, "visual_review_timestamp"):
+                self.evaluate(record)
+
+    def test_quality_review_must_follow_task_creation_and_expire_with_task(self):
+        now = datetime.now(timezone.utc)
+        fresh_review = valid_receipt()
+        fresh_review["reviewed_at"] = (now - timedelta(minutes=5)).isoformat()
+        created = (now - timedelta(hours=1)).isoformat()
+        self.assertEqual("pass", self.evaluate(fresh_review, task_created_at=created)["review_result"])
+        for creation in ((now + timedelta(minutes=1)).isoformat(),
+                         (now - timedelta(hours=25)).isoformat(),
+                         "2026-10-12T10:00:00"):
+            with self.subTest(created=creation), self.assertRaisesRegex(ValueError, "visual_review_timestamp"):
+                self.evaluate(fresh_review, task_created_at=creation)
+
+    def test_declared_candidate_count_requires_manifest_revalidation(self):
+        with self.assertRaisesRegex(ValueError, "visual_review_candidate_inventory_required"):
+            self.evaluate(valid_receipt(), expected_candidate_count=5)
+        with self.assertRaisesRegex(ValueError, "visual_review_candidate_count_invalid"):
+            self.evaluate(valid_receipt(), expected_candidate_count=True)
+
+    def test_comparison_set_cannot_claim_repeated_or_nonsequential_candidates(self):
+        for items in (
+            [{"candidate_number": 1, "source_sha256": SOURCE}] * 2,
+            [{"candidate_number": 1, "source_sha256": SOURCE},
+             {"candidate_number": 2, "source_sha256": SOURCE}],
+            [{"candidate_number": 3, "source_sha256": SOURCE}],
+        ):
+            record = valid_receipt()
+            record["comparison_set"] = items
+            with self.subTest(items=items), self.assertRaisesRegex(ValueError, "visual_review_comparison"):
+                self.evaluate(record)
 
     def test_valid_record_is_bound_to_exact_candidate_bytes(self):
         record = self.evaluate(valid_receipt())

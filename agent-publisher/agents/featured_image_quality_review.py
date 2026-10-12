@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -27,6 +27,50 @@ REVIEW_RESULTS = frozenset({"PASS", "REJECT", "UNVERIFIED"})
 REVIEW_ACTORS = frozenset({"user", "agent-delegated", "independent-reviewer"})
 REVIEW_METHODS = frozenset({"human_visual", "direct_agent_visual", "vision_model"})
 THUMBNAIL_SIZE = (240, 135)
+# A quality decision is reusable only for 24 hours, even if policy/source SHA
+# still matches. A new task may not inherit an earlier review. This is a local
+# freshness policy, not authentication of the original observation.
+VISUAL_REVIEW_TTL = timedelta(hours=24)
+_ISO_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})\Z")
+
+
+def _aware_timestamp(value: str) -> datetime:
+    if not isinstance(value, str) or _ISO_TIMESTAMP.fullmatch(value) is None:
+        raise ValueError("visual_review_timestamp_invalid_iso_timezone")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("visual_review_timestamp_invalid_iso_timezone") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("visual_review_timestamp_invalid_iso_timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def validate_visual_review_freshness(reviewed_at: str, *, task_created_at: str | None = None,
+                                     now: datetime | None = None) -> None:
+    """Require strict zone-aware ISO times, review <= now, and 24h task TTL."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("visual_review_timestamp_clock_timezone_missing")
+    now = now.astimezone(timezone.utc)
+    reviewed = _aware_timestamp(reviewed_at)
+    if reviewed > now:
+        raise ValueError("visual_review_timestamp_in_future")
+    if now - reviewed > VISUAL_REVIEW_TTL:
+        raise ValueError("visual_review_timestamp_expired")
+    if task_created_at is not None:
+        created = _aware_timestamp(task_created_at)
+        if created > now or reviewed < created:
+            raise ValueError("visual_review_timestamp_before_task_or_future_task")
+        if (reviewed - created > VISUAL_REVIEW_TTL
+                or now - created > VISUAL_REVIEW_TTL):
+            raise ValueError("visual_review_timestamp_task_expired")
+
+
+def validate_expected_candidate_count(expected_candidate_count: int | None) -> None:
+    if expected_candidate_count is not None and (
+            type(expected_candidate_count) is not int or not 1 <= expected_candidate_count <= 20):
+        raise ValueError("visual_review_candidate_count_invalid")
 
 
 def _sha(path: Path) -> str:
@@ -122,16 +166,20 @@ def _load_manifest(path: Path) -> tuple[dict, list[Path]]:
     numbers = [r.get("candidate_number") for r in rows if isinstance(r, dict)]
     # A selected-only manifest produced by the legitimate prior transport is
     # allowed, but it cannot claim that unavailable siblings were compared.
-    if len(numbers) != len(rows) or (numbers != list(range(1, len(rows) + 1))
-                                    and (len(numbers) != 1 or type(numbers[0]) is not int or numbers[0] < 1)):
+    if (len(numbers) != len(rows)
+            or any(type(number) is not int or number < 1 for number in numbers)
+            or (numbers != list(range(1, len(rows) + 1)) and len(numbers) != 1)):
         raise ValueError("visual_review_manifest_numbering_invalid")
     paths = []
+    seen_bytes = set()
+    seen_pixels = set()
     for row in rows:
         if (not isinstance(row.get("path"), str)
                 or not isinstance(row.get("sha256"), str)):
             raise ValueError("visual_review_manifest_candidate_invalid")
         path = Path(row["path"]).resolve(strict=True)
-        if _sha(path) != row.get("sha256"):
+        original_sha = _sha(path)
+        if original_sha != row.get("sha256"):
             raise ValueError("visual_review_candidate_sha_mismatch")
         with Image.open(path) as image:
             if (image.format != row.get("format")
@@ -139,8 +187,37 @@ def _load_manifest(path: Path) -> tuple[dict, list[Path]]:
                     or image.height != row.get("height")
                     or path.stat().st_size != row.get("bytes")):
                 raise ValueError("visual_review_candidate_format_size_mismatch")
+            normalized = ImageOps.exif_transpose(image).convert("RGBA")
+            pixels_digest = hashlib.sha256(
+                f"{normalized.width}x{normalized.height}:RGBA:".encode("ascii")
+                + normalized.tobytes()).hexdigest()
+        if original_sha in seen_bytes or pixels_digest in seen_pixels:
+            raise ValueError("visual_review_duplicate_candidate_content")
+        seen_bytes.add(original_sha)
+        seen_pixels.add(pixels_digest)
         paths.append(path)
     return data, paths
+
+
+def validate_candidate_comparison(manifest: Mapping, comparison: object,
+                                  *, expected_candidate_count: int | None = None,
+                                  selected_candidate: int | None = None) -> None:
+    """Compare the claimed review set to the actual SHA-sealed distinct files."""
+    validate_expected_candidate_count(expected_candidate_count)
+    rows = manifest.get("candidates")
+    if not isinstance(rows, list) or not isinstance(comparison, list):
+        raise ValueError("visual_review_comparison_invalid")
+    if expected_candidate_count is not None:
+        if len(rows) != expected_candidate_count or len(comparison) != expected_candidate_count:
+            raise ValueError("visual_review_candidate_count_mismatch")
+        if [row["candidate_number"] for row in rows] != list(range(1, expected_candidate_count + 1)):
+            raise ValueError("visual_review_candidate_count_mismatch")
+        if type(selected_candidate) is not int or not 1 <= selected_candidate <= expected_candidate_count:
+            raise ValueError("visual_review_candidate_count_mismatch")
+    expected = [{"candidate_number": row["candidate_number"], "source_sha256": row["sha256"]}
+                for row in rows]
+    if comparison != expected:
+        raise ValueError("visual_review_comparison_manifest_mismatch")
 
 
 def prepare_review_template(manifest_path: Path | str,
@@ -200,7 +277,9 @@ def finalize_visual_review(template: Mapping, *, staged_path: Path | str,
                            selected_candidate: int, selection_mode: str,
                            task_id: str, review_actor: str, review_method: str,
                            selection_reason: str, reviewed_at: str | None = None,
-                           model_result_ref: str | None = None) -> dict:
+                           model_result_ref: str | None = None,
+                           expected_candidate_count: int | None = None,
+                           task_created_at: str | None = None) -> dict:
     """Validate explicit per-image observations; issue P1-compatible receipt.
 
     A receipt is still reviewer-reported evidence, not independent proof of
@@ -212,6 +291,12 @@ def finalize_visual_review(template: Mapping, *, staged_path: Path | str,
     if _sha(path) != template.get("manifest_sha256"):
         raise ValueError("visual_review_manifest_changed")
     manifest, sources = _load_manifest(path)
+    validate_expected_candidate_count(expected_candidate_count)
+    if expected_candidate_count is not None and (
+            len(manifest["candidates"]) != expected_candidate_count
+            or [r["candidate_number"] for r in manifest["candidates"]]
+               != list(range(1, expected_candidate_count + 1))):
+        raise ValueError("visual_review_candidate_count_mismatch")
     version, policy_sha = _policy_binding()
     if (template.get("generator_policy_version") != version
             or template.get("generator_policy_sha256") != policy_sha):
@@ -224,6 +309,8 @@ def finalize_visual_review(template: Mapping, *, staged_path: Path | str,
         raise ValueError("visual_review_similarity_evidence_invalid")
     if type(selected_candidate) is not int or selected_candidate not in [r["candidate_number"] for r in manifest["candidates"]]:
         raise ValueError("visual_review_selected_candidate_invalid")
+    if expected_candidate_count is not None and selected_candidate > expected_candidate_count:
+        raise ValueError("visual_review_candidate_count_mismatch")
     if selection_mode not in {"user", "agent-delegated"}:
         raise ValueError("visual_review_selection_mode_invalid")
     if (review_actor not in REVIEW_ACTORS or review_method not in REVIEW_METHODS
@@ -235,6 +322,8 @@ def finalize_visual_review(template: Mapping, *, staged_path: Path | str,
             or not isinstance(selection_reason, str)
             or len(selection_reason.strip()) < 12):
         raise ValueError("visual_review_task_or_selection_reason_missing")
+    reviewed_at = reviewed_at or datetime.now(timezone.utc).isoformat()
+    validate_visual_review_freshness(reviewed_at, task_created_at=task_created_at)
     observations = template.get("candidate_observations")
     if not isinstance(observations, dict) or set(observations) != {str(row["candidate_number"]) for row in manifest["candidates"]}:
         raise ValueError("visual_review_observations_missing")
@@ -329,7 +418,7 @@ def finalize_visual_review(template: Mapping, *, staged_path: Path | str,
         "selection_mode": selection_mode,
         "review_actor": review_actor,
         "review_method": review_method,
-        "reviewed_at": reviewed_at or datetime.now(timezone.utc).isoformat(),
+        "reviewed_at": reviewed_at,
         "review_result": status,
         "issues": issues,
         "checks": selected_checks,
@@ -350,7 +439,9 @@ def finalize_visual_review(template: Mapping, *, staged_path: Path | str,
 
 
 def verify_visual_review_evidence(receipt: Mapping, *, manifest_path: Path | str,
-                                  staged_path: Path | str) -> dict:
+                                  staged_path: Path | str,
+                                  expected_candidate_count: int | None = None,
+                                  task_created_at: str | None = None) -> dict:
     """Revalidate source/stage/observations against independently read files.
 
     This detects stale files, changed receipts and unsupported PASS claims. It
@@ -358,9 +449,16 @@ def verify_visual_review_evidence(receipt: Mapping, *, manifest_path: Path | str
     """
     if not isinstance(receipt, Mapping) or receipt.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("visual_review_receipt_schema_invalid")
+    validate_visual_review_freshness(receipt.get("reviewed_at"), task_created_at=task_created_at)
+    validate_expected_candidate_count(expected_candidate_count)
     evidence = receipt.get("review_evidence")
     if not isinstance(evidence, dict):
         raise ValueError("visual_review_observation_evidence_missing")
+    manifest, _ = _load_manifest(Path(manifest_path).resolve(strict=True))
+    validate_candidate_comparison(
+        manifest, receipt.get("comparison_set"),
+        expected_candidate_count=expected_candidate_count,
+        selected_candidate=receipt.get("selected_candidate"))
     template = prepare_review_template(manifest_path, evidence.get("recent_cover_paths", []))
     if (evidence.get("manifest_sha256") != template["manifest_sha256"]
             or evidence.get("generator_policy_sha256") != template["generator_policy_sha256"]
@@ -378,7 +476,9 @@ def verify_visual_review_evidence(receipt: Mapping, *, manifest_path: Path | str
         review_method=receipt.get("review_method"),
         selection_reason=receipt.get("selection_reason"),
         reviewed_at=receipt.get("reviewed_at"),
-        model_result_ref=receipt.get("model_result_ref"))
+        model_result_ref=receipt.get("model_result_ref"),
+        expected_candidate_count=expected_candidate_count,
+        task_created_at=task_created_at)
     if dict(receipt) != rebuilt:
         raise ValueError("visual_review_receipt_tampered_or_stale")
     return {"status": rebuilt["review_result"],

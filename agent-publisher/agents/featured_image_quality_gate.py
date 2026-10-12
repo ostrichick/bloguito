@@ -26,6 +26,8 @@ def require_accepted_quality_review(
     expected_task_id: str | None = None,
     manifest_path: Path | str | None = None,
     staged_path: Path | str | None = None,
+    expected_candidate_count: int | None = None,
+    task_created_at: str | None = None,
 ) -> dict:
     """Reject absent, malformed, non-current or unreviewed image decisions.
 
@@ -79,8 +81,13 @@ def require_accepted_quality_review(
             or not REQUIRED_VISUAL_CHECKS.issubset(check_results)
             or any(check_results[k] is not True for k in REQUIRED_VISUAL_CHECKS)):
         raise ValueError("visual_review_checks_incomplete_or_failed")
-    if not isinstance(review.get("reviewed_at"), str) or not review["reviewed_at"].strip():
-        raise ValueError("visual_review_time_missing")
+    from agents.featured_image_quality_review import (
+        validate_expected_candidate_count, validate_visual_review_freshness)
+    validate_expected_candidate_count(expected_candidate_count)
+    validate_visual_review_freshness(review.get("reviewed_at"),
+                                     task_created_at=task_created_at)
+    if expected_candidate_count is not None and (manifest_path is None or staged_path is None):
+        raise ValueError("visual_review_candidate_inventory_required")
     if (not isinstance(review.get("comparison_set"), list)
             or not review["comparison_set"]
             or not isinstance(review.get("selection_reason"), str)
@@ -93,6 +100,19 @@ def require_accepted_quality_review(
             or not any(item["candidate_number"] == selected_candidate
                        and item["source_sha256"] == source_sha256 for item in comparison)):
         raise ValueError("visual_review_comparison_candidate_mismatch")
+    numbers = [item["candidate_number"] for item in comparison]
+    hashes = [item["source_sha256"] for item in comparison]
+    if (any(number < 1 for number in numbers)
+            or len(set(numbers)) != len(numbers)
+            or len(set(hashes)) != len(hashes)
+            or (numbers != list(range(1, len(numbers) + 1))
+                and not (len(numbers) == 1 and numbers == [selected_candidate]))):
+        raise ValueError("visual_review_comparison_duplicates_or_numbering_invalid")
+    if expected_candidate_count is not None and (
+            len(comparison) != expected_candidate_count
+            or numbers != list(range(1, expected_candidate_count + 1))
+            or selected_candidate > expected_candidate_count):
+        raise ValueError("visual_review_candidate_count_mismatch")
     evidence = review.get("review_evidence")
     if not isinstance(evidence, dict) or not isinstance(evidence.get("candidate_observations"), dict):
         raise ValueError("visual_review_observations_missing")
@@ -123,7 +143,9 @@ def require_accepted_quality_review(
         # caller-supplied JSON PASS never bypasses this independent readback.
         from agents.featured_image_quality_review import verify_visual_review_evidence
         validated = verify_visual_review_evidence(
-            review, manifest_path=manifest_path, staged_path=staged_path)
+            review, manifest_path=manifest_path, staged_path=staged_path,
+            expected_candidate_count=expected_candidate_count,
+            task_created_at=task_created_at)
         if validated["status"] != "pass":
             raise ValueError("visual_review_not_accepted")
     return {

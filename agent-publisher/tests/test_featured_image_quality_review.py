@@ -9,6 +9,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -208,6 +209,80 @@ class QualityReviewTests(unittest.TestCase):
         analysis = analyze_candidate_diversity([self.source, other])
         self.assertTrue(analysis["pair_signals"][0]["identical_bytes"])
         self.assertTrue(analysis["review_required"])
+
+    def test_manifest_rejects_same_content_repeated_even_when_sealed_hashes_agree(self):
+        duplicate = self.root / "duplicate.png"
+        duplicate.write_bytes(self.source.read_bytes())
+        manifest = write_manifest(self.root, [self.source, duplicate])
+        with self.assertRaisesRegex(ValueError, "visual_review_duplicate_candidate"):
+            prepare_review_template(manifest)
+
+    def test_manifest_rejects_byte_distinct_files_with_identical_decoded_pixels(self):
+        other = self.root / "second.png"
+        with Image.open(self.source) as image:
+            image.save(other, "PNG", compress_level=0)
+        self.assertNotEqual(sha(self.source), sha(other))
+        with self.assertRaisesRegex(ValueError, "visual_review_duplicate_candidate"):
+            prepare_review_template(write_manifest(self.root, [self.source, other]))
+
+    def test_expected_candidate_count_matches_sealed_manifest_and_receipt(self):
+        from agents.featured_image_quality_review import verify_visual_review_evidence
+        receipt = self.make_receipt()
+        self.assertEqual("pass", verify_visual_review_evidence(
+            receipt, manifest_path=self.manifest, staged_path=self.stage,
+            expected_candidate_count=1)["status"])
+        with self.assertRaisesRegex(ValueError, "visual_review_candidate_count_mismatch"):
+            verify_visual_review_evidence(
+                receipt, manifest_path=self.manifest, staged_path=self.stage,
+                expected_candidate_count=5)
+        receipt["comparison_set"].append({"candidate_number": 2, "source_sha256": "f" * 64})
+        with self.assertRaisesRegex(ValueError, "visual_review_candidate_count_mismatch"):
+            verify_visual_review_evidence(
+                receipt, manifest_path=self.manifest, staged_path=self.stage,
+                expected_candidate_count=1)
+
+    def test_two_distinct_candidates_pass_real_gate_when_task_count_matches(self):
+        second = self.root / "two.png"
+        Image.new("RGB", (1200, 675), "#fefeff").save(second)
+        manifest = write_manifest(self.root, [self.source, second])
+        template = fill_test_observations(prepare_review_template(manifest))
+        created = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+        receipt = self.make_receipt(template, expected_candidate_count=2,
+                                    task_created_at=created)
+        review_path = self.root / "quality-review.json"
+        review_path.write_text(json.dumps(receipt), encoding="utf-8")
+        self.assertEqual("pass", require_accepted_quality_review(
+            review_path, source_sha256=sha(self.source), staged_sha256=sha(self.stage),
+            selected_candidate=1, selection_mode="user",
+            expected_candidate_count=2, task_created_at=created,
+            manifest_path=manifest, staged_path=self.stage)["review_result"])
+        with self.assertRaisesRegex(ValueError, "visual_review_candidate_count_mismatch"):
+            require_accepted_quality_review(
+                review_path, source_sha256=sha(self.source), staged_sha256=sha(self.stage),
+                selected_candidate=1, selection_mode="user",
+                expected_candidate_count=3, task_created_at=created,
+                manifest_path=manifest, staged_path=self.stage)
+
+    def test_review_ttl_exact_boundary_and_cross_timezone_order(self):
+        from agents.featured_image_quality_review import validate_visual_review_freshness
+        now = datetime(2026, 10, 12, 6, 0, tzinfo=timezone.utc)
+        validate_visual_review_freshness(
+            "2026-10-11T06:00:00Z", now=now)
+        # Same instant in KST. Offset-bearing timestamps are compared in UTC.
+        validate_visual_review_freshness(
+            "2026-10-12T14:00:00+09:00",
+            task_created_at="2026-10-12T04:30:00Z", now=now)
+        with self.assertRaisesRegex(ValueError, "visual_review_timestamp_expired"):
+            validate_visual_review_freshness("2026-10-11T05:59:59Z", now=now)
+        with self.assertRaisesRegex(ValueError, "visual_review_timestamp_in_future"):
+            validate_visual_review_freshness("2026-10-12T06:00:01Z", now=now)
+
+    def test_finalizer_rejects_old_or_future_review_dates(self):
+        for stamp in ("2020-10-12T10:00:00+09:00",
+                      (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+                      "2026-10-12T14:00:00"):
+            with self.subTest(stamp=stamp), self.assertRaisesRegex(ValueError, "visual_review_timestamp"):
+                self.make_receipt(reviewed_at=stamp)
 
     def test_real_five_bad_covers_trigger_diversity_review_if_available(self):
         sources = [PRIOR_SCRATCH / name for name, _ in REAL_BAD_COVERS]
