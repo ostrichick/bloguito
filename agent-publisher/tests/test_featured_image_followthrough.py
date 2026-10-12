@@ -106,6 +106,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "candidate-1.png"
             Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            quality_receipt = Path(temp) / "visual-review.json"
+            quality_receipt.write_text("reviewed", encoding="utf-8")
             def local_only(argv, **kwargs):
                 if "editorial_cli_via_ssh.py" in " ".join(str(item) for item in argv):
                     self.fail("stale WordPress baseline started media import")
@@ -116,6 +118,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                                return_value={**self.baseline, "thumbnail_id": 858}),
                   patch.object(follow, "_run", side_effect=local_only) as run,
                   patch.object(follow, "update_after_image_checkpoint"),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        return_value={"review_result": "pass"}),
                   patch.object(follow, "verify_manual_image_upload_lineage", return_value={
                       "source_sha256": follow.hashlib.sha256(source.read_bytes()).hexdigest(),
                       "staged_sha256": "f" * 64,
@@ -123,7 +127,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "wordpress_changed_before_media_import"):
                     follow.continue_upload(
                         856, source, "설명",
-                        selected_candidate=1, selection_mode="agent-delegated")
+                        selected_candidate=1, selection_mode="agent-delegated",
+                        visual_review_receipt=quality_receipt)
             self.assertEqual(2, run.call_count)  # local seal and stage only
 
     def test_existing_staging_prevents_blind_second_import(self):
@@ -161,6 +166,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "candidate-1.png"
             Image.new("RGB", (1672, 941), "white").save(source, "PNG")
+            quality_receipt = Path(temp) / "visual-review.json"
+            quality_receipt.write_text("reviewed", encoding="utf-8")
             real_run = follow._run
 
             def transport_only_mock(argv, **kwargs):
@@ -180,12 +187,15 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                   patch.object(follow, "_run", side_effect=transport_only_mock) as run,
                   patch.object(follow, "update_after_image_checkpoint") as update,
                   patch.object(follow, "assert_after_image_complete") as guard,
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        return_value={"review_result": "pass"}),
                   patch.object(follow, "inspect", return_value={
                       "wordpress_verified": True, "missing_requirements": [],
                   })):
                 result = follow.continue_upload(
                     856, source, "장기요양보험 신청 안내",
-                    selected_candidate=1, selection_mode="agent-delegated")
+                    selected_candidate=1, selection_mode="agent-delegated",
+                    visual_review_receipt=quality_receipt)
             self.assertEqual(3, run.call_count)
             live.assert_called_once_with(856, "bloguito")
             self.assertIn("replace-featured-image", run.call_args.args[0])
@@ -249,6 +259,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                 Image.new("RGB", (1600, 900), color).save(candidate, "PNG")
                 originals.append(candidate)
             manifest = root / "candidate-manifest.json"
+            quality_receipt = root / "visual-review.json"
+            quality_receipt.write_text("reviewed", encoding="utf-8")
             real_run = follow._run
             real_run([str(follow.sys.executable),
                       str(follow.ROOT / "scripts/seal_featured_image_candidates.py"),
@@ -264,10 +276,13 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                   patch.object(follow, "_run", side_effect=transport_mock) as run,
                   patch.object(follow, "update_after_image_checkpoint"),
                   patch.object(follow, "assert_after_image_complete"),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        return_value={"review_result": "pass"}),
                   patch.object(follow, "inspect", return_value={"wordpress_verified": True})):
                 result = follow.continue_upload(
                     856, originals[2], "Third candidate",
-                    candidate_manifest=manifest, selected_candidate=3, selection_mode="user")
+                    candidate_manifest=manifest, selected_candidate=3, selection_mode="user",
+                    visual_review_receipt=quality_receipt)
             self.assertEqual("completed", result["status"])
             self.assertEqual(2, run.call_count)  # stage + canonical upload, no new seal
             argv = run.call_args.args[0]
@@ -289,6 +304,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
             Image.new("RGB", (1600, 900), "white").save(source, "PNG")
             manifest = root / "candidate-manifest.json"
             output = root / "candidate-1-upload.webp"
+            quality_receipt = root / "visual-review.json"
+            quality_receipt.write_text("reviewed", encoding="utf-8")
             follow._run([str(follow.sys.executable),
                          str(follow.ROOT / "scripts/seal_featured_image_candidates.py"),
                          str(source), "--output", str(manifest)])
@@ -302,6 +319,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                   patch.object(follow, "_run", return_value=json.dumps(fake_upload)) as run,
                   patch.object(follow, "update_after_image_checkpoint"),
                   patch.object(follow, "assert_after_image_complete"),
+                  patch("agents.featured_image_quality_gate.require_accepted_quality_review",
+                        return_value={"review_result": "pass"}),
                   patch.object(follow, "inspect", return_value={"wordpress_verified": True})):
                 with self.assertRaisesRegex(ValueError, "existing_staging_requires_explicit_resume"):
                     follow.continue_upload(
@@ -309,7 +328,8 @@ class FeaturedImageFollowthroughTests(unittest.TestCase):
                         selected_candidate=1, selection_mode="user")
                 result = follow.continue_upload(
                     856, source, "ALT", candidate_manifest=manifest,
-                    selected_candidate=1, selection_mode="user", resume=True)
+                    selected_candidate=1, selection_mode="user", resume=True,
+                    visual_review_receipt=quality_receipt)
             self.assertEqual("completed", result["status"])
             self.assertEqual(1, run.call_count)
             self.assertIn("editorial_cli_via_ssh.py", " ".join(run.call_args.args[0]))

@@ -258,7 +258,8 @@ def _parse_upload_receipt(output: str, post_id: int) -> dict:
 def continue_upload(
     post_id: int, source: Path, alt_text: str, host: str = "bloguito", *,
     candidate_manifest: Path | None = None, selected_candidate: int | None = None,
-    selection_mode: str | None = None, resume: bool = False,
+    selection_mode: str | None = None, visual_review_receipt: Path | None = None,
+    resume: bool = False,
     observer: TaskObservation | None = None,
 ) -> dict:
     state = load_after_image_checkpoint(post_id)
@@ -313,6 +314,13 @@ def continue_upload(
         staged, manifest, selected_candidate, selection_mode)
     if binding["source_sha256"] != source_sha:
         raise ValueError("candidate_sha_conflict")
+    if visual_review_receipt is None:
+        raise ValueError("visual_review_receipt_required_before_media_import")
+    from agents.featured_image_quality_gate import require_accepted_quality_review
+    review = require_accepted_quality_review(
+        visual_review_receipt,
+        source_sha256=binding["source_sha256"], staged_sha256=binding["staged_sha256"],
+        selected_candidate=selected_candidate, selection_mode=selection_mode)
     # Bind the exact original, selected candidate and stage before any upload.
     update_after_image_checkpoint(
         post_id,
@@ -325,6 +333,8 @@ def continue_upload(
             "selected_candidate": selected_candidate,
             "selection_mode": selection_mode,
             "selection_actor": selection_mode,
+            "visual_review_receipt_sha256": hashlib.sha256(visual_review_receipt.read_bytes()).hexdigest(),
+            "visual_review_result": review["review_result"],
             "staged_alt_text": alt_text.strip(),
         },
     )
@@ -344,7 +354,8 @@ def continue_upload(
             "--ssh-host", host, "--", "replace-featured-image",
             "--post-id", str(post_id), "--image-path", str(staged),
             "--candidate-manifest", str(manifest), "--selected-candidate", str(selected_candidate),
-            "--selection-mode", selection_mode, "--alt-text", alt_text.strip(),
+            "--selection-mode", selection_mode, "--visual-review-receipt", str(visual_review_receipt),
+            "--alt-text", alt_text.strip(),
             "--confirm-update", "--confirm-image-selection",
         ], timeout=240)
     receipt = _parse_upload_receipt(raw, post_id)
@@ -376,6 +387,8 @@ def main() -> int:
             command.add_argument("--selected-candidate", type=int, required=True)
             command.add_argument("--selection-mode", choices=["user", "agent-delegated"],
                                  required=True)
+            command.add_argument("--visual-review-receipt", type=Path, required=True,
+                                 help="Receipt from an actual visual review of the selected candidate")
             command.add_argument("--resume", action="store_true",
                                  help="Reuse a verified local WebP stage only if upload has not started.")
     args = parser.parse_args()
@@ -397,6 +410,7 @@ def main() -> int:
                     args.post_id, args.source, args.alt_text, args.ssh_host,
                     candidate_manifest=args.candidate_manifest,
                     selected_candidate=args.selected_candidate, selection_mode=args.selection_mode,
+                    visual_review_receipt=args.visual_review_receipt,
                     resume=args.resume, observer=observer)
         # ASCII JSON avoids Windows PowerShell 5.1 output-codepage corruption.
         print(json.dumps(result, ensure_ascii=True, indent=2))

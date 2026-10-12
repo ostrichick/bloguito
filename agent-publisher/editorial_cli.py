@@ -115,12 +115,15 @@ def _main():
                         help='1-based candidate number selected in the manifest')
     parser.add_argument('--selection-mode', choices=['user', 'agent-delegated'],
                         help='explicit user selection or delegated choice')
+    parser.add_argument('--visual-review-receipt', type=Path,
+                        help='reviewed original/staged image and candidate selection evidence')
     args = parser.parse_args()
 
     image_lineage = None
     if args.action in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
         if args.action == 'replace-featured-image' and args.attest_existing:
-            if args.candidate_manifest or args.selected_candidate is not None or args.selection_mode:
+            if (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
+                    or args.visual_review_receipt):
                 parser.error('attest-existing must not claim new image generation provenance')
         elif args.image_path:
             from agents.featured_image import verify_manual_image_upload_lineage
@@ -128,8 +131,19 @@ def _main():
                 args.image_path, args.candidate_manifest,
                 args.selected_candidate, args.selection_mode,
             )
-        elif args.candidate_manifest or args.selected_candidate is not None or args.selection_mode:
-            parser.error('candidate selection flags require --image-path')
+            if not args.visual_review_receipt:
+                parser.error('visual_review_receipt_required_before_media_import')
+            from agents.featured_image_quality_gate import require_accepted_quality_review
+            image_lineage['visual_review'] = require_accepted_quality_review(
+                args.visual_review_receipt,
+                source_sha256=image_lineage['source_sha256'],
+                staged_sha256=image_lineage['staged_sha256'],
+                selected_candidate=image_lineage['candidate_number'],
+                selection_mode=image_lineage['selection_mode'],
+            )
+        elif (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
+              or args.visual_review_receipt):
+            parser.error('candidate selection and visual review flags require --image-path')
 
     if args.media_metadata_file and args.action != 'import-section-image':
         parser.error('--media-metadata-file is only valid for import-section-image')
