@@ -117,6 +117,8 @@ def _main():
                         help='explicit user selection or delegated choice')
     parser.add_argument('--visual-review-receipt', type=Path,
                         help='reviewed original/staged image and candidate selection evidence')
+    parser.add_argument('--image-task-id',
+                        help='current image-generation task identifier bound to reviewed candidate')
     args = parser.parse_args()
 
     image_lineage = None
@@ -133,6 +135,8 @@ def _main():
             )
             if not args.visual_review_receipt:
                 parser.error('visual_review_receipt_required_before_media_import')
+            if not args.image_task_id:
+                parser.error('current_image_task_id_required_before_media_import')
             from agents.featured_image_quality_gate import require_accepted_quality_review
             image_lineage['visual_review'] = require_accepted_quality_review(
                 args.visual_review_receipt,
@@ -140,9 +144,10 @@ def _main():
                 staged_sha256=image_lineage['staged_sha256'],
                 selected_candidate=image_lineage['candidate_number'],
                 selection_mode=image_lineage['selection_mode'],
+                expected_task_id=args.image_task_id,
             )
         elif (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
-              or args.visual_review_receipt):
+              or args.visual_review_receipt or args.image_task_id):
             parser.error('candidate selection and visual review flags require --image-path')
 
     if args.media_metadata_file and args.action != 'import-section-image':

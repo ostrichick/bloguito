@@ -23,6 +23,7 @@ def require_accepted_quality_review(
     receipt_path: Path | str,
     *, source_sha256: str, staged_sha256: str,
     selected_candidate: int, selection_mode: str,
+    expected_task_id: str | None = None,
 ) -> dict:
     """Reject absent, malformed, non-current or unreviewed image decisions.
 
@@ -58,6 +59,8 @@ def require_accepted_quality_review(
     task_id = review.get("task_id")
     if not isinstance(task_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{4,120}", task_id):
         raise ValueError("visual_review_task_identity_invalid")
+    if expected_task_id is not None and task_id != expected_task_id:
+        raise ValueError("visual_review_task_identity_mismatch")
     if review.get("review_result") != "pass" or review.get("issues") != []:
         raise ValueError("visual_review_not_accepted")
     if (review.get("review_actor") not in {"user", "agent-delegated", "independent-reviewer"}

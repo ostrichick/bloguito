@@ -317,10 +317,17 @@ def continue_upload(
     if visual_review_receipt is None:
         raise ValueError("visual_review_receipt_required_before_media_import")
     from agents.featured_image_quality_gate import require_accepted_quality_review
+    expected_task_id = (state.get("image_task_id") or (state.get("image_task") or {}).get("task_id"))
+    if expected_task_id is None:
+        # Previously started checkpoints remain resumable, but their new
+        # visual review must explicitly bind to this post + original body.
+        # Never restore an old blanket generator exception as permission.
+        expected_task_id = f"legacy-post-{post_id}-{state['expected_content_sha256'][:12]}"
     review = require_accepted_quality_review(
         visual_review_receipt,
         source_sha256=binding["source_sha256"], staged_sha256=binding["staged_sha256"],
-        selected_candidate=selected_candidate, selection_mode=selection_mode)
+        selected_candidate=selected_candidate, selection_mode=selection_mode,
+        expected_task_id=expected_task_id)
     # Bind the exact original, selected candidate and stage before any upload.
     update_after_image_checkpoint(
         post_id,
@@ -355,6 +362,7 @@ def continue_upload(
             "--post-id", str(post_id), "--image-path", str(staged),
             "--candidate-manifest", str(manifest), "--selected-candidate", str(selected_candidate),
             "--selection-mode", selection_mode, "--visual-review-receipt", str(visual_review_receipt),
+            "--image-task-id", expected_task_id,
             "--alt-text", alt_text.strip(),
             "--confirm-update", "--confirm-image-selection",
         ], timeout=240)
