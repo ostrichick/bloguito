@@ -76,6 +76,18 @@ class RentBenefitExample(BaseModel):
     standard_credit_man: int
 
 
+class VoluntaryInsurance2026Example(BaseModel):
+    operation: Literal['voluntary_insurance_2026_example']
+    average_remuneration_won: int
+    regional_total_won: int
+    health_won: int
+    long_term_care_won: int
+    voluntary_total_won: int
+    advantage: Literal['voluntary', 'regional', 'equal']
+    monthly_gap_won: int
+    twelve_month_gap_won: int
+
+
 DerivedCalculation = (
     SumCalculation
     | ThousandWonToWonCalculation
@@ -85,6 +97,7 @@ DerivedCalculation = (
     | MonthlyFromTotalDaysCalculation
     | AddDurationCalculation
     | RentBenefitExample
+    | VoluntaryInsurance2026Example
 )
 
 
