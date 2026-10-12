@@ -275,6 +275,10 @@ def update_after_image_checkpoint(
     payload = load_after_image_checkpoint(post_id, root)
     if payload is None:
         raise ValueError("after_image_checkpoint_missing")
+    # A terminal or held checkpoint is immutable for ordinary progress updates.
+    # Otherwise a public checkpoint-update command could silently reopen it.
+    if payload.get("status") != "in_progress":
+        raise ValueError("after_image_checkpoint_not_active")
     for step in _validate_after_image_steps(completed_steps):
         payload["completed"][step] = True
     if target_image_handle is not None:
@@ -311,6 +315,16 @@ def validate_current_image_task(post_id: int, root: Path | None = None) -> dict[
         if state.get("status") == "held_image_generation_unavailable":
             raise ValueError("image_generation_held:manual_resolution_required")
         raise ValueError("image_task_checkpoint_not_active")
+    # Every task's review must be tied to a valid, recent checkpoint creation
+    # time. Missing creation metadata must never disable the quality-review TTL.
+    created_at = state.get("created_at")
+    if not isinstance(created_at, str):
+        raise ValueError("image_task_created_at_missing_or_stale")
+    from agents.featured_image_quality_review import validate_visual_review_freshness
+    try:
+        validate_visual_review_freshness(_now(), task_created_at=created_at)
+    except ValueError as exc:
+        raise ValueError("image_task_created_at_missing_or_stale") from exc
     if ((state.get("result") or {}).get("upload_attempt_started")
             or (state.get("completed") or {}).get("uploaded")):
         raise ValueError("image_task_import_started_or_completed:reconcile_before_retry")

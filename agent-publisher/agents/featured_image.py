@@ -1678,6 +1678,8 @@ def replace_featured_image_from_live_baseline(
     confirmed: bool = False,
     approval_kind: str | None = None,
     approval_evidence_sha256: str | None = None,
+    authorized_baseline: tuple[str, int | None] | None = None,
+    authorized_metadata: dict[str, str] | None = None,
 ) -> dict:
     """Canonical image-only path: read live CAS baseline and enforce retry budget."""
     if not confirmed or not isinstance(post_id, int) or post_id <= 0:
@@ -1702,6 +1704,18 @@ def replace_featured_image_from_live_baseline(
         expected_thumbnail_id = int(before_thumb)
     else:
         raise ValueError("expected_thumbnail_id_required")
+    if authorized_baseline is not None:
+        if (not isinstance(authorized_baseline, tuple)
+                or len(authorized_baseline) != 2
+                or authorized_baseline != (expected_content_sha256, expected_thumbnail_id)):
+            raise ValueError("image_task_wordpress_baseline_changed_before_import")
+    if authorized_metadata is not None:
+        permitted = {"post_status", "post_title", "post_name", "post_excerpt"}
+        if (not isinstance(authorized_metadata, dict)
+                or set(authorized_metadata) != permitted
+                or any(not isinstance(value, str) or live.get(key) != value
+                       for key, value in authorized_metadata.items())):
+            raise ValueError("image_task_wordpress_metadata_changed_before_import")
     attempt_key = _quick_attempt_key(
         post_id, image_path, alt_text, expected_content_sha256)
 

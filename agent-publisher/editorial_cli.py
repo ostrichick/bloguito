@@ -55,6 +55,20 @@ def _require_current_image_task(args, image_lineage: dict) -> dict:
         raise ValueError('image_task_checkpoint_identity_mismatch')
     if state.get('status') != 'in_progress':
         raise ValueError('image_task_checkpoint_not_active')
+    baseline_sha = state.get('expected_content_sha256')
+    baseline_thumb = state.get('expected_thumbnail_id')
+    if (not isinstance(baseline_sha, str) or len(baseline_sha) != 64
+            or any(c not in '0123456789abcdef' for c in baseline_sha)
+            or (baseline_thumb is not None and (type(baseline_thumb) is not int or baseline_thumb <= 0))):
+        raise ValueError('image_task_original_wordpress_baseline_missing')
+    snapshot_keys = {
+        'post_status': 'initial_status', 'post_title': 'initial_title',
+        'post_name': 'initial_slug', 'post_excerpt': 'initial_excerpt',
+    }
+    original_metadata = {wp_key: (state.get('result') or {}).get(state_key)
+                         for wp_key, state_key in snapshot_keys.items()}
+    if any(not isinstance(value, str) for value in original_metadata.values()):
+        raise ValueError('image_task_original_wordpress_metadata_missing')
     if args.image_task_record:
         try:
             supplied = json.loads(args.image_task_record.read_text(encoding='utf-8'))
@@ -71,7 +85,10 @@ def _require_current_image_task(args, image_lineage: dict) -> dict:
     validate_image_task_selection(
         task, selected_candidate=image_lineage['candidate_number'],
         selection_mode=image_lineage['selection_mode'])
-    return {**task, '_checkpoint_created_at': state.get('created_at')}
+    return {**task, '_checkpoint_created_at': state.get('created_at'),
+            '_checkpoint_content_sha256': baseline_sha,
+            '_checkpoint_thumbnail_id': baseline_thumb,
+            '_checkpoint_metadata': original_metadata}
 
 
 @contextmanager
@@ -391,6 +408,9 @@ def _main():
                 confirmed=True,
                 approval_kind='manual_user_selected',
                 approval_evidence_sha256=evidence_sha,
+                authorized_baseline=(image_task['_checkpoint_content_sha256'],
+                                     image_task['_checkpoint_thumbnail_id']),
+                authorized_metadata=image_task['_checkpoint_metadata'],
             )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
@@ -437,6 +457,10 @@ def _main():
                 parser.error('edit-post with a bundle requires --edit-intent')
         if args.image_path and (not args.expected_thumbnail_id or not args.alt_text):
             parser.error('edit-post with --image-path requires --expected-thumbnail-id and --alt-text')
+        if args.image_path and (
+                args.expected_content_sha256 != image_task['_checkpoint_content_sha256']
+                or args.expected_thumbnail_id != image_task['_checkpoint_thumbnail_id']):
+            raise ValueError('image_task_edit_post_original_baseline_mismatch')
         if bundle is None and not args.image_path:
             parser.error('edit-post requires either a bundle file or --image-path')
         image_approval_kind = None

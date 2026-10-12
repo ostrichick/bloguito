@@ -219,6 +219,41 @@ class TaskStateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "after_image_steps_incomplete"):
                 from agents.task_state import assert_after_image_complete
                 assert_after_image_complete(922, root)
+            with self.assertRaisesRegex(ValueError, "after_image_checkpoint_not_active"):
+                update_after_image_checkpoint(922, completed_steps=["image_generated"], root=root)
+            self.assertEqual("held_image_generation_unavailable",
+                             load_after_image_checkpoint(922, root)["status"])
+
+    def test_complete_checkpoint_cannot_be_reopened_by_step_update(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_after_image_checkpoint(
+                922, remaining_steps=["Upload"], expected_content_sha256="a" * 64,
+                expected_thumbnail_id=7, target_image_handle="native:pending",
+                completion_requirements=["uploaded"], root=root)
+            update_after_image_checkpoint(922, completed_steps=["uploaded"], root=root)
+            with self.assertRaisesRegex(ValueError, "after_image_checkpoint_not_active"):
+                update_after_image_checkpoint(922, completed_steps=["image_generated"], root=root)
+
+    def test_checkpoint_without_original_created_at_cannot_authorize_upload(self):
+        import json
+        from datetime import datetime, timedelta, timezone
+        from agents.image_generation_policy import new_image_generation_task
+        for created in (None, "bad-time", "2020-01-01T00:00:00+00:00",
+                        (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()):
+            with self.subTest(created=created), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                task = new_image_generation_task(post_id=922, candidate_count=1, selection_mode="user")
+                write_after_image_checkpoint(
+                    922, remaining_steps=["Upload"], expected_content_sha256="a" * 64,
+                    expected_thumbnail_id=7, target_image_handle="native:pending",
+                    completion_requirements=["uploaded"], image_task=task, root=root)
+                checkpoint = root / "data/editorial_runs/task-state/post-922/after-image.json"
+                payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+                payload["created_at"] = created
+                checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "image_task_created_at_missing_or_stale"):
+                    validate_current_image_task(922, root)
 
     def test_image_task_binding_drift_blocks_before_import(self):
         with tempfile.TemporaryDirectory() as folder:

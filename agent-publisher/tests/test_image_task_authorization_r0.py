@@ -80,6 +80,10 @@ class ImageTaskAuthorizationR0Tests(unittest.TestCase):
                 expected_thumbnail_id=924, target_image_handle="native:pending",
                 completion_requirements=["uploaded"], image_task=task, root=root)
             state = load_after_image_checkpoint(922, root)
+            state["result"].update({
+                "initial_status": "draft", "initial_title": "기존 글",
+                "initial_slug": "old-post", "initial_excerpt": "이전 설명",
+            })
             args = self.make_args(task_id=task["task_id"])
             with (patch("agents.task_state.load_after_image_checkpoint", return_value=state),
                   patch("agents.task_state.validate_current_image_task", return_value=task)):
@@ -138,7 +142,10 @@ class ImageTaskAuthorizationR0Tests(unittest.TestCase):
             task = new_image_generation_task(post_id=922, candidate_count=1,
                                              selection_mode="user")
             state = {"status": "in_progress", "image_task": task,
-                     "image_task_id": task["task_id"], "created_at": "2026-10-12T15:00:00+09:00"}
+                     "image_task_id": task["task_id"], "created_at": "2026-10-12T15:00:00+09:00",
+                     "expected_content_sha256": "a" * 64, "expected_thumbnail_id": 924,
+                     "result": {"initial_status": "draft", "initial_title": "기존 글",
+                                "initial_slug": "old-post", "initial_excerpt": "이전 설명"}}
             argv = ["editorial_cli.py", "replace-featured-image", "--post-id", "922",
                     "--image-path", str(path), "--alt-text", "실제 원본 이미지 설명",
                     "--confirm-update", "--confirm-image-selection",
@@ -165,6 +172,48 @@ class ImageTaskAuthorizationR0Tests(unittest.TestCase):
                         side_effect=upload)):
                 editorial_cli._main()
             self.assertEqual(["claim", "upload"], calls)
+
+    def test_changed_wordpress_thumbnail_between_followthrough_and_writer_is_never_rebased(self):
+        from agents import featured_image
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "staged.webp"
+            original.write_bytes(b"mocked-stage")
+            with (patch.object(featured_image, "_validate_featured_image_with_receipt",
+                               return_value={"path": str(original)}),
+                  patch.object(featured_image, "get_post", return_value={
+                      "post_status": "draft", "post_content": "unchanged body",
+                      "post_title": "기존 글", "post_name": "old-post", "post_excerpt": "이전 설명"}),
+                  patch.object(featured_image, "content_sha256", return_value="a" * 64),
+                  patch.object(featured_image, "_read_post_meta", return_value="858"),
+                  patch.object(featured_image, "replace_featured_image") as writer):
+                with self.assertRaisesRegex(ValueError, "image_task_wordpress_baseline_changed_before_import"):
+                    featured_image.replace_featured_image_from_live_baseline(
+                        922, original, alt_text="기존 이미지 변경 감지 테스트", confirmed=True,
+                        authorized_baseline=("a" * 64, 857),
+                        authorized_metadata={"post_status": "draft", "post_title": "기존 글",
+                                             "post_name": "old-post", "post_excerpt": "이전 설명"})
+                writer.assert_not_called()
+
+    def test_changed_post_title_between_preflight_and_writer_is_not_rebased(self):
+        from agents import featured_image
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "staged.webp"
+            path.write_bytes(b"mocked-stage")
+            with (patch.object(featured_image, "_validate_featured_image_with_receipt",
+                               return_value={"path": str(path)}),
+                  patch.object(featured_image, "get_post", return_value={
+                      "post_status": "draft", "post_content": "unchanged body",
+                      "post_title": "다른 관리자 수정", "post_name": "old-post", "post_excerpt": "이전 설명"}),
+                  patch.object(featured_image, "content_sha256", return_value="a" * 64),
+                  patch.object(featured_image, "_read_post_meta", return_value="857"),
+                  patch.object(featured_image, "replace_featured_image") as writer):
+                with self.assertRaisesRegex(ValueError, "image_task_wordpress_metadata_changed_before_import"):
+                    featured_image.replace_featured_image_from_live_baseline(
+                        922, path, alt_text="기존 정보 변경 감지 테스트", confirmed=True,
+                        authorized_baseline=("a" * 64, 857),
+                        authorized_metadata={"post_status": "draft", "post_title": "기존 글",
+                                             "post_name": "old-post", "post_excerpt": "이전 설명"})
+                writer.assert_not_called()
 
 
 if __name__ == "__main__":
