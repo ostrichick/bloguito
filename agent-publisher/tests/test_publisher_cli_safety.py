@@ -13,6 +13,23 @@ class DraftCommandSafetyTests(unittest.TestCase):
                 PublisherAgent().publish(article, image_path=Path('candidate.jpg'))
         run.assert_not_called()
 
+    def test_scheduler_cannot_bypass_provenance_with_self_signed_approval_digest(self):
+        article = {'editorial_bundle': {}, 'title': '안전 테스트', 'content': '본문'}
+        with (patch('agents.publisher.acquire_editorial_lock') as lock,
+              patch.object(PublisherAgent, '_publish_editorial') as create,
+              patch('agents.featured_image.replace_featured_image_from_live_baseline') as upload,
+              patch('agents.publisher.run_wordpress') as run):
+            with self.assertRaisesRegex(ValueError, 'scheduled_image_trusted_writer_unavailable'):
+                PublisherAgent().publish(
+                    article, image_path=Path('pretend-chatgpt.jpg'),
+                    image_alt_text='이미지', image_approval_kind='automated_visual_review',
+                    image_approval_evidence_sha256='a' * 64,
+                )
+            lock.assert_not_called()
+            create.assert_not_called()
+            upload.assert_not_called()
+            run.assert_not_called()
+
     def test_live_drafts_list_read_only_without_index(self):
         payload=[{'ID':243,'post_title':'검토 대기','post_date':'2026-09-18 12:00:00','post_status':'draft'}]
         with patch('agents.publisher.DRAFTS_INDEX_FILE',Path('/nonexistent-draft-posts-index.json')), patch('agents.publisher.subprocess.run',return_value=Mock(stdout=json.dumps(payload))) as run:

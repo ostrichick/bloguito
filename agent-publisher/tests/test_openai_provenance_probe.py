@@ -40,6 +40,14 @@ class OpenAIProviderProvenanceTests(unittest.TestCase):
         self.assertNotIn('host_signature', result)
         self.assertNotIn('task_id', result)
 
+    def test_valid_openai_c2pa_detected_remains_provider_signal_not_authorization(self):
+        credential = dict(self.verified['results'][0], validation_state='valid')
+        result = MODULE.probe_original(self.image, client=FakeClient({
+            **self.verified, 'results': [credential]}))
+        self.assertTrue(result['trusted_openai_c2pa'])
+        self.assertNotIn('task_id', result)
+        self.assertNotIn('signature', result)
+
     def test_synthid_only_or_untrusted_claim_cannot_claim_strict_c2pa(self):
         for fake in ({'type': 'synthid', 'outcome': 'detected'},
                      {'type': 'c2pa', 'outcome': 'detected', 'validation_state': 'invalid',

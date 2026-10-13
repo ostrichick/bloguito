@@ -358,6 +358,19 @@ def run_pipeline(category_keys: list, limit_per_cat: int = 1):
                                      cat_info['name'], f"Post #{post_id}",
                                      used_model=article.get('used_model'))
 
+            except ValueError as e:
+                if str(e) == 'scheduled_image_trusted_writer_unavailable':
+                    # The protected R3 writer is deliberately not installed.
+                    # This is an expected safety hold, not a retriable model
+                    # or publishing failure; no draft/media write occurred.
+                    stats['held'] += 1
+                    stats['held_reasons'].append(
+                        f"[{cat_info['name']}] trusted image writer not yet deployed")
+                    continue
+                print(f"❌ 작업 중 에러 발생: {e}")
+                stats["errors"] += 1
+                stats["held_reasons"].append(f"[{cat_info['name']}] 오류: {str(e)[:30]}")
+                _record_notification(stats, notify_error, f"{cat_info['name']} 발행 단계", str(e))
             except Exception as e:
                 print(f"❌ 작업 중 에러 발생: {e}")
                 stats["errors"] += 1

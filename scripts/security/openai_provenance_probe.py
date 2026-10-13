@@ -27,12 +27,13 @@ def classify_provenance_results(result: dict) -> dict:
     if (not isinstance(result, dict)
             or result.get('object') != 'content_provenance_check'
             or type(result.get('created_at')) is not int
+            or result['created_at'] <= 0
             or not isinstance(result.get('results'), list)):
         raise ValueError('provider_provenance_response_invalid')
     matched = [entry for entry in result['results']
                if isinstance(entry, dict) and entry.get('type') == 'c2pa'
                and entry.get('outcome') == 'detected'
-               and entry.get('validation_state') == 'trusted'
+               and entry.get('validation_state') in {'trusted', 'valid'}
                and entry.get('issuer') == 'OpenAI OpCo, LLC'
                and isinstance(entry.get('model'), str)
                and entry.get('model')]

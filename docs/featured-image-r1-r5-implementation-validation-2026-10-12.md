@@ -58,3 +58,20 @@
 5. R5 서로 다른 주제 실제 3건의 원본·승인·WP 저장/ALT/불변 필드/readback 성공 확인.
 
 이 중 어느 한 단계라도 실패하거나 증거를 얻을 수 없으면 **NO-GO**로 보류한다.
+
+## 2026-10-13: Docker 없는 노트북에서 수행한 추가 구현
+
+사용자 요청에 따라 `C:/Projects/Bloguito-image-r1-r5-20261012` 격리 브랜치에서 로컬로 가능한 범위만 추가 구현했다. Docker, PHP CLI, 운영 WP/MariaDB 실행 없이 완료했다는 뜻이지 실제 WP E2E 검증을 통과했다는 의미는 아니다. 운영 SSH/DB/WordPress와 기본 `main`은 변경하지 않았다.
+
+### 경계 강화 및 표적 회귀
+
+- `PublisherAgent.publish(image_path=...)`가 스케줄러가 제출한 로컬 이미지와 자가 계산한 승인 SHA만으로 `wp media import`를 시작하던 별도 우회 통로를 `scheduled_image_trusted_writer_unavailable`로 **draft 생성 전** 차단했다. 스케줄러에서도 이 의도된 중단을 오류 대신 안전 보류로 분류한다. 공식 포스터 경로는 독립 출처/권한 계약 없이 이전 자동 이미지 API를 사용하지 않도록 보류된다.
+- OpenAI Content Provenance API의 명세상 OpenAI issuer, `outcome=detected`와 `validation_state=trusted` **또는** `valid`를 공급자 출처 *신호*로 처리하도록 조정했다. 이것은 호스트 생성 작업 증명이나 R2 승인 서명으로 승격되지 않는다. 해당 API를 자격 증명으로 직접 호출하지 않았고 실제 생성 성공을 주장하지 않는다.
+- R3 고정 PHP 실행기 `scripts/security/featured_image_set.php` 작성. 첨부 이미지가 **이미 별도로 import되어 있는 경우에만** WordPress 일반 게시물의 `_thumbnail_id`와 첨부의 `_wp_attachment_image_alt`만 변경한다. PHP는 입력 JSON allowlist, root writer의 사전 SHA 잠금/서명 승인 계약, 전용 비관리자 WordPress 권한/사용자 검사, InnoDB 테이블 확인, post·attachment·meta row lock, content/title/slug/excerpt/status·기존 thumbnail/ALT CAS, 실제 attachment 파일 SHA/MIME/경로 확인, 원자적 metadata transaction·readback/실패 시 rollback을 요구한다. 신뢰 서명 검증은 root Python writer가 책임진다. **미디어 신규 import 기능은 여전히 R3의 미완료 부분**이다.
+- PHP 계약 테스트 `test_featured_image_php_contract.py`는 이 파일과 root writer의 인터페이스를 정적 확인한다. 실제 PHP CLI가 없으므로 `php -l` 및 PHP 런타임 실행은 PC에서 해야 한다.
+- PC 전용 `scripts/ops/image_r4_pc_fixture.py` + `image_r4_pc_smoke.py`와 `test_featured_image_r4_pc_fixture.py`는 별도 무작위 project, 내부 전용 네트워크, 신규 MariaDB/WordPress named volumes, 합성 이미지 3개, WP-CLI 임시 컨테이너, 합성 DB CAS/ALT/SHA/경합 실험을 준비한다. **실제 R3 root writer가 아닌 합성 fixture의 DB 동작 확인**이다. `docs/featured-image-r4-pc-runbook-2026-10-13.md`를 정본으로 사용한다. 노트북에서는 Compose 파일 생성/정적 검사만 가능하다.
+- PC 작업 순서 및 정확한 재개 지시는 `docs/featured-image-pc-handoff-2026-10-13.md`에 별도로 기록했다. 이 문서는 다른 프로젝트나 타 에이전트의 변경을 교란하지 않고 같은 feature 브랜치에서 재개하도록 작성되었다.
+
+### 반드시 남기는 운영 blocker
+
+독립적으로 서명할 **실제 ChatGPT 이미지 생성 호스트 증거 및 사용자/독립 검수 승인 발급자**, 신뢰 private key 격리, 실제 서버 root-owned 승인 request spool과 읽기 전용 PHP mount, 제한 SSH/sudo OS 설치, 안전한 신규 미디어 import writer, WordPress 실DB 정상/부정/경합/응답 소실 시험, 새 실제 대표이미지 3건 시범 수용은 아직 완료하지 않았다. 테스트용 signer/synthetic PNG/모의 WordPress/스케줄러 출력은 이 blocker를 해결하지 않는다. **운영 NO-GO, WordPress 실제 mutation 0, R5 실물 0/3**.
