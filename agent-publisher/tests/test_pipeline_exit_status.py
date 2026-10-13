@@ -263,6 +263,37 @@ class PipelineExitTests(unittest.TestCase):
             summary.assert_called_once()
             self.assertIn('no draft created', out.getvalue())
 
+    def test_missing_protected_writer_for_reviewed_poster_is_expected_hold(self):
+        with ExitStack() as stack, redirect_stdout(io.StringIO()):
+            for name in ('sync_inventory', 'ensure_inventory', 'notify_published',
+                         'notify_error', 'notify_pipeline_summary',
+                         'record_scheduled_new_draft_completion'):
+                stack.enter_context(patch.object(pipeline, name))
+            stack.enter_context(patch.object(
+                pipeline, 'build_scheduled_growth_plan', return_value={
+                    'action': 'new_draft', 'reason': 'test',
+                    'target': {'brief_id': 'poster-brief', 'category_key': 'concert'},
+                }))
+            radar = stack.enter_context(patch.object(pipeline, 'RadarAgent')).return_value
+            curator = stack.enter_context(patch.object(pipeline, 'CuratorAgent')).return_value
+            writer = stack.enter_context(patch.object(pipeline, 'CopywriterAgent')).return_value
+            designer = stack.enter_context(patch.object(pipeline, 'DesignerAgent')).return_value
+            publisher = stack.enter_context(patch.object(pipeline, 'PublisherAgent')).return_value
+            radar.search_news.return_value = [{'keyword': '공식 공연', 'link': 'https://example.org'}]
+            curator.curate.return_value = {
+                'link': 'https://example.org',
+                'reviewed_poster_url': 'https://official.example.org/real-poster.jpg',
+            }
+            writer.write_article.return_value = {'title': '공식 공연 일정'}
+            designer.last_review_evidence_sha256 = 'f' * 64
+            publisher.publish.side_effect = ValueError('scheduled_image_trusted_writer_unavailable')
+            stats = pipeline.run_pipeline(['concert'])
+            self.assertEqual((1, 0, 0), (stats['held'], stats['published'], stats['errors']))
+            self.assertIn('trusted image writer not yet deployed', stats['held_reasons'][0])
+            self.assertEqual('editorial_hold', stats['growth_outcome'])
+            pipeline.record_scheduled_new_draft_completion.assert_not_called()
+            pipeline.notify_error.assert_not_called()
+
     def test_official_poster_fallback_to_unavailable_image_is_hold_not_retry(self):
         with ExitStack() as stack, redirect_stdout(io.StringIO()):
             for name in ('sync_inventory', 'ensure_inventory', 'notify_published',

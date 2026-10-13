@@ -37,6 +37,7 @@
     "sync_backups_encrypted.py": "Authenticated encrypted off-host backup synchronization",
     "sync_post_catalog.py": "POST_CATALOG synchronization",
     "verify_browser_qa.py": "Independent validation of reusable existing-session browser QA observations",
-    "verify_full_page_browser_qa.py": "Independent supplemental full-page screenshots, CDP 2x visual scale, and new-tab CTA HTTP proof verifier"
+    "verify_full_page_browser_qa.py": "Independent supplemental full-page screenshots, CDP 2x visual scale, and new-tab CTA HTTP proof verifier",
+    "verify_featured_image_pilots.py": "Fail-closed three-pilot source and WordPress acceptance readiness check"
   }
 }

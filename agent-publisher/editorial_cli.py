@@ -238,6 +238,7 @@ def _main():
                 staged_path=args.image_path,
                 expected_candidate_count=image_task['candidate_count'],
                 task_created_at=image_task['_checkpoint_created_at'],
+                trusted_image_task=image_task,
             )
         elif (args.candidate_manifest or args.selected_candidate is not None or args.selection_mode
               or args.visual_review_receipt or args.image_task_id or args.image_task_record):
@@ -411,26 +412,10 @@ def _main():
                     or not args.confirm_update or not args.expected_thumbnail_id
                     or not args.expected_content_sha256 or args.confirm_image_selection or args.alt_only):
                 parser.error('attest-existing requires exact post/content/thumbnail/image/ALT and --confirm-update')
-            from agents.publish_gate import approval_evidence_digest
-            from agents.featured_image import attest_current_featured_image, validate_featured_image_file
-            visual_file = validate_featured_image_file(args.image_path)
-            approval = approval_evidence_digest('automated_visual_review', {
-                'post_id': args.post_id,
-                'current_attachment_id': args.expected_thumbnail_id,
-                'image_sha256': visual_file['sha256'],
-                'visual_reviewed': True,
-                'existing_image_preserved': True,
-                'selection_mode': 'agent-delegated',
-            })
-            result = attest_current_featured_image(
-                args.post_id, args.image_path,
-                args.expected_content_sha256, args.expected_thumbnail_id,
-                alt_text=args.alt_text, approval_evidence_sha256=approval,
-                confirmed=True)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            if args.output:
-                args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-            return
+            # An intact existing attachment proves byte identity only. A
+            # caller-provided flag cannot create an independent review event
+            # or grant publication authority; keep WordPress unchanged.
+            raise ValueError('existing_image_independent_visual_approval_required')
         if not args.post_id or not args.alt_text or not args.confirm_update:
             parser.error(f'{label} requires --post-id, --alt-text and --confirm-update')
         if args.alt_only and args.image_path:

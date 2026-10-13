@@ -73,6 +73,16 @@ class PublisherAgent:
             if image_path is not None and (
                     not image_alt_text or not image_approval_kind or not image_approval_evidence_sha256):
                 raise ValueError('featured_image_approval_required')
+            if image_path is not None:
+                # This scheduler/internal API formerly created a WordPress
+                # draft and then imported any caller-supplied image with only
+                # a locally calculated digest as "approval". That bypasses the
+                # separate R1/R2 origin and reviewer trust boundaries. Do not
+                # create a half-complete draft or attempt media import while
+                # the protected R3 writer is not installed and independently
+                # tested. Official posters also require an explicit distinct
+                # provenance contract, not this unrestricted image-path API.
+                raise ValueError('scheduled_image_trusted_writer_unavailable')
             from agents.editorial import ROOT
             lock = acquire_editorial_lock(ROOT)
             try:

@@ -377,7 +377,9 @@ def continue_upload(
         selected_candidate=selected_candidate, selection_mode=selection_mode,
         expected_task_id=expected_task_id, manifest_path=manifest, staged_path=staged,
         expected_candidate_count=state["image_task"]["candidate_count"] if state.get("image_task") else None,
-        task_created_at=state.get("created_at"))
+        task_created_at=state.get("created_at"),
+        trusted_image_task=state.get("image_task") or {},
+    )
     # Bind the exact original, selected candidate and stage before any upload.
     update_after_image_checkpoint(
         post_id,

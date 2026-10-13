@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import editorial_cli
 
 from agents import featured_image
 
@@ -58,21 +59,33 @@ class ExistingFeaturedAttestationTests(unittest.TestCase):
             approval_evidence_sha256="d" * 64, confirmed=True, **kwargs)
 
     def test_existing_image_produces_gate_only_without_reimport_or_change(self):
-        from agents.post_manifest_store import acquire_editorial_lock
-        result = self.run_attestation()
-        self.assertTrue(result["readback_verified"])
-        self.assertTrue(result["image_unchanged"])
-        self.assertEqual(608, result["thumbnail_id"])
-        record = self.mocks[6]
-        self.assertEqual("automated_visual_review", record.call_args.kwargs["approval_kind"])
-        self.assertEqual(self.sha, record.call_args.kwargs["content_sha256"])
+        # Integrity check cannot issue automated_visual_review for an existing
+        # cover without a separately authenticated human/reviewer event.
+        with self.assertRaisesRegex(ValueError, 'independent_visual_approval_required'):
+            self.run_attestation()
+        self.mocks[6].assert_not_called()
         self.assertFalse((self.root / "data" / ".editorial-publish.lock").exists())
-        self.assertEqual(2, self.mocks[8].call_count,
-                         'one fresh preflight snapshot and one separate postwrite readback')
+        self.mocks[8].assert_not_called()
+
+    def test_cli_existing_image_integrity_cannot_self_issue_visual_review_attestation(self):
+        import sys
+        argv = ['editorial_cli.py', 'replace-featured-image',
+                '--post-id', '592', '--attest-existing',
+                '--image-path', 'C:/tmp/current-cover.jpg',
+                '--alt-text', '기존 이미지 검증', '--confirm-update',
+                '--expected-thumbnail-id', '608',
+                '--expected-content-sha256', self.sha]
+        with (patch.object(sys, 'argv', argv),
+              patch.object(featured_image, 'attest_current_featured_image') as attestation,
+              patch.object(featured_image, 'record_publish_attestation') as writer):
+            with self.assertRaisesRegex(ValueError, 'independent_visual_approval_required'):
+                editorial_cli._main()
+            attestation.assert_not_called()
+            writer.assert_not_called()
 
     def test_stale_body_refuses_gate(self):
         with patch.object(featured_image, "record_publish_attestation") as record:
-            with self.assertRaisesRegex(ValueError, "post_baseline_mismatch"):
+            with self.assertRaisesRegex(ValueError, "independent_visual_approval_required"):
                 featured_image.attest_current_featured_image(
                     592, "C:/tmp/current-cover.jpg", "e" * 64, 608,
                     alt_text="카드포인트 통합조회, 남은 포인트 계좌입금 안내",
@@ -81,7 +94,7 @@ class ExistingFeaturedAttestationTests(unittest.TestCase):
 
     def test_stale_thumbnail_refuses_gate(self):
         with patch.object(featured_image, "record_publish_attestation") as record:
-            with self.assertRaisesRegex(ValueError, "thumbnail_changed"):
+            with self.assertRaisesRegex(ValueError, "independent_visual_approval_required"):
                 featured_image.attest_current_featured_image(
                     592, "C:/tmp/current-cover.jpg", self.sha, 609,
                     alt_text="카드포인트 통합조회, 남은 포인트 계좌입금 안내",
@@ -91,19 +104,20 @@ class ExistingFeaturedAttestationTests(unittest.TestCase):
     def test_remote_sha_mismatch_fails_closed(self):
         with patch.object(featured_image, "record_publish_attestation",
                           side_effect=ValueError("publish_attestation_write_failed:binding_mismatch")):
-            with self.assertRaisesRegex(ValueError, "binding_mismatch"):
+            with self.assertRaisesRegex(ValueError, "independent_visual_approval_required"):
                 self.run_attestation()
 
-    def test_attestation_readback_detects_concurrent_post_and_thumbnail_drift(self):
+    def test_untrusted_attestation_does_not_read_or_write_even_if_server_could_drift(self):
         for changed in [({**self.original, 'post_title': 'changed'}, '608'),
                         (self.original, '999')]:
             with self.subTest(changed=changed):
                 observed = iter([(self.original.copy(), '608'), changed])
                 with patch.object(featured_image, 'read_post_thumbnail_snapshot',
                                   side_effect=lambda *a: next(observed)) as snapshot:
-                    with self.assertRaisesRegex(ValueError, 'post_changed_during_attestation'):
+                    with self.assertRaisesRegex(ValueError, 'independent_visual_approval_required'):
                         self.run_attestation()
-                self.assertEqual(2, snapshot.call_count)
+                snapshot.assert_not_called()
+                self.mocks[6].assert_not_called()
 
 
 if __name__ == "__main__":
