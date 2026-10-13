@@ -85,11 +85,13 @@ PC용 격리 compose/harness 명령·실행 실패 원인·통과 조건은 `doc
 
 ### 노트북에서 이어갈 경계
 
-- 새 GitHub Actions `isolated-r4-image-and-r3-setter` job이 신규 synthetic fixture에서 실제 R4와 R3 setter를 실행하고 시험 volume을 정리한다. credentials/private key는 artifact에 넣지 않고 두 synthetic evidence JSON만 7일 보관한다. PC의 로컬 통과와 GitHub 원격 job 성공 여부는 별개이며 최종 응답의 CI 상태를 따른다.
+- 구현·PC 검증 commit은 `238140cc1762f9154915503affbe0f499ad92459`다. 같은 commit의 [GitHub Test Suite run 38342050430](https://github.com/ostrichick/bloguito/actions/runs/38342050430)은 **6개 job 모두 SUCCESS**: Python, PHP, infrastructure, 기존 실제 WP DB, v3 full restore, 새 `isolated-r4-image-and-r3-setter`다. 새 job은 신규 synthetic fixture에서 실제 R4와 R3 setter를 실행하고 시험 volume을 정리했다. credentials/private key는 artifact에 넣지 않고 두 synthetic evidence JSON만 7일 보관한다. 원격 두 JSON도 PC의 비추적 `github-ci-evidence/`로 받아 status/8개·11개 검사 결과를 확인했다. 후속 결과 문서 commit은 코드 변경이 아니다.
 - R1/R2: 이 세션의 호스트 image generation 도구와 CoS `save_image` 기능은 존재하지만, 확인한 CoS 함수 목록에는 독립된 signed host-event/승인 발급자가 없다. 도구를 사용할 수 없다고 단정하지 않는다. 실제 호스트 실행·저장과 SHA를 독립 검증·서명할 서비스 및 사용자/검수 권한 분리가 마련되지 않았다. 테스트 signer나 자가 작성 proof로 대체하지 않는다.
 - R3: 신규 media import 구현, root-owned 승인 spool의 운영 설치, 제한 SSH/sudo 계정, AI의 기존 관리자/임의 WP-CLI 접근 제거, 실제 응답 소실 reconciliation은 미완료다. 현재 setter는 기존 attachment metadata 두 개만 변경한다.
 - R4: 이번 8/11/6개 검사는 독립된 부분 계약의 실측이다. R1~R3 전체 시스템을 연결한 인수 성공으로 합산하지 않는다. 진짜 제한 import 및 SSH 중단·재개 통합은 다음 gate로 남는다.
 - R5: 실제 서로 다른 주제 3건은 **0/3**. 원본 발급·독립 선택/검수·제한 import·독립 WordPress readback을 먼저 연결해야 한다. publisher를 우회해 운영 글/이미지를 만들어 수를 채우지 않는다.
 - 다음 에이전트는 pull 후 이 마지막 절과 runbook을 먼저 읽고, 완료된 PC synthetic 검사를 다시 미실시로 되돌리지 않는다. 노트북 로컬 Docker 부재만으로 작업을 PC로 돌려보내지 말고 새 CI 검사를 사용한다. 실제 신뢰 발급 및 제한 import/권한 분리를 해결하기 전 운영 배포·게시물 변경·GO를 하지 않는다.
 
-원시 증거와 비공개 synthetic credentials/SQL은 PC worktree의 `scratch/tasks/image-r1-r5-pc-20261013/` 및 `scratch/tasks/featured-image-r4-pc/`에 있다. 최종 정리 때 main의 비추적 scratch에 SHA 비교 후 보존한다. Git에는 코드·검증 요약만 올린다.
+코드 commit `238140c`의 clean release는 98파일/inventory digest `0ecf9d5d50d74c27d9bd36ea693163acedd5fd80d8adf9881c2ba0ad5712ef7c`이며 정규 builder와 installer manifest 검증을 통과했다. 운영에는 설치하지 않았다.
+
+원시 증거와 비공개 synthetic credentials는 main의 비추적 `scratch/tasks/image-r1-r5-pc-20261013/` 및 `scratch/tasks/featured-image-r4-pc-20261013-evidence/`에 SHA256 일치 비교 후 보존했다. `preservation-receipt.json`과 `runtime-inventory.json`에 경로/파일 수/고정 이미지/실제 컨테이너를 기록했다. 모든 시험 컨테이너 4 project를 중지하고 volume을 보존했다. Git에는 코드·검증 요약만 올린다. sibling 전용 `retire_worktree.py` dry-run은 Codex managed 경로에서 안전하게 차단됐고, 증거 보존 후 호스트의 managed-worktree archive를 요청했다. 강제 삭제·clean·sibling 검사 우회는 하지 않았다.
