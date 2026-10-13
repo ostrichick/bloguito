@@ -31,7 +31,7 @@ PHP_NAME = "fixture-cas.php"
 COMPOSE = """# Synthetic local R4 fixture. No ports, fixed container names or production paths.
 services:
   db:
-    image: mariadb:11.4
+    image: mariadb@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6
     environment:
       MARIADB_ROOT_PASSWORD: ${R4_DB_ROOT_PASSWORD:?}
       MARIADB_DATABASE: r4_synthetic
@@ -46,7 +46,7 @@ services:
       timeout: 3s
       retries: 24
   web:
-    image: wordpress:php8.3-apache
+    image: wordpress@sha256:f32ffa85064d9c951b7b69c929fa2a9f682aa4443e0c0a56ac2000499cb64383
     environment:
       WORDPRESS_DB_HOST: db:3306
       WORDPRESS_DB_NAME: r4_synthetic
@@ -59,7 +59,10 @@ services:
       db:
         condition: service_healthy
   cli:
-    image: wordpress:cli-php8.3
+    image: wordpress@sha256:36243da432a0f0a3b56dc3240ecee9b159108d71305e7c064d987a20a465bfde
+    # Apache's Debian image owns uploads as 33; CLI's Alpine www-data is 82.
+    # Match the shared volume owner instead of granting world-write access.
+    user: "33:33"
     profiles: [tools]
     entrypoint: ["wp"]
     working_dir: /var/www/html
@@ -86,7 +89,9 @@ volumes:
 # Executed ONLY inside newly initialized synthetic DB. This tests PHP-level
 # post row locking and readback; it is not the production root-owned writer.
 FIXTURE_PHP = r'''<?php
-global $wpdb, $args;
+global $wpdb;
+// WP-CLI eval-file supplies $args in its include scope, not $GLOBALS.
+// Declaring it global here would discard every supplied probe argument.
 $op = $args[0] ?? '';
 if (!in_array($op, ['snapshot', 'cas-set', 'find-sha'], true)) { WP_CLI::error('unsupported_probe'); }
 $post_id = filter_var($args[1] ?? null, FILTER_VALIDATE_INT);
@@ -303,7 +308,7 @@ def _check_local_docker() -> None:
 
 def compose_args(folder: Path, *args: str) -> list[str]:
     state = verified_fixture(folder)
-    return (["docker", "compose", "-f", str(Path(folder) / COMPOSE_NAME),
+    return (["docker", "compose", "--progress", "quiet", "-f", str(Path(folder) / COMPOSE_NAME),
              "--project-directory", str(folder), "--env-file", str(Path(folder) / ".env"),
              "-p", state["project"], *args])
 

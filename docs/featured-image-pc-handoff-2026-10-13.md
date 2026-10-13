@@ -2,6 +2,8 @@
 
 작성: 2026-10-13 KST. 실행 환경: `DubuLaptop` / `C:\Projects\Bloguito-image-r1-r5-20261012`.
 
+**최신 PC 결과:** 마지막 6절을 먼저 읽는다. main `598f437` 통합본을 가져와 실제 합성 R4와 고정 R3 PHP setter 검증을 수행했고 실행 결함을 수정했다. 표적·전체 회귀는 통과했다. R1/R2 발급 체계, 신규 media import writer, 운영 권한 분리와 R5는 미완료로 운영 `NO-GO`다. 아래 0~5절의 '실DB 미실시'는 노트북 최초 인계 시점의 이력이다.
+
 ## 0. 먼저 지켜야 할 범위
 
 이 문서는 **운영 WordPress 배포 승인서가 아니다**. `R1/R2` 신뢰 가능한 독립 증거 발급자와 사용자 선택 승인 시스템이 아직 없다. `R3`는 제한형 writer의 개발 계약이며 운영 sudo/sshd/WordPress 권한 분리가 확인되지 않았다. `R4` Docker 기반 격리 환경, `R5` 신규 이미지 3건 실물 검증은 미실시이다. 따라서 운영 자동 업로드 **NO-GO**, 운영 게시물·운영 데이터베이스에 쓰기 **0회**를 유지한다.
@@ -53,3 +55,41 @@ PC용 격리 compose/harness 명령·실행 실패 원인·통과 조건은 `doc
 ## 5. PC 재개용 지시
 
 > `ostrichick/bloguito`의 feature branch `feat/featured-image-r1-r5-20261012` 최신 커밋을 체크아웃하고 `docs/featured-image-pc-handoff-2026-10-13.md`, `docs/featured-image-r4-pc-runbook-2026-10-13.md`, `docs/featured-image-r1-r5-implementation-validation-2026-10-12.md`, `AGENTS.md`를 읽어라. 이 작업은 Bloguito 대표이미지 R1–R5 보안 보강의 PC 단계이며, 노트북에서 작성·검증한 코드를 무단 재설계하지 말고 남은 작업을 직접 격리 Docker WordPress/MariaDB에서 검증한다. 테스트 포스터/데이터만 사용하고 운영 WordPress/DB/SSH/실제 게시물은 수정하지 마라. R1/R2 신뢰 서명 발급자, R3 fixed PHP writer와 최소 권한, R4 경합·응답 소실·CAS/ALT/readback, R5 실제 서로 다른 주제 3건을 각각 완료/차단으로 보고해라. 정상 이미지 출처 증거·실제 사용자 승인 또는 위임이 없으면 운영 자동화는 반드시 NO-GO를 유지해라. 기존 main의 미커밋 문서를 보존하고, 테스트/코드 검증 결과와 남은 장애물을 문서에 기록해라.`
+
+## 6. 2026-10-13 PC 실행 후속 결과
+
+### 범위와 현재 판정
+
+- 깨끗한 PC main을 `5cf3a83`에서 통합본 `598f437d46be5ac1f918bd133b2913db5472dd46`으로 fast-forward pull했다. R1~R5 feature만 과거 상태로 checkout하지 않고 workflow 통합본을 기준으로 별도 `codex/image-r1-r5-pc-20261013` managed worktree에서 수정·검증했다.
+- **PC 실제 실행 가능한 검증은 수행했지만 R1~R5 전체 완료는 아니다.** 합성 R4 E2E PASS, 고정 R3 PHP setter 실DB PASS, Linux root 파일/서명/fence PASS, 운영 자동화 NO-GO, R5 실물 0/3, 운영 WordPress mutation 0회다. 신규 실물 이미지를 생성하거나 운영 SSH/DB/글/이미지/cron을 변경하지 않았다.
+- Docker Desktop의 stale `sailor-ingest.sock` 시작 오류는 Docker 프로세스 종료 후 runtime socket 디렉터리 둘을 백업·재생성하여 복구했다. factory reset이나 기존 volume 삭제는 하지 않았다. Docker Engine 29.7.2, Compose 5.5.1, 시험 WordPress 7.1.3/PHP 8.3/MariaDB 11.4다.
+
+### 실제 실행에서 수정한 결함
+
+1. fixture PHP의 `global $args`가 `wp eval-file`의 include-scope 인수를 없애 `unsupported_probe`로 실패했다. `$wpdb`만 global로 유지했다.
+2. Apache 이미지의 uploads UID는 33, Alpine CLI 기본 www-data UID는 82여서 실제 import가 실패했다. CLI를 `33:33`으로 고정했다. root/world-write 권한으로 해결하지 않았다.
+3. Compose의 container progress 메시지가 WP-CLI stderr의 정확한 CAS 거부 마커를 오염시켜 안전하게 NO-GO 처리됐다. `compose --progress quiet`로 해당 progress만 억제하고 기존 정확한 rc/마커 검사는 유지했다. 일반 Docker 장애를 CAS conflict로 인정하지 않는다.
+4. 세 이미지를 실제 다운로드한 불변 digest로 고정했다. digest는 코드의 COMPOSE와 fixture-state Compose SHA에 포함한다.
+5. 전체 회귀에서 Windows의 IANA 시간대 DB 부재로 Clarity 3개 오류가 발생했다. Windows 전용 `tzdata==2026.5` 의존성을 등록·설치했고 해당 5개 표적 검사를 통과했다. Clarity 동작/운영 token은 변경하지 않았다.
+
+### 시험 및 증거
+
+- 실패 fixture 3개는 `bloguito_r4pc_db838252c600`, `bloguito_r4pc_c6ec0f2e86ed`, `bloguito_r4pc_40cc70dfaf82`이며 전체 project/config는 비추적 `fixture-init*.json`을 따른다. 실패 환경에서 smoke/media import를 재시도하지 않았고 매번 새 빈 DB/volume을 만들었다. 마지막 성공 project는 `bloguito_r4pc_d1fa7f0bcab1`이다.
+- R4 마지막 실행은 `SYNTHETIC_E2E_PASS_R4_ACCEPTANCE_NO_GO`: synthetic 설치, 초기 draft baseline, 서로 다른 이미지 import 정확히 3회, stale content 거부, 정상 CAS/ALT/파일 SHA readback, stale thumbnail 거부, 두 DB 연결의 정확히 한 승자, SHA 읽기 복구 **8/8 검사 PASS**. attachment 수는 3개, 본문 SHA·draft 상태 보존이다. 실제 R3 제한 import나 SSH 유실 시험으로 표현하지 않는다.
+- 새 `wordpress/tests/real-db/r3_image_setter.py`는 정규 고정 PHP 파일을 read-only bind해 실제 PHP lint, 관리자/없는 custom capability 거부, stale body/thumbnail/ALT·파일 SHA 거부, 전용 non-admin 정상 저장·readback, stale replay 거부, 두 실제 PHP 연결의 한 승자, 두 번째 metadata SQL 실패 후 ALT/thumbnail 동시 rollback **11/11 PASS**. 원본·검수 서명이 없는 synthetic direct-PHP DB 시험이므로 `root_writer_tested=false`, `ssh_sudo_tested=false`, `new_media_import_tested=false`를 명시한다.
+- 별도 Linux root probe는 root-owned 0600 승인 파일·분리된 임시 공개키 두 개·실제 Ed25519 검증, 조작된 승인 거부, writable trust anchor 거부, nonprivate 승인 거부, OS `O_EXCL` 경합 8개 중 1개 성공, 영구 claim 재호출 거부 **6/6 PASS**. 임시 private key는 메모리에만 생성하고 쓰지 않았으며 운영 발급자/키로 사용하지 않았다. 실제 forced-command/sudo 전체 dispatch 성공은 검증하지 않았다.
+- `visudo -cf`의 write sudoers 예제 문법 통과. 실제 SSH 계정/권한 설치·sshd 설정·우회 자격 제거와 동일하지 않다.
+- 이미지 표적 151개 중 149 PASS + 2 SKIP, R3 offline 8 PASS, 수정 후 R4 표적 16 PASS, Clarity 5 PASS. 최종 전체 **1,497개 실행, 1,491 PASS + 6 SKIP, 실패/오류 0**. 중간 실행의 timezone 오류와 임시 runner root import-path 오류는 보존한 뒤 복구·전체 재실행했다.
+- SKIP 6개는 Windows symlink 2개, native PHP 2개, Git 비추적 과거 원본 PNG 1개, Linux cron shell 1개다. PHP는 별도 Docker lint/setter 및 WordPress PHP contract runner를 실제 통과했으며 native-PHP skip을 자동 제거했다고 주장하지 않는다.
+- `php wordpress/tests/run.php`, UTF-8/비밀정보 검사, pip check, diff check 통과. PHP contract runner의 첫 read-only `/tmp` 실패는 임시 tmpfs를 제공해 재실행하여 통과했다.
+
+### 노트북에서 이어갈 경계
+
+- 새 GitHub Actions `isolated-r4-image-and-r3-setter` job이 신규 synthetic fixture에서 실제 R4와 R3 setter를 실행하고 시험 volume을 정리한다. credentials/private key는 artifact에 넣지 않고 두 synthetic evidence JSON만 7일 보관한다. PC의 로컬 통과와 GitHub 원격 job 성공 여부는 별개이며 최종 응답의 CI 상태를 따른다.
+- R1/R2: 이 세션의 호스트 image generation 도구와 CoS `save_image` 기능은 존재하지만, 확인한 CoS 함수 목록에는 독립된 signed host-event/승인 발급자가 없다. 도구를 사용할 수 없다고 단정하지 않는다. 실제 호스트 실행·저장과 SHA를 독립 검증·서명할 서비스 및 사용자/검수 권한 분리가 마련되지 않았다. 테스트 signer나 자가 작성 proof로 대체하지 않는다.
+- R3: 신규 media import 구현, root-owned 승인 spool의 운영 설치, 제한 SSH/sudo 계정, AI의 기존 관리자/임의 WP-CLI 접근 제거, 실제 응답 소실 reconciliation은 미완료다. 현재 setter는 기존 attachment metadata 두 개만 변경한다.
+- R4: 이번 8/11/6개 검사는 독립된 부분 계약의 실측이다. R1~R3 전체 시스템을 연결한 인수 성공으로 합산하지 않는다. 진짜 제한 import 및 SSH 중단·재개 통합은 다음 gate로 남는다.
+- R5: 실제 서로 다른 주제 3건은 **0/3**. 원본 발급·독립 선택/검수·제한 import·독립 WordPress readback을 먼저 연결해야 한다. publisher를 우회해 운영 글/이미지를 만들어 수를 채우지 않는다.
+- 다음 에이전트는 pull 후 이 마지막 절과 runbook을 먼저 읽고, 완료된 PC synthetic 검사를 다시 미실시로 되돌리지 않는다. 노트북 로컬 Docker 부재만으로 작업을 PC로 돌려보내지 말고 새 CI 검사를 사용한다. 실제 신뢰 발급 및 제한 import/권한 분리를 해결하기 전 운영 배포·게시물 변경·GO를 하지 않는다.
+
+원시 증거와 비공개 synthetic credentials/SQL은 PC worktree의 `scratch/tasks/image-r1-r5-pc-20261013/` 및 `scratch/tasks/featured-image-r4-pc/`에 있다. 최종 정리 때 main의 비추적 scratch에 SHA 비교 후 보존한다. Git에는 코드·검증 요약만 올린다.

@@ -1,5 +1,7 @@
 # Bloguito 대표이미지 R1–R5 구현·검증 기록 (2026-10-12)
 
+**2026-10-13 PC 후속:** [PC 인계 문서 6절](featured-image-pc-handoff-2026-10-13.md#6-2026-10-13-pc-실행-후속-결과)이 최신 실행 결과다. 실제 합성 R4 8개 검사, 고정 R3 setter 11개 검사 및 Linux root 파일/서명/fence 6개 검사는 통과했다. 실행 fixture 결함 3종과 Windows tzdata 의존성을 수정하고 Linux CI를 추가했다. 본문의 최초 '실DB 0건/미실시'는 이력이며, R1/R2 발급·신규 media import writer·운영 권한 분리·R5 0/3의 NO-GO는 유지한다.
+
 ## 기준/범위
 
 - 기준 `main`: `9fd0201d98a7ea29e64a32cdae7e28e252d2faa6` (R0).

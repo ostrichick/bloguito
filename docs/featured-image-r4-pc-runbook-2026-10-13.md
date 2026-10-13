@@ -2,6 +2,8 @@
 
 ## 판정 및 범위
 
+**2026-10-13 PC 후속:** 아래 최초 인계 당시의 미실행 상태를 대체한다. 실제 격리 R4 합성 E2E와 고정 R3 PHP setter 실DB 검사는 PASS다. R1/R2 독립 발급·신규 import writer·운영 권한 분리·R5 인수는 미완료로 운영 `NO-GO`를 유지한다. 상세 결과는 [PC 인계 문서의 후속 결과](featured-image-pc-handoff-2026-10-13.md#6-2026-10-13-pc-실행-후속-결과)를 읽는다.
+
 **현재 결과: 노트북 정적/모의 검증만 수행. 실제 Docker·WordPress·MariaDB E2E 미실행. R4/R5 운영 적용은 `NO-GO`.** 이 문서의 `SYNTHETIC_E2E_PASS_R4_ACCEPTANCE_NO_GO`는 새로운 합성 데이터 전용 인프라 검증 성공을 의미하며, R1 호스트 원본 서명·R2 독립 승인·R3 서버 제한형 writer·실제 SSH 유실·R5 운영 게시물 3건을 인증하지 않는다. 기존 운영 DB, 백업, 원본 이미지, WordPress 글, SSH/sudo/cron 및 배포는 건드리지 않는다.
 
 작업 트리: `C:\Projects\Bloguito-image-r1-r5-20261012`. PC에서는 prime이 통합한 **정확한 커밋**으로 갱신하고 해당 커밋 SHA를 결과에 기록한다. 아래 명령은 PowerShell에서 **저장소 루트**로 이동한 다음 실행한다. 노트북에는 Docker가 없어 PC 실제 검증은 인계 단계로 남는다.
@@ -21,9 +23,11 @@
 
 공식 운영 Compose `wordpress/docker-compose.yml`에는 `wordpress_app`, `wordpress_db`와 `127.0.0.1:8080` 등이 있으므로 격리 테스트에 사용하면 안 된다. 본 fixture의 Compose에는 그러한 이름·포트·볼륨·SSH 연결·운영 데이터 마운트가 없다. 오직 생성한 `./fixtures`만 **read-only** 마운트한다. Docker 엔진은 로컬 `unix://` 또는 Windows `npipe://` context만 허용하며 `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`로 설정된 별도 원격 엔진은 차단한다.
 
-이미지 태그는 PC의 초기 다운로드 시점에 결정된다. 장기 재현성을 위해 PC 실행 당시 `docker image inspect`의 digest/image ID와 Docker/Compose 버전을 별도 기록해야 한다. 태그를 불변 digest로 고정하지 않았으므로 날짜가 다른 PC에서 **동일 이미지 바이트**가 보장된다고 주장하지 않는다. 이후 정식 R4 인수 테스트에서는 확인된 3개 이미지 digest를 고정하는 것이 필요하다.
+PC 후속 수정에서 실제 다운로드한 MariaDB/WordPress/CLI 세 이미지를 `COMPOSE`의 불변 digest로 고정했다. 생성되는 `fixture-state.json`은 해당 Compose SHA도 봉인한다. Apache 이미지의 업로드 볼륨 owner(33)에 맞춰 Alpine CLI를 `33:33`으로 실행하며 world-write나 root 실행으로 권한 문제를 우회하지 않는다. `docker compose --progress quiet`로 Compose 진행 메시지를 억제하되 CAS 판독은 계속 정확한 WordPress 거부 메시지만 허용한다. 이미지 업데이트 시에는 digest/UID 계약과 실DB 시험을 함께 재검증한다.
 
 ## 2. PC 사전 준비와 정적 검증
+
+PC에서 실제로 발견한 두 런타임 결함도 수정했다: `wp eval-file`의 `$args`는 include scope 변수이므로 global로 덮어쓰지 않는다. Apache(UID 33)와 Alpine CLI(UID 82)의 기본 사용자 차이는 CLI UID를 공유 볼륨 owner에 맞춰 해결한다. 새 `.github/workflows/test.yml`의 `isolated-r4-image-and-r3-setter` job은 별도 빈 환경에서 이 계약을 실제 실행하므로 노트북에 Docker를 설치하지 않아도 향후 결과를 확인할 수 있다. 합성 검사 성공을 R1/R2 출처·승인 또는 운영 GO로 승격하지 않는다.
 
 Docker Desktop Linux containers 또는 로컬 Docker Engine + Compose v2가 필요하다. Docker/WordPress를 설치하지 않은 노트북에서는 이 단계의 Python 테스트만 실행한다. **운영 서버 SSH 연결이나 운영 백업 복원은 필요하지 않다.**
 

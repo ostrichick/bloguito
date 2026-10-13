@@ -112,6 +112,44 @@ jobs:
         if: always()
         run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" down --volumes --remove-orphans
 
+  isolated-r4-image-and-r3-setter:
+    # Synthetic data only. No production SSH, signing authority or credentials.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise real R4 CAS and fixed R3 PHP with nonadmin identity
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess, sys
+          sys.path.insert(0, 'scripts/ops')
+          import image_r4_pc_fixture as fixture
+          import image_r4_pc_smoke as smoke
+          folder = fixture.init_fixture()
+          evidence = pathlib.Path('image-runtime-evidence')
+          evidence.mkdir()
+          try:
+              fixture.start(folder)
+              result = smoke.smoke(folder)
+              assert result['status'] == 'SYNTHETIC_E2E_PASS_R4_ACCEPTANCE_NO_GO', result
+              subprocess.run([sys.executable, 'wordpress/tests/real-db/r3_image_setter.py',
+                              '--fixture', str(folder), '--confirm-local-isolated'], check=True)
+          finally:
+              for name in ('r4-smoke-evidence.json', 'r3-setter-evidence.json'):
+                  source = folder / name
+                  if source.exists():
+                      (evidence / name).write_bytes(source.read_bytes())
+              fixture.stop(folder, destroy_synthetic_data=True)
+          PY
+      - name: Preserve synthetic evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-image-runtime-evidence
+          path: image-runtime-evidence/*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   isolated-v3-full-restore:
     # CI-only detached environment. No host ports, production SSH, or secrets.
     runs-on: ubuntu-latest
