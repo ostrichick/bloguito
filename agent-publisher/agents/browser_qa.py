@@ -24,6 +24,7 @@ QA_EVIDENCE_SCHEMA = 2
 LEGACY_QA_EVIDENCE_SCHEMA = 1
 RENDER_SOURCES = {'local_static', 'wordpress_theme', 'authenticated_preview'}
 QA_VIEWPORTS = (390, 1280)
+TRUSTED_WORDPRESS_HOST = 'lifeinfo24.org'
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 
 
@@ -41,7 +42,10 @@ def _valid_url(url: str, render_source: str, post_id: int) -> bool:
     parsed = urlsplit(url)
     if render_source == 'local_static':
         return parsed.scheme == 'file' or (parsed.scheme == 'http' and parsed.hostname in {'localhost', '127.0.0.1'})
-    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+    # A matching post id in arbitrary HTTPS markup is not WordPress origin
+    # evidence. Bind both page and per-screen URL to this site's known host.
+    if (parsed.scheme != 'https' or parsed.hostname != TRUSTED_WORDPRESS_HOST
+            or parsed.username or parsed.password or parsed.port not in {None, 443}):
         return False
     params = parse_qs(parsed.query, keep_blank_values=True)
     for name in ('p', 'page_id', 'preview_id'):
@@ -92,12 +96,18 @@ def _evaluate_screen(screen: dict, *, width: int, scopes: list[str],
                       and type(metrics.get('scroll_width')) in {int, float}
                       and metrics['scroll_width'] <= metrics['client_width'] + 2)
         else:
+            # documentElement.clientWidth is the layout viewport minus any
+            # scrollbar, never wider than window.innerWidth. Reject invented
+            # dimensions that would make a huge fake viewport look overflow-free.
+            # Allow up to 32 CSS px for a system scrollbar at these test widths.
             passed = (type(metrics.get('inner_width')) in {int, float}
                       and metrics['inner_width'] == expected_width
                       and type(metrics.get('client_width')) in {int, float}
-                      and metrics['client_width'] > 0
+                      and 0 < metrics['client_width'] <= metrics['inner_width']
+                      and metrics['client_width'] >= expected_width - 32
                       and type(metrics.get('scroll_width')) in {int, float}
                       and metrics['scroll_width'] > 0
+                      and metrics['scroll_width'] >= metrics['client_width'] - 2
                       and metrics['scroll_width'] <= metrics['client_width'] + 2)
         results['zoom_reflow_simulated'] = _pass_or_fail(passed)
 
@@ -306,6 +316,11 @@ def verify_qa_completion_receipt(path: Path, *, post_id: int, content_sha256: st
     result = evaluate_browser_qa(evidence, evidence_dir=path.parent)
     if result['post_id'] != post_id or result['content_sha256'] != content_sha256:
         raise ValueError('browser_qa_evidence_content_binding_mismatch')
+    # Schema 1 is retained for historical read-only evaluation only. A new
+    # QA completion must use fresh schema 2 browser evidence, regardless of
+    # which classifier-selected browser scopes the task requires.
+    if result['schema'] != QA_EVIDENCE_SCHEMA:
+        raise ValueError('browser_qa_schema2_required_for_reflow_completion')
     if not required_scopes.issubset(set(result['eligible_wp_completed_scopes'])):
         raise ValueError('browser_qa_evidence_scope_unverified')
     return result

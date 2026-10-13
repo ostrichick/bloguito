@@ -31,7 +31,7 @@ function validateArgs(args) {
   const target = new URL(args['--url']);
   if (source === 'local_static' ?
       !(target.protocol === 'file:' || (target.protocol === 'http:' && ['localhost','127.0.0.1'].includes(target.hostname))) :
-      target.protocol !== 'https:') throw Error('render_source_url_conflict');
+      target.origin !== 'https://lifeinfo24.org') throw Error('render_source_url_conflict');
   if (source === 'authenticated_preview' &&
       !(['1','true'].includes(target.searchParams.get('preview')) ||
         /^[1-9]\d*$/.test(target.searchParams.get('preview_id') || '')))

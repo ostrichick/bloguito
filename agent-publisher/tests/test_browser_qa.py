@@ -206,6 +206,32 @@ class BrowserQaEvidenceTests(unittest.TestCase):
             self.assertIn('390:zoom_reflow_simulated:unverified',
                           decision['incomplete_scopes']['layout-accessibility'])
 
+    def test_320_css_reflow_rejects_fabricated_large_and_tiny_layout_widths(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            evidence=fixture(root, render_source='authenticated_preview')
+            metrics=evidence['screens'][0]['observation']['reflow_simulated_viewport']['metrics']
+            metrics.update(inner_width=320,client_width=10000,scroll_width=10000)
+            result=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          result['incomplete_scopes']['layout-accessibility'])
+            metrics.update(inner_width=320,client_width=1,scroll_width=1)
+            result=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          result['incomplete_scopes']['layout-accessibility'])
+            metrics.update(inner_width=320,client_width=305,scroll_width=1)
+            result=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          result['incomplete_scopes']['layout-accessibility'])
+            metrics.update(inner_width=320,client_width=305,scroll_width=305)
+            result=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertEqual('pass',result['observed_checks']['390']['zoom_reflow_simulated'])
+            desktop=evidence['screens'][1]['observation']['reflow_simulated_viewport']['metrics']
+            desktop.update(inner_width=640,client_width=10000,scroll_width=10000)
+            result=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('1280:zoom_reflow_simulated:fail',
+                          result['incomplete_scopes']['layout-accessibility'])
+
     def test_legacy_schema_1_receipts_preserve_original_195px_verdict(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
@@ -218,13 +244,45 @@ class BrowserQaEvidenceTests(unittest.TestCase):
             decision=evaluate_browser_qa(evidence,evidence_dir=root)
             self.assertIn('390:zoom_reflow_simulated:fail',
                           decision['incomplete_scopes']['layout-accessibility'])
-            # A legacy failure cannot be upgraded by adding a new v2-only field.
+            # A legacy failure cannot be upgraded by adding a v2-only field.
             evidence['screens'][0]['observation']['reflow_simulated_viewport']={
                 'kind':'css_viewport_reflow_not_native_zoom','width':320,
                 'metrics':{'inner_width':320,'client_width':320,'scroll_width':320}}
             decision=evaluate_browser_qa(evidence,evidence_dir=root)
             self.assertIn('390:zoom_reflow_simulated:fail',
                           decision['incomplete_scopes']['layout-accessibility'])
+
+    def test_legacy_schema_1_readable_but_cannot_close_new_reflow_qa(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            evidence=fixture(root,render_source='authenticated_preview',schema=1)
+            # The old 195px check genuinely passed; that does not measure 320px.
+            self.assertEqual('browser_pass',evaluate_browser_qa(evidence,evidence_dir=root)['status'])
+            path=root/'legacy-evidence.json'
+            path.write_text(json.dumps(evidence),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'schema2_required_for_reflow_completion'):
+                verify_qa_completion_receipt(
+                    path,post_id=641,content_sha256='a'*64,
+                    required_scopes={'layout-accessibility'})
+            with self.assertRaisesRegex(ValueError,'schema2_required_for_reflow_completion'):
+                verify_qa_completion_receipt(
+                    path,post_id=641,content_sha256='a'*64,
+                    required_scopes={'content-mobile-desktop','layout-accessibility'})
+            # Historical receipts are readable but cannot close any new task.
+            with self.assertRaisesRegex(ValueError,'schema2_required_for_reflow_completion'):
+                verify_qa_completion_receipt(
+                    path,post_id=641,content_sha256='a'*64,
+                    required_scopes={'content-mobile-desktop'})
+            fresh=fixture(root,render_source='authenticated_preview',schema=2)
+            path.write_text(json.dumps(fresh),encoding='utf-8')
+            result=verify_qa_completion_receipt(
+                path,post_id=641,content_sha256='a'*64,
+                required_scopes={'layout-accessibility'})
+            self.assertEqual(2,result['schema'])
+            with self.assertRaisesRegex(ValueError,'content_binding_mismatch'):
+                verify_qa_completion_receipt(
+                    path,post_id=642,content_sha256='a'*64,
+                    required_scopes={'layout-accessibility'})
 
     def test_cta_href_alone_without_actual_navigation_is_unverified(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -293,6 +351,40 @@ class BrowserQaEvidenceTests(unittest.TestCase):
             evidence['screens'][1]['url'] = 'https://lifeinfo24.org/?p=642'
             with self.assertRaisesRegex(ValueError, 'screen_url_invalid'):
                 evaluate_browser_qa(evidence, evidence_dir=root)
+
+    def test_untrusted_wordpress_origin_cannot_pass_with_matching_post_id(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for source in ('wordpress_theme', 'authenticated_preview'):
+                evidence=fixture(root,render_source=source)
+                for url in ('https://example.org/?p=641&preview=true',
+                            'https://lifeinfo24.org.evil.example/?p=641&preview=true',
+                            'https://lifeinfo24.org:8443/?p=641&preview=true'):
+                    evidence['url']=url
+                    for screen in evidence['screens']:
+                        screen['url']=url
+                    with self.subTest(source=source,url=url):
+                        with self.assertRaisesRegex(ValueError,'render_source_url_conflict'):
+                            evaluate_browser_qa(evidence,evidence_dir=root)
+                        path=root/'forged-evidence.json'
+                        path.write_text(json.dumps(evidence),encoding='utf-8')
+                        with self.assertRaisesRegex(ValueError,'render_source_url_conflict'):
+                            verify_qa_completion_receipt(
+                                path,post_id=641,content_sha256='a'*64,
+                                required_scopes={'layout-accessibility'})
+
+    def test_browser_runner_rejects_untrusted_wordpress_origin_before_cdp(self):
+        invocation=subprocess.run([
+            'node',str(REPO/'scripts/browser_qa_harness.mjs'),
+            '--endpoint','http://127.0.0.1:1',
+            '--post-id','641','--content-sha','a'*64,
+            '--render-source','authenticated_preview',
+            '--target-id','test-target-12345',
+            '--output-dir','unused-test-dir',
+            '--url','https://example.org/?p=641&preview=1',
+        ],capture_output=True,text=True)
+        self.assertNotEqual(0,invocation.returncode)
+        self.assertIn('render_source_url_conflict',invocation.stderr)
 
     def test_post_id_query_and_true_preview_parameter_must_be_bound(self):
         with tempfile.TemporaryDirectory() as folder:
