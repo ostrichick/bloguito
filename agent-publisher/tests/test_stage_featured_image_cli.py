@@ -19,6 +19,54 @@ SPEC.loader.exec_module(MODULE)
 
 
 class StageFeaturedImageCliTests(unittest.TestCase):
+    def test_noncanonical_stage_receipt_path_rejected_before_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-1.png"
+            output = root / "candidate-1-upload.webp"
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            with patch("sys.argv", [
+                "stage_featured_image.py", str(source), str(output),
+                "--candidate-manifest", str(root / "manifest.json"),
+                "--selected-candidate", "1", "--selection-mode", "user",
+                "--receipt", str(root / "custom.json"),
+            ]):
+                with self.assertRaises(SystemExit) as blocked:
+                    MODULE.main()
+            self.assertEqual(2, blocked.exception.code)
+            self.assertFalse(output.exists())
+            self.assertFalse((root / "custom.json").exists())
+
+    def test_explicit_lossless_png_staging_preserves_sealed_image_lineage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "candidate-1.png"
+            staged = root / "candidate-1-upload.png"
+            manifest = root / "manifest.json"
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            seal_spec = importlib.util.spec_from_file_location(
+                "png_sealer", SCRIPT.parent / "seal_featured_image_candidates.py")
+            sealer = importlib.util.module_from_spec(seal_spec)
+            seal_spec.loader.exec_module(sealer)
+            sealer.seal_candidates([source], manifest)
+            arguments = ["stage_featured_image.py", str(source), str(staged),
+                         "--candidate-manifest", str(manifest),
+                         "--selected-candidate", "1", "--selection-mode", "user"]
+            with patch("sys.argv", arguments):
+                with self.assertRaises(SystemExit) as blocked:
+                    MODULE.main()
+            self.assertEqual(2, blocked.exception.code)
+            self.assertFalse(staged.exists())
+            with patch("sys.argv", arguments + ["--lossless-png"]):
+                self.assertEqual(0, MODULE.main())
+            with Image.open(staged) as decoded:
+                self.assertEqual("PNG", decoded.format)
+                self.assertEqual((1200, 675), decoded.size)
+            lineage = verify_manual_image_upload_lineage(
+                staged, manifest, 1, "user")
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),
+                             lineage["source_sha256"])
+
     def test_codex_native_original_stages_and_rejects_changed_host_output(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -124,6 +172,42 @@ class StageFeaturedImageCliTests(unittest.TestCase):
                 verify_manual_image_upload_lineage(staged, manifest, 1, "user")
             Image.new("RGB", (1600, 900), "black").save(source, "PNG")
             with self.assertRaisesRegex(ValueError, "candidate_sha_conflict"):
+                verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
+
+    def test_stage_selection_actor_cannot_override_sealed_selection_mode(self):
+        """A receipt must not describe an agent selection as a user decision."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source, staged, manifest = (
+                root / "candidate-1.png", root / "candidate-1-upload.webp", root / "manifest.json")
+            Image.new("RGB", (1600, 900), "white").save(source, "PNG")
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "selection_actor_sealer", SCRIPT.parent / "seal_featured_image_candidates.py")
+            sealer = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sealer)
+            sealer.seal_candidates([source], manifest)
+            with patch("sys.argv", [
+                "stage_featured_image.py", str(source), str(staged),
+                "--candidate-manifest", str(manifest), "--selected-candidate", "1",
+                "--selection-mode", "agent-delegated", "--selection-actor", "agent-delegated",
+            ]):
+                self.assertEqual(0, MODULE.main())
+            from agents.publish_gate import manual_selection_approval_kind
+            lineage = verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
+            self.assertEqual("manual_agent_delegated", manual_selection_approval_kind(lineage))
+            receipt_path = staged.with_suffix(staged.suffix + ".stage.json")
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["selection_actor"] = "user"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "manual_cover_lineage_receipt_mismatch"):
+                verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
+            with self.assertRaisesRegex(ValueError, "image_selection_actor_mode_conflict"):
+                manual_selection_approval_kind({"selection_mode": "agent-delegated",
+                                                "selection_actor": "user"})
+            receipt.pop("selection_actor")
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "manual_cover_lineage_receipt_mismatch"):
                 verify_manual_image_upload_lineage(staged, manifest, 1, "agent-delegated")
 
     def test_local_unsealed_image_cannot_be_uploaded(self):

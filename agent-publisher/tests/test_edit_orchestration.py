@@ -12,6 +12,28 @@ from agents.task_state import (
 
 
 class CombinedImagePhaseTests(unittest.TestCase):
+    def test_new_cover_on_thumbnailless_post_is_bound_to_null_thumbnail_cas(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = Path(folder) / "selected.webp"
+            image_path.write_bytes(b"verified-candidate")
+            imported = []
+
+            def replace(post_id, path, sha, **kwargs):
+                imported.append(kwargs)
+                return {"attachment_id": 906, "publish_attestation": {"version": 1}}
+
+            result = run_combined_image_phase(
+                887, image_path=image_path, desired_content_sha256="a" * 64,
+                expected_thumbnail_id=None, alt_text="Approved image", resume=False,
+                state=None, update_state=lambda *args, **kwargs: None,
+                reconcile_image=lambda *args, **kwargs: self.fail("unexpected reconcile"),
+                recover_imported_image=lambda *args, **kwargs: self.fail("unexpected recovery"),
+                replace_image=replace, approval_kind="manual_agent_delegated",
+                approval_evidence_sha256="b" * 64)
+            self.assertEqual(906, result["attachment_id"])
+            self.assertEqual(1, len(imported))
+            self.assertIsNone(imported[0]["expected_thumbnail_id"])
+
     def test_approved_combined_image_passes_exact_evidence_to_wordpress_mutator(self):
         with tempfile.TemporaryDirectory() as folder:
             image_path = Path(folder) / "selected.webp"
@@ -44,13 +66,12 @@ class CombinedImagePhaseTests(unittest.TestCase):
                 run_combined_image_phase(
                     887, image_path=path, desired_content_sha256="a" * 64,
                     expected_thumbnail_id=888, alt_text="Approved image", resume=True,
-                    state={"checkpoints": {"image_import_attempt": {
-                        "started": True, "image_sha256": image_sha,
-                        "expected_thumbnail_id": 888,
+                    state={"checkpoints": {"image_outcome": {
+                        "attachment_id": 906,
                     }}},
                     update_state=lambda *args, **kwargs: None,
-                    reconcile_image=lambda *args, **kwargs: None,
-                    recover_imported_image=lambda *args, **kwargs: {"attachment_id": 906},
+                    reconcile_image=lambda *args, **kwargs: {"attachment_id": 906},
+                    recover_imported_image=lambda *args, **kwargs: self.fail("must not SHA-adopt"),
                     replace_image=lambda *args, **kwargs: self.fail("do not duplicate import"),
                     approval_kind="manual_user_selected",
                     approval_evidence_sha256="b" * 64,
@@ -97,7 +118,7 @@ class CombinedImagePhaseTests(unittest.TestCase):
                             root=Path(folder),
                         )
 
-    def test_resume_after_import_attempt_recovers_without_second_import(self):
+    def test_resume_after_import_attempt_without_id_receipt_is_held_without_second_import(self):
         updates = []
         media_imports = 0
         image_sha = hashlib.sha256(b"image-bytes").hexdigest()
@@ -150,22 +171,23 @@ class CombinedImagePhaseTests(unittest.TestCase):
             state = {
                 "checkpoints": {"image_import_attempt": attempt_payload},
             }
-            result = run_combined_image_phase(
-                393,
-                image_path=image_path,
-                desired_content_sha256="a" * 64,
-                expected_thumbnail_id=70,
-                alt_text="검토된 이미지",
-                resume=True,
-                state=state,
-                update_state=update_state,
-                reconcile_image=lambda *args, **kwargs: None,
-                recover_imported_image=lambda *args, **kwargs: recovered,
-                replace_image=lambda *args, **kwargs: self.fail("must not import again"),
-            )
+            with self.assertRaisesRegex(ValueError, "featured_image_import_ownership_unverified"):
+                run_combined_image_phase(
+                    393,
+                    image_path=image_path,
+                    desired_content_sha256="a" * 64,
+                    expected_thumbnail_id=70,
+                    alt_text="검토된 이미지",
+                    resume=True,
+                    state=state,
+                    update_state=update_state,
+                    reconcile_image=lambda *args, **kwargs: None,
+                    recover_imported_image=lambda *args, **kwargs: self.fail("must not SHA-adopt"),
+                    replace_image=lambda *args, **kwargs: self.fail("must not import again"),
+                )
 
         self.assertEqual(1, media_imports)
-        self.assertEqual(777, result["attachment_id"])
+        self.assertFalse(any("image_saved" in kw.get("completed", []) for _, kw in updates))
 
     def test_resume_after_import_attempt_blocks_when_sha_recovery_is_empty(self):
         image_sha = hashlib.sha256(b"image").hexdigest()
@@ -179,7 +201,7 @@ class CombinedImagePhaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             image_path = Path(folder) / "cover.jpg"
             image_path.write_bytes(b"image")
-            with self.assertRaisesRegex(ValueError, "featured_image_import_outcome_ambiguous"):
+            with self.assertRaisesRegex(ValueError, "featured_image_import_ownership_unverified"):
                 run_combined_image_phase(
                     393,
                     image_path=image_path,
@@ -193,6 +215,24 @@ class CombinedImagePhaseTests(unittest.TestCase):
                     recover_imported_image=lambda *args, **kwargs: None,
                     replace_image=lambda *args, **kwargs: self.fail("must not import again"),
                 )
+
+    def test_resume_does_not_trust_sha_only_positive_recovery(self):
+        """Callbacks must not convert unowned SHA candidates into an image outcome."""
+        with tempfile.TemporaryDirectory() as folder:
+            image_path = Path(folder) / "image.jpg"
+            image_path.write_bytes(b"unowned-image")
+            state = {"checkpoints": {"image_import_attempt": {
+                "started": True, "image_sha256": hashlib.sha256(b"unowned-image").hexdigest(),
+                "expected_thumbnail_id": 70, "preexisting_attachment_ids": [],
+            }}}
+            with self.assertRaisesRegex(ValueError, "featured_image_import_ownership_unverified"):
+                run_combined_image_phase(
+                    393, image_path=image_path, desired_content_sha256="a" * 64,
+                    expected_thumbnail_id=70, alt_text="alt", resume=True,
+                    state=state, update_state=lambda *a, **k: None,
+                    reconcile_image=lambda *a, **k: None,
+                    recover_imported_image=lambda *a, **k: {"attachment_id": 777},
+                    replace_image=lambda *a, **k: self.fail("must not import"))
 
     def test_resume_rejects_a_different_image_before_remote_recovery(self):
         with tempfile.TemporaryDirectory() as folder:

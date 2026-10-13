@@ -1,0 +1,45 @@
+name: bloguito-real-db-check
+
+# Deliberately self-contained: no host ports, production paths or secrets.
+# Always supply an isolated -p project and finish with down --volumes.
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: ci-only-root-not-a-secret
+      MARIADB_DATABASE: wordpress_ci
+      MARIADB_USER: wordpress_ci
+      MARIADB_PASSWORD: ci-only-user-not-a-secret
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 3s
+      timeout: 5s
+      retries: 35
+    volumes:
+      - db_ci:/var/lib/mysql
+  wordpress:
+    image: wordpress:php8.3-apache
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: &wordpress_env
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: wordpress_ci
+      WORDPRESS_DB_USER: wordpress_ci
+      WORDPRESS_DB_PASSWORD: ci-only-user-not-a-secret
+    volumes:
+      - wp_ci:/var/www/html
+  cli:
+    image: wordpress:cli-php8.3
+    user: "33:33"
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      - wordpress
+    environment: *wordpress_env
+    volumes:
+      - wp_ci:/var/www/html
+      - ../../..:/bloguito:ro
+
+volumes:
+  db_ci:
+  wp_ci:

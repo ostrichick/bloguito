@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from agents.change_classifier import classify_change
 from agents.task_state import mark_browser_qa_complete, start_task_state, update_task_state
 from test_editorial_system import sample
+from test_browser_qa import fixture
 
 
 class QaScopeTests(unittest.TestCase):
@@ -47,16 +49,25 @@ class QaScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'browser_qa_scope_incomplete'):
                 mark_browser_qa_complete(
                     641, sha, completed_scopes=['content-mobile-desktop'], root=root)
+            with self.assertRaisesRegex(ValueError, 'browser_qa_execution_evidence_required'):
+                mark_browser_qa_complete(
+                    641, sha, completed_scopes=['content-mobile-desktop', 'featured-image'],
+                    observed_thumbnail_id=777, root=root)
+            observed = fixture(root, scopes=['content-mobile-desktop'])
+            observed['content_sha256'] = sha
+            qa_path = root / 'qa-observation.json'
+            qa_path.write_text(json.dumps(observed), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'browser_qa_thumbnail_mismatch'):
                 mark_browser_qa_complete(
                     641, sha,
                     completed_scopes=['content-mobile-desktop', 'featured-image'],
-                    observed_thumbnail_id=778, root=root)
+                    observed_thumbnail_id=778, qa_evidence_path=qa_path, root=root)
             state = mark_browser_qa_complete(
                 641, sha,
                 completed_scopes=['content-mobile-desktop', 'featured-image'],
-                observed_thumbnail_id=777, root=root)
+                observed_thumbnail_id=777, qa_evidence_path=qa_path, root=root)
         self.assertEqual('complete', state['status'])
+        self.assertEqual('wordpress_theme', state['result']['browser_qa_evidence']['render_source'])
 
 
 if __name__ == '__main__':

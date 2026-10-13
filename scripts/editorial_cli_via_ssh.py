@@ -44,14 +44,16 @@ from agents.publish_gate import (  # noqa: E402
 )
 from agents.wordpress_transport import wordpress_transport
 from agents.remote_transport_config import resolve_transport  # noqa: E402
+from agents.ssh_cli_request import parse_cli_request as _parse_cli_request_pure  # noqa: E402
 from agents.runtime_stdio import configure_utf8_stdio  # noqa: E402
 from agents.section_image import SECTION_IMAGE_SNAPSHOT_SCRIPT  # noqa: E402
-from agents.workflow_metrics import annotate, increment, timed, workflow_run  # noqa: E402
+from agents.workflow_metrics import annotate, increment, timed, workflow_run, workload_signature  # noqa: E402
 from agents.wordpress_mutation import (  # noqa: E402
     ATTACHMENT_SHA_LOOKUP_SCRIPT,
     FEATURED_IMAGE_LOCK_SCRIPT,
     GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT,
     GUARDED_CATEGORY_MUTATION_SCRIPT,
+    GUARDED_NEW_DRAFT_META_SCRIPT,
     GUARDED_POST_MUTATION_SCRIPT,
     GUARDED_THUMBNAIL_MUTATION_SCRIPT,
     POST_THUMBNAIL_SNAPSHOT_SCRIPT,
@@ -173,60 +175,9 @@ def _safe_identifier(value, label):
 
 
 def _parse_cli_request(cli_args):
-    if not cli_args or cli_args[0] not in _CLI_ACTION_METADATA:
-        raise ValueError('unsupported_editorial_ssh_action')
-    action = cli_args[0]
-    meta = _CLI_ACTION_METADATA[action]
-    positional = cli_args[1] if len(cli_args) > 1 and not cli_args[1].startswith('--') else None
-    ids = set()
-    values = {}
-    confirm_title_change = False
-    resume = False
-    promotion_ids_seen = False
-    index = 1
-    while index < len(cli_args):
-        value = cli_args[index]
-        if value in _REQUEST_VALUE_FLAGS:
-            next_value = cli_args[index + 1] if index + 1 < len(cli_args) else None
-            values.setdefault(value, next_value)
-            if value == '--post-id' and next_value is not None and next_value.isdigit():
-                ids.add(int(next_value))
-            index += 1
-            continue
-        if value == '--confirm-title-change':
-            confirm_title_change = True
-        elif value == '--resume':
-            resume = True
-        elif action == 'promote-draft' and value == '--ids' and not promotion_ids_seen:
-            promotion_ids_seen = True
-            index += 1
-            while index < len(cli_args) and not cli_args[index].startswith('--'):
-                if cli_args[index].isdigit():
-                    ids.add(int(cli_args[index]))
-                index += 1
-            continue
-        index += 1
-
-    if meta.target_mode == 'positional' and positional is not None and positional.isdigit():
-        ids.add(int(positional))
-    elif meta.target_mode == 'promote' and positional is not None:
-        for item in positional.split(','):
-            if item.strip().isdigit():
-                ids.add(int(item.strip()))
-
-    image_value = values.get('--image-path')
-    output_value = values.get('--output')
-    return _CliRequest(
-        action=action,
-        cli_args=cli_args,
-        target_ids=ids,
-        bundle_path=(Path(positional) if meta.bundle_positional and positional is not None else None),
-        image_path=(Path(image_value) if image_value is not None else None),
-        image_path_supplied='--image-path' in values,
-        expected_content_sha256=values.get('--expected-content-sha256'),
-        confirm_title_change=confirm_title_change,
-        resume=resume,
-        output_path=(Path(output_value) if output_value is not None else None),
+    return _parse_cli_request_pure(
+        cli_args, actions=_CLI_ACTION_METADATA,
+        request_type=_CliRequest, value_flags=_REQUEST_VALUE_FLAGS,
     )
 
 
@@ -440,6 +391,39 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             raise ValueError('unexpected_wordpress_update_flags')
         return payload
 
+    def validate_new_draft_meta_payload(raw):
+        if action not in _CREATE_ACTIONS:
+            raise ValueError('guarded_draft_metadata_not_allowed')
+        if isinstance(raw, bytes):
+            raw = raw.decode('utf-8')
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('invalid_guarded_draft_metadata_payload') from exc
+        required = {'post_status', 'post_title', 'post_name', 'post_excerpt', 'content_sha256'}
+        allow_meta = {
+            '_bloguito_permalink_scheme', 'rank_math_focus_keyword',
+            'rank_math_title', 'rank_math_description',
+        }
+        if (not isinstance(payload, dict)
+                or set(payload) != {'protocol', 'post_id', 'expected', 'meta'}
+                or payload.get('protocol') != 1
+                or type(payload.get('post_id')) is not int
+                or payload['post_id'] not in allowed_ids
+                or not isinstance(payload.get('expected'), dict)
+                or set(payload['expected']) != required
+                or payload['expected'].get('post_status') != 'draft'
+                or any(not isinstance(v, str) or '\x00' in v
+                       for v in payload['expected'].values())
+                or not re.fullmatch(r'[0-9a-f]{64}', payload['expected']['content_sha256'])
+                or not isinstance(payload.get('meta'), dict)
+                or not payload['meta'] or set(payload['meta']) - allow_meta
+                or payload['meta'].get('_bloguito_permalink_scheme') != 'post-id-v1'
+                or any(not isinstance(v, str) or not v or '\x00' in v
+                       for v in payload['meta'].values())):
+            raise ValueError('invalid_guarded_draft_metadata_payload')
+        return payload
+
     def validate_category_payload(raw):
         if action != 'repair-draft-category':
             raise ValueError('guarded_category_mutation_not_allowed')
@@ -592,7 +576,7 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 or payload.get('protocol') != 1
                 or type(payload.get('post_id')) is not int or payload['post_id'] not in allowed_ids
                 or type(payload.get('thumbnail_id')) is not int or payload['thumbnail_id'] <= 0
-                or payload.get('approval_kind') not in {'manual_user_selected', 'automated_visual_review'}
+                or payload.get('approval_kind') not in {'manual_user_selected', 'manual_agent_delegated', 'automated_visual_review'}
                 or type(payload.get('requires_live_state')) is not bool
                 or any(not re.fullmatch(r'[0-9a-f]{64}', payload.get(key, '')) for key in sha_keys)
                 or not isinstance(payload.get('expires_at_gmt'), str)
@@ -708,6 +692,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
             return
         if wp == ['eval', GUARDED_POST_MUTATION_SCRIPT, '--allow-root']:
             return 'guarded_mutation'
+        if action in _CREATE_ACTIONS and wp == [
+                'eval', GUARDED_NEW_DRAFT_META_SCRIPT, '--allow-root']:
+            return 'guarded_draft_meta'
         if (action == 'repair-draft-category'
                 and wp == ['eval', GUARDED_CATEGORY_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_category_mutation'
@@ -717,6 +704,9 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if (action == 'replace-featured-image'
                 and wp == ['eval', GUARDED_ATTACHMENT_ALT_MUTATION_SCRIPT, '--allow-root']):
             return 'guarded_attachment_alt_mutation'
+        if (action == 'replace-featured-image'
+                and wp == ['eval', POST_THUMBNAIL_SNAPSHOT_SCRIPT, '--allow-root']):
+            return 'post_thumbnail_snapshot'
         if (action in _FEATURED_IMAGE_ACTIONS
                 and wp == ['eval', ATTACHMENT_SHA_LOOKUP_SCRIPT, '--allow-root']):
             return 'attachment_sha_lookup'
@@ -800,6 +790,21 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
         if command[:5] == _WP_PREFIX:
             wp = command[5:]
             kind = validate_wp(wp)
+            if kind == 'post_thumbnail_snapshot':
+                raw = kwargs.get('input')
+                if isinstance(raw, bytes):
+                    raw = raw.decode('utf-8')
+                try:
+                    payload = json.loads(raw) if isinstance(raw, str) else None
+                except ValueError as exc:
+                    raise ValueError('invalid_image_snapshot_request') from exc
+                if (not isinstance(payload, dict) or set(payload) != {'post_id'}
+                        or type(payload['post_id']) is not int
+                        or payload['post_id'] not in allowed_ids):
+                    raise ValueError('invalid_image_snapshot_request')
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(POST_THUMBNAIL_SNAPSHOT_SCRIPT) + ' --allow-root')
+                return remote_run(remote, retry_255=True, **kwargs)
             if previous_thumbnail is not None and wp == previous_thumbnail[0]:
                 increment('wp_snapshot_reuses')
                 value = previous_thumbnail[1]
@@ -841,6 +846,17 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
                 # The server-side CAS makes one replay safe. If the first write
                 # committed but SSH lost its response, the replay sees the exact
                 # desired state and the local guarded helper reconciles it.
+                return remote_run(remote, retry_255=True, **options)
+            if kind == 'guarded_draft_meta':
+                validate_new_draft_meta_payload(kwargs.get('input'))
+                remote = ('sudo docker exec -i wordpress_app wp eval '
+                          + shlex.quote(GUARDED_NEW_DRAFT_META_SCRIPT) + ' --allow-root')
+                options = dict(kwargs)
+                raw = options.get('input')
+                if options.get('text') or options.get('universal_newlines'):
+                    options['input'] = raw if isinstance(raw, str) else raw.decode('utf-8')
+                else:
+                    options['input'] = raw.encode('utf-8') if isinstance(raw, str) else raw
                 return remote_run(remote, retry_255=True, **options)
             if kind == 'guarded_category_mutation':
                 validate_category_payload(kwargs.get('input'))
@@ -1025,6 +1041,26 @@ def make_transport(action, target_ids, host, *, ssh_user=None, wsl_distro=None,
     return run
 
 
+def _annotate_primary_workload(action, bundle, *, image_present):
+    """Mirror the remote CLI's privacy-bounded dimensions on the SSH receipt.
+
+    The SSH adapter owns network counters; the separate remote Python process
+    cannot annotate this outer metrics record. No article data is persisted.
+    """
+    if action not in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
+        return
+    try:
+        signature = workload_signature(bundle, image_present=image_present)
+    except (ValueError, TypeError):
+        return  # Telemetry must not reject canonical editorial input before CLI validation.
+    metadata = {'workload_signature': signature}
+    if action == 'prepare-draft':
+        metadata['route'] = 'create'
+    elif action == 'replace-featured-image':
+        metadata['route'] = 'image-only'
+    annotate(**metadata)
+
+
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-mode', choices=['direct', 'wsl', 'tailscale'])
@@ -1056,6 +1092,16 @@ def _main():
     annotate(transport=config.mode, transport_adapter_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     transport_action = action
     expected_rank_math_meta = None
+    if action == 'replace-featured-image':
+        _annotate_primary_workload(action, None, image_present=bool(image_path))
+    elif action == 'prepare-draft' and request.bundle_path is not None and request.bundle_path.is_file():
+        # This is a metrics-only read. Canonical validation/loading still runs
+        # within editorial_cli and may reject or re-evaluate changed inputs.
+        try:
+            metric_bundle = json.loads(request.bundle_path.read_text(encoding='utf-8'))
+            _annotate_primary_workload(action, metric_bundle, image_present=bool(image_path))
+        except (OSError, ValueError, TypeError):
+            pass  # Missing/invalid measurements are incomparable, never zero.
     if action == 'edit-post':
         if request.bundle_path is None and not request.image_path_supplied:
             parser.error('edit-post requires a bundle file or --image-path')
@@ -1065,6 +1111,7 @@ def _main():
             if not bundle_path.is_file():
                 parser.error(f'{action} bundle file not found')
             bundle = json.loads(bundle_path.read_text(encoding='utf-8'))
+        _annotate_primary_workload(action, bundle, image_present=bool(image_path))
         post_ids = sorted(targets)
         if len(post_ids) != 1:
             parser.error(f'{action} requires exactly one --post-id')

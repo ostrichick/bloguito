@@ -200,6 +200,24 @@ class TestPostCatalog(unittest.TestCase):
             rows = run_ssh_inventory()
         self.assertEqual(648, rows[0]['ID'])
 
+    def test_remote_inventory_uses_unique_temp_names_and_cleans_up_on_scp_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            calls = []
+            def remote(command, **kwargs):
+                calls.append(command)
+                if command[0] == "scp":
+                    raise RuntimeError("transfer interrupted")
+                return Mock(returncode=0, stdout="")
+            with patch.object(catalog_sync, "EDITORIAL_DATA_DIR", target), \
+                    patch("sync_post_catalog.subprocess.run", side_effect=remote):
+                with self.assertRaisesRegex(RuntimeError, "transfer interrupted"):
+                    run_ssh_inventory()
+            self.assertEqual([], list(target.glob("*.php")))
+            self.assertEqual("scp", calls[0][0])
+            self.assertEqual("ssh", calls[-1][0])
+            self.assertRegex(calls[0][-1], r"/tmp/catalog_inventory_[0-9a-f]{32}\.php$")
+
     def test_catalog_php_collects_current_permalink_for_growth_mapping(self):
         self.assertIn("'permalink' => (string)get_permalink($id)", catalog_sync.CATALOG_PHP)
 
@@ -241,6 +259,72 @@ class TestPostCatalog(unittest.TestCase):
                 catalog_inventory.read_text(encoding="utf-8")))
             self.assertEqual(canonical_payload,
                              canonical_inventory.read_text(encoding="utf-8"))
+
+    def test_generation_receipt_detects_incomplete_two_file_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            catalog_md = root / "POST_CATALOG.md"
+            catalog_inventory = root / "catalog_inventory.json"
+            posts = []
+            with (patch.object(catalog_sync, "CATALOG_MD", catalog_md),
+                  patch.object(catalog_sync, "CATALOG_INVENTORY_JSON", catalog_inventory),
+                  patch.object(catalog_sync, "run_ssh_inventory", return_value=posts),
+                  patch.object(catalog_sync, "reconcile_reviewed_statuses",
+                               return_value={"moved": [], "skipped": []}),
+                  patch.object(catalog_sync, "load_reviewed_bundles", return_value={})):
+                catalog_sync.sync_catalog()
+                self.assertEqual("verified", catalog_sync.catalog_generation_status()["status"])
+                catalog_inventory.write_text("[]\n", encoding="utf-8")
+                self.assertEqual(
+                    "incomplete_generation",
+                    catalog_sync.catalog_generation_status()["status"])
+
+    def test_catalog_does_not_overwrite_manual_backlog_edited_during_fetch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            catalog_md = root / "POST_CATALOG.md"
+            catalog_inventory = root / "catalog_inventory.json"
+            catalog_md.write_text("human earlier", encoding="utf-8")
+            def edited_during_fetch():
+                catalog_md.write_text("human newer", encoding="utf-8")
+                return []
+            with (patch.object(catalog_sync, "CATALOG_MD", catalog_md),
+                  patch.object(catalog_sync, "CATALOG_INVENTORY_JSON", catalog_inventory),
+                  patch.object(catalog_sync, "run_ssh_inventory", side_effect=edited_during_fetch),
+                  patch.object(catalog_sync, "reconcile_reviewed_statuses",
+                               return_value={"moved": [], "skipped": []}),
+                  patch.object(catalog_sync, "load_reviewed_bundles", return_value={})):
+                with self.assertRaisesRegex(ValueError, "catalog_changed_during_sync"):
+                    catalog_sync.sync_catalog()
+            self.assertEqual("human newer", catalog_md.read_text(encoding="utf-8"))
+            self.assertFalse(catalog_inventory.exists())
+
+    def test_catalog_snapshot_write_error_leaves_tracked_markdown_unchanged(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            catalog_md = root / "POST_CATALOG.md"
+            catalog_inventory = root / "catalog_inventory.json"
+            catalog_md.write_text("curated editorial backlog", encoding="utf-8")
+            with (patch.object(catalog_sync, "CATALOG_MD", catalog_md),
+                  patch.object(catalog_sync, "CATALOG_INVENTORY_JSON", catalog_inventory),
+                  patch.object(catalog_sync, "run_ssh_inventory", return_value=[]),
+                  patch.object(catalog_sync, "reconcile_reviewed_statuses",
+                               return_value={"moved": [], "skipped": []}),
+                  patch.object(catalog_sync, "load_reviewed_bundles", return_value={}),
+                  patch.object(catalog_sync, "_atomic_file",
+                               side_effect=OSError("disk full"))):
+                with self.assertRaisesRegex(OSError, "disk full"):
+                    catalog_sync.sync_catalog()
+            self.assertEqual("curated editorial backlog",
+                             catalog_md.read_text(encoding="utf-8"))
+
+    def test_catalog_sync_respects_existing_editorial_mutation_lock(self):
+        from agents.post_manifest_store import editorial_lock
+        with editorial_lock(ROOT_DIR / "agent-publisher"):
+            with patch.object(catalog_sync, "run_ssh_inventory") as remote:
+                with self.assertRaisesRegex(ValueError, "editorial_publication_busy"):
+                    catalog_sync.sync_catalog()
+                remote.assert_not_called()
 
     @staticmethod
     def _reviewed_record(post_id=844, status='draft', title='테스트 글'):

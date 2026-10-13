@@ -165,7 +165,8 @@ class ImageTaskAuthorizationR0Tests(unittest.TestCase):
                   patch("agents.task_state.claim_image_import_attempt", side_effect=claim),
                   patch("agents.featured_image.verify_manual_image_upload_lineage", return_value={
                       "source_sha256": "a" * 64, "staged_sha256": "b" * 64,
-                      "candidate_number": 1, "selection_mode": "user"}),
+                      "candidate_number": 1, "selection_mode": "user",
+                      "selection_actor": "user"}),
                   patch("agents.featured_image_quality_gate.require_accepted_quality_review",
                         return_value={"review_result": "pass"}),
                   patch("agents.featured_image.replace_featured_image_from_live_baseline",

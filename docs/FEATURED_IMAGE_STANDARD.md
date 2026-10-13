@@ -21,10 +21,14 @@
 - **실제로 생성한 후보 N개 전부**를 생성 직후 CoS Core `save_image`로 각 원본을 로컬 `candidate-1`~`candidate-N` 안정 경로에 저장한다. 저장 도구는 반드시 현재 대화에서 ChatGPT가 생성한 **원본**만 저장해야 한다. 실패하면 브라우저 스크롤·nth 재시도·Base64 변환·별도 bridge·로컬 재그리기로 우회하지 않고 해당 후보를 차단하여 원인을 보고한다. 이어 `seal_featured_image_candidates.py`로 후보 번호·경로·SHA-256·format/dimensions를 manifest에 고정한다. 원본 저장·decode·seal 실패 후보는 선택지로 제시하지 않는다.
 - 로컬에 고정한 N개 후보는 사용자가 비교·선택하려는 경우 모두 보여준다. 사용자가 에이전트에 선택을 위임한 경우에는 직접 품질을 비교해 선정 이유를 남기며, 사용자가 비교 화면을 요구하지 않았다면 별도의 선택 응답을 기다릴 필요가 없다.
 - 선택 주체는 `user` 또는 `agent-delegated` 중 하나로 명시한다. `agent-delegated`는 사용자의 명시적 선택 위임·1개 즉시 업로드 지시에만 사용한다. 위임이 없으면 사용자 선택을 받아야 한다.
+- 후보 봉인 manifest의 `origin_claim`은 도구 호출에 대한 **자가 기재 메타데이터**이지 실제 ChatGPT `image_gen` 생성이나 CoS `save_image` 실행의 독립 검증 증거가 아니다. 해당 호스트 호출 결과를 볼 수 있으면 원본 경로·SHA 및 작업 기록에 각각 연결하고, 읽을 수 없으면 `host_tool_invocation_unverified`로 구별한다. 확인되지 않은 tool call ID/서명/실행 로그를 새로 만들거나 승인 digest를 도구 실행 증명으로 표현하지 않는다.
+- stage receipt의 `selection_actor`는 `selection_mode`와 동일해야 한다. 둘이 다르거나 actor가 누락되면 신규 업로드 provenance 검증을 실패 처리한다. 사용자 직접 선택은 `manual_user_selected`, 사용자에게 위임받은 에이전트 선택은 `manual_agent_delegated`로 분리하여 기록하며, 어느 쪽도 manifest만으로 실제 선택 위임의 채팅 근거까지 독립 확인했다는 뜻이 아니다.
 - 선택이 확정되기 전에는 어느 후보도 WordPress 대표 이미지로 지정하지 않는다. 선택한 candidate 번호를 해당 파일/SHA에 결합하며, 선택 이후에는 브라우저 히스토리에서 다시 이미지를 찾아 저장하지 않는다. 브라우저 캐시·스크린샷·클립보드·Base64 재조립·별도 대화 파일 bridge는 일반 후보 이미지 전달 경로에 사용하지 않는다.
 - 선택된 원본 후보를 그대로 후속 업로드의 source로 사용하며 후보 번호를 바꾸거나 다른 후보로 대체하지 않는다. WordPress 규격에 맞추기 위한 결정론적 1200×675 staging은 허용하되 비율이 다른 경우 피사체를 잘라내지 않고 전체 전경을 보존한다.
-- 생성 대표이미지의 staging 기본 출력은 WebP다. `stage_featured_image.py --candidate-manifest <manifest> --selected-candidate N --selection-mode user|agent-delegated <candidate-file>`에서 manifest와 선택 주체/번호는 필수이며 선택 source의 sealed path/SHA와 정확히 같아야 한다. 글자 품질 등 이유로 무손실이 필요한 특수 경우에만 PNG를 명시적으로 선택한다. 로컬 staging은 전경을 유지한 크기·형식 변환만 허용하며 장면 재제작·그리기는 금지한다.
+- 생성 대표이미지의 staging 기본 출력은 WebP다. `stage_featured_image.py --candidate-manifest <manifest> --selected-candidate N --selection-mode user|agent-delegated <candidate-file>`에서 manifest와 선택 주체/번호는 필수이며 선택 source의 sealed path/SHA와 정확히 같아야 한다. 글자·테두리 손실이 문제인 **특수 경우에만** `--lossless-png <candidate-file> <explicit-output.png>`로 무손실 PNG를 선택한다. 확장자만 PNG로 바꾸는 것은 거부하며 원본 후보의 provenance/SHA, staging receipt, WordPress 업로드·readback은 WebP와 동일하게 요구한다. 로컬 staging은 전경을 유지한 크기·형식 변환만 허용하며 장면 재제작·그리기는 금지한다.
+- Stage receipt는 이후 WordPress 업로드 검증기가 읽는 정규 경로 `<staged-image>.stage.json`에 저장한다. CLI의 `--receipt`를 지정하더라도 경로가 다르면 stage 시작 전에 실패한다. 수동 승인 종류 계산도 `selection_actor`가 빠졌거나 `selection_mode`와 다르면 거부한다. 기록된 actor는 선택 주체에 대한 계약이며 실제 채팅 위임이나 `image_gen` 호출의 독립 서명으로 간주하지 않는다.
 - 선택 후에는 정규 `replace-featured-image` 또는 신규 draft의 `--image-path` 경로로 업로드하고 thumbnail readback을 확인한다.
+- 기존 공개글에서 본문과 대표이미지를 결합 수정하는 `edit-post --image-path`는 현재 썸네일이 있을 때 `--expected-thumbnail-id <양수>`로 기준 ID를 고정하고, **썸네일 없음**을 확인한 때에만 `--expect-no-thumbnail`을 사용한다. 두 옵션을 함께 쓰거나 양수 ID 대신 임의 숫자를 넣지 않는다. 원본 이미지가 없는 상태도 이후 원격 CAS/readback을 통과해야 한다.
 - 이미지 생성 호출 때문에 작업 turn이 끊기는 환경에서는 `AFTER_IMAGE` 체크포인트를 남겨 다음 turn에서 후보 선택·업로드 작업을 이어간다.
 
 ### 사용자가 ChatGPT 이미지 공유 링크로 기존 원본을 지정한 경우
@@ -64,7 +68,7 @@
 
 ## 5. 공개 전 이미지 승인 결속
 
-이미지 업로드 성공이나 1200×675 규격 통과만으로 공개 자격을 만들지 않는다. 수동 경로는 사용자 후보 선택, 스케줄러 경로는 자동 비전 검수 통과가 있어야 versioned publication attestation을 만들 수 있다. 이 attestation은 현재 reviewed 본문 SHA, 제목 SHA, 대표 attachment ID, 이미지 파일 SHA, ALT SHA, review digest, source/review freshness와 `requires_live_state` 여부에 결합한다. attestation 생성 시 current policy의 review binding과 source declaration/freshness 검사를 다시 통과해야 한다.
+이미지 업로드 성공이나 1200×675 규격 통과만으로 공개 자격을 만들지 않는다. 수동 경로는 **사용자 직접 선택 또는 명시적 위임을 받은 에이전트 선택**, 스케줄러 경로는 자동 비전 검수 통과가 있어야 versioned publication attestation을 만들 수 있다. `approval_kind`는 위의 두 수동 선택을 정확히 구별하고, `approval_evidence_sha256`는 선택 주장과 로컬 후보·staging SHA를 묶은 digest다. **호스트의 실제 `image_gen`·CoS `save_image` 실행을 암호학적으로 검증하는 증명은 아니다.** 이 attestation은 현재 reviewed 본문 SHA, 제목 SHA, 대표 attachment ID, 이미지 파일 SHA, ALT SHA, review digest, source/review freshness와 `requires_live_state` 여부에 결합한다. attestation 생성 시 current policy의 review binding과 source declaration/freshness 검사를 다시 통과해야 한다.
 
 본문·제목·대표이미지·ALT·원본 파일 중 하나라도 승인 뒤 바뀌거나 검토 시간이 만료되면 공개 게이트는 실패한다. 성공적으로 공개되면 attestation은 소비되어 삭제하므로 공개 글을 다시 draft로 되돌린 경우 과거 승인을 재사용하지 않는다. 과거 draft에는 승인 기록을 임의로 backfill하지 않는다.
 

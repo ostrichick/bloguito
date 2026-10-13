@@ -111,7 +111,7 @@ function bloguito_validate_publishability(
             return new WP_Error('bloguito_publish_gate_invalid', '발행 승인 정보가 올바르지 않습니다.');
         }
     }
-    if (!in_array($gate['approval_kind'], ['manual_user_selected', 'automated_visual_review'], true)) {
+    if (!in_array($gate['approval_kind'], ['manual_user_selected', 'manual_agent_delegated', 'automated_visual_review'], true)) {
         return new WP_Error('bloguito_publish_gate_image_unapproved', '대표이미지 선택 또는 품질 검수가 완료되지 않았습니다.');
     }
     if (!is_bool($gate['requires_live_state'])) {

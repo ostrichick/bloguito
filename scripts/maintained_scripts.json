@@ -26,6 +26,7 @@
     "prepare_post_approval.py": "Pre-approval comparison package builder",
     "record_growth_work.py": "Record completed existing-page growth work and recheck window",
     "review_featured_image_candidates.py": "Prepare and verify observed visual review evidence for sealed featured image candidates",
+    "report_growth_queue.py": "Read-only provenance-checked daily growth candidate and editorial hold report",
     "run_validation.py": "Scope-aware regression validation planner and runner",
     "score_topic_candidates.py": "Private topic demand scoring and scheduler gate report builder",
     "seal_featured_image_candidates.py": "Seal original ChatGPT image candidates with SHA-256",
@@ -34,6 +35,8 @@
     "task_workspace.py": "Managed scratch task workspace lifecycle",
     "sync_backups.py": "Verified backup synchronization with direct/Tailscale transports",
     "sync_backups_encrypted.py": "Authenticated encrypted off-host backup synchronization",
-    "sync_post_catalog.py": "POST_CATALOG synchronization"
+    "sync_post_catalog.py": "POST_CATALOG synchronization",
+    "verify_browser_qa.py": "Independent validation of reusable existing-session browser QA observations",
+    "verify_full_page_browser_qa.py": "Independent supplemental full-page screenshots, CDP 2x visual scale, and new-tab CTA HTTP proof verifier"
   }
 }

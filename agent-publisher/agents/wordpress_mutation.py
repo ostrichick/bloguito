@@ -25,6 +25,54 @@ GUARDED_POST_META_KEYS = (
     "rank_math_title",
     "rank_math_description",
 )
+GUARDED_NEW_DRAFT_META_KEYS = (*GUARDED_POST_META_KEYS, "_bloguito_permalink_scheme")
+GUARDED_NEW_DRAFT_META_SCRIPT = (
+    '$p=json_decode(file_get_contents("php://stdin"),true);'
+    '$emit=function($v){echo wp_json_encode($v,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);};'
+    '$keys=["_bloguito_permalink_scheme"=>1,"rank_math_focus_keyword"=>1,'
+    '"rank_math_title"=>1,"rank_math_description"=>1];'
+    '$required=["post_status","post_title","post_name","post_excerpt","content_sha256"];'
+    'if(!is_array($p)||($p["protocol"]??null)!==1||!is_int($p["post_id"]??null)'
+    '||$p["post_id"]<=0||!is_array($p["expected"]??null)||!is_array($p["meta"]??null))'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$e=$p["expected"];$m=$p["meta"];$ek=array_keys($e);sort($ek);'
+    'sort($required);if($ek!==$required||array_diff_key($m,$keys))'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    'foreach($e as $v){if(!is_string($v)){$emit(["status"=>"invalid_payload"]);return;}}'
+    'foreach($m as $v){if(!is_string($v)||$v===""){$emit(["status"=>"invalid_payload"]);return;}}'
+    'if(!preg_match("/^[0-9a-f]{64}$/D",$e["content_sha256"])'
+    '||$e["post_status"]!=="draft"||($m["_bloguito_permalink_scheme"]??"")!=="post-id-v1")'
+    '{$emit(["status"=>"invalid_payload"]);return;}'
+    '$id=$p["post_id"];global $wpdb;'
+    'if($wpdb->query("START TRANSACTION")===false){$emit(["status"=>"transaction_failed"]);return;}'
+    '$locked=$wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE ID=%d FOR UPDATE",$id));'
+    'if(!$locked){$wpdb->query("ROLLBACK");$emit(["status"=>"missing"]);return;}'
+    '$meta_keys=array_keys($m);$placeholders=implode(",",array_fill(0,count($meta_keys),"%s"));'
+    '$wpdb->get_results($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} '
+    'WHERE post_id=%d AND meta_key IN (".$placeholders.") FOR UPDATE",'
+    'array_merge([$id],$meta_keys)));'
+    'clean_post_cache($id);wp_cache_delete($id,"post_meta");$post=get_post($id);'
+    '$current=["post_status"=>(string)$post->post_status,"post_title"=>(string)$post->post_title,'
+    '"post_name"=>(string)$post->post_name,"post_excerpt"=>(string)$post->post_excerpt,'
+    '"content_sha256"=>hash("sha256",(string)$post->post_content)];'
+    'foreach($e as $key=>$value){if(!hash_equals($value,(string)$current[$key]))'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"cas_mismatch"]);return;}}'
+    '$present=[];$all=true;$fresh=true;foreach($m as $key=>$value){'
+    '$exists=metadata_exists("post",$id,$key);'
+    '$present[$key]=$exists?(string)get_post_meta($id,$key,true):null;'
+    '$all=$all&&$exists&&hash_equals($value,$present[$key]);'
+    '$fresh=$fresh&&!$exists;}'
+    'if($all){$wpdb->query("ROLLBACK");$emit(["status"=>"already_applied","saved_meta"=>$present]);return;}'
+    'if(!$fresh){$wpdb->query("ROLLBACK");$emit(["status"=>"meta_conflict"]);return;}'
+    'foreach($m as $key=>$value){if(update_post_meta($id,$key,wp_slash($value))===false)'
+    '{$wpdb->query("ROLLBACK");$emit(["status"=>"update_failed"]);return;}}'
+    'wp_cache_delete($id,"post_meta");$saved=[];$ok=true;'
+    'foreach($m as $key=>$value){$saved[$key]=(string)get_post_meta($id,$key,true);'
+    '$ok=$ok&&hash_equals($value,$saved[$key]);}'
+    'if(!$ok){$wpdb->query("ROLLBACK");$emit(["status"=>"verification_failed"]);return;}'
+    'if($wpdb->query("COMMIT")===false){$emit(["status"=>"commit_ambiguous"]);return;}'
+    '$emit(["status"=>"ok","saved_meta"=>$saved]);'
+)
 POST_THUMBNAIL_SNAPSHOT_SCRIPT = (
     '$p=json_decode(file_get_contents("php://stdin"),true);'
     '$post=get_post((int)($p["post_id"]??0));'
@@ -367,6 +415,49 @@ def content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def guarded_set_new_draft_metadata(base, post_id: int, *, expected: dict, meta: dict) -> dict:
+    """CAS-only metadata update for an already verified newly created draft.
+
+    The fixed WP PHP transaction either writes all approved metadata keys or
+    rejects the request, and a replay may only accept the *exact* desired
+    values on the same unchanged post. There is no wp_update_post side effect.
+    """
+    expected_keys = {
+        "post_status", "post_title", "post_name", "post_excerpt", "content_sha256",
+    }
+    if (type(post_id) is not int or post_id <= 0
+            or not isinstance(expected, dict) or set(expected) != expected_keys
+            or expected.get("post_status") != "draft"
+            or any(not isinstance(v, str) or "\x00" in v for v in expected.values())
+            or not re.fullmatch(r"[0-9a-f]{64}", expected["content_sha256"])
+            or not isinstance(meta, dict) or not meta
+            or set(meta) - set(GUARDED_NEW_DRAFT_META_KEYS)
+            or meta.get("_bloguito_permalink_scheme") != "post-id-v1"
+            or any(not isinstance(v, str) or not v or "\x00" in v for v in meta.values())):
+        raise ValueError("invalid_guarded_draft_metadata")
+    payload = {
+        "protocol": 1,
+        "post_id": post_id,
+        "expected": dict(expected),
+        "meta": dict(meta),
+    }
+    with timed("wp_guarded_draft_meta"):
+        increment("wp_roundtrips")
+        result = run_wordpress(
+            list(base) + ["eval", GUARDED_NEW_DRAFT_META_SCRIPT, "--allow-root"],
+            input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            capture_output=True, text=True, encoding="utf-8", errors="strict",
+            check=True,
+        )
+    observed = _guarded_result(result.stdout)
+    if observed.get("status") not in {"ok", "already_applied"}:
+        raise ValueError("wordpress_draft_meta_" + str(observed.get("status") or "unknown"))
+    saved = observed.get("saved_meta")
+    if not isinstance(saved, dict) or saved != meta:
+        raise ValueError("wordpress_draft_meta_readback_failed")
+    return saved
+
+
 def get_post(base, post_id, *, fields=None, timeout=None):
     command = list(base) + ["post", "get", str(int(post_id))]
     if fields:
@@ -380,6 +471,40 @@ def get_post(base, post_id, *, fields=None, timeout=None):
             kwargs["timeout"] = timeout
         result = run_wordpress(command, **kwargs)
     return json.loads((result.stdout or "").lstrip("\ufeff"))
+
+
+def read_post_thumbnail_snapshot(base, post_id: int, *, timeout=None) -> tuple[dict, str | None]:
+    """Fresh read-only post+thumbnail pair from ONE WordPress process.
+
+    It replaces only adjacent, same-state preflight reads. No returned value
+    may serve as a write CAS or substitute for guarded mutation readback.
+    """
+    if type(post_id) is not int or post_id <= 0:
+        raise ValueError("invalid_post_thumbnail_snapshot_target")
+    command = list(base) + ["eval", POST_THUMBNAIL_SNAPSHOT_SCRIPT, "--allow-root"]
+    kwargs = dict(input=json.dumps({"post_id": post_id}), capture_output=True,
+                  text=True, encoding="utf-8", errors="strict", check=True)
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    with timed("wp_target_read"):
+        increment("wp_roundtrips")
+        result = run_wordpress(command, **kwargs)
+    try:
+        value = json.loads((result.stdout or "").lstrip("\ufeff"))
+        if not isinstance(value, dict) or set(value) != {"post", "thumbnail_id"}:
+            raise ValueError
+        fields = {"post_status", "post_title", "post_name", "post_content", "post_excerpt"}
+        post = value["post"]
+        thumb = value["thumbnail_id"]
+        if (not isinstance(post, dict) or set(post) != fields
+                or any(not isinstance(field, str) for field in post.values())
+                or thumb is not None and (
+                    type(thumb) is not str or not thumb.isdecimal()
+                    or int(thumb) <= 0)):
+            raise ValueError
+        return post, thumb
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_post_thumbnail_snapshot_readback") from exc
 
 
 def find_attachment_ids_by_sha(base, post_id: int, image_sha256: str, *, timeout=None) -> list[int]:

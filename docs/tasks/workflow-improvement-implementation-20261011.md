@@ -1,0 +1,118 @@
+# Bloguito 반복 작업 개선 구현 기록 — 2026-10-11
+
+이 문서는 `docs/bloguito-workflow-improvement-plan-2026-10-11.md`의 실행 결과를 **로컬 구현 / 테스트 / 운영 배포**로 분리해 기록한다. 계획의 원인 분석은 당시 정적 코드 검사이며 이 기록의 구현 결과와 구별한다. 본문은 새 릴리스가 운영 환경에 설치되었다는 뜻이 아니다.
+
+## 실행 결과와 계약
+
+| ID | 로컬 구현 결과 | 주 검증 경계 | 운영 적용 |
+| --- | --- | --- | --- |
+| S1 | 스케줄러·수동 growth writer 공유 잠금, 중복 실행 실패 상태 | 병렬 실행, 프로세스 예외/종료, 알림 중복 | 미배포 |
+| S2 | 이미지 생성 시점 WordPress snapshot을 image-only CAS에 고정 | 사전 검사 후 동시 변경, thumbnail 변경/응답 유실 시 import fence | 미배포 |
+| S3 | 신규 `prepare-draft`의 durable creating/created/complete journal, 작성 즉시 post ID 기록, 모호한 요청 재생성 차단 | lost SSH response, 메타 실패 후 동일 ID 재개, 외부 글 변조 | 미배포 |
+| T2 | 카탈로그의 임시 원격 PHP 실행별 이름·finally cleanup, tracked 백로그 CAS, 원자 개별 기록+세대 일치 검증 | 동시 sync, 파일 교체/읽기 오류, 사용자 편집 경합 | 미배포 |
+| T3 | 새 draft의 permalink/Rank Math 메타를 내용 SHA·title/status/slug/발췌문 CAS와 함께 guarded transaction/readback | 성공 재실행과 메타 불일치/응답 유실; PHP 문법 검사 | 미배포 |
+| T4 | 공식 법령 조항 및 PDF 페이지 범위 선택 수집, 별도 원문 SHA/버전·텍스트 SHA 유지 및 캐시 경계 | 60k 초과 원문, 범위 밖 인용 차단, cache/reviewer stale | 미배포 |
+| T1 | 다른 검색 질문의 공유 공식 URL 중복 예외를 사람 승인·정확한 brief/비교대상 SHA receipt에 결합 | 실제 같은 질문은 하드 블록; 자동 scheduler 예외 없음 | 미배포 |
+| F1 | 동일 action+release+route+transport만 묶는 `summarize_workflow_metrics.py --cohorts` | 5개 미만 표본의 비교 부적합 표시 | 미배포 |
+| Q2 | `report_growth_queue.py` 읽기 전용 JSON 보고서 | missing/mismatched growth provenance에서는 조치 대상 숨김 | 미배포 |
+| Q3 | 결과에 `drafts_created` 병기, 역사적 `published` 키 유지, 사용자 로그 draft 명칭 | 기존 파서 호환, 상태 검사 | 미배포 |
+| R2 | 위임 이미지 선택 approval kind 분리 및 WP MU 검사 동기화; null-thumbnail combined edit; 명시적 lossless PNG staging | 브라우저·이미지 생성 호출의 자체 증명은 하지 않음 | 미배포 |
+| R1 | 이미지 시작 상태 지문 계산을 부작용 없는 별도 내부 모듈로 이동, 기존 공개 import 유지 | 기존 image/followthrough 테스트 | 미배포 |
+| F2 | **부분 구현:** 이미지 업로드 직전 동일 상태의 글/썸네일 조회를 2 WP reads → 1로 병합. 기존 SSH 경로는 이미 1회라 SSH 감소 없음; edit-post의 별개 CAS 경계는 유지 | 읽기 실패/응답 유실/동시 편집 실패 주입, 호출 횟수 fixture. 운영 속도 개선 실측 없음 | 미배포 |
+| Q1 | **하네스 구현:** 기존 CDP 탭에서 390/1280 렌더·TOC·표/카드·CTA·계산기 관측 및 PNG/SHA 증거, 독립 검증 후 task-state 결합. 정적 렌더는 WordPress QA로 인정하지 않음 | 13개 synthetic fixture, 실제 인증 미리보기 브라우저 실행/네이티브 200% 확대는 미검증 | 미배포 |
+
+**독립 원본 보존:** 작업 전 `main`의 `docs/POST_CATALOG.md`, `docs/clarity-integration-2026-09-29.md`, `docs/INDEX.md` 미커밋 변경과 계획서 untracked 파일을 덮어쓰지 않고 별도 Git worktree에서 구현했다. 신규 공개 포스트·임시글·대표이미지·예약 cron에 대한 WordPress mutation은 이 구현 검증 단계에서 수행하지 않았다.
+
+## 확인된 한계
+
+- 신규 draft의 `wp post create`와 로컬 journal은 동일 데이터베이스 transaction을 공유하지 않는다. 따라서 응답/ID 자체가 유실되면 **확실한 단일 post ID가 확인되지 않는 한 자동 복구가 아니라 차단**한다. 제목이나 본문이 같다는 이유로 기존 글을 임의 채택하거나 두 번째 `post create`를 보내지 않는다. 서버 측 생성 토큰을 완전히 원자적이라 주장하려면 독립 WordPress DB·hook/cache 장애 검증이 먼저 필요하다.
+- Rank Math 메타의 guarded 원격 WordPress PHP는 syntax-only 검증을 수행했다. 실제 isolated WordPress DB의 transaction rollback, WP hook/object-cache 동작을 추가 검증하기 전 운영에 적용됐다고 주장하지 않는다.
+- `image_gen`·CoS `save_image` 실제 호스트 호출의 독립된 서명 영수증은 현재 로컬 manifest의 문자열로 대체할 수 없다. 원본 파일 SHA·선택 주체·후속 업로드 기록을 검증하되 호스트 도구 호출 그 자체의 암호학적 확인을 주장하지 않는다.
+- 기존 실행 성공 중앙값(신규 약 46.6초, 수정 45.7초, 이미지 60.8초)은 서로 다른 코드 버전과 작업 난도 표본이어서 이 릴리스의 절감률로 전용하지 않는다. 실제 운영 적용 후 동일 코드 버전·유형의 추가 표본에서 비교한다.
+- 범용 브라우저 QA는 실제 접속된 CDP 세션·URL·post ID·저장된 content SHA가 필요한 도구이며, synthetic 테스트 스크린샷만으로 운영 WordPress 테마나 인증 미리보기의 레이아웃을 확인했다고 볼 수 없다. 기존 200% 접근성 확대는 절반 viewport 근사 검증일 뿐이다.
+- F2는 실제 SSH latency 개선이 아니라 동일 Python 프로세스 내 WordPress 읽기 횟수만 2→1로 줄인 좁은 최적화다. 쓰기 직전 CAS와 쓰기 직후 readback을 유지한다.
+
+## 운영 릴리스 승인 전 게이트
+
+1. 모든 Git commit을 한 검증된 통합 브랜치에 합치고 `git diff --check`, 필요한 전체 Python/PHP 테스트와 release manifest consistency를 통과시킨다.
+2. `build_editorial_release.py`로 clean HEAD에서 immutable manifest/archive를 만든 뒤 `install_editorial_release.py`를 disposable app에 적용·rollback 실험한다. WordPress MU plugin은 이 Python release에 포함되지 않으므로 독립 업데이트/기존 해시 복원 검증이 필요하다.
+3. **운영 WordPress의 기존 본문/메타·공개 상태를 임의로 수정해 smoke test하지 않는다.** 별도 disposable WordPress/DB 검증과 백업·운영 비밀값/cron 보존 검사 후 배포한다. 실패 시 기존 release/hash를 되돌리고 이미 생성된 post ID는 중복 생성하지 않는다.
+4. 배포 후 실제 cron 한 번의 결과, WordPress 저장·메타/이미지 readback, 통계 코호트의 충분한 관측치를 분리해 기록한다. 단순 코드 unit 통과를 운영 성공으로 승격하지 않는다.
+
+## Q1·F2 최종 통합 검증 (2026-10-11, 운영 미배포)
+
+- F2 안전한 중복 읽기 최소화: 통합 `1e596b3`, `test_f2_read_snapshots.py` 6건 단독 PASS. 직접 Python 호출의 동일 snapshot WP roundtrip 2→1은 mock 계측값이며 SSH 왕복/지연 절감의 실측 근거는 아니다.
+- Q1 실제 CDP 세션용 하네스: 통합 `aa250c5`, `test_browser_qa.py` 13건 synthetic/offline PASS. 운영 WordPress의 인증 preview에 접속해 PASS를 기록한 것은 아니다.
+- 릴리스 inventory 불일치와 독립 테스트 import 경로는 통합 후 `501c7d2`에서 보정했다. 정규 `run_validation.py --route repository --run` 결과: **Python 1,296건, failures 0, errors 0, skipped 2, exit 0**. Windows 환경의 `cron shell requires Linux` 및 `symlinks unavailable`이 건너뜀 원인이다.
+- 독립 PHP 테스트: 운영 컨테이너 **`/tmp` 임시 격리 디렉터리**에 현재 로컬 PHP fixture 19개만 전송하고 `wordpress/tests/run.php`를 실행했다. 전체 파일 문법 검사 및 독립 contract runner **exit 0**; 임시 디렉터리 정리 확인. 실제 WP DB나 게시물 쓰기 테스트는 하지 않았다.
+- clean HEAD의 `build_editorial_release.py --archive` 산출물은 87개 런타임·정책 파일의 digest와 installer manifest 검증에 통과했다. 이 빌더는 `run_daily.sh`, `scripts/`, `wordpress/mu-plugins/`를 패키징하지 않는다. 공유 lock의 실행 코드는 포함되는 `main.py`에 있지만 cron 셸 로깅 개선은 별도 배포 대상이다. MU의 `manual_agent_delegated` 허용은 반드시 분리된 검증·백업·롤백 절차로 적용해야 한다.
+- 현재 운영 `editorial-release.json`의 revision은 `9b8145c0680e1d27d9e252d7f0cfaf2c3191a8d5`, inventory digest는 `3104dbc8c9ea1e9c3d3da173826b7e10772b064220a410f491bd489b40ca8cdb`로 확인했다. 운영 `run_daily.sh` SHA-256 `850c5c510eef74db72dcacf05f91ed2f406be0d1222d403f0512b0449c760e42`, 운영 MU SHA-256 `a77b668fd1c12c137a54ed0a14e63c3056e060f0bb43848ed5e2823b602f867f`. 로컬 MU SHA-256은 `d10d4b3bff10378f965b7e9db8d6d912c3ee99fdeb833136e0774939639794fa`로 **서로 다르다**.
+- 운영 `backups/editorial-20261010T031614Z/manifest.json`과 백업 파일의 존재는 읽기 전용으로 확인했다. **복구 시뮬레이션·실제 WordPress DB 통합·cron 동작·인증 미리보기·성능 개선률 검증은 아직 하지 않았다.** 현재 단계에서 운영 릴리스, WordPress draft 수정 또는 공개 발행을 실행하지 않는다.
+
+## 14항목 후속 구현·운영 안전 재판정 (2026-10-11)
+
+**판정 축:** 다음 `완료`는 *로컬 기능 구현 및 관련 회귀* 기준이다. `부분`은 코드 범위 또는 계획의 실제 증거가 더 필요하다는 의미다. 전 항목 **운영 신규 릴리스 미배포**이며, 코드 완료가 WordPress 실운영 검증을 뜻하지 않는다.
+
+| 항목 | 로컬 구현 판정 | 원 계획 기준 잔여 증거/한계 |
+| --- | --- | --- |
+| S1 실행 잠금 | 완료 | Linux cron-vs-direct 동시 실행 검증 미완료; 운영 cron 미변경 |
+| S2 이미지 CAS | 완료 | 운영 WordPress 이미지 경합/비멱등 import 실행 미검증 |
+| S3 Draft journal | 완료 | 같은 post ID 재개·모호한 응답 재시도 차단 fixture PASS; 실제 DB crash 경계 미검증 |
+| T1 검색 의도 | 완료 | synthetic/검토 승인 계약 PASS, 실제 #928/#139/#926 인적 의미 검토 별도 |
+| T2 카탈로그 | 완료 | atomic per-file + digest generation detection. 전체 쌍을 하나의 DB transaction으로 주장하지 않음 |
+| T3 SEO CAS | 완료 | 독립 PHP 모형 DB 13 시나리오 PASS; 실제 MariaDB row lock/cache/rollback 미검증 |
+| T4 원문 부분추출 | 완료 | exact source/raw SHA 계약 테스트 PASS, 운영 대형 공식 자료 roundtrip 별도 |
+| F1 성능 계측 | 부분 | cohort 계측/표시는 구현; 동질 운영 표본·median/P90 비교 미확보 |
+| F2 조회 효율 | 부분 | 기존 이미지 승인 pre/post 각 2 WP reads→1 fresh snapshot, 총 논리 조회 4→2(단위 mock); preimport 2→1. SSH/live latency 변화 미측정 |
+| Q1 브라우저 QA | 부분 | 하네스 구현, CDP 9222에서 Lenovo 대상만 확인; Bloguito 탭 및 정확한 post SHA 부재로 390/1280 운영 Preview 미검증 |
+| Q2 성장 후보 보고 | 완료 | 읽기 전용 근거·보류 이유 보고서 구현, 성장 인과·측정 수요 추정 없음 |
+| Q3 상태 인계 | 부분 | `task-status --post-id` 읽기 전용 상태별 다음 행동 구현, 실제 WP readback은 독립 필요 |
+| R1 공통 구조 | 부분 | 순수 이미지 baseline과 공통 edit resume/image phase 계약 분리; 대형 editor/transport의 잔여 구조 분리는 안전성 검증 후 단계적으로 진행 |
+| R2 이미지 정합성 | 부분 | 승인 주체/PNG/null 썸네일과 `selection_actor` 영수증 일치 검증 구현; host image_gen 서명 증거 및 MU 운영 적용 미확보 |
+
+**이번 후속 구현 통합:** F2 기존 이미지 보존 승인에서 원본 글·썸네일을 매 시점 하나의 신선한 WordPress snapshot으로 가져오고, 쓰기 전/후 경계 자체는 유지했다. Q3 read-only operational status는 결과 모호함을 `blocked_before_write`로 추정하지 않으며 내용 SHA와 별도 live readback을 요구한다. R2는 staging actor 불일치·누락을 실패 처리한다. signed release inventory에 `agent-publisher/run_daily.sh`(실행모드·rollback 보존)와 `wordpress/mu-plugins/bloguito-post-row-actions.php`(별도 설치, 자동 갱신 아님)를 추가했다. 서버의 기존 MU 파일 SHA가 다르면 Python 설치 시작 전 실패한다. `--preflight-only`는 **원격 운영 호스트에서 읽기 전용 진단**에 사용한다.
+
+**Q1·R2 후속 실제 환경 결과 (2026-10-11, 전 항목 운영 변경 없음):** 기존 CDP 9222와 CoS Desktop 브라우저 API를 먼저 확인했으나 Bloguito 대상이 없어 허용된 **단일 격리 Edge 세션** CDP 9333으로 #641 공개 WordPress를 실제 검증했다. `390×844`·`1280×900` PNG/SHA·12개 목차·4개 표·본문 링크·문서 가로 넘침을 독립 verifier가 재평가하여 `browser_pass` (두 reader scope)로 판정했다. 브라우저 고유 200% 확대는 CDP Ctrl++에 반응하지 않아 미검증, target=_blank CTA 클릭도 미확인이다. 근거·캡처 경로는 `docs/BROWSER_QA_HARNESS.md`. R2는 운영 MU SHA `a77b668...`와 로컬 릴리스 MU SHA `d10d4b3...`가 불일치하여 운영 릴리스 호환성 차단을 확인했다. 읽기 전용 원본 바이트 사본과 임시 디렉터리 swap/rollback/장애 주입 훈련은 통과했으며 상세는 `docs/tasks/mu-rollout-readiness-20261011.md`. 실제 운영 MU 교체·image_gen 호출 서명 증거는 없음.
+
+**Q1·R2 추가 독립 보완 (격리 브랜치, 운영 미배포):** Q1 CDP 실제 탭은 Lenovo Vantage WebView 하나만 있고 Bloguito 탭이 없어 390/1280 스크린샷은 생성하지 않았다. 운영 #641 저장 글 SHA `78aa3ebed10a8eac20ae5e927f69e7a5b468b14e20b690a277e138a61aec3c17`은 WP-CLI 읽기 전용으로 별도 확인했고 공개 GET은 body/article/shortlink 동일 ID 마커를 보였다. Q1 verifier의 viewport URL 전역 일치와 DOM 글 ID 일치 검사를 보강해 다른 게시물 화면의 증거 재사용을 차단했다. R2 CLI는 stage receipt 비표준 경로를 시작 전에 차단하며 승인 kind 계산에서도 누락된 selection actor를 거부한다. 서명된 원본 호스트 image_gen 호출 증거 및 운영 MU 배포는 여전히 미확인이다.
+
+**검증:** 최종 통합 코드 Python repository route `1,308 tests, 0 failures, 0 errors, 4 skipped, exit 0`(Windows Linux-only cron 1, Windows symlink 관련 2, 로컬 PHP 실행 불가 1). 격리 PHP 컨테이너에서 신규 draft guarded metadata 스크립트의 모형 DB 13/13 PASS, MU PHP syntax/contract runner PASS. S3 journal recovery 6 PASS, 백업 archive 내부 gzip 손상 실패 주입 포함 synthetic backup restore 12 PASS. 이는 실제 WordPress/MariaDB 데이터베이스 통합이나 사이트 전체 복원 성공이 아니다. 자세한 사유는 `docs/bloguito-db-validation-2026-10-11.md`.
+
+**운영 적용 차단 사유:** 현재 운영 runtime revision `9b8145c…`, 운영 MU SHA `a77b668f…`, 새 소스 MU SHA `d10d4b3b…`로 불일치한다. 노트북은 Docker/WSL/MariaDB가 없고 운영 서버는 RAM 952 MiB(available 약 461 MiB)로 프로덕션 자원 경합 없이 독립 MariaDB를 추가하기 어렵다. 실제 Linux cron 경쟁 테스트, 독립 DB 원자성/캐시 검증, 실백업 복원 훈련, WordPress MU 분리 설치/롤백 확인, 실제 CDP 인증 Preview QA가 미완료이므로 신규 runtime/MU/cron 운영 배포를 실행하지 않았다. 특정 글 공개·게시물 수정·비멱등 media import **0건**.
+
+## 후속 구현·독립 실 DB와 릴리스 정합성 재검증 (2026-10-11)
+
+- **실제 DB 게이트 일부 해소:** 격리 GitHub Actions [run 38125050282](https://github.com/ostrichick/bloguito/actions/runs/38125050282) 4개 job PASS. `wordpress/tests/real-db/`에서 실제 WordPress PHP 8.3 + MariaDB 10.11 InnoDB의 신규 draft metadata CAS, 두 독립 writer 중 단일 성공/충돌, 원고 변동 차단, 두 번째 meta write 실패 시 원자 롤백, 성공 후 replay, user/agent 위임 이미지 승인, 별도 SQL 복원 DB의 draft/메타를 검증했다. Linux `run_daily.sh` 및 직접 실행 공통 lock, SIGKILL 해제 **8 tests PASS**. 이는 실제 외부 장애로 인한 ambiguous COMMIT 이후 복구와 전체 v3 사이트 restore까지 입증한 것은 아니다. 세부 결과 `docs/bloguito-db-validation-2026-10-11.md`.
+- **Q3+R1 추가 구현:** `agents/task_reconciliation.py`로 보관 task-state의 분류를 부작용 없는 함수로 분리했다. `editorial_cli.py task-status --post-id N --verify-live`는 실제 서버에서 최신 WordPress post+thumbnail을 **한 번 읽기만 하여** 저장 기록과 SHA/상태/attachment ID를 비교한다. 메타·첨부파일 원본·semantic review·이미지 host 원본성을 verified로 승격하지 않으며 복구 실행·재작성·재업로드는 금지한다. 외부 변경·WP 조회 실패 테스트 포함.
+- **F1 비교 도구 보강:** `summarize_workflow_metrics.py --compare-versions OLD NEW`는 action/route/transport/릴리스 지문이 같은 성공 실측 코호트로만 비교하며 양쪽 5건 미만 또는 릴리스 revision 누락·중복은 비교값을 비워둔다. 원본 `main`에 보관된 측정치(읽기 전용) **성공 80건·34 코호트·검증된 release revision별 비교 가능 0건**으로 확인. 다른 버전의 기준선 중앙값을 새 코드 개선률로 사용하지 않는다.
+- **Q1+R2 보강:** 기존 연결 가능한 localhost CDP는 Lenovo Vantage만 존재하고, Bloguito의 인증 Preview/공개 게시물 탭은 확인되지 않아 390/1280 **실브라우저 QA 미실행**. 공개 post #641 본문 SHA를 읽기 전용으로 확인했지만 실제 렌더 결과를 합성하지 않았다. 하네스는 WP post ID/현재 URL 바인딩을 강화했다. 이미지 staging receipt 경로와 selection actor/mode가 어긋나면 승인하지 않도록 검증했다. host `image_gen` 호출의 독립 서명 증거를 합성하지 않는다.
+- **릴리스 설치 rollback 개선:** 새로운 `agents/task_reconciliation.py` 포함 canonical inventory 지문을 재계산했다. installer는 최초 MU 일치 검사 뒤 runtime 파일·정책을 설치하고, 원본 source manifest와 **설치된 모든 대상 파일 SHA**를 재비교하며, MU version을 다시 조회해 중간 drift를 감지한다. 실패 주입 시 이전 바이트로 자동 rollback하며 신규 release receipt 저장을 차단하는 표적 테스트 PASS.
+- **운영 백업 확인:** 운영 서버 최신 검사 대상 `/home/ubuntu/backups/bloguito_backup_20261011_105154.tar.gz` 약 113MB에 `restore_backup.sh --verify-only` 실행, `Archive verified; version=3.0`, `VERIFY_ONLY_OK`, **exit 0**. 압축·구성 요소·nested path 유효성만 확인했으며 **실운영 사이트 복원은 수행하지 않았다**.
+- **최종 로컬 회귀:** repository route Python **1,321 tests, 0 failures, 0 errors, 4 skipped, exit 0**. CI의 Linux 테스트가 로컬 OS 건너뜀을 보완한다. 원본 `main`의 3개 수정 문서 및 1개 untracked 계획 파일은 보존했다.
+
+**최종 기능 판정:** S1/S2/S3/T1/T2/T3/T4/Q2는 **로컬 구현 완료(8)**. F1/F2/Q1/Q3/R1/R2는 **부분 완료(6)**; 미착수 0. 실제 운영 릴리스 적용은 아직 0건이며, 현재 MU SHA (`a77b668f…`)와 canonical source MU SHA (`d10d4b3b…`) 불일치, 실제 사이트 전체 v3 복원 훈련·별도 MU 설치/복구 절차, 다른 세션의 운영 상태 및 배포 윈도 검증이 남았다. 독립 DB PASS만으로 prod MU/cron과 Python 전체를 동시 변경하지 않는다. 공개 발행·결과 불명확한 비멱등 media import는 하지 않는다.
+
+## 추가 실환경 복구·Q1·운영 릴리스 검사 (2026-10-11)
+
+아래는 기존 1,321건 Python 검사 기록 **이후** 추가된 증거이며, 앞선 당시 미검증 판정을 소급하여 PASS로 고쳐 읽지 않는다.
+
+- **격리 실환경 전체 복구:** GitHub Actions [run 38125946395](https://github.com/ostrichick/bloguito/actions/runs/38125946395) 5개 job 모두 PASS. `wordpress/tests/real-db/full_restore.py`가 실제 MariaDB COMMIT 직후 PHP 출력만 유실시킨 뒤 새 PHP 세션이 정상 저장을 조회하고 정확한 replay가 `already_applied`임을 확인했다. 정규 `backup_daily.sh`로 CI 가상 사이트 전체 v3(DB/uploads/plugins/themes/MU/configs/secrets) 아카이브를 만들고 별도 WordPress+MariaDB로 `restore_backup.sh --verify-only` 및 `--yes`를 실행, post/메타·미디어 파일·플러그인·테마·MU·runtime JSON과 복구 후 WP-CLI 부팅을 확인했다. 정규 릴리스 installer의 실패 주입으로 runtime·policy·cron 셸 실행 권한·비밀 설정·기존 릴리스 영수증 rollback도 확인했다. DB+미디어 동시 시점 전역 atomicity, 물리적 TCP reset/DB crash, host Nginx·secret **자동 설치**, 실제 운영 데이터의 RTO/RPO 보장은 검증 범위 밖이다.
+- **Q3 결과 모호함 분류 확대:** `task-status --post-id ID --verify-live --reconcile-image-sha256 SHA`는 `image_import_attempt.started=true` 이고 attachment ID 미확정일 때만 실제 WordPress 첨부파일의 SHA를 읽기 전용 조회한다. 0개/1개/복수 후보 모두 재업로드나 자동 adoption 권한이 아니다. `draft-create-status reviewed-bundle.json [--post-id ID]`는 원래 bundle의 정확한 workflow key·`creating/created/complete` journal과 단일 WP post 상태/원문 SHA를 조회해 다음 정규 작업을 구분한다. `creating`은 ID 후보의 본문이 같아도 ownership이 입증됐다고 보지 않고 journal을 임의 승격하지 않는다.
+- **R1 안전한 분리:** 부작용 없는 `agents/draft_create_reconciliation.py`와 `agents/ssh_cli_request.py`로 각각 S3 진단·SSH CLI 요청 파싱을 분리했다. 기존 `_parse_cli_request` 래퍼, action allowlist, `_CliRequest` 구조, 원격 transport, 저장/이미지 CAS 계약은 그대로 유지하고 표적 63건 SSH 회귀를 통과했다.
+- **Q1 실제 공개 글 검증:** 공개 post #641의 정확한 WP 본문 SHA `78aa3ebed10a8eac20ae5e927f69e7a5b468b14e20b690a277e138a61aec3c17`와 URL·postid 마커를 결합한 **실제 Edge 브라우저** 390x844 및 1280x900의 첫 viewport PNG/JSON을 생성했다. `verify_browser_qa.py`는 `browser_pass`이고 각 뷰포트의 TOC 12개, 표 4개, 문서 overflow 없음이 확인됐다. 화면도 직접 시각 검사했다. native 200% zoom의 실제 적용, target=_blank CTA 클릭 후 목적지, 인증 draft Preview와 페이지 전체 스크롤 구간은 미검증이다. 브라우저는 종료했고 추가 프로필은 생성하지 않았다.
+- **R2 실제 MU 정책 확인:** 운영 MU와 signed source MU 차이는 `manual_agent_delegated`를 추가 허용하는 1줄이었다. 바이트 SHA/CAS 보호 아래 MU 파일 원자 교체 및 장애 후 복원을 독립 사본으로 재현하는 `scripts/ops/mu_rollout_disposable_drill.py`의 4개 표적 테스트는 PASS. 실제 운영 이미지 생성 호스트 호출은 `origin_claim`이나 staging 영수증만으로 인증되지 않는다.
+- **릴리스 설치 동시성:** installer는 기존 editorial directory lock과 scheduler/main kernel file lock을 동시에 획득해야 runtime 파일을 교체한다. 바쁜 editor 또는 cron/growth 프로세스가 있으면 실패하며 backup/기존 파일을 덮지 않는다. 잠금 획득/해제/실패 주입 표적 검증 PASS. preflight는 읽기 전용이다.
+- **운영 보호 백업:** 2026-10-11 17:50 KST에 정규 `backup_daily.sh`로 `/home/ubuntu/backups/bloguito_backup_20261011_175028.tar.gz` 약 114MB를 새로 생성했다. `restore_backup.sh --verify-only`는 v3 manifest/components/gzip/nested-path 검사 **exit 0**. 실제 운영 백업으로 운영 DB/사이트를 복원하거나 게시물을 수정하지는 않았다.
+- **성능:** 기록된 실측은 성공 80건, 34개 실행 코호트이며, 새 릴리스 동질 전후 관측치 0건이므로 평균·중앙값·P90 절감률은 미측정으로 남긴다. F2의 logical roundtrip 절감 fixture가 원격 SSH 지연 개선을 증명하지는 않는다.
+
+## Q3·R1 추가 안전 수정 (2026-10-11, 격리 worktree)
+
+기준 `2cde4f74f16cae2fa68180aafc431d258bca84bc`, 별도 `C:/Projects/Bloguito-q3-r1-final-20261011`. **운영 WordPress·main·통합 worktree 미변경.** 기존 승인된 세 가지 상위 CLI, 게시물·썸네일 CAS, 성공 후 readback, 실패 시 import fence, 기존 task/journal/result 스키마와 actor·이미지 출처 계약을 유지한다.
+
+- **Q3 재현 결함 1:** 성공 attachment ID receipt가 없는 `image_import_attempt`를 SHA만으로 조회해 정확히 한 후보를 자동 채택하는 `quick_replace_featured_image`, `recover_imported_featured_image_outcome`, `run_combined_image_phase` 경로를 별도 실패 주입 테스트로 확인했다. 단일 SHA 일치·사전 attachment ID 목록의 차이·동일 이미지를 사용한다는 사실만으로 원래 WP-CLI 작업의 소유권이나 종료가 증명되지 않는다. 새 내부 순수 계약 `agents/media_recovery_contract.py`는 후보 관찰과 원래 업로드의 확정 ID/종료 증거를 분리하고, 불명확한 상태에서 무조건 fail-closed 한다. 기존 확정된 `image_outcome.attachment_id`는 여전히 정규 `reconcile_featured_image_outcome`에서 실제 attachment SHA·ALT·게시물·thumbnail CAS/readback을 검사한다. 새 자동 재업로드·우회 경로 없음.
+- **Q3 재현 결함 2:** 실제 SSH 응답 유실 후 한 SHA 후보가 발견되면 정상 `guarded_set_post_thumbnail`을 먼저 실행하고 나중에야 `featured_image_import_process_termination_unknown`을 발생시킬 수 있었다. 중단 검사를 guarded thumbnail 쓰기 **전**으로 이동했다. 동일 timeout fault 테스트에서 thumbnail mutator `0`회, import 재실행 `0`회, 기존 pending fence와 실패 receipt 유지 확인.
+- **Q3 재현 결함 3:** `DraftCreateJournal.created/complete`가 처음 확인된 ID를 후속 호출에서 다른 ID로 덮을 수 있었고, `creating`에서 임의 ID로 바로 `complete`할 수도 있었다. 이제 `begin → created(정확 ID) → complete(동일 ID)` 전환을 요구하고, 이미 `created/complete`에서 동일 ID의 반복 호출만 안전하게 멱등 처리한다. 이 제한은 로컬 journal의 **기존 ID를 보존**하는 것이며 ID 자체를 유실한 원격 `wp post create`를 자동 복구하는 기능은 아니다.
+- **운영자 읽기 전용 진단:** `task-status --reconcile-image-sha256` 입력 SHA가 원래 `image_import_attempt.image_sha256`와 다르거나 기록이 없다면 WordPress 조회 전에 `unverified/original_attempt_sha_mismatch`로 중단한다. 일치하면 사전 snapshot의 ID를 제외한 0/1/복수 후보와 `ownership_verified=false`, `import_termination_verified=false`, `write_authorized=false`를 표시한다. 임의 matching post/attachment를 자동 소유물로 판정하지 않는다.
+- **R1 안전한 모듈 경계:** 위 결정론적 상태·SHA 후보 분류·원격 import fence 판단을 별도 내부 모듈로 이동해 큰 `featured_image.py`의 위험한 중복 continuation 코드를 줄였다. 신규 정식 runtime 모듈 1개가 canonical inventory에 추가되어 릴리스 인벤토리 digest를 `e2b6b13723b8fca851977c656eda41c1c3b906534d264cb2831619db60252213`으로 갱신했다. 이는 향후 **새** signed release manifest용이며 이미 운영 적용된 92파일 릴리스의 SHA/receipt를 소급 변경하지 않는다.
+
+**잔여 차단점:** 원래 성공 import의 분실된 attachment ID를 단순 SHA 후보만으로 확정할 수 없다. 소유권이 기록되지 않았거나 WP-CLI 프로세스 종료가 독립 확인되지 않으면 운영자가 기존 task-state·original receipt·실제 remote liveness·WP attachment/post CAS를 확인한 뒤 별도 승인된 복구 절차를 설계해야 한다. 직접 DB 조회·공개 글 수정·새 media import를 수행하지 않았다. 기존 `DraftCreateJournal`의 파일 읽기→쓰기 사이 다중 프로세스 경쟁을 DB 원자성으로 주장하지 않으며, post 생성과 local journal도 원자 transaction이 아니다. 실제 네트워크 장애 주입/운영 매체 수정 및 전체 Python suite는 이번 격리 변경의 검증 범위 밖이다.

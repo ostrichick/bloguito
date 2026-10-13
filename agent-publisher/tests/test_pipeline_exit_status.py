@@ -12,6 +12,16 @@ from notifier import AlertDelivery
 
 
 class PipelineExitTests(unittest.TestCase):
+    def test_pipeline_result_names_draft_creation_without_relabeling_legacy_counter(self):
+        stats = {
+            "candidates": 1, "published": 1, "held": 0, "errors": 0,
+            "growth_outcome": "new_draft_selected",
+        }
+        result = pipeline._pipeline_result(stats)
+        self.assertEqual(1, result["drafts_created"])
+        self.assertEqual(1, result["published"])  # backward compatibility
+        self.assertEqual("completed", result["status"])
+
     def test_growth_refresh_failure_fails_closed_before_planner_reads_private_state(self):
         with tempfile.TemporaryDirectory() as root, patch.object(pipeline, 'GROWTH_DIR', Path(root)):
             stale = Path(root) / 'daily-growth-plan.json'

@@ -75,6 +75,77 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertTrue(installer.environment_config_is_external(external))
         self.assertFalse(installer.environment_config_is_external(external.replace("os.getenv('GEMINI_API_KEY', '')", "'inline-credential'")))
 
+    def test_mu_mismatch_blocks_before_any_runtime_write(self):
+        app = self.entrypoint_release()
+        with patch.object(installer.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'wp_mu_release_incompatible'):
+                installer.install(self.root, app, installed_mu_digest='0' * 64)
+        run.assert_not_called()
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'backups').exists())
+        self.assertFalse((app / 'run_daily.sh').exists())
+
+    def test_preflight_only_does_not_create_a_backup_or_mutate_app(self):
+        app = self.entrypoint_release()
+        manifest, mu_digest = installer.preflight_release(
+            self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertEqual(self.manifest, manifest)
+        self.assertEqual(self.files[installer.WP_MU_RELATIVE], mu_digest)
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'backups').exists())
+
+    def test_editorial_busy_blocks_release_before_any_write(self):
+        app = self.entrypoint_release()
+        active = app / 'data' / '.editorial-publish.lock'
+        active.mkdir(parents=True)
+        with patch.object(installer.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'release_editorial_writer_busy'):
+                installer.install(self.root, app,
+                                  installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        run.assert_not_called()
+        self.assertTrue(active.is_dir())
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'backups').exists())
+
+    def test_release_lock_released_after_smoke_failure(self):
+        app = self.entrypoint_release()
+        with patch.object(installer.subprocess, 'run', side_effect=RuntimeError('smoke failed')):
+            with self.assertRaisesRegex(RuntimeError, 'smoke failed'):
+                installer.install(self.root, app,
+                                  installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertFalse((app / 'data' / '.editorial-publish.lock').exists())
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        # POSIX flock and Windows msvcrt both allow a second acquisition.
+        with installer.exclusive_release_window(app):
+            self.assertTrue((app / 'data' / '.editorial-publish.lock').is_dir())
+
+    def test_shell_is_packaged_as_executable_and_restored_on_failed_smoke(self):
+        app = self.entrypoint_release()
+        shell = app / 'run_daily.sh'
+        shell.write_text('#!/bin/sh\necho original\n', encoding='utf-8')
+        shell.chmod(0o755)
+        original_mode = shell.stat().st_mode & 0o777
+        with patch.object(installer.subprocess, 'run', side_effect=RuntimeError('injected smoke failure')):
+            with self.assertRaisesRegex(RuntimeError, 'injected smoke failure'):
+                installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertEqual('#!/bin/sh\necho original\n', shell.read_text(encoding='utf-8'))
+        self.assertEqual(original_mode, shell.stat().st_mode & 0o777)
+        self.assertFalse((app / 'data/editorial-release.json').exists())
+
+    def test_symlinked_runtime_directory_cannot_redirect_release_write(self):
+        app = self.entrypoint_release()
+        external = self.root / 'outside-runtime'
+        external.mkdir()
+        try:
+            (app / 'agents').symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest('directory symlinks unavailable')
+        with patch.object(installer.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'release_target_symlink_refused'):
+                installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        run.assert_not_called()
+        self.assertEqual([], list(external.iterdir()))
+
     def test_retirement_cannot_delete_arbitrary_operational_files(self):
         self.manifest['retired_files'] = ['data/published_posts.json']
         self.write_manifest()
@@ -110,7 +181,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_entrypoint_install_is_exact_and_does_not_replace_environment(self):
         app = self.entrypoint_release()
         with patch.object(installer.subprocess, 'run') as run:
-            installer.install(self.root, app)
+            installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
         self.assertEqual((self.root / 'agent-publisher/main.py').read_bytes(), (app / 'main.py').read_bytes())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
         receipt = json.loads((app / 'data/editorial-release.json').read_text())
@@ -129,11 +200,33 @@ class ReleaseManifestTests(unittest.TestCase):
         app = self.entrypoint_release()
         with patch.object(installer.subprocess, 'run', side_effect=RuntimeError('import failed')):
             with self.assertRaisesRegex(RuntimeError, 'import failed'):
-                installer.install(self.root, app)
+                installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
         self.assertEqual('old main', (app / 'main.py').read_text())
         self.assertFalse((app / 'agents/edit_post.py').exists())
         self.assertFalse((app / 'data/editorial-release.json').exists())
         self.assertEqual('GEMINI_API_KEY=private-environment-value', (app / '.env').read_text())
+
+    def test_external_writer_during_smoke_fails_installed_readback_and_rolls_back(self):
+        app = self.entrypoint_release()
+        def mutate_installed_file(*args, **kwargs):
+            (app / 'main.py').write_bytes(b'external drift')
+        with patch.object(installer.subprocess, 'run', side_effect=mutate_installed_file):
+            with self.assertRaisesRegex(ValueError, 'release_readback_mismatch:agent-publisher/main.py'):
+                installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
+        self.assertEqual(b'old main', (app / 'main.py').read_bytes())
+        self.assertFalse((app / 'data/editorial-release.json').exists())
+
+    def test_mu_drift_during_install_rolls_back_runtime_files(self):
+        app = self.entrypoint_release()
+        digest = self.files[installer.WP_MU_RELATIVE]
+        with patch.object(installer.subprocess, 'run'), patch.object(
+                installer, 'verify_installed_mu_compatibility',
+                side_effect=[digest, ValueError('wp_mu_release_incompatible')]) as checker:
+            with self.assertRaisesRegex(ValueError, 'wp_mu_release_incompatible'):
+                installer.install(self.root, app, installed_mu_digest=digest)
+        self.assertEqual(2, checker.call_count)
+        self.assertEqual('old main', (app / 'main.py').read_text())
+        self.assertFalse((app / 'data/editorial-release.json').exists())
 
     def test_install_rejects_unknown_agent_module_but_ignores_root_one_off_script(self):
         app = self.entrypoint_release()
@@ -142,10 +235,10 @@ class ReleaseManifestTests(unittest.TestCase):
         (app / 'one_off_maintenance.py').write_text('# not an import-package member')
         with patch.object(installer.subprocess, 'run'):
             with self.assertRaisesRegex(ValueError, 'unexpected_existing_runtime_module'):
-                installer.install(self.root, app)
+                installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
         (app / 'agents' / 'unknown_runtime.py').unlink()
         with patch.object(installer.subprocess, 'run'):
-            installer.install(self.root, app)
+            installer.install(self.root, app, installed_mu_digest=self.files[installer.WP_MU_RELATIVE])
 
     def test_canonical_builder_includes_all_agent_runtime_modules_and_excludes_tests(self):
         inventory = builder.release_inventory(ROOT)
@@ -156,6 +249,8 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertTrue(runtime_agents.issubset(set(inventory)))
         self.assertIn('agent-publisher/agents/editorial.py', inventory)
         self.assertIn('agent-publisher/agents/public_fast_edit.py', inventory)
+        self.assertIn('agent-publisher/run_daily.sh', inventory)
+        self.assertIn(installer.WP_MU_RELATIVE, inventory)
         self.assertIn('agent-publisher/agents/validation_router.py', inventory)
         self.assertNotIn('agent-publisher/data/search_briefs.json', inventory)
         self.assertIn('agent-publisher/data/renderer_provenance.json', inventory)

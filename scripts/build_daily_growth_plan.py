@@ -22,6 +22,7 @@ from agents.growth_planner import (  # noqa: E402
     save_daily_plan,
 )
 from agents.temporal_validation import KST  # noqa: E402
+from agents.growth_run_lock import GrowthRunAlreadyRunning, growth_run_lock  # noqa: E402
 from config import CATEGORIES  # noqa: E402
 
 
@@ -55,21 +56,25 @@ def main(argv=None) -> int:
                         help="limit planning to one active category; repeat as needed")
     args = parser.parse_args(argv)
     try:
-        as_of = (date.fromisoformat(args.as_of_date) if args.as_of_date
-                 else datetime.now(KST).date())
-        opportunities = _load_json(args.opportunities, "growth_opportunities_unreadable")
-        scores = _load_json(args.topic_scores, "topic_scores_unreadable")
-        work_log = (_load_json(args.work_log, "growth_work_log_unreadable")
-                    if args.work_log.exists() else {"schema_version": 1, "entries": []})
-        policy = load_policy(args.policy)
-        category_keys = args.category or list(CATEGORIES)
-        slug_map = {key: value["slug"] for key, value in CATEGORIES.items()}
-        plan = decide_daily_action(
-            opportunities, scores, policy, as_of=as_of,
-            work_log=work_log,
-            category_keys=category_keys, category_slug_map=slug_map,
-        )
-        target = save_daily_plan(plan, args.output_dir)
+        with growth_run_lock():
+            as_of = (date.fromisoformat(args.as_of_date) if args.as_of_date
+                     else datetime.now(KST).date())
+            opportunities = _load_json(args.opportunities, "growth_opportunities_unreadable")
+            scores = _load_json(args.topic_scores, "topic_scores_unreadable")
+            work_log = (_load_json(args.work_log, "growth_work_log_unreadable")
+                        if args.work_log.exists() else {"schema_version": 1, "entries": []})
+            policy = load_policy(args.policy)
+            category_keys = args.category or list(CATEGORIES)
+            slug_map = {key: value["slug"] for key, value in CATEGORIES.items()}
+            plan = decide_daily_action(
+                opportunities, scores, policy, as_of=as_of,
+                work_log=work_log,
+                category_keys=category_keys, category_slug_map=slug_map,
+            )
+            target = save_daily_plan(plan, args.output_dir)
+    except GrowthRunAlreadyRunning:
+        print("daily_growth_plan_busy:growth_writer_already_running", file=sys.stderr)
+        return 2
     except (ValueError, GrowthPlannerError) as exc:
         print("daily_growth_plan_failed:" + (str(exc) or "invalid_daily_growth_input"),
               file=sys.stderr)

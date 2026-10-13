@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -112,10 +113,24 @@ def workflow_run(action: str):
     try:
         yield metrics
     except BaseException as error:
-        metrics.finish(status="error", error_type=type(error).__name__)
+        try:
+            metrics.finish(status="error", error_type=type(error).__name__)
+        except (OSError, ValueError) as metrics_error:
+            # Telemetry must never hide the original WordPress/validation
+            # failure, especially after an external mutation was attempted.
+            import sys
+            print(f"[Workflow Metrics] error receipt unavailable: {type(metrics_error).__name__}",
+                  file=sys.stderr)
         raise
     else:
-        metrics.finish()
+        try:
+            metrics.finish()
+        except (OSError, ValueError) as metrics_error:
+            # Metrics are best-effort; a successfully saved post stays saved
+            # even if the local JSONL destination is full or read-only.
+            import sys
+            print(f"[Workflow Metrics] success receipt unavailable: {type(metrics_error).__name__}",
+                  file=sys.stderr)
     finally:
         _current.reset(token)
 
@@ -139,9 +154,29 @@ def increment(name: str, amount: int = 1) -> None:
 
 def annotate(**metadata) -> None:
     """Attach routing/version attributes, never article data or credentials."""
-    allowed = {'route', 'transport', 'transport_adapter_sha256'}
+    allowed = {'route', 'transport', 'transport_adapter_sha256', 'workload_signature'}
     if set(metadata) - allowed:
         raise ValueError('unsupported_workflow_metric_attribute')
+    if 'workload_signature' in metadata and not re.fullmatch(
+            r'sources-(?:na|[0-9]|10plus)/image-(?:yes|no)',
+            str(metadata['workload_signature'])):
+        raise ValueError('invalid_workload_signature')
     metrics = _current.get()
     if metrics is not None:
         metrics.metadata.update(metadata)
+
+
+def workload_signature(bundle: dict | None, *, image_present: bool) -> str:
+    """Small non-content dimensions for future apples-to-apples comparisons.
+
+    No topic, post identifier, private article data, source URL or image path
+    enters telemetry. Absent bundle is only valid for image-only work.
+    """
+    if bundle is None:
+        sources = 'na'
+    else:
+        if not isinstance(bundle, dict) or not isinstance(bundle.get('sources'), list):
+            raise ValueError('invalid_metric_bundle_source_count')
+        count = len(bundle['sources'])
+        sources = str(count) if count < 10 else '10plus'
+    return f'sources-{sources}/image-{"yes" if image_present else "no"}'

@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from agents.editorial import render
 from agents.publish_gate import (
     approval_evidence_digest,
+    manual_selection_approval_kind,
     record_publish_attestation,
     reviewed_binding_for_post,
     validate_publish_attestation,
@@ -18,6 +19,28 @@ from test_editorial_system import sample, sign
 
 
 class PublishGateTests(unittest.TestCase):
+    def test_delegated_choice_has_distinct_approval_kind_and_same_verified_protocol(self):
+        user = manual_selection_approval_kind({"selection_mode": "user", "selection_actor": "user"})
+        delegated = manual_selection_approval_kind({
+            "selection_mode": "agent-delegated", "selection_actor": "agent-delegated"})
+        self.assertEqual("manual_user_selected", user)
+        self.assertEqual("manual_agent_delegated", delegated)
+        evidence = {"post_id": 901, "image_sha256": "a" * 64,
+                    "selection_mode": "agent-delegated"}
+        self.assertNotEqual(approval_evidence_digest(user, evidence),
+                            approval_evidence_digest(delegated, evidence))
+        from agents.publish_gate import (
+            PUBLISH_GATE_RECORD_SCRIPT, PUBLISH_GATE_VALIDATE_SCRIPT,
+        )
+        self.assertIn('manual_agent_delegated', PUBLISH_GATE_RECORD_SCRIPT)
+        self.assertIn('manual_agent_delegated', PUBLISH_GATE_VALIDATE_SCRIPT)
+        with self.assertRaisesRegex(ValueError, "image_selection_mode_invalid"):
+            manual_selection_approval_kind({
+                "selection_mode": "automated_visual_review",
+                "selection_actor": "automated_visual_review"})
+        with self.assertRaisesRegex(ValueError, "image_selection_actor_mode_conflict"):
+            manual_selection_approval_kind({"selection_mode": "agent-delegated"})
+
     def _current_bundle(self):
         bundle = sample()
         now = datetime.now(KST)

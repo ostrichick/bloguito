@@ -127,11 +127,21 @@ def main() -> int:
                         help="Agent mode requires explicit task delegation or one-cover immediate-upload instruction")
     parser.add_argument("--selection-actor", choices=["user", "agent-delegated"],
                         help="Identity of the selecting authority (must agree with selection mode)")
+    parser.add_argument("--lossless-png", action="store_true",
+                        help="Explicit exceptional PNG staging for text/edge quality; requires .png output")
     args = parser.parse_args()
 
     output = args.output or args.source.with_name(args.source.stem + "-upload.webp")
-    receipt_path = args.receipt or output.with_suffix(output.suffix + ".stage.json")
-    if output.suffix.lower() != ".webp":
+    canonical_receipt = output.with_suffix(output.suffix + ".stage.json").resolve()
+    receipt_path = args.receipt or canonical_receipt
+    # The downstream import verifier always reads <staged>.stage.json.
+    # A free-form --receipt silently produces an unusable staged file.
+    if receipt_path.resolve() != canonical_receipt:
+        parser.error("stage_receipt_must_use_canonical_path")
+    if args.lossless_png:
+        if output.suffix.lower() != ".png" or args.output is None:
+            parser.error("lossless_png_requires_explicit_png_output")
+    elif output.suffix.lower() != ".webp":
         parser.error("manual_candidate_stage_requires_webp_output")
     if args.selection_actor and args.selection_actor != args.selection_mode:
         parser.error("selection_actor_mode_conflict")
@@ -151,7 +161,7 @@ def main() -> int:
     except Exception as exc:
         failure = {
             "version": 1,
-            "stage": "local_webp_staging",
+            "stage": "local_png_staging" if args.lossless_png else "local_webp_staging",
             "error": type(exc).__name__ + ":" + str(exc),
             "original_image_path": str(args.source.resolve()),
             "original_image_sha256": binding.get("sealed_source_sha256"),

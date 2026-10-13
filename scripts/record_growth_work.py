@@ -23,6 +23,7 @@ from agents.growth_work_log import (  # noqa: E402
     save_work_log,
 )
 from agents.temporal_validation import KST  # noqa: E402
+from agents.growth_run_lock import GrowthRunAlreadyRunning, growth_run_lock  # noqa: E402
 
 
 GROWTH_DIR = AGENT_ROOT / "data" / "growth"
@@ -55,18 +56,22 @@ def main(argv=None) -> int:
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     args = parser.parse_args(argv)
     try:
-        completed_on = (date.fromisoformat(args.completed_on) if args.completed_on
-                        else datetime.now(KST).date())
-        plan = _load(args.plan, "daily_growth_plan_unreadable")
-        log = _load(args.work_log, "growth_work_log_unreadable") if args.work_log.exists() else empty_work_log()
-        policy = load_policy(args.policy)
-        edit_result = _load(args.edit_receipt, "growth_edit_receipt_unreadable")
-        edit_receipt = edit_result.get("mutation_receipt") if isinstance(edit_result, dict) else None
-        updated = record_existing_completion(
-            log, plan, policy, post_id=args.post_id,
-            completed_on=completed_on, edit_receipt=edit_receipt, note=args.note,
-        )
-        target = save_work_log(updated, args.work_log)
+        with growth_run_lock():
+            completed_on = (date.fromisoformat(args.completed_on) if args.completed_on
+                            else datetime.now(KST).date())
+            plan = _load(args.plan, "daily_growth_plan_unreadable")
+            log = _load(args.work_log, "growth_work_log_unreadable") if args.work_log.exists() else empty_work_log()
+            policy = load_policy(args.policy)
+            edit_result = _load(args.edit_receipt, "growth_edit_receipt_unreadable")
+            edit_receipt = edit_result.get("mutation_receipt") if isinstance(edit_result, dict) else None
+            updated = record_existing_completion(
+                log, plan, policy, post_id=args.post_id,
+                completed_on=completed_on, edit_receipt=edit_receipt, note=args.note,
+            )
+            target = save_work_log(updated, args.work_log)
+    except GrowthRunAlreadyRunning:
+        print("growth_work_record_busy:growth_writer_already_running", file=sys.stderr)
+        return 2
     except (ValueError, GrowthWorkLogError) as exc:
         print("growth_work_record_failed:" + (str(exc) or "invalid_growth_work_input"),
               file=sys.stderr)

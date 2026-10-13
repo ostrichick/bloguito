@@ -9,7 +9,7 @@ from pathlib import Path
 from agents.editorial import validate_bundle, render
 from agents.editorial_writer import EditorialWriterAgent, article_from_bundle, load_inventory, fetch_sources
 from agents.runtime_stdio import configure_utf8_stdio
-from agents.workflow_metrics import workflow_run
+from agents.workflow_metrics import workflow_run, annotate, workload_signature
 
 
 configure_utf8_stdio()
@@ -111,7 +111,7 @@ MAINTENANCE_ACTIONS = {
     'sources', 'check', 'review', 'manual-review', 'reformat', 'list-drafts',
     'import-section-image', 'complete-task-qa', 'checkpoint-after-image',
     'update-after-image-checkpoint', 'repair-draft-category', 'fix-excerpt',
-    'volatility-report',
+    'volatility-report', 'task-status', 'draft-create-status',
 }
 ALL_ACTIONS = sorted(
     PRIMARY_CONTENT_ACTIONS | PUBLICATION_ACTIONS | MAINTENANCE_ACTIONS
@@ -128,6 +128,10 @@ def _main():
     parser.add_argument('--expected-content-sha256', help='SHA256 of the original public WordPress post content')
     parser.add_argument('--expected-thumbnail-id', type=int,
                         help='replace-featured-image: current _thumbnail_id CAS value')
+    parser.add_argument('--expect-no-thumbnail', action='store_true',
+                        help='edit-post with --image-path: explicitly CAS-match a post without an existing thumbnail')
+    parser.add_argument('--expected-initial-image-baseline-sha256',
+                        help='replace-featured-image handoff: immutable original post+thumbnail snapshot fingerprint')
     parser.add_argument('--confirm-update', action='store_true', help='explicit authorization to change only the specified reviewed post or draft')
     parser.add_argument('--confirm-image-selection', action='store_true',
                         help='manual image path: confirm the user selected this exact reviewed candidate')
@@ -139,6 +143,10 @@ def _main():
     parser.add_argument('--edit-intent', help='edit-post: the user-requested scope of this edit')
     parser.add_argument('--resume', action='store_true',
                         help='edit-post: resume a matching interrupted task-state after live SHA reconciliation')
+    parser.add_argument('--verify-live', action='store_true',
+                        help='task-status: read-only, fresh WordPress content/thumbnail SHA comparison')
+    parser.add_argument('--reconcile-image-sha256',
+                        help='task-status only: read-only SHA-bound attachment lookup for ambiguous media import')
     parser.add_argument('--alt-text', help='replace-featured-image: reviewed alt text for the imported image')
     parser.add_argument('--alt-only', action='store_true',
                         help='replace-featured-image: keep current image and update only its reviewed ALT text')
@@ -149,6 +157,8 @@ def _main():
                         choices=['content-mobile-desktop', 'cta-destination', 'layout-accessibility',
                                  'featured-image', 'public-page'],
                         help='complete-task-qa: QA scope actually completed; repeat for multiple scopes')
+    parser.add_argument('--qa-evidence', type=Path,
+                        help='complete-task-qa: executed browser QA JSON receipt with screenshots')
     parser.add_argument('--observed-thumbnail-id', type=int,
                         help='complete-task-qa: thumbnail ID observed during featured-image browser QA')
     parser.add_argument('--remaining-step', action='append',
@@ -166,6 +176,10 @@ def _main():
     parser.add_argument('--inventory', type=Path, help='read-only checks/review only; publish always queries WordPress')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--author-model', help='manual-review/prepare-draft: exact interactive author model, e.g. GPT-5.6 Sol')
+    parser.add_argument('--topic-intent-receipt', type=Path,
+                        help='prepare-draft only: explicitly user-approved, SHA-bound intent differentiation JSON')
+    parser.add_argument('--confirm-intent-differentiation', action='store_true',
+                        help='prepare-draft only: confirm user personally reviewed all compared questions and answers')
     parser.add_argument('--image-path', type=Path,
                         help='selected staged ChatGPT image_gen cover with sealed candidate provenance')
     parser.add_argument('--candidate-manifest', type=Path,
@@ -181,6 +195,19 @@ def _main():
     parser.add_argument('--image-task-record', type=Path,
                         help='task-bound generator policy record for new drafts or direct existing-post workflows')
     args = parser.parse_args()
+    if args.verify_live and args.action != 'task-status':
+        parser.error('--verify-live is exclusively read-only task-status')
+    if args.reconcile_image_sha256 and (
+            args.action != 'task-status' or not args.verify_live):
+        parser.error('--reconcile-image-sha256 requires task-status --verify-live')
+    if args.expect_no_thumbnail and (
+            args.action != 'edit-post' or not args.image_path
+            or args.expected_thumbnail_id is not None):
+        parser.error('--expect-no-thumbnail requires edit-post --image-path and forbids --expected-thumbnail-id')
+    if args.topic_intent_receipt or args.confirm_intent_differentiation:
+        if (args.action != 'prepare-draft' or not args.topic_intent_receipt
+                or not args.confirm_intent_differentiation):
+            parser.error('intent differentiation requires prepare-draft, receipt and explicit user confirmation')
 
     image_lineage = None
     if args.action in {'prepare-draft', 'edit-post', 'replace-featured-image'}:
@@ -260,6 +287,37 @@ def _main():
         print("-" * 75)
         return
 
+    if args.action == 'task-status':
+        if args.file or args.post_id is None or args.post_id <= 0:
+            parser.error('task-status requires --post-id only, without a positional file')
+        from agents.task_state import task_operational_summary
+        summary = task_operational_summary(args.post_id)
+        if args.verify_live:
+            from agents.task_state import load_task_state
+            from agents.task_reconciliation import read_live_task_reconciliation
+            state = load_task_state(args.post_id)
+            summary['live_reconciliation'] = read_live_task_reconciliation(args.post_id, state)
+            if args.reconcile_image_sha256:
+                from agents.task_reconciliation import inspect_uncertain_image_import
+                summary['image_import_reconciliation'] = inspect_uncertain_image_import(
+                    args.post_id, state, args.reconcile_image_sha256)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
+    if args.action == 'draft-create-status':
+        if not args.file or args.verify_live or args.reconcile_image_sha256:
+            parser.error('draft-create-status requires a reviewed bundle file; do not pass image task flags')
+        from agents.draft_create_reconciliation import reconcile_draft_create
+        path = Path(args.file)
+        bundle = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(bundle, dict):
+            parser.error('draft-create-status requires an editorial bundle object')
+        # Diagnostic is read-only. A proposed post ID is never promoted into
+        # the durable journal by this action, even if its body matches.
+        report = reconcile_draft_create(bundle, candidate_post_id=args.post_id)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
     if args.action == 'promote-draft':
         from agents.publisher import PublisherAgent
         target_ids = []
@@ -297,7 +355,8 @@ def _main():
         from agents.task_state import mark_browser_qa_complete
         state = mark_browser_qa_complete(
             args.post_id, args.expected_content_sha256, completed_scopes=args.qa_scope,
-            observed_thumbnail_id=args.observed_thumbnail_id)
+            observed_thumbnail_id=args.observed_thumbnail_id,
+            qa_evidence_path=args.qa_evidence)
         print(json.dumps(state, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -342,9 +401,12 @@ def _main():
 
     if args.action == 'replace-featured-image':
         label = args.action
+        annotate(workload_signature=workload_signature(None, image_present=True))
         if args.inventory or args.file:
             parser.error(f'{label} uses --post-id/--image-path and no bundle file')
         if args.attest_existing:
+            if args.expected_initial_image_baseline_sha256:
+                parser.error('image handoff baseline applies only to new image uploads')
             if (not args.post_id or not args.image_path or not args.alt_text
                     or not args.confirm_update or not args.expected_thumbnail_id
                     or not args.expected_content_sha256 or args.confirm_image_selection or args.alt_only):
@@ -373,6 +435,8 @@ def _main():
             parser.error(f'{label} requires --post-id, --alt-text and --confirm-update')
         if args.alt_only and args.image_path:
             parser.error(f'{label} --alt-only cannot be combined with --image-path')
+        if args.alt_only and args.expected_initial_image_baseline_sha256:
+            parser.error('image handoff baseline applies only to new image uploads')
         if args.alt_only and args.confirm_image_selection:
             parser.error(f'{label} --alt-only cannot be combined with --confirm-image-selection')
         if not args.alt_only and not args.image_path:
@@ -390,8 +454,9 @@ def _main():
             )
         else:
             from agents.featured_image import replace_featured_image_from_live_baseline
-            from agents.publish_gate import approval_evidence_digest
-            evidence_sha = approval_evidence_digest('manual_user_selected', {
+            from agents.publish_gate import approval_evidence_digest, manual_selection_approval_kind
+            approval_kind = manual_selection_approval_kind(image_lineage)
+            evidence_sha = approval_evidence_digest(approval_kind, {
                 'post_id': args.post_id,
                 'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
                 'selection_confirmed': True,
@@ -406,16 +471,20 @@ def _main():
                 args.image_path,
                 alt_text=args.alt_text,
                 confirmed=True,
-                approval_kind='manual_user_selected',
+                approval_kind=approval_kind,
                 approval_evidence_sha256=evidence_sha,
                 authorized_baseline=(image_task['_checkpoint_content_sha256'],
                                      image_task['_checkpoint_thumbnail_id']),
                 authorized_metadata=image_task['_checkpoint_metadata'],
+                expected_initial_baseline_sha256=args.expected_initial_image_baseline_sha256,
             )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         return
+
+    if args.expected_initial_image_baseline_sha256:
+        parser.error('--expected-initial-image-baseline-sha256 is only valid for replace-featured-image uploads')
 
     if args.action == 'import-section-image':
         if args.inventory or args.file:
@@ -455,8 +524,11 @@ def _main():
             bundle = json.loads(candidate.read_text(encoding='utf-8'))
             if not args.edit_intent:
                 parser.error('edit-post with a bundle requires --edit-intent')
-        if args.image_path and (not args.expected_thumbnail_id or not args.alt_text):
-            parser.error('edit-post with --image-path requires --expected-thumbnail-id and --alt-text')
+        annotate(workload_signature=workload_signature(bundle, image_present=bool(args.image_path)))
+        if args.image_path and (
+                (args.expected_thumbnail_id is None and not args.expect_no_thumbnail)
+                or not args.alt_text):
+            parser.error('edit-post with --image-path requires --alt-text and an explicit thumbnail baseline')
         if args.image_path and (
                 args.expected_content_sha256 != image_task['_checkpoint_content_sha256']
                 or args.expected_thumbnail_id != image_task['_checkpoint_thumbnail_id']):
@@ -466,8 +538,8 @@ def _main():
         image_approval_kind = None
         image_approval_evidence = None
         if args.image_path:
-            from agents.publish_gate import approval_evidence_digest
-            image_approval_kind = 'manual_user_selected'
+            from agents.publish_gate import approval_evidence_digest, manual_selection_approval_kind
+            image_approval_kind = manual_selection_approval_kind(image_lineage)
             image_approval_evidence = approval_evidence_digest(image_approval_kind, {
                 'post_id': args.post_id,
                 'image_sha256': hashlib.sha256(args.image_path.read_bytes()).hexdigest(),
@@ -511,6 +583,8 @@ def _main():
         return
     args.file = Path(args.file)
     data = json.loads(args.file.read_text(encoding='utf-8'))
+    if args.action == 'prepare-draft':
+        annotate(workload_signature=workload_signature(data, image_present=bool(args.image_path)))
     if args.action == 'manual-review' and args.author_model:
         data['authoring'] = {
             'mode': 'interactive_chatgpt',
@@ -596,12 +670,37 @@ def _main():
         args.file.with_suffix('.html').write_text(render(data['plan'], data['sources']), encoding='utf-8')
 
         from agents.publisher import PublisherAgent
-        post_id = PublisherAgent().publish(article_from_bundle(data))
+        article = article_from_bundle(data)
+        if args.topic_intent_receipt:
+            if args.topic_intent_receipt.is_symlink():
+                raise ValueError('topic_intent_receipt_symlink_not_allowed')
+            try:
+                receipt = json.loads(args.topic_intent_receipt.read_text(encoding='utf-8'))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError('topic_intent_receipt_unreadable') from exc
+            article['topic_intent_receipt'] = receipt
+        post_id = PublisherAgent().publish(article)
+        # The WordPress draft is already committed. Preserve its ID before the
+        # separate, non-idempotent featured-image upload starts.
+        draft_saved_receipt = {
+            'action': 'prepare-draft',
+            'post_id': int(post_id),
+            'status': 'draft',
+            'completion': 'draft_saved_pending_image' if image_path is not None else 'draft_saved',
+            'title': data['plan']['title'],
+            'featured_image_attached': False,
+        }
+        if args.output:
+            args.output.write_text(
+                json.dumps(draft_saved_receipt, ensure_ascii=False, indent=2),
+                encoding='utf-8')
+        print('Draft ID:', post_id)
         image_result = None
         if image_path is not None:
             from agents.featured_image import replace_featured_image_from_live_baseline
-            from agents.publish_gate import approval_evidence_digest
-            evidence_sha = approval_evidence_digest('manual_user_selected', {
+            from agents.publish_gate import approval_evidence_digest, manual_selection_approval_kind
+            approval_kind = manual_selection_approval_kind(image_lineage)
+            evidence_sha = approval_evidence_digest(approval_kind, {
                 'post_id': int(post_id),
                 'image_sha256': hashlib.sha256(image_path.read_bytes()).hexdigest(),
                 'review_digest': data.get('review', {}).get('digest'),
@@ -610,14 +709,27 @@ def _main():
                 'selection_mode': image_lineage['selection_mode'],
                 'source_sha256': image_lineage['source_sha256'],
             })
-            image_result = replace_featured_image_from_live_baseline(
-                int(post_id),
-                image_path,
-                alt_text=args.alt_text,
-                confirmed=True,
-                approval_kind='manual_user_selected',
-                approval_evidence_sha256=evidence_sha,
-            )
+            try:
+                image_result = replace_featured_image_from_live_baseline(
+                    int(post_id),
+                    image_path,
+                    alt_text=args.alt_text,
+                    confirmed=True,
+                    approval_kind=approval_kind,
+                    approval_evidence_sha256=evidence_sha,
+                )
+            except Exception as exc:
+                # SSH callers surface failure_receipt separately. Never let
+                # the image failure erase the already committed draft's ID.
+                prior = getattr(exc, 'failure_receipt', None)
+                evidence = dict(prior) if isinstance(prior, dict) else {}
+                evidence.update({
+                    'draft_post_id': int(post_id),
+                    'draft_status': 'draft_saved_pending_image',
+                })
+                exc.failure_receipt = evidence
+                exc.failure_stage = getattr(exc, 'failure_stage', 'draft_image_upload')
+                raise
         seo = data.get('brief', {}).get('seo') or {}
         receipt = {
             'action': 'prepare-draft',
@@ -633,7 +745,6 @@ def _main():
             'publish_attestation': (image_result or {}).get('publish_attestation'),
             'live_inventory_validation': 'passed',
         }
-        print('Draft ID:', post_id)
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         if args.output:
             args.output.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')

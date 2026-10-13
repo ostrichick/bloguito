@@ -40,6 +40,11 @@ jobs:
       - name: Check tracked files for secrets
         run: python scripts/check_repo_secrets.py
 
+      - name: Verify Linux cron and direct-main file lock
+        env:
+          PYTHONPATH: agent-publisher
+        run: python -m unittest discover -s agent-publisher/tests -p 'test_scheduler_run_lock.py' -v
+
       - name: Run test suite
         env:
           PYTHONPATH: agent-publisher
@@ -58,6 +63,20 @@ jobs:
           sudo apt-get install -y php-cli
       - name: Check WordPress MU plugins and contracts
         run: php wordpress/tests/run.php
+      - name: Execute guarded draft metadata PHP transaction fixture
+        run: |
+          python3 - <<'PY'
+          import base64
+          import subprocess
+          import sys
+          sys.path.insert(0, "agent-publisher")
+          from agents.wordpress_mutation import GUARDED_NEW_DRAFT_META_SCRIPT
+          script = base64.b64encode(GUARDED_NEW_DRAFT_META_SCRIPT.encode()).decode()
+          subprocess.run(
+              ["php", "wordpress/tests/draft-meta-cas-fixture.php", script],
+              check=True,
+          )
+          PY
 
   infrastructure-test:
     runs-on: ubuntu-latest
@@ -69,3 +88,47 @@ jobs:
           bash -n agent-publisher/backup_daily.sh agent-publisher/restore_backup.sh
           MYSQL_PASSWORD=ci-placeholder MYSQL_ROOT_PASSWORD=ci-placeholder \
             docker compose -f wordpress/docker-compose.yml config --quiet
+
+      - name: Test isolated backup validation and failure injection on Linux
+        run: python3 -m unittest discover -s agent-publisher/tests -p 'test_backup_recovery_v3.py' -v
+
+  isolated-real-wordpress-db:
+    # This job owns completely disposable DB + WordPress named volumes.
+    # No ports, SSH, production .env, repository secrets, or deployment steps.
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    env:
+      COMPOSE_PROJECT: bloguito-realdb-${{ github.run_id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check isolated composition
+        run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" config --quiet
+      - name: Start disposable MariaDB and WordPress
+        run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" up -d --wait
+      - name: Test actual WP metadata CAS, concurrency, rollback, MU and SQL restore
+        run: python3 wordpress/tests/real-db/run.py --project "$COMPOSE_PROJECT"
+      - name: Remove disposable database and volumes
+        if: always()
+        run: docker compose -f wordpress/tests/real-db/compose.yml -p "$COMPOSE_PROJECT" down --volumes --remove-orphans
+
+  isolated-v3-full-restore:
+    # CI-only detached environment. No host ports, production SSH, or secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      COMPOSE_PROJECT: bloguito-fullrestore-${{ github.run_id }}
+      CI_RESTORE_DB_CONTAINER: bloguito-ci-db-${{ github.run_id }}
+      CI_RESTORE_WP_CONTAINER: bloguito-ci-wp-${{ github.run_id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Check detached stack
+        run: docker compose -f wordpress/tests/real-db/compose.yml -f wordpress/tests/real-db/restore.override.yml -p "$COMPOSE_PROJECT" config --quiet
+      - name: Boot fresh MariaDB and WordPress
+        run: docker compose -f wordpress/tests/real-db/compose.yml -f wordpress/tests/real-db/restore.override.yml -p "$COMPOSE_PROJECT" up -d --wait
+      - name: Run real lost-response replay, v3 backup restore and release rollback
+        run: python3 wordpress/tests/real-db/full_restore.py
+      - name: Delete synthetic database and all CI-only volumes
+        if: always()
+        run: docker compose -f wordpress/tests/real-db/compose.yml -f wordpress/tests/real-db/restore.override.yml -p "$COMPOSE_PROJECT" down --volumes --remove-orphans

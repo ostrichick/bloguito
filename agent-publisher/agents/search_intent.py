@@ -1,5 +1,7 @@
 """Editorially reviewed search briefs; never infer search volume from RSS."""
 import json
+import hashlib
+import re
 from html import unescape
 from datetime import date
 from pathlib import Path
@@ -73,10 +75,143 @@ def _url_outside_verified_source_footer(content, url):
     return url in unescape(str(soup))
 
 
-def duplicate_posts(brief, posts, related_post_ids=None):
-    import re
-    def norm(value):
-        return re.sub(r'[^가-힣a-z0-9]', '', value.casefold()).replace('앙코르', '앵콜')
+def _normalized_intent(value):
+    return re.sub(r'[^가-힣a-z0-9]', '', str(value).casefold()).replace('앙코르', '앵콜')
+
+
+def _canonical_footer_only(content, url):
+    """Tighter than the legacy existing-post citation compatibility helper.
+
+    An exempt source must occur in the current renderer's terminal h2#sources
+    and ul.source-list. Arbitrary/mid-article or legacy footers remain blocked.
+    """
+    if (not isinstance(content, str) or url not in unescape(content)
+            or _url_outside_verified_source_footer(content, url)):
+        return False
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(content, 'html.parser')
+    for listing in soup.select('ul.source-list'):
+        heading = listing.find_previous_sibling('h2')
+        if (heading is None or heading.get('id') != 'sources'
+                or listing.find_next_sibling() is not None
+                or listing.parent is None
+                or listing.parent.find_next_sibling() is not None):
+            continue
+        if any(link.get('href') == url for link in listing.select('li > a')):
+            return True
+    return False
+
+
+def intent_brief_digest(brief):
+    """Exact brief binding, independent of optional out-of-band intent receipts."""
+    return hashlib.sha256(json.dumps(
+        brief, ensure_ascii=False, sort_keys=True, separators=(',', ':'),
+        allow_nan=False).encode('utf-8')).hexdigest()
+
+
+def _validated_intent_receipt(brief, post, receipt, today=None):
+    """Explicit, time-limited human judgement; NEVER inferred from shared URLs.
+
+    A receipt has no power to exempt title identity, shared action/body URLs,
+    unhydrated inventory entries, a changed live post, or other post IDs.
+    """
+    if not isinstance(receipt, dict) or set(receipt) != {
+            'schema_version', 'brief_sha256', 'reviewer', 'approved',
+            'reviewed_on', 'valid_until', 'comparisons'}:
+        return False
+    if (type(receipt['schema_version']) is not int or receipt['schema_version'] != 1
+            or receipt['reviewer'] != 'user' or receipt['approved'] is not True
+            or not isinstance(receipt['comparisons'], list)
+            or not receipt['comparisons']):
+        return False
+    try:
+        if receipt['brief_sha256'] != intent_brief_digest(brief):
+            return False
+        today = today or date.today()
+        reviewed_on = date.fromisoformat(receipt['reviewed_on'])
+        until = date.fromisoformat(receipt['valid_until'])
+        brief_until = date.fromisoformat(brief['review_until'])
+        if (not reviewed_on <= today <= until <= brief_until
+                or (until - reviewed_on).days > 7):
+            return False
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return False
+    matches = [entry for entry in receipt['comparisons']
+               if isinstance(entry, dict) and entry.get('post_id') == post.get('ID')
+               and type(entry.get('post_id')) is int]
+    if len(matches) != 1:
+        return False
+    entry = matches[0]
+    if set(entry) != {'post_id', 'post_content_sha256', 'post_title', 'post_status',
+                      'new_reader_question', 'existing_reader_question',
+                      'existing_answer_scope', 'differentiation_reason',
+                      'decision', 'shared_action_or_answer'}:
+        return False
+    content = post.get('post_content')
+    observed_sha = post.get('content_sha256')
+    if (not isinstance(content, str) or not isinstance(observed_sha, str)
+            or not re.fullmatch(r'[0-9a-f]{64}', observed_sha)
+            or hashlib.sha256(content.encode('utf-8')).hexdigest() != observed_sha
+            or entry['post_content_sha256'] != observed_sha
+            or entry['post_title'] != post.get('post_title')
+            or entry['post_status'] != post.get('post_status')
+            or entry['decision'] != 'distinct_reader_question'
+            or entry['shared_action_or_answer'] is not False):
+        return False
+    if (not isinstance(entry['new_reader_question'], str)
+            or _normalized_intent(entry['new_reader_question']) !=
+            _normalized_intent(brief.get('question', ''))
+            or not isinstance(entry['existing_reader_question'], str)
+            or len(entry['existing_reader_question'].strip()) < 8
+            or _normalized_intent(entry['existing_reader_question']) ==
+            _normalized_intent(entry['new_reader_question'])
+            or any(not isinstance(entry[key], str) or len(entry[key].strip()) < minimum
+                   for key, minimum in (('existing_answer_scope', 12),
+                                        ('differentiation_reason', 24)))):
+        return False
+    return True
+
+
+def classify_topic_conflicts(brief, posts, *, intent_receipt=None, today=None):
+    """Explain matches without silently licensing independent search intent."""
+    official = set(brief.get('official_urls') or ())
+    terms = brief.get('required_title_terms') or ()
+    result = []
+    for post in posts:
+        if post.get('post_status') not in {'publish', 'draft', 'pending', 'future', 'private'}:
+            continue
+        if type(brief.get('existing_post_id')) is int and post.get('ID') == brief['existing_post_id']:
+            continue
+        title_match = bool(terms and all(
+            _normalized_intent(t) in _normalized_intent(post.get('post_title', ''))
+            for t in terms))
+        title_match |= bool(_normalized_intent(brief.get('primary_keyword', ''))
+                            and _normalized_intent(brief['primary_keyword']) ==
+                            _normalized_intent(post.get('post_title', '')))
+        content = post.get('post_content')
+        content_urls = set(post.get('content_urls') or ())
+        shared = sorted(url for url in official
+                        if url in content_urls
+                        or (isinstance(content, str) and url in unescape(content)))
+        if not title_match and not shared:
+            continue
+        citation_only = bool(shared and isinstance(content, str)
+                             and all(_canonical_footer_only(content, url) for url in shared))
+        approved = bool(not title_match and citation_only
+                        and type(brief.get('existing_post_id')) is not int
+                        and _validated_intent_receipt(brief, post, intent_receipt, today=today))
+        reason = ('same_title_intent' if title_match else
+                  'shared_body_or_action_url' if not citation_only and isinstance(content, str) else
+                  'unverified_shared_url' if not citation_only else
+                  'reviewed_distinct_source_citation' if approved else
+                  'shared_source_citation_needs_review')
+        result.append({'post_id': post.get('ID'), 'post_status': post.get('post_status'),
+                       'reason': reason, 'official_urls': shared,
+                       'blocking': not approved})
+    return result
+
+
+def duplicate_posts(brief, posts, related_post_ids=None, *, intent_receipt=None, today=None):
     terms = brief.get('required_title_terms', [])
     official = set(brief.get('official_urls', []))
     related = set(related_post_ids or ())
@@ -96,12 +231,20 @@ def duplicate_posts(brief, posts, related_post_ids=None):
             # Lightweight inventory callers hydrate URL-overlap candidates
             # before validation. If one reaches here unhydrated, fail closed.
             return url in urls
+        if (intent_receipt is not None
+                and _validated_intent_receipt(brief, post, intent_receipt, today=today)
+                and isinstance(content, str)
+                and _canonical_footer_only(content, url)
+                and url in unescape(content)):
+            return False
         if url in urls:
             return True
         return isinstance(content, str) and url in unescape(content)
     return [p for p in posts if p.get('post_status') in {'publish', 'draft', 'pending', 'future', 'private'}
             and not (isinstance(existing_post_id, int) and p.get('ID') == existing_post_id)
-            and ((terms and all(norm(t) in norm(p.get('post_title', '')) for t in terms))
+            and ((terms and all(_normalized_intent(t) in _normalized_intent(p.get('post_title', '')) for t in terms))
+                 or (_normalized_intent(brief.get('primary_keyword', '')) and
+                     _normalized_intent(brief['primary_keyword']) == _normalized_intent(p.get('post_title', '')))
                  or any(url_duplicate(p, url) for url in official))]
 
 
