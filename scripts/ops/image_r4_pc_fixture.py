@@ -290,9 +290,11 @@ def _check_local_docker() -> None:
             "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")):
         raise RuntimeError("explicit_docker_environment_override_denied")
     current = subprocess.run(["docker", "context", "show"],
-                             capture_output=True, text=True, check=True, timeout=15).stdout.strip()
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", check=True, timeout=15).stdout.strip()
     context = subprocess.run(["docker", "context", "inspect", current],
-                             capture_output=True, text=True, check=True, timeout=15)
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", check=True, timeout=15)
     payload = json.loads(context.stdout)
     endpoint = payload[0]["Endpoints"]["docker"]["Host"]
     if not endpoint.startswith(("npipe://", "unix://")):
