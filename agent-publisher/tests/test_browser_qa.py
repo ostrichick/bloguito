@@ -24,7 +24,8 @@ from agents.browser_qa import evaluate_browser_qa, verify_qa_completion_receipt
 REPO = Path(__file__).resolve().parents[2]
 
 
-def fixture(root, *, render_source='wordpress_theme', scopes=None, cta=False, calculator=False):
+def fixture(root, *, render_source='wordpress_theme', scopes=None, cta=False,
+            calculator=False, schema=2):
     """Create two synthetic screenshot fixtures and plausible test-only DOM data."""
     scopes = scopes if scopes is not None else ['content-mobile-desktop', 'layout-accessibility']
     url = ('file:///C:/test.html' if render_source == 'local_static'
@@ -39,16 +40,20 @@ def fixture(root, *, render_source='wordpress_theme', scopes=None, cta=False, ca
         Image.new('RGB', (width, height), 'white').save(img)
         image_sha = hashlib.sha256(img.read_bytes()).hexdigest()
         small = width == 390
+        reflow_width = (width // 2 if schema == 1 or width == 1280 else 320)
+        reflow_key = ('zoom_simulated_half_viewport' if schema == 1
+                      else 'reflow_simulated_viewport')
         observation = {
             'ready_state': 'complete', 'page_post_id': 641, 'inner_width': width,
             'client_width': width, 'scroll_width': width,
             'wp_theme_dom': render_source != 'local_static',
             'authenticated_dom': render_source == 'authenticated_preview',
-            'zoom_simulated_half_viewport': {
-                'kind': 'css_half_width_reflow_not_native_zoom',
-                'width': width // 2,
-                'metrics': {'inner_width': width // 2, 'client_width': width // 2,
-                            'scroll_width': width // 2},
+            reflow_key: {
+                'kind': ('css_half_width_reflow_not_native_zoom' if schema == 1
+                         else 'css_viewport_reflow_not_native_zoom'),
+                'width': reflow_width,
+                'metrics': {'inner_width': reflow_width, 'client_width': reflow_width,
+                            'scroll_width': reflow_width},
             },
             'toc': {'links': [{'href': '#step-1', 'target_found': True,
                                'target_unique': True, 'click_hash_matched': True}]},
@@ -69,7 +74,7 @@ def fixture(root, *, render_source='wordpress_theme', scopes=None, cta=False, ca
         screens.append({'viewport': {'width': width, 'height': height},
                         'url': url, 'screenshot': {'path': name, 'sha256': image_sha},
                         'observation': observation})
-    return {'schema': 1, 'post_id': 641, 'content_sha256': 'a' * 64,
+    return {'schema': schema, 'post_id': 641, 'content_sha256': 'a' * 64,
             'render_source': render_source, 'url': url,
             'executed_at': datetime.now(timezone.utc).isoformat(),
             'execution': {'engine': 'existing_cdp_session', 'target_id': 'test-only-target-123',
@@ -143,15 +148,83 @@ class BrowserQaEvidenceTests(unittest.TestCase):
             self.assertIn('390:tables_cards_keyboard:fail',
                           result['incomplete_scopes']['content-mobile-desktop'])
 
-    def test_zoom_half_width_reflow_failure_blocks_accessibility_not_claim_native(self):
+    def test_320_css_reflow_passes_without_native_zoom_claim(self):
+        with tempfile.TemporaryDirectory() as folder:
+            evidence = fixture(Path(folder), render_source='authenticated_preview')
+            self.assertEqual(320, evidence['screens'][0]['observation']
+                             ['reflow_simulated_viewport']['width'])
+            self.assertEqual(640, evidence['screens'][1]['observation']
+                             ['reflow_simulated_viewport']['width'])
+            decision = evaluate_browser_qa(evidence, evidence_dir=Path(folder))
+            self.assertEqual('browser_pass', decision['status'])
+            self.assertEqual('pass', decision['observed_checks']['390']['zoom_reflow_simulated'])
+            self.assertEqual('not_verified_by_cdp_viewport_simulation', decision['native_zoom_200pct'])
+
+    def test_320_css_reflow_real_overflow_blocks_accessibility(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             evidence=fixture(root)
-            evidence['screens'][0]['observation']['zoom_simulated_half_viewport']['metrics']['scroll_width']=410
+            evidence['screens'][0]['observation']['reflow_simulated_viewport']['metrics']['scroll_width']=410
             result=evaluate_browser_qa(evidence,evidence_dir=root)
             self.assertIn('390:zoom_reflow_simulated:fail',
                           result['incomplete_scopes']['layout-accessibility'])
+            self.assertIn('content-mobile-desktop', result['completed_scopes'])
             self.assertEqual('not_verified_by_cdp_viewport_simulation',result['native_zoom_200pct'])
+
+    def test_desktop_640_css_reflow_overflow_still_blocks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            evidence=fixture(root)
+            metrics=evidence['screens'][1]['observation']['reflow_simulated_viewport']['metrics']
+            metrics.update(inner_width=640,client_width=625,scroll_width=690)
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('1280:zoom_reflow_simulated:fail',
+                          decision['incomplete_scopes']['layout-accessibility'])
+
+    def test_320_css_reflow_missing_or_inconsistent_metrics_cannot_pass(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            evidence=fixture(root)
+            reflow=evidence['screens'][0]['observation']['reflow_simulated_viewport']
+            reflow['metrics']['inner_width']=240
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          decision['incomplete_scopes']['layout-accessibility'])
+            reflow['metrics']['inner_width']=320
+            reflow['metrics']['scroll_width']=None
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          decision['incomplete_scopes']['layout-accessibility'])
+            reflow['metrics']['scroll_width']=320
+            reflow['width']=195
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:unverified',
+                          decision['incomplete_scopes']['layout-accessibility'])
+            reflow['width']=320
+            del evidence['screens'][0]['observation']['reflow_simulated_viewport']
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:unverified',
+                          decision['incomplete_scopes']['layout-accessibility'])
+
+    def test_legacy_schema_1_receipts_preserve_original_195px_verdict(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            evidence=fixture(root,render_source='authenticated_preview',schema=1)
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertEqual('browser_pass',decision['status'])
+            self.assertEqual(1,decision['schema'])
+            old=evidence['screens'][0]['observation']['zoom_simulated_half_viewport']
+            old['metrics'].update(inner_width=240,client_width=195,scroll_width=240)
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          decision['incomplete_scopes']['layout-accessibility'])
+            # A legacy failure cannot be upgraded by adding a new v2-only field.
+            evidence['screens'][0]['observation']['reflow_simulated_viewport']={
+                'kind':'css_viewport_reflow_not_native_zoom','width':320,
+                'metrics':{'inner_width':320,'client_width':320,'scroll_width':320}}
+            decision=evaluate_browser_qa(evidence,evidence_dir=root)
+            self.assertIn('390:zoom_reflow_simulated:fail',
+                          decision['incomplete_scopes']['layout-accessibility'])
 
     def test_cta_href_alone_without_actual_navigation_is_unverified(self):
         with tempfile.TemporaryDirectory() as folder:

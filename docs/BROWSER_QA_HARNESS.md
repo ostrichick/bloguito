@@ -38,7 +38,11 @@
 | `wordpress_theme` | HTTPS WordPress 테마 DOM이 확인된 페이지 | 관련 scope PASS 및 task-state와 SHA 결합 시 가능 |
 | `authenticated_preview` | HTTPS 미리보기 쿼리와 로그인 DOM이 확인된 WordPress 미리보기 | 관련 scope PASS 및 task-state와 SHA 결합 시 가능 |
 
-모든 관찰은 **390×844** 및 **1280×900 CSS px**의 같은 기존 탭에서 이루어진다. 문서 전체 overflow, 표 caption/열·행/키보드 수평 스크롤, 모바일 카드 행수·표 가시성, TOC 앵커의 실제 클릭 후 해시, 내부/외부 링크, 설정된 CTA의 실제 같은 탭 이동, 계산기 정상/오류 입력 시나리오와 화면 결과를 기록한다. 200% 확대 관련 `zoom_simulated_half_viewport`는 절반 너비로 재배치한 **근사 검사**이며 **브라우저 네이티브 200% 확대, 스크린리더, 실제 모바일 터치의 검증이 아니다**. 이 세 항목은 필요한 경우 사람의 별도 QA에 남긴다.
+모든 관찰은 **390×844** 및 **1280×900 CSS px**의 같은 기존 탭에서 이루어진다. 문서 전체 overflow, 표 caption/열·행/키보드 수평 스크롤, 모바일 카드 행수·표 가시성, TOC 앵커의 실제 클릭 후 해시, 내부/외부 링크, 설정된 CTA의 실제 같은 탭 이동, 계산기 정상/오류 입력 시나리오와 화면 결과를 기록한다.
+
+**증거 schema 2(320px reflow):** 390px 모바일 관찰은 **320 CSS px**, 1280px 데스크톱 관찰은 **640 CSS px** 너비에서 추가로 CSS 리플로우를 측정한다. `reflow_simulated_viewport.kind=css_viewport_reflow_not_native_zoom`이며 `width`, `inner_width`, `client_width`, `scroll_width`를 검증기가 별도로 검증한다. 지정한 실제 너비가 적용되지 않았거나 document scroll 너비가 client 너비보다 2px 초과하면 해당 layout scope는 **FAIL 또는 미검증**이다. WordPress 로그인 관리자 표시줄의 240px 최소 너비 때문에 390/2=195px에서만 세 게시물이 동일하게 실패한 증거를 정상 PASS로 바꾸지는 않는다. 320 CSS px는 [WCAG 2.1 SC 1.4.10 Reflow](https://www.w3.org/WAI/WCAG21/Understanding/reflow)의 세로 스크롤 콘텐츠 기준(1280px에서 400% 확대 시 환산)에 대응하나, 여기서는 **CDP의 너비 조절만** 검증하므로 브라우저 네이티브 200%/400% 확대, WCAG 전체 준수, 스크린리더 및 실제 모바일 터치는 증명하지 않는다. 필요한 경우 사람의 QA가 별도로 남는다.
+
+**schema 1 하위호환:** 과거 `zoom_simulated_half_viewport`(390→195px, 1280→640px) 영수증은 여전히 당시 판정 규칙으로 독립 평가한다. 과거 195px FAIL을 새 320px 규칙으로 PASS 승격하지 않는다. 새 320px QA 완료는 새 브라우저 실행으로 생성한 schema 2 증거가 필요하고 post ID, 저장 내용 SHA, URL/인증 출처, PNG 해시 및 실제 화면 크기의 기존 바인딩은 유지한다.
 
 실제 브라우저 실행 없이 HTML 파서·정적 스캔 결과만으로 `browser_pass`를 만들 수 없도록 정규 경로에서 CDP 실행 메타데이터, 두 viewport의 PNG 실제 픽셀 치수와 SHA, DOM 계측값을 확인한다. 계측 JSON은 별도 verifier가 전달된 성공 여부를 신뢰하지 않고 **다시 계산**한다. 이 기록도 위조 불가능한 브라우저 서명은 아니며, WordPress의 원본 `post_content`를 재수집하지 않는다. `post_id` 및 `content_sha256`은 기존 **WordPress 저장/readback에 묶인 task-state 값**과 맞춰 최종 검증한다. 증거의 글자만으로 운영 DB의 최신 상태까지 증명하는 것은 아니다.
 

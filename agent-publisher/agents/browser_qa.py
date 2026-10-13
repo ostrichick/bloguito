@@ -18,7 +18,10 @@ from PIL import Image
 from agents.qa_scope import validate_qa_scopes
 
 
-QA_EVIDENCE_SCHEMA = 1
+# Schema 1 receipts retain the original 195/640 half-viewport verdicts.
+# Schema 2 measures 320/640 CSS px and must not reinterpret old receipts.
+QA_EVIDENCE_SCHEMA = 2
+LEGACY_QA_EVIDENCE_SCHEMA = 1
 RENDER_SOURCES = {'local_static', 'wordpress_theme', 'authenticated_preview'}
 QA_VIEWPORTS = (390, 1280)
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
@@ -52,7 +55,8 @@ def _valid_url(url: str, render_source: str, post_id: int) -> bool:
     return True
 
 
-def _evaluate_screen(screen: dict, *, width: int, scopes: list[str], config: dict) -> dict:
+def _evaluate_screen(screen: dict, *, width: int, scopes: list[str],
+                     config: dict, schema: int) -> dict:
     if (not isinstance(screen, dict) or not isinstance(screen.get('viewport'), dict)
             or screen['viewport'].get('width') != width
             or type(screen['viewport'].get('height')) is not int
@@ -69,18 +73,33 @@ def _evaluate_screen(screen: dict, *, width: int, scopes: list[str], config: dic
     if observation.get('inner_width') != width:
         raise ValueError('browser_qa_emulated_viewport_not_applied')
     results = {'document_overflow': _pass_or_fail(scroll <= client + 2)}
-    zoom = observation.get('zoom_simulated_half_viewport')
-    if (not isinstance(zoom, dict) or zoom.get('kind') != 'css_half_width_reflow_not_native_zoom'
-            or zoom.get('width') != round(width / 2)
+    legacy = schema == LEGACY_QA_EVIDENCE_SCHEMA
+    zoom = observation.get('zoom_simulated_half_viewport' if legacy else 'reflow_simulated_viewport')
+    expected_width = round(width / 2) if legacy or width == 1280 else 320
+    expected_kind = ('css_half_width_reflow_not_native_zoom' if legacy
+                     else 'css_viewport_reflow_not_native_zoom')
+    if (not isinstance(zoom, dict) or zoom.get('kind') != expected_kind
+            or type(zoom.get('width')) is not int or zoom['width'] != expected_width
             or not isinstance(zoom.get('metrics'), dict)):
         results['zoom_reflow_simulated'] = 'unverified'
     else:
         metrics=zoom['metrics']
-        results['zoom_reflow_simulated'] = _pass_or_fail(
-            metrics.get('inner_width') == round(width / 2)
-            and type(metrics.get('client_width')) in {int, float}
-            and type(metrics.get('scroll_width')) in {int, float}
-            and metrics['scroll_width'] <= metrics['client_width'] + 2)
+        # Re-evaluate v1 byte-for-byte under its original measurement contract;
+        # tighten invalid-width handling only for new schema 2 receipts.
+        if legacy:
+            passed = (metrics.get('inner_width') == expected_width
+                      and type(metrics.get('client_width')) in {int, float}
+                      and type(metrics.get('scroll_width')) in {int, float}
+                      and metrics['scroll_width'] <= metrics['client_width'] + 2)
+        else:
+            passed = (type(metrics.get('inner_width')) in {int, float}
+                      and metrics['inner_width'] == expected_width
+                      and type(metrics.get('client_width')) in {int, float}
+                      and metrics['client_width'] > 0
+                      and type(metrics.get('scroll_width')) in {int, float}
+                      and metrics['scroll_width'] > 0
+                      and metrics['scroll_width'] <= metrics['client_width'] + 2)
+        results['zoom_reflow_simulated'] = _pass_or_fail(passed)
 
     toc = observation.get('toc')
     if not isinstance(toc, dict) or not isinstance(toc.get('links'), list):
@@ -167,8 +186,11 @@ def _evaluate_screen(screen: dict, *, width: int, scopes: list[str], config: dic
 
 def evaluate_browser_qa(evidence: dict, *, evidence_dir: Path) -> dict:
     """Return a re-evaluated receipt. Never trust a supplied success/status flag."""
-    if not isinstance(evidence, dict) or evidence.get('schema') != QA_EVIDENCE_SCHEMA:
+    if (not isinstance(evidence, dict)
+            or type(evidence.get('schema')) is not int
+            or evidence['schema'] not in {LEGACY_QA_EVIDENCE_SCHEMA, QA_EVIDENCE_SCHEMA}):
         raise ValueError('browser_qa_schema_invalid')
+    schema = evidence['schema']
     source = evidence.get('render_source')
     post_id, content_sha = evidence.get('post_id'), evidence.get('content_sha256')
     if (source not in RENDER_SOURCES or type(post_id) is not int or post_id <= 0
@@ -222,7 +244,8 @@ def evaluate_browser_qa(evidence: dict, *, evidence_dir: Path) -> dict:
                 captured.verify()
         except (OSError, SyntaxError) as exc:
             raise ValueError('browser_qa_screenshot_decode_failed') from exc
-        verified[str(width)] = _evaluate_screen(screen, width=width, scopes=scopes, config=config)
+        verified[str(width)] = _evaluate_screen(
+            screen, width=width, scopes=scopes, config=config, schema=schema)
 
     if source in {'wordpress_theme', 'authenticated_preview'}:
         if not all(screen['observation'].get('wp_theme_dom') is True for screen in screens):
@@ -262,7 +285,7 @@ def evaluate_browser_qa(evidence: dict, *, evidence_dir: Path) -> dict:
     # cannot close QA for a saved WordPress post's actual theme/preview.
     eligible = completed if source != 'local_static' else []
     return {
-        'schema': QA_EVIDENCE_SCHEMA, 'post_id': post_id, 'content_sha256': content_sha,
+        'schema': schema, 'post_id': post_id, 'content_sha256': content_sha,
         'render_source': source, 'url': url, 'required_scopes': scopes,
         'observed_checks': verified, 'completed_scopes': completed,
         'eligible_wp_completed_scopes': eligible,

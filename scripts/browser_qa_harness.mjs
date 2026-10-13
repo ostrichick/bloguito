@@ -292,13 +292,16 @@ async function run() {
           (args['--render-source']!=='local_static' && !restored.wp_theme_dom) ||
           (args['--render-source']==='authenticated_preview' && !restored.authenticated_dom))
         throw Error('browser_qa_restored_preview_not_verified');
-      // A half-width reflow is *not* native browser 200% zoom. Keep its
-      // evidence separate and never convert it into a native zoom PASS.
+      // WCAG 1.4.10 reflow uses 320 CSS px; 390/2=195 is below that target
+      // and may hit the logged-in WordPress admin bar's 240px min-width.
+      // Keep the desktop half-width 640px check. Neither viewport override
+      // establishes native browser zoom (which remains unverified).
+      const reflowWidth = width === 390 ? 320 : Math.round(width / 2);
       await cdp.send('Emulation.setDeviceMetricsOverride', {
-        width:Math.round(width/2),height,deviceScaleFactor:1,mobile:width===390});
+        width:reflowWidth,height,deviceScaleFactor:1,mobile:width===390});
       await pause(200);
-      observation.zoom_simulated_half_viewport={kind:'css_half_width_reflow_not_native_zoom',
-        width:Math.round(width/2),metrics:await cdp.evaluate(()=>({
+      observation.reflow_simulated_viewport={kind:'css_viewport_reflow_not_native_zoom',
+        width:reflowWidth,metrics:await cdp.evaluate(()=>({
           inner_width:window.innerWidth,client_width:document.documentElement.clientWidth,
           scroll_width:document.documentElement.scrollWidth}))};
       await cdp.send('Emulation.setDeviceMetricsOverride', {
@@ -314,7 +317,7 @@ async function run() {
         screenshot:{path:filename,sha256:createHash('sha256').update(bytes).digest('hex')},
         observation});
     }
-    const evidence={schema:1,run_id:runId,post_id:Number(args['--post-id']),
+    const evidence={schema:2,run_id:runId,post_id:Number(args['--post-id']),
       content_sha256:args['--content-sha'],render_source:args['--render-source'],
       url:redactEvidenceUrl(expected.href),executed_at:new Date().toISOString(),required_scopes:scopes,
       config:{cta_targets:config.cta_targets || [],calculator_cases:config.calculator_cases || []},
